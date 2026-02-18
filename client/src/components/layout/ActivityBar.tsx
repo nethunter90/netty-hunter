@@ -2,7 +2,7 @@ import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Target, Terminal, ShieldAlert,
-  Brain, FileText, LogOut, User, Shield
+  Brain, FileText, LogOut, User, Shield, Layers
 } from "lucide-react";
 import { authAPI } from "../../lib/api";
 import toast from "react-hot-toast";
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { id: "findings", icon: ShieldAlert, label: "Findings", path: "/findings" },
   { id: "intelligence", icon: Brain, label: "Intelligence", path: "/intelligence" },
   { id: "reports", icon: FileText, label: "Reports", path: "/reports" },
+  { id: "orchestration", icon: Layers, label: "Orchestration", path: "/orchestration" },
 ];
 
 export default function ActivityBar({ activeView, onViewChange, user, onLogout }: ActivityBarProps) {

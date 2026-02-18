@@ -60,3 +60,18 @@ export const authAPI = {
   logout: () => api.post("/auth/logout"),
   me: () => api.get("/auth/me"),
 };
+
+export const orchestrationAPI = {
+  /** Describe all 6 layers */
+  getLayers: () => api.get("/orchestration/layers"),
+  /** Start a full orchestrated hunt (REST – fires async, use Socket.IO for real-time) */
+  run: (data: Record<string, unknown>) => api.post("/orchestration/run", data),
+  /** Abort an active orchestration */
+  stop: (id: string) => api.post(`/orchestration/stop/${id}`),
+  /** Get orchestration state by ID */
+  getState: (id: string) => api.get(`/orchestration/${id}`),
+  /** List recent orchestrations */
+  list: () => api.get("/orchestration"),
+  /** Summary stats */
+  stats: () => api.get("/orchestration/stats/summary"),
+};

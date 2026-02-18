@@ -11,8 +11,10 @@ import logger from "./utils/logger";
 import authRoutes from "./routes/auth";
 import huntRoutes from "./routes/hunt";
 import bountyRoutes from "./routes/bounty";
+import orchestrationRoutes from "./routes/orchestration";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
+import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
 
 // Ensure log dir exists
 try { mkdirSync("logs", { recursive: true }); } catch { /* already exists */ }
@@ -74,13 +76,21 @@ const huntLimiter = rateLimit({
   message: "Hunt rate limit exceeded",
 });
 
+const orchestrationLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 min
+  max: 5, // 5 orchestrations per 10 min
+  message: "Orchestration rate limit exceeded",
+});
+
 app.use("/api", apiLimiter);
 app.use("/api/hunt/start", huntLimiter);
+app.use("/api/orchestration/run", orchestrationLimiter);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/hunt", huntRoutes);
 app.use("/api/bounty", bountyRoutes);
+app.use("/api/orchestration", orchestrationRoutes);
 
 // Health check
 app.get("/health", (_req, res) => res.json({
@@ -114,6 +124,47 @@ io.on("connection", (socket) => {
     if (engine) {
       socket.emit("hunt:state", engine.getState());
     }
+  });
+
+  // Subscribe to orchestration room for real-time 6-layer updates
+  socket.on("subscribe:orchestration", ({ orchestrationId }: { orchestrationId: string }) => {
+    socket.join(`orchestration:${orchestrationId}`);
+    logger.info("Socket subscribed to orchestration", { id: socket.id, orchestrationId });
+  });
+
+  // Start a full orchestrated hunt via Socket.IO
+  socket.on("orchestration:run", async (params: {
+    programId: number;
+    targetUrl: string;
+    mode?: "forward" | "backward";
+    goal?: string;
+    maxIterations?: number;
+    budget?: { maxRequests: number; maxTime: number };
+    focusVulnClasses?: string[];
+  }) => {
+    const orchestrator = new CampaignOrchestrator();
+    const state = orchestrator.getState();
+    const orchestrationId = state.orchestrationId;
+
+    // Wire all events → socket
+    [
+      "orchestration:started", "orchestration:layer_start", "orchestration:layer_complete",
+      "orchestration:layer_error", "orchestration:audit", "orchestration:complete",
+      "orchestration:aborted",
+      "l4:hunt_started", "l4:phase", "l4:observations", "l4:hypotheses",
+      "l4:probing", "l4:probe_result", "l4:finding_raw", "l4:strategy_update",
+      "l4:solver_finding", "l4:error",
+      "l5:verifying", "l5:verified", "l5:rejected",
+      "l6:report_generated", "l6:autonomy_updated",
+    ].forEach(evt => {
+      orchestrator.on(evt, (d) => socket.emit(evt, d));
+    });
+
+    socket.emit("orchestration:created", { orchestrationId });
+
+    orchestrator.orchestrate(params).catch(err => {
+      socket.emit("orchestration:error", { orchestrationId, error: String(err) });
+    });
   });
 
   socket.on("hunt:start", async (params: {
