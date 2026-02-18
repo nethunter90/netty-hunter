@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-size: 13px; }
+  body { background: #0a0a0f; color: #c8c8e8; }
+}
+
+@layer components {
+  .hack-panel {
+    @apply bg-hack-panel border border-hack-border rounded;
+  }
+  .hack-btn {
+    @apply px-3 py-1.5 rounded text-xs font-mono font-medium border transition-all duration-150;
+    @apply border-hack-border bg-hack-surface text-hack-text;
+    @apply hover:border-hack-accent hover:text-hack-accent hover:bg-hack-accent/5;
+  }
+  .hack-btn-primary {
+    @apply px-3 py-1.5 rounded text-xs font-mono font-semibold;
+    @apply bg-hack-accent text-hack-bg border border-hack-accent;
+    @apply hover:bg-hack-green hover:shadow-lg hover:shadow-hack-accent/20;
+    @apply active:scale-95 transition-all duration-150;
+  }
+  .hack-btn-danger {
+    @apply px-3 py-1.5 rounded text-xs font-mono font-medium;
+    @apply bg-hack-red/10 text-hack-red border border-hack-red/30;
+    @apply hover:bg-hack-red/20 transition-all duration-150;
+  }
+  .hack-input {
+    @apply bg-hack-surface border border-hack-border rounded px-3 py-1.5 text-xs font-mono;
+    @apply text-hack-text placeholder:text-hack-dim;
+    @apply focus:outline-none focus:border-hack-accent focus:ring-1 focus:ring-hack-accent/20;
+    @apply transition-colors duration-150;
+  }
+  .hack-label {
+    @apply text-xs text-hack-dim font-mono uppercase tracking-wider mb-1 block;
+  }
+  .severity-critical { @apply text-hack-red bg-hack-red/10 border-hack-red/30; }
+  .severity-high { @apply text-hack-orange bg-hack-orange/10 border-hack-orange/30; }
+  .severity-medium { @apply text-hack-yellow bg-hack-yellow/10 border-hack-yellow/30; }
+  .severity-low { @apply text-hack-blue bg-hack-blue/10 border-hack-blue/30; }
+  .severity-info { @apply text-hack-dim bg-hack-muted/50 border-hack-border; }
+  .status-dot {
+    @apply w-2 h-2 rounded-full inline-block;
+  }
+  .status-running { @apply bg-hack-accent animate-pulse; }
+  .status-pending { @apply bg-hack-dim; }
+  .status-complete { @apply bg-hack-blue; }
+  .status-failed { @apply bg-hack-red; }
+}
+
+/* Terminal cursor blink */
+.terminal-cursor::after {
+  content: "█";
+  animation: blink 1s step-end infinite;
+  color: #00ff88;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Matrix-like grid overlay */
+.matrix-grid {
+  background-image:
+    linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Glow effects */
+.glow-green { text-shadow: 0 0 8px #00ff8880; }
+.glow-red { text-shadow: 0 0 8px #ff335580; }
+.glow-blue { text-shadow: 0 0 8px #4488ff80; }
+.border-glow-green { box-shadow: 0 0 0 1px #00ff8830, 0 0 12px #00ff8820; }
+
+/* Scan line animation */
+.scan-overlay::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #00ff8840, transparent);
+  animation: scan 4s linear infinite;
+  pointer-events: none;
+}
+@keyframes scan {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(100%); }
+}
+
+/* Code highlight override */
+pre { margin: 0; }
+
+/* Custom scrollbar for terminal feel */
+.terminal-scroll::-webkit-scrollbar { width: 4px; }
+.terminal-scroll::-webkit-scrollbar-thumb { background: #00ff8820; }
+.terminal-scroll::-webkit-scrollbar-thumb:hover { background: #00ff8840; }

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+logs/
+drizzle/
+.DS_Store
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.turbo/
