@@ -10,12 +10,13 @@ import { promisify } from "util";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
-import { huntSessions, findings, solverResults } from "../db/schema";
+import { huntSessions, findings, exploitChains } from "../db/schema";
 import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
 import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
+import ROIModel from "../intelligence/ROIModel";
 
 const execAsync = promisify(exec);
 
@@ -192,17 +193,25 @@ export class HunterEngine extends EventEmitter {
   private wafSynthesizer = new IntelligenceSynthesizer();
   private scopeGuard = ScopeGuard.getInstance();
   private modelRouter = ModelRouter.getInstance();
+  private roiModel = new ROIModel();
   private toolLastUsed: Map<string, number> = new Map();
+  private dbSessionId = 0;
+  private campaignId = 0;
+  private targetId = 0;
 
   async startHunt(params: {
     targetUrl: string;
     programId: number;
     campaignId: number;
+    targetId: number;
     sessionId?: string;
     maxIterations?: number;
     budget?: Partial<HuntState["budget"]>;
+    focusVulnClasses?: string[];
   }): Promise<string> {
     const sessionUuid = params.sessionId || uuidv4();
+    this.campaignId = params.campaignId;
+    this.targetId = params.targetId;
 
     this.state = {
       sessionId: sessionUuid,
@@ -223,14 +232,32 @@ export class HunterEngine extends EventEmitter {
       },
     };
 
-    // Persist session
-    await db.insert(huntSessions).values({
+    // Persist session and capture the real DB ID
+    const [session] = await db.insert(huntSessions).values({
       campaignId: params.campaignId,
-      targetId: 1, // linked later
+      targetId: params.targetId,
       sessionUuid,
       phase: "observe",
       status: "running",
-    });
+    }).returning();
+    this.dbSessionId = session.id;
+
+    // Pre-seed hypotheses from template focus classes if provided
+    if (params.focusVulnClasses?.length) {
+      for (const vc of params.focusVulnClasses) {
+        this.state.hypotheses.push({
+          id: uuidv4(),
+          vulnClass: vc,
+          targetUrl: params.targetUrl,
+          reasoning: `Template-focused: ${vc} is a priority for this hunt`,
+          confidence: 0.6,
+          priority: 9,
+          evidence: [],
+          status: "pending",
+          createdAt: Date.now(),
+        });
+      }
+    }
 
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
@@ -460,7 +487,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
           hypothesis.status = "inconclusive";
         }
       } else {
-        hypothesis.status = relatedProbes.length > 0 ? "rejected" : "pending";
+        if (relatedProbes.length > 0) {
+          hypothesis.status = "rejected";
+          // Record miss in ROI model so success rates decay appropriately
+          this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
+        } else {
+          hypothesis.status = "pending";
+        }
       }
     }
 
@@ -609,7 +642,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
   private async persistFinding(confirmed: HypothesisConfirmed): Promise<void> {
     try {
       await db.insert(findings).values({
-        huntSessionId: 1,
+        huntSessionId: this.dbSessionId,
+        campaignId: this.campaignId,
+        targetId: this.targetId,
         title: `${confirmed.hypothesis.vulnClass.toUpperCase()} found at ${confirmed.hypothesis.targetUrl}`,
         vulnType: confirmed.hypothesis.vulnClass,
         severity: confirmed.severity,
@@ -622,6 +657,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         verificationStatus: "pending",
         status: "new",
       });
+      // Update ROI model with confirmed finding
+      await this.roiModel.updateSuccessRate(confirmed.hypothesis.vulnClass, true);
     } catch (err) {
       logger.error("Failed to persist finding", { err });
     }
@@ -639,6 +676,31 @@ Return ONLY valid JSON array of hypothesis objects.`;
           completedAt: new Date(),
         })
         .where(eq(huntSessions.sessionUuid, this.state.sessionId));
+
+      // Create exploit chain if multiple findings confirmed – links findings into an attack narrative
+      if (this.campaignId && this.state.confirmedFindings.length >= 2) {
+        const steps = this.state.confirmedFindings.map((f, i) => ({
+          order: i + 1,
+          vulnClass: f.hypothesis.vulnClass,
+          targetUrl: f.hypothesis.targetUrl,
+          severity: f.severity,
+          payload: f.exploitPayload.slice(0, 200),
+        }));
+        const maxSeverityIdx = this.state.confirmedFindings
+          .map(f => ({ critical: 4, high: 3, medium: 2, low: 1, info: 0 }[f.severity] || 0))
+          .reduce((maxI, v, i, arr) => v > arr[maxI] ? i : maxI, 0);
+        const topFinding = this.state.confirmedFindings[maxSeverityIdx];
+        await db.insert(exploitChains).values({
+          campaignId: this.campaignId,
+          chainUuid: uuidv4(),
+          name: `Chain: ${topFinding.hypothesis.vulnClass} → ${this.state.confirmedFindings.length} vulns`,
+          steps: steps as unknown as Record<string, unknown>[],
+          totalImpact: topFinding.cvssScore,
+          successRate: this.state.confirmedFindings.length / Math.max(this.state.hypotheses.length, 1),
+          finalObjective: `Multi-vector attack on ${this.state.targetUrl}`,
+          status: "discovered",
+        });
+      }
     } catch (err) {
       logger.error("Failed to persist hunt results", { err });
     }

@@ -25,6 +25,7 @@ const StartHuntSchema = z.object({
   mode: z.enum(["forward", "backward"]).default("forward"),
   goal: z.string().min(5).max(500).optional(),
   maxIterations: z.number().int().min(1).max(50).default(10),
+  templateId: z.string().optional(),
   budget: z.object({
     maxRequests: z.number().int().min(10).max(10000).default(2000),
     maxTime: z.number().int().min(60).max(86400).default(3600),
@@ -38,7 +39,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId, targetUrl, mode, goal, maxIterations, budget } = parsed.data;
+  const { programId, targetUrl, mode, goal, maxIterations, budget, templateId } = parsed.data;
 
   // Verify program exists
   const [program] = await db.select().from(programs).where(eq(programs.id, programId)).limit(1);
@@ -63,22 +64,51 @@ router.post("/start", async (req: Request, res: Response) => {
     status: "scanning",
   }).returning();
 
+  // Resolve template's focus vuln classes if a template was selected
+  let focusVulnClasses: string[] | undefined;
+  if (templateId) {
+    const templates = HuntStrategyBuilder.getTemplates();
+    const tmpl = templates.find(t => t.id === templateId);
+    if (tmpl?.vulnClasses?.length) focusVulnClasses = tmpl.vulnClasses;
+  }
+
   try {
     if (mode === "backward" && goal) {
-      // Backward hunt: build plan first
+      // Backward hunt: build plan then immediately execute via HunterEngine
       const plan = await backwardHunt.createPlan({
         campaignId: campaign.id,
         objective: goal,
         targetUrl,
       });
 
+      // Auto-execute: seed HunterEngine with the plan's attack approaches as hypotheses
+      const engine = new HunterEngine();
+      const approaches = await backwardHunt.getNextActions(plan);
+      const sessionUuid = await engine.startHunt({
+        targetUrl,
+        programId,
+        campaignId: campaign.id,
+        targetId: target.id,
+        maxIterations,
+        budget,
+        // Use approach vuln classes as focus; fall back to template if provided
+        focusVulnClasses: approaches.map(a => a.vulnClass).slice(0, 6),
+      });
+
+      activeSessions.set(sessionUuid, engine);
+      engine.on("hunt:complete", () => {
+        setTimeout(() => activeSessions.delete(sessionUuid), 60000);
+      });
+
+      logger.info("Backward hunt started", { campaignId: campaign.id, planId: plan.planId, sessionUuid });
       return res.json({
         campaignId: campaign.id,
         targetId: target.id,
+        sessionUuid,
         mode: "backward",
         planId: plan.planId,
         objective: plan.objective,
-        status: "planning",
+        status: "running",
       });
     }
 
@@ -88,8 +118,10 @@ router.post("/start", async (req: Request, res: Response) => {
       targetUrl,
       programId,
       campaignId: campaign.id,
+      targetId: target.id,
       maxIterations,
       budget,
+      focusVulnClasses,
     });
 
     activeSessions.set(sessionUuid, engine);

@@ -30,7 +30,7 @@ export default function Reports() {
 
   useEffect(() => {
     setLoading(true);
-    hunterAPI.getFindings({ status: "new" }).then(r => {
+    hunterAPI.getFindings().then(r => {
       setFindings(r.data || []);
     }).finally(() => setLoading(false));
   }, []);
@@ -52,7 +52,7 @@ export default function Reports() {
     toast.success(`Generated ${generated} reports`);
     setGenerating(false);
     // Reload
-    hunterAPI.getFindings({ status: "new" }).then(r => setFindings(r.data || []));
+    hunterAPI.getFindings().then(r => setFindings(r.data || []));
   };
 
   const copyReport = (text: string) => {

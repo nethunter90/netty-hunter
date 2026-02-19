@@ -144,6 +144,11 @@ export class UnifiedReinforcementStore {
     return entry !== null;
   }
 
+  // ── Generic Record (for external callers) ─────────────────────────────────
+  async record(domain: RLDomain, key: string, success: boolean): Promise<void> {
+    await this.upsert(domain, key, {}, success);
+  }
+
   // ── Temporal Decay ────────────────────────────────────────────────────────
   async applyTemporalDecay(domainName: RLDomain, decayDays: number = 30): Promise<void> {
     const cutoff = new Date(Date.now() - decayDays * 24 * 3600 * 1000);

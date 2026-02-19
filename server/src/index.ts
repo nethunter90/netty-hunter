@@ -1,8 +1,9 @@
 import "dotenv/config";
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import { Server as SocketServer } from "socket.io";
 import session from "express-session";
+import connectPg from "connect-pg-simple";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -15,6 +16,8 @@ import orchestrationRoutes from "./routes/orchestration";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
+
+const PgSession = connectPg(session);
 
 // Ensure log dir exists
 try { mkdirSync("logs", { recursive: true }); } catch { /* already exists */ }
@@ -49,8 +52,13 @@ app.use(cors({
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Session
+// Session – PostgreSQL-backed (survives restarts)
 app.use(session({
+  store: new PgSession({
+    conString: process.env.DATABASE_URL,
+    tableName: "sessions",
+    createTableIfMissing: true,
+  }),
   secret: process.env.SESSION_SECRET || "change-me-in-production-minimum-32-chars",
   resave: false,
   saveUninitialized: false,
@@ -60,6 +68,15 @@ app.use(session({
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
 }));
+
+// ─── Auth Middleware ──────────────────────────────────────────────────────────
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  next();
+}
 
 // Rate limiting
 const apiLimiter = rateLimit({
@@ -88,9 +105,9 @@ app.use("/api/orchestration/run", orchestrationLimiter);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
-app.use("/api/hunt", huntRoutes);
-app.use("/api/bounty", bountyRoutes);
-app.use("/api/orchestration", orchestrationRoutes);
+app.use("/api/hunt", requireAuth, huntRoutes);
+app.use("/api/bounty", requireAuth, bountyRoutes);
+app.use("/api/orchestration", requireAuth, orchestrationRoutes);
 
 // Health check
 app.get("/health", (_req, res) => res.json({

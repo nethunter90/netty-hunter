@@ -54,7 +54,10 @@ router.get("/programs/:id", async (req: Request, res: Response) => {
 });
 
 router.patch("/programs/:id", async (req: Request, res: Response) => {
-  const [updated] = await db.update(programs).set({ ...req.body, updatedAt: new Date() })
+  const parsed = ProgramSchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const [updated] = await db.update(programs)
+    .set({ ...parsed.data, updatedAt: new Date() })
     .where(eq(programs.id, parseInt(req.params.id))).returning();
   if (!updated) return res.status(404).json({ error: "Not found" });
   return res.json(updated);
@@ -68,6 +71,10 @@ router.delete("/programs/:id", async (req: Request, res: Response) => {
 // ── Target Selection Intelligence ─────────────────────────────────────────────
 router.get("/rank-programs", async (_req: Request, res: Response) => {
   const scores = await targetSelection.scorePrograms();
+  // Persist computed ROI scores back to the programs table
+  await Promise.all(scores.map(s =>
+    db.update(programs).set({ roiScore: s.roiScore }).where(eq(programs.id, s.programId))
+  ));
   return res.json(scores);
 });
 
@@ -100,7 +107,9 @@ router.get("/rl-stats", async (_req: Request, res: Response) => {
 router.post("/rl-record", async (req: Request, res: Response) => {
   const { domain, key, success } = req.body;
   if (!domain || !key) return res.status(400).json({ error: "domain and key required" });
-  await rlStore["upsert"]; // type-safe exposure not needed; use specific methods
+  const validDomains = ["tool_success", "framework_vuln", "program_type", "confidence_calibration", "exploration"];
+  if (!validDomains.includes(domain)) return res.status(400).json({ error: "invalid domain" });
+  await rlStore.record(domain, key, Boolean(success));
   return res.json({ ok: true });
 });
 

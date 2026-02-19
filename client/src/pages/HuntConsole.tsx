@@ -119,6 +119,7 @@ export default function HuntConsole() {
         mode: huntMode,
         goal: goal || undefined,
         maxIterations,
+        templateId: selectedTemplate || undefined,
         budget: { maxRequests: 2000, maxTime: 3600 },
       });
 
