@@ -53,8 +53,8 @@ export class ROIModel {
       .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, vulnClass)))
       .limit(1);
 
-    const successRate = stored && stored.totalCount > 0
-      ? (stored.successCount || 0) / stored.totalCount
+    const successRate = stored && (stored.totalCount ?? 0) > 0
+      ? (stored.successCount || 0) / (stored.totalCount ?? 1)
       : 0.15; // default 15% success rate
 
     const adjustedPayout = basePayout * this.getSeverityMultiplier(vulnClass);

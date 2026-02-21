@@ -33,7 +33,7 @@ export type VulnClass =
   | "xss" | "sqli" | "ssrf" | "lfi" | "rfi" | "rce" | "xxe"
   | "idor" | "auth_bypass" | "open_redirect" | "cors" | "csrf"
   | "info_disclosure" | "misconfig" | "exposed_admin" | "subdomain_takeover"
-  | "rate_limit_bypass" | "business_logic";
+  | "rate_limit_bypass" | "business_logic" | "security_headers";
 
 export interface SolverResult {
   taskId: string;

@@ -12,6 +12,7 @@ import authRoutes from "./routes/auth";
 import huntRoutes from "./routes/hunt";
 import bountyRoutes from "./routes/bounty";
 import orchestrationRoutes from "./routes/orchestration";
+import hunterRoutes from "./routes/hunter";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -91,6 +92,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/hunt", huntRoutes);
 app.use("/api/bounty", bountyRoutes);
 app.use("/api/orchestration", orchestrationRoutes);
+app.use("/api/hunter", hunterRoutes);
 
 // Health check
 app.get("/health", (_req, res) => res.json({

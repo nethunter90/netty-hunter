@@ -17,7 +17,6 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
 import {
   programs, campaigns, targets, findings,
-  huntSessions, autonomyMetrics,
 } from "../db/schema";
 import { eq, desc } from "drizzle-orm";
 import logger from "../utils/logger";
@@ -645,23 +644,8 @@ export class CampaignOrchestrator extends EventEmitter {
 
       const maturityReport = await this.autonomyTracker.recordHuntOutcome(huntMetrics);
       autonomyScore = maturityReport.compositeScore;
+      // recordHuntOutcome already persists to autonomy_metrics — no duplicate insert
       this.emit("l6:autonomy_updated", { compositeScore: autonomyScore });
-
-      // Persist to DB
-      await db.insert(autonomyMetrics).values({
-        huntNumber: maturityReport.huntNumber,
-        compositeScore: maturityReport.compositeScore,
-        domainScores: maturityReport.domainScores as unknown as Record<string, unknown>,
-        brierSnapshot: maturityReport.brierScore,
-        reinforcementNoise: maturityReport.reinforcementNoise,
-        regressionDetected: maturityReport.regressionFlags.length > 0,
-        metadata: {
-          maturityLevel: maturityReport.maturityLevel,
-          regressionFlags: maturityReport.regressionFlags,
-          recommendations: maturityReport.recommendations,
-          readyForFullAutonomy: maturityReport.readyForFullAutonomy,
-        },
-      });
     } catch (err) {
       logger.warn("Autonomy tracker update failed (non-critical)", { err });
     }
