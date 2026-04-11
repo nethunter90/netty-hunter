@@ -46,7 +46,9 @@ export class TargetSelectionIntelligence {
     const huntCount = await db.select({ count: sql<number>`count(*)` })
       .from(campaigns).where(eq(campaigns.programId, programId));
     const findingCount = await db.select({ count: sql<number>`count(*)` })
-      .from(findings).where(eq(findings.campaignId, programId));
+      .from(findings)
+      .innerJoin(campaigns, eq(findings.campaignId, campaigns.id))
+      .where(eq(campaigns.programId, programId));
 
     const hunts = Number(huntCount[0]?.count || 0);
     const finds = Number(findingCount[0]?.count || 0);

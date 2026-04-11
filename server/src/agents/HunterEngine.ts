@@ -5,7 +5,7 @@
  * Features: Anomaly-first scanning, real-time strategy adaptation, Tool Knowledge System.
  */
 import { EventEmitter } from "events";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
@@ -18,7 +18,7 @@ import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface Observation {
@@ -77,17 +77,23 @@ export interface HypothesisConfirmed {
 }
 
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
+// Commands return { bin, args } arrays — never interpolated shell strings —
+// to prevent command injection via attacker-controlled URLs.
 export const TOOL_KNOWLEDGE: Record<string, {
   description: string;
   vulnClasses: string[];
-  command: (url: string, opts?: Record<string, string>) => string;
+  command: (url: string, opts?: Record<string, string>) => { bin: string; args: string[] };
   parser: (output: string) => Record<string, unknown>;
   rateLimit: number; // seconds between invocations
 }> = {
   nmap: {
     description: "Network port scanner and service fingerprinter",
     vulnClasses: ["open_ports", "service_enumeration", "os_detection"],
-    command: (url) => `nmap -sV -sC --script=http-headers,http-title -p 80,443,8080,8443 ${new URL(url).hostname} --open -oX -`,
+    command: (url) => ({
+      bin: "nmap",
+      args: ["-sV", "-sC", "--script=http-headers,http-title", "-p", "80,443,8080,8443",
+             new URL(url).hostname, "--open", "-oX", "-"],
+    }),
     parser: (output) => {
       const ports: string[] = [];
       const matches = output.match(/portid="(\d+)"[^>]*state="open"/g) || [];
@@ -99,7 +105,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   nuclei: {
     description: "Fast vulnerability scanner with templated probes",
     vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "idor", "exposed_panels", "misconfig"],
-    command: (url, opts) => `nuclei -u ${url} -severity ${opts?.severity || "medium,high,critical"} -json -silent -timeout 10`,
+    command: (url, opts) => ({
+      bin: "nuclei",
+      args: ["-u", url, "-severity", opts?.severity || "medium,high,critical",
+             "-json", "-silent", "-timeout", "10"],
+    }),
     parser: (output) => {
       const findings: unknown[] = [];
       output.split("\n").filter(l => l.trim()).forEach(line => {
@@ -112,7 +122,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   ffuf: {
     description: "Fast web fuzzer for directory and parameter discovery",
     vulnClasses: ["hidden_endpoints", "backup_files", "admin_panels", "parameter_pollution"],
-    command: (url) => `ffuf -u ${url}/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,301,302,403 -t 50 -timeout 5 -json`,
+    command: (url) => ({
+      bin: "ffuf",
+      args: ["-u", `${url}/FUZZ`, "-w", "/usr/share/wordlists/dirb/common.txt",
+             "-mc", "200,301,302,403", "-t", "50", "-timeout", "5", "-json"],
+    }),
     parser: (output) => {
       try {
         const data = JSON.parse(output);
@@ -127,7 +141,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   sqlmap: {
     description: "Automated SQL injection detection and exploitation",
     vulnClasses: ["sqli", "blind_sqli", "time_based_sqli", "error_based_sqli"],
-    command: (url) => `sqlmap -u "${url}" --batch --level=2 --risk=2 --timeout=10 --output-dir=/tmp/sqlmap --forms 2>&1 | tail -50`,
+    command: (url) => ({
+      bin: "sqlmap",
+      args: ["-u", url, "--batch", "--level=2", "--risk=2",
+             "--timeout=10", "--output-dir=/tmp/sqlmap", "--forms"],
+    }),
     parser: (output) => {
       const injectable = /parameter .* is vulnerable|sqlmap identified/.test(output);
       const dbms = output.match(/back-end DBMS: (.+)/)?.[1] || "unknown";
@@ -138,7 +156,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   whatweb: {
     description: "Web technology fingerprinter",
     vulnClasses: ["tech_stack", "cms_detection", "framework_detection"],
-    command: (url) => `whatweb --no-errors --aggression=3 --log-json=- ${url}`,
+    command: (url) => ({
+      bin: "whatweb",
+      args: ["--no-errors", "--aggression=3", "--log-json=-", url],
+    }),
     parser: (output) => {
       try {
         const data = JSON.parse(output.split("\n").find(l => l.startsWith("[")) || "[]");
@@ -152,7 +173,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   nikto: {
     description: "Web server vulnerability scanner",
     vulnClasses: ["misconfig", "outdated_software", "dangerous_files", "headers"],
-    command: (url) => `nikto -h ${url} -Format json -timeout 10 -maxtime 60 2>&1`,
+    command: (url) => ({
+      bin: "nikto",
+      args: ["-h", url, "-Format", "json", "-timeout", "10", "-maxtime", "60"],
+    }),
     parser: (output) => {
       const vulns = output.match(/OSVDB-\d+:.+/g) || [];
       const items = output.match(/\+ .+/g) || [];
@@ -163,7 +187,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   gobuster: {
     description: "Directory/file brute-forcer",
     vulnClasses: ["hidden_endpoints", "backup_files", "exposed_configs"],
-    command: (url) => `gobuster dir -u ${url} -w /usr/share/wordlists/dirb/common.txt -q --no-error -t 50 --timeout 5s 2>/dev/null`,
+    command: (url) => ({
+      bin: "gobuster",
+      args: ["dir", "-u", url, "-w", "/usr/share/wordlists/dirb/common.txt",
+             "-q", "--no-error", "-t", "50", "--timeout", "5s"],
+    }),
     parser: (output) => {
       const found = output.match(/\/.+ \(\d+\)/g) || [];
       return { paths: found, count: found.length };
@@ -173,7 +201,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   curl_probe: {
     description: "HTTP header and response analysis",
     vulnClasses: ["security_headers", "cors", "csrf", "information_disclosure", "open_redirect"],
-    command: (url) => `curl -sI -L --max-time 10 "${url}"`,
+    command: (url) => ({
+      bin: "curl",
+      args: ["-sI", "-L", "--max-time", "10", url],
+    }),
     parser: (output) => {
       const headers: Record<string, string> = {};
       output.split("\n").forEach(line => {
@@ -534,20 +565,21 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const waitTime = (tool.rateLimit * 1000) - (Date.now() - lastUsed);
     if (waitTime > 0) await new Promise(r => setTimeout(r, Math.min(waitTime, 5000)));
 
-    const cmd = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+    const { bin, args } = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+    const cmdString = `${bin} ${args.join(" ")}`;
     const start = Date.now();
 
     try {
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 30000 });
+      const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
-      return { ...parsed, duration: Date.now() - start, command: cmd };
+      return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
       const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
-      if (error.killed) return { timeout: true, duration: 30000, command: cmd };
+      if (error.killed) return { timeout: true, duration: 30000, command: cmdString };
       const output = (error.stdout || "") + (error.stderr || "");
       this.toolLastUsed.set(toolName, Date.now());
-      return { ...tool.parser(output), duration: Date.now() - start, command: cmd };
+      return { ...tool.parser(output), duration: Date.now() - start, command: cmdString };
     }
   }
 

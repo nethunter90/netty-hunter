@@ -9,6 +9,7 @@ import Findings from "./pages/Findings";
 import Intelligence from "./pages/Intelligence";
 import Reports from "./pages/Reports";
 import Orchestration from "./pages/Orchestration";
+import Hunter from "./pages/Hunter";
 import Login from "./pages/Login";
 import { authAPI } from "./lib/api";
 
@@ -89,6 +90,7 @@ export default function App() {
               <Route path="/intelligence" element={<Intelligence />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/orchestration" element={<Orchestration />} />
+              <Route path="/hunter" element={<Hunter />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
