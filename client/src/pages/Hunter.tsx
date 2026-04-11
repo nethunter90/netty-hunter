@@ -869,7 +869,7 @@ export default function Hunter() {
               )}
 
               {detailTab === "attack-path" && attackPath && (
-                <div className="h-full overflow-y-auto terminal-scroll p-3">
+                <div className="h-full overflow-hidden p-3">
                   <AttackPathVisualizer
                     path={attackPath}
                     onStepClick={(step) => {

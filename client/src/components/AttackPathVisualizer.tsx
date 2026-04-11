@@ -525,7 +525,7 @@ export default function AttackPathVisualizer({ path, compact = false, onStepClic
   const totalDuration = path.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
 
   return (
-    <div className="hack-panel flex flex-col overflow-hidden">
+    <div className="hack-panel flex flex-col overflow-hidden h-full">
       {/* Terminal-style header */}
       <div className="relative flex items-center gap-2 px-3 py-2 border-b border-hack-border bg-hack-surface">
         {/* Window dots */}
