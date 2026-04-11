@@ -20,12 +20,24 @@ interface OllamaResponse {
   eval_count?: number;
 }
 
+// ─── Circuit Breaker ──────────────────────────────────────────────────────────
+// Prevents repeated calls to an unresponsive Ollama instance.
+// CLOSED → normal; OPEN → Ollama down, skip immediately; HALF_OPEN → recovery probe.
+type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
 export class ModelRouter {
   private static instance: ModelRouter;
   private readonly baseUrl: string;
   private availableModels: string[] = [];
   private lastModelCheck = 0;
   private readonly MODEL_CHECK_TTL = 60000; // 1 minute
+
+  // Circuit breaker state
+  private circuitState: CircuitState = "CLOSED";
+  private failureCount = 0;
+  private lastFailureTime = 0;
+  private readonly FAILURE_THRESHOLD = 3;    // trips circuit after 3 consecutive failures
+  private readonly RECOVERY_TIMEOUT = 30_000; // 30 s before allowing a recovery probe
 
   private readonly PREFERRED_MODELS: ModelConfig[] = [
     { name: "deepseek-r1:7b", taskTypes: ["reason", "analyze"], contextWindow: 32768, speed: "slow" },
@@ -45,6 +57,51 @@ export class ModelRouter {
   static getInstance(): ModelRouter {
     if (!ModelRouter.instance) ModelRouter.instance = new ModelRouter();
     return ModelRouter.instance;
+  }
+
+  // ── Circuit breaker helpers ────────────────────────────────────────────────
+  private recordSuccess(): void {
+    this.failureCount = 0;
+    if (this.circuitState !== "CLOSED") {
+      logger.info("ModelRouter: Circuit CLOSED — Ollama recovered");
+      this.circuitState = "CLOSED";
+    }
+  }
+
+  private recordFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+    if (this.failureCount >= this.FAILURE_THRESHOLD && this.circuitState === "CLOSED") {
+      logger.error("ModelRouter: Circuit OPEN — Ollama unreachable after repeated failures", {
+        failures: this.failureCount,
+      });
+      this.circuitState = "OPEN";
+    }
+  }
+
+  /** Returns true when a call to Ollama should be attempted. */
+  isHealthy(): boolean {
+    if (this.circuitState === "OPEN") {
+      if (Date.now() - this.lastFailureTime > this.RECOVERY_TIMEOUT) {
+        this.circuitState = "HALF_OPEN";
+        logger.info("ModelRouter: Circuit HALF_OPEN — attempting recovery probe");
+        return true;
+      }
+      return false;
+    }
+    return true; // CLOSED or HALF_OPEN
+  }
+
+  /** Active health check — pings /api/tags and updates circuit state. */
+  async healthCheck(): Promise<boolean> {
+    try {
+      await axios.get(`${this.baseUrl}/api/tags`, { timeout: 5000 });
+      this.recordSuccess();
+      return true;
+    } catch {
+      this.recordFailure();
+      return false;
+    }
   }
 
   private async getAvailableModels(): Promise<string[]> {
@@ -101,35 +158,54 @@ export class ModelRouter {
     temperature?: number;
     maxTokens?: number;
   } = {}): Promise<string> {
+    if (!this.isHealthy()) {
+      throw new Error("ModelRouter: Circuit OPEN — Ollama is unavailable (will retry after recovery timeout)");
+    }
+
     const model = await this.selectModel(taskType);
-    const messages = [];
+    const messages: { role: string; content: string }[] = [];
 
     if (options.systemPrompt) {
       messages.push({ role: "system", content: options.systemPrompt });
     }
     messages.push({ role: "user", content: prompt });
 
-    try {
-      const resp = await axios.post<OllamaResponse>(
-        `${this.baseUrl}/api/chat`,
-        {
-          model,
-          messages,
-          stream: false,
-          options: {
-            temperature: options.temperature ?? 0.1,
-            num_predict: options.maxTokens ?? 2048,
-          },
-        },
-        { timeout: 120000 }
-      );
+    const MAX_RETRIES = 2;
+    let lastErr: unknown;
 
-      const content = (resp.data as unknown as { message: { content: string } }).message?.content || resp.data.response || "";
-      return content;
-    } catch (err) {
-      logger.error("ModelRouter: Generation failed", { model, err: String(err) });
-      throw new Error(`Model generation failed: ${String(err)}`);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        // Exponential backoff: 1 s, 2 s
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        logger.warn("ModelRouter: Retrying generation", { model, attempt, taskType });
+      }
+
+      try {
+        const resp = await axios.post<OllamaResponse>(
+          `${this.baseUrl}/api/chat`,
+          {
+            model,
+            messages,
+            stream: false,
+            options: {
+              temperature: options.temperature ?? 0.1,
+              num_predict: options.maxTokens ?? 2048,
+            },
+          },
+          { timeout: 120000 }
+        );
+
+        const content = (resp.data as unknown as { message: { content: string } }).message?.content || resp.data.response || "";
+        this.recordSuccess();
+        return content;
+      } catch (err) {
+        lastErr = err;
+        logger.warn("ModelRouter: Generation attempt failed", { model, attempt, err: String(err) });
+        this.recordFailure();
+      }
     }
+
+    throw new Error(`ModelRouter: Generation failed after ${MAX_RETRIES + 1} attempts — ${String(lastErr)}`);
   }
 
   async reason(prompt: string): Promise<string> {

@@ -149,7 +149,13 @@ Return JSON: { "summary": "...", "impact": "..." }`;
         summary: parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint}.`,
         impact: parsed.impact || `This vulnerability poses a significant security risk to ${metadata.programName} and its users.`,
       };
-    } catch {
+    } catch (err) {
+      // Non-critical: report polish fails gracefully with template text — hunt result is not lost
+      logger.warn("ReportGenerator: AI content generation failed — using template fallback", {
+        err: String(err),
+        vulnClass: finding.vulnClass,
+        endpoint: finding.endpoint,
+      });
       return {
         summary: `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint} with ${Math.round(verification.finalConfidence * 100)}% confidence.`,
         impact: `Successful exploitation of this vulnerability could allow an attacker to compromise user data and system integrity.`,

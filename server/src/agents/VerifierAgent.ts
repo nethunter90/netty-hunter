@@ -240,12 +240,17 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
         reasoning: String(parsed.reasoning || "AI analysis complete"),
         confidenceAdjustment: Math.min(0.3, Math.max(-0.5, Number(parsed.confidenceAdjustment) || 0)),
       };
-    } catch {
-      // Conservative fallback: use previous layers
+    } catch (err) {
+      // Non-critical: AI confirmation failure degrades to L2/L3 consensus rather than killing the pipeline
+      logger.warn("VerifierAgent: Layer 4 AI confirmation failed — degrading to L2/L3 consensus", {
+        err: String(err),
+        endpoint: result.endpoint,
+        vulnClass: result.vulnClass,
+      });
       const aiConfirmed = previousLayers.layer2.confirmed && previousLayers.layer3.confirmed;
       return {
         confirmed: aiConfirmed,
-        reasoning: "AI analysis failed – using layer 2/3 consensus",
+        reasoning: "AI analysis unavailable – verdict based on L2 HTTP re-probe + L3 browser replay",
         confidenceAdjustment: aiConfirmed ? 0 : -0.2,
       };
     }

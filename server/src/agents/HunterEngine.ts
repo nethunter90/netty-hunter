@@ -425,6 +425,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
     }
   }
 
+  private isBudgetExhausted(): boolean {
+    return this.state.budget.requestsMade >= this.state.budget.maxRequests;
+  }
+
   // ── Phase 3: Probe ──────────────────────────────────────────────────────────
   private async probe(): Promise<void> {
     logger.info("PROBE phase", { session: this.state.sessionId });
@@ -434,6 +438,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
       .slice(0, 3); // probe top 3 per iteration
 
     for (const hypothesis of pending) {
+      // Pre-flight budget check — stop probing if we've hit the request cap
+      if (this.isBudgetExhausted()) {
+        logger.info("HunterEngine: Budget exhausted — halting probe phase", {
+          requestsMade: this.state.budget.requestsMade,
+          maxRequests: this.state.budget.maxRequests,
+        });
+        this.emit("hunt:budget_exhausted", {
+          requestsMade: this.state.budget.requestsMade,
+          maxRequests: this.state.budget.maxRequests,
+        });
+        break;
+      }
+
       hypothesis.status = "probing";
       this.emit("hunt:probing", { hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass });
 
@@ -679,6 +696,29 @@ Return ONLY valid JSON array of hypothesis objects.`;
     };
   }
 
+  private buildReproductionSteps(confirmed: HypothesisConfirmed): string[] {
+    const steps: string[] = [
+      `Navigate to the target endpoint: \`${confirmed.hypothesis.targetUrl}\``,
+      `Vulnerability class: \`${confirmed.hypothesis.vulnClass}\` — ${confirmed.hypothesis.reasoning}`,
+    ];
+
+    confirmed.proof.forEach((probe, i) => {
+      steps.push(
+        `Step ${i + 3}: Run \`${probe.tool}\` — ${probe.success ? "Evidence found" : "Probed"}. ` +
+        `Output: ${probe.output.slice(0, 300)}`
+      );
+    });
+
+    if (confirmed.exploitPayload) {
+      steps.push(`Payload used: \`${confirmed.exploitPayload.slice(0, 500)}\``);
+    }
+    steps.push(
+      `Expected result: ${confirmed.severity.toUpperCase()} severity (CVSS ${confirmed.cvssScore}). ` +
+      `Confidence: ${Math.round(confirmed.hypothesis.confidence * 100)}%`
+    );
+    return steps;
+  }
+
   private async persistFinding(confirmed: HypothesisConfirmed): Promise<void> {
     try {
       await db.insert(findings).values({
@@ -692,7 +732,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         cvssScore: confirmed.cvssScore,
         description: confirmed.hypothesis.reasoning,
         evidence: confirmed.proof as unknown as Record<string, unknown>[],
-        reproductionSteps: [],
+        reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
         verificationStatus: "pending",
         status: "new",
