@@ -4,7 +4,7 @@
  * Auto-tunes confidence thresholds based on historical performance.
  */
 import { db } from "../db";
-import { findings, reinforcementStore } from "../db/schema";
+import { findings, reinforcementStore, programs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import logger from "../utils/logger";
 
@@ -44,8 +44,32 @@ export interface VulnROI {
 export class ROIModel {
   private readonly HOURLY_RATE = 150; // $150/hr equivalent
 
-  async calculateExpectedValue(vulnClass: string, programMaxPayout: number): Promise<VulnROI> {
-    const basePayout = Math.min(BASE_PAYOUTS[vulnClass] || 1000, programMaxPayout);
+  async calculateExpectedValue(
+    vulnClass: string,
+    programMaxPayout: number,
+    programId?: number
+  ): Promise<VulnROI> {
+    // Fetch program-specific historical payout & success rate when programId is provided
+    let programAvgPayout: number | null = null;
+    let programSuccessRate: number | null = null;
+
+    if (programId) {
+      const [prog] = await db.select({
+        avgPayout: programs.avgPayout,
+        successRate: programs.successRate,
+      }).from(programs).where(eq(programs.id, programId)).limit(1);
+
+      if (prog) {
+        programAvgPayout = prog.avgPayout;
+        programSuccessRate = prog.successRate;
+      }
+    }
+
+    // Blend: 60% global base payout, 40% program historical average (when available)
+    const globalBase = Math.min(BASE_PAYOUTS[vulnClass] || 1000, programMaxPayout);
+    const basePayout = programAvgPayout && programAvgPayout > 0
+      ? Math.round(globalBase * 0.6 + programAvgPayout * 0.4)
+      : globalBase;
 
     // Fetch historical success rate from reinforcement store
     const [stored] = await db.select()
@@ -53,9 +77,14 @@ export class ROIModel {
       .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, vulnClass)))
       .limit(1);
 
-    const successRate = stored && stored.totalCount > 0
+    const rlRate = stored && stored.totalCount > 0
       ? (stored.successCount || 0) / stored.totalCount
       : 0.15; // default 15% success rate
+
+    // Blend: 70% RL store rate, 30% program-specific historical rate (when available)
+    const successRate = programSuccessRate && programSuccessRate > 0
+      ? rlRate * 0.7 + programSuccessRate * 0.3
+      : rlRate;
 
     const adjustedPayout = basePayout * this.getSeverityMultiplier(vulnClass);
     const ev = adjustedPayout * successRate;
@@ -77,9 +106,11 @@ export class ROIModel {
     };
   }
 
-  async rankVulnClasses(programMaxPayout: number): Promise<VulnROI[]> {
+  async rankVulnClasses(programMaxPayout: number, programId?: number): Promise<VulnROI[]> {
     const classes = Object.keys(BASE_PAYOUTS);
-    const rois = await Promise.all(classes.map(vc => this.calculateExpectedValue(vc, programMaxPayout)));
+    const rois = await Promise.all(
+      classes.map(vc => this.calculateExpectedValue(vc, programMaxPayout, programId))
+    );
     rois.sort((a, b) => b.expectedValue - a.expectedValue);
     return rois;
   }

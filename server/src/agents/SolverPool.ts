@@ -50,6 +50,28 @@ export interface SolverResult {
   toolsUsed: string[];
 }
 
+// ─── Per-domain rate limiter ──────────────────────────────────────────────────
+// Shared across all solver instances: max 2 requests/second per hostname.
+// Prevents concurrent solvers from hammering the same target simultaneously.
+const domainQueues = new Map<string, PQueue>();
+
+function getDomainQueue(url: string): PQueue {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    hostname = url; // fallback: treat whole URL as key
+  }
+  if (!domainQueues.has(hostname)) {
+    domainQueues.set(hostname, new PQueue({
+      concurrency: 1,
+      intervalCap: 2,
+      interval: 1000, // 2 requests per second per domain
+    }));
+  }
+  return domainQueues.get(hostname)!;
+}
+
 // ─── Individual Solvers ───────────────────────────────────────────────────────
 abstract class BaseSolver {
   protected modelRouter = ModelRouter.getInstance();
@@ -64,7 +86,7 @@ abstract class BaseSolver {
     body?: string
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
     try {
-      const resp = await axios({
+      const resp = await getDomainQueue(url).add(() => axios({
         method,
         url,
         params,
@@ -76,11 +98,11 @@ abstract class BaseSolver {
         timeout: 10000,
         validateStatus: () => true,
         maxRedirects: 3,
-      });
+      }));
       return {
-        status: resp.status,
-        headers: resp.headers as Record<string, string>,
-        body: typeof resp.data === "string" ? resp.data.slice(0, 5000) : JSON.stringify(resp.data).slice(0, 5000),
+        status: resp!.status,
+        headers: resp!.headers as Record<string, string>,
+        body: typeof resp!.data === "string" ? resp!.data.slice(0, 5000) : JSON.stringify(resp!.data).slice(0, 5000),
       };
     } catch (err: unknown) {
       const error = err as { message: string };

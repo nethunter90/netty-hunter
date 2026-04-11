@@ -40,6 +40,8 @@ export interface Hypothesis {
   evidence: Observation[];
   status: "pending" | "probing" | "confirmed" | "rejected" | "inconclusive";
   createdAt: number;
+  retryCount?: number;   // tracks how many times this hypothesis has been re-queued from gray zone
+  toolHint?: string;     // preferred tool override for next probe attempt (set on retry)
 }
 
 export interface ProbeResult {
@@ -442,8 +444,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
         continue;
       }
 
-      // Select appropriate tool based on vuln class
-      const toolName = this.selectTool(hypothesis.vulnClass);
+      // Select appropriate tool — honour retry hint if set, otherwise auto-select
+      const toolName = hypothesis.toolHint || this.selectTool(hypothesis.vulnClass);
+      delete hypothesis.toolHint; // consume the hint so it doesn't persist to future probes
       const probeResult = await this.runTool(toolName, hypothesis.targetUrl, hypothesis);
 
       const result: ProbeResult = {
@@ -484,7 +487,21 @@ Return ONLY valid JSON array of hypothesis objects.`;
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
         } else {
-          hypothesis.status = "inconclusive";
+          // Gray zone (0.2–0.7): re-queue with a different tool, up to 2 retries
+          hypothesis.retryCount = (hypothesis.retryCount || 0) + 1;
+          if (hypothesis.retryCount < 2) {
+            hypothesis.status = "pending";
+            hypothesis.toolHint = this.getAlternateTool(hypothesis);
+            logger.info("Hypothesis re-queued from gray zone", {
+              id: hypothesis.id,
+              vulnClass: hypothesis.vulnClass,
+              confidence: newConfidence,
+              retry: hypothesis.retryCount,
+              nextTool: hypothesis.toolHint,
+            });
+          } else {
+            hypothesis.status = "inconclusive"; // exhausted retries
+          }
         }
       } else {
         if (relatedProbes.length > 0) {
@@ -555,6 +572,29 @@ Return ONLY valid JSON array of hypothesis objects.`;
       xxe: "nuclei",
     };
     return vulnToolMap[vulnClass] || "nuclei";
+  }
+
+  private getAlternateTool(hypothesis: Hypothesis): string {
+    // Rotation per vuln class — each entry is an ordered list of tool alternatives
+    const TOOL_ROTATION: Record<string, string[]> = {
+      sqli:             ["sqlmap", "nuclei", "curl_probe"],
+      xss:              ["nuclei", "curl_probe"],
+      ssrf:             ["nuclei", "curl_probe"],
+      lfi:              ["nuclei", "curl_probe"],
+      rce:              ["nuclei", "curl_probe"],
+      cors:             ["curl_probe", "nuclei"],
+      csrf:             ["curl_probe", "nuclei"],
+      idor:             ["curl_probe", "nuclei"],
+      info_disclosure:  ["curl_probe", "nuclei"],
+      auth_bypass:      ["nuclei", "curl_probe"],
+      misconfig:        ["nikto", "nuclei"],
+      xxe:              ["nuclei", "curl_probe"],
+      security_headers: ["curl_probe", "nuclei"],
+    };
+    const rotation = TOOL_ROTATION[hypothesis.vulnClass] || ["nuclei", "curl_probe"];
+    const currentTool = this.selectTool(hypothesis.vulnClass);
+    const currentIdx = rotation.indexOf(currentTool);
+    return rotation[(currentIdx + 1) % rotation.length];
   }
 
   private computeAnomalyScore(data: Record<string, unknown>): number {

@@ -299,7 +299,7 @@ export class CampaignOrchestrator extends EventEmitter {
 
     let rankedVulns: unknown[] = [];
     try {
-      rankedVulns = await this.roiModel.rankVulnClasses(maxPayout);
+      rankedVulns = await this.roiModel.rankVulnClasses(maxPayout, params.programId);
     } catch (err) {
       logger.warn("ROI ranking failed (non-critical)", { err });
       rankedVulns = [];

@@ -87,13 +87,15 @@ router.get("/recommend-target", async (req: Request, res: Response) => {
 // ── ROI Model ─────────────────────────────────────────────────────────────────
 router.get("/roi/:vulnClass", async (req: Request, res: Response) => {
   const maxPayout = parseInt(String(req.query.maxPayout || "10000"));
-  const roi = await roiModel.calculateExpectedValue(req.params.vulnClass, maxPayout);
+  const programId = req.query.programId ? parseInt(String(req.query.programId)) : undefined;
+  const roi = await roiModel.calculateExpectedValue(req.params.vulnClass, maxPayout, programId);
   return res.json(roi);
 });
 
 router.get("/roi-ranking", async (req: Request, res: Response) => {
   const maxPayout = parseInt(String(req.query.maxPayout || "10000"));
-  const ranking = await roiModel.rankVulnClasses(maxPayout);
+  const programId = req.query.programId ? parseInt(String(req.query.programId)) : undefined;
+  const ranking = await roiModel.rankVulnClasses(maxPayout, programId);
   return res.json(ranking);
 });
 

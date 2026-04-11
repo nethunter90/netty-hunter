@@ -140,8 +140,8 @@ export class HuntStrategyBuilder {
       onFailure: "Log and continue",
     }));
 
-    // Get ROI-sorted vuln classes
-    const roiRanking = await roiModel.rankVulnClasses(10000);
+    // Get ROI-sorted vuln classes (pass programId for program-specific blending when available)
+    const roiRanking = await roiModel.rankVulnClasses(10000, params.programId);
     const prioritized = roiRanking
       .filter(r => template.vulnClasses.includes(r.vulnClass))
       .map(r => r.vulnClass);
