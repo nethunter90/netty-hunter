@@ -17,11 +17,16 @@ import hunterRoutes from "./routes/hunter";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
+import { initializeAutonomousBrain } from "./lib/intelligence";
 
 const PgSession = connectPg(session);
 
 // Ensure log dir exists
 try { mkdirSync("logs", { recursive: true }); } catch { /* already exists */ }
+
+// ─── Autonomous Brain ─────────────────────────────────────────────────────────
+initializeAutonomousBrain();
+logger.info("Autonomous brain initialized");
 
 // ─── Express App ──────────────────────────────────────────────────────────────
 const app = express();

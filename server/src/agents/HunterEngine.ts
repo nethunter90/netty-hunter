@@ -573,6 +573,20 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
+      // Feed raw output to autonomous brain
+      try {
+        const { getAutonomousBrain } = await import('../lib/intelligence');
+        await getAutonomousBrain().processObservation({
+          id: `obs-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          source: 'tool',
+          type: toolName,
+          rawOutput: stdout + stderr,
+          missionId: this.state.sessionId,
+          huntGoal: hypothesis?.vulnClass,
+          target: url,
+        });
+      } catch { /* non-critical */ }
       return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
       const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
