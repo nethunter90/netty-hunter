@@ -33,6 +33,7 @@ import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
 import { DraftReportGenerator } from "../intelligence/ReportGenerator";
 import { NucleiTemplateGenerator } from "../intelligence/NucleiGenerator";
 import { HuntStrategyBuilder } from "../routes/huntStrategy";
+import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -648,6 +649,41 @@ export class CampaignOrchestrator extends EventEmitter {
       this.emit("l6:autonomy_updated", { compositeScore: autonomyScore });
     } catch (err) {
       logger.warn("Autonomy tracker update failed (non-critical)", { err });
+    }
+
+    // 6c.5 Post-Hunt Extraction Pipeline
+    // Phase 1: calibrate confidence per verified finding
+    // Phase 2: extract operational chains from multi-finding sessions
+    // Phase 3: emit cross-hunt pattern stats
+    try {
+      for (const { finding } of verifiedFindings) {
+        await this.rlStore.recordConfidenceCalibration(
+          finding.vulnType,
+          finding.confidence ?? 0.5,
+          true
+        );
+      }
+
+      if (verifiedFindings.length >= 2) {
+        const sequence = verifiedFindings.map(({ finding }) => finding.vulnType).filter(Boolean);
+        const estimatedBounty = verifiedFindings.reduce((sum, { finding }) => {
+          const payoutMap: Record<string, number> = { critical: 5000, high: 2000, medium: 500, low: 100 };
+          return sum + (payoutMap[finding.severity ?? "low"] ?? 100);
+        }, 0);
+        exploitChainIntelligence.recordChain({
+          sessionId: String(this.state.campaignId ?? params.targetUrl),
+          sequence,
+          techStack: [],
+          bounty: estimatedBounty,
+          succeeded: true,
+        });
+      }
+
+      const chainStats = exploitChainIntelligence.getStats();
+      const topROI = exploitChainIntelligence.getChainROI().slice(0, 3);
+      this.emit("l6:chains_extracted", { chainStats, topROI });
+    } catch (err) {
+      logger.warn("Post-hunt extraction pipeline failed (non-critical)", { err });
     }
 
     // 6d. Mark campaign complete
