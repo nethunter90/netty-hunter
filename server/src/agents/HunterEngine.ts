@@ -17,6 +17,7 @@ import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
+import { promptKB } from "../intelligence/PromptKnowledgeBase";
 
 const execFileAsync = promisify(execFile);
 
@@ -408,6 +409,13 @@ export class HunterEngine extends EventEmitter {
     logger.info("HYPOTHESIZE phase", { session: this.state.sessionId });
 
     const context = this.buildContext();
+
+    // Pull smart orchestration template as structured context
+    const chainTemplate = promptKB.render("smart_tool_chain", {
+      goal: "vulnerability hypothesis generation",
+      current_findings: `${this.state.confirmedFindings.length} confirmed, ${this.state.observations.length} observations`,
+    });
+
     const prompt = `You are a bug bounty hunter analyzing a web application.
 
 Target: ${this.state.targetUrl}
@@ -416,6 +424,9 @@ ${JSON.stringify(this.state.observations.slice(-10), null, 2)}
 
 Current confirmed findings: ${this.state.confirmedFindings.length}
 Previously tested hypotheses: ${this.state.hypotheses.length}
+
+Orchestration context:
+${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
