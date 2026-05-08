@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "T4-001",
+    "complexity": "L1",
+    "cloud_domain": "AWS S3",
+    "scenario": "S3 bucket allows public listing but not public write.",
+    "prompt": "Assess impact severity based on data sensitivity context.",
+    "reasoning_focus": "Data exposure vs modification risk.",
+    "expected_answer": "Public listing of an S3 bucket exposes all object keys, sizes, and last-modified timestamps, enabling attackers to enumerate sensitive file names, directory structures, and data organization patterns. While the absence of public write prevents direct data tampering, the listing alone can reveal PII file paths, backup naming conventions, or internal project structures that inform targeted attacks. The severity depends entirely on whether object keys contain sensitive identifiers or if objects themselves are also publicly readable. If objects are readable, this is a critical data breach; if only listing is allowed, it is a medium-severity information disclosure that enables further reconnaissance. Defensive measures should include enabling S3 Block Public Access at the account level and auditing bucket policies for overly permissive Principal statements.",
+    "evaluation_criteria": "Must distinguish between listing exposure and object content exposure, and explain how enumerated metadata itself can be leveraged for further attacks."
+  },
+  {
+    "id": "T4-002",
+    "complexity": "L1",
+    "cloud_domain": "AWS EC2",
+    "scenario": "Instance metadata endpoint accessible internally.",
+    "prompt": "Determine whether metadata access alone implies risk.",
+    "reasoning_focus": "Metadata trust boundary.",
+    "expected_answer": "The EC2 instance metadata service (IMDS) at 169.254.169.254 provides access to instance identity documents, network configuration, and critically, temporary IAM role credentials via the iam/security-credentials/ path. If IMDSv1 is enabled, any process or SSRF vulnerability on the instance can retrieve these credentials without additional authentication headers. Even without an attached IAM role, metadata exposes the instance's VPC configuration, security group IDs, and user-data scripts which may contain bootstrapping secrets. The risk is not theoretical\u2014SSRF-to-metadata is one of the most exploited cloud attack vectors (e.g., Capital One breach). Mitigation requires enforcing IMDSv2 with hop limit of 1 and restricting instance role permissions to least privilege.",
+    "evaluation_criteria": "Must identify IAM credential exposure via IMDS, distinguish between IMDSv1 and IMDSv2 risk profiles, and reference SSRF as a common exploitation vector."
+  },
+  {
+    "id": "T4-003",
+    "complexity": "L1",
+    "cloud_domain": "Azure Storage",
+    "scenario": "SAS token grants read access to blob container.",
+    "prompt": "Evaluate potential blast radius if token leaked.",
+    "reasoning_focus": "Token-scoped access modeling.",
+    "expected_answer": "A leaked SAS token with read access to a blob container allows any bearer to enumerate and download all blobs within the container scope for the token's validity period. The blast radius depends on whether the token is a service SAS (scoped to specific container/blob), account SAS (potentially scoped to multiple services), or user delegation SAS (tied to Azure AD identity). If the container holds customer data, PII, or application secrets, the exposure constitutes a data breach proportional to the container's contents. Unlike IAM credentials, SAS tokens cannot be individually revoked\u2014the only remediation is rotating the storage account key (for service/account SAS) or waiting for expiry. Immediate response should include rotating the signing key, auditing access logs via Azure Monitor, and implementing SAS policies with short expiry windows and IP restrictions.",
+    "evaluation_criteria": "Must differentiate SAS token types, explain that individual SAS tokens cannot be revoked without key rotation, and address the time-bounded nature of the exposure."
+  },
+  {
+    "id": "T4-004",
+    "complexity": "L1",
+    "cloud_domain": "GCP IAM",
+    "scenario": "Service account has 'viewer' role across project.",
+    "prompt": "Assess privilege boundaries for read-only roles.",
+    "reasoning_focus": "Role capability interpretation.",
+    "expected_answer": "The GCP Viewer role (roles/viewer) grants read access to nearly all resources in a project, including the ability to list Cloud Storage objects, read BigQuery datasets, view Compute Engine instance metadata, and enumerate IAM bindings. While it cannot modify resources, the read surface is extensive enough to expose sensitive data, secrets stored in environment variables, and infrastructure topology. Critically, Viewer can read Cloud Functions source code, App Engine configurations, and potentially access data in databases if the service account is also granted data-layer access. The role should be replaced with more granular predefined roles scoped to specific services the account actually needs to read. Service account keys for this account should be rotated and access logged via Cloud Audit Logs.",
+    "evaluation_criteria": "Must explain that Viewer provides broad read access across many GCP services and identify specific high-value data categories exposed by project-wide read permissions."
+  },
+  {
+    "id": "T4-005",
+    "complexity": "L1",
+    "cloud_domain": "Serverless",
+    "scenario": "Lambda function publicly invokable.",
+    "prompt": "Determine if invocation alone implies data exposure.",
+    "reasoning_focus": "Execution vs data privilege separation.",
+    "expected_answer": "Public invocation of a Lambda function does not automatically imply data exposure\u2014the risk depends on the function's execution role permissions, what data sources it accesses, and whether it returns sensitive data in its response. If the function queries a database and returns results to the caller, public invocation directly exposes that data. Even if the response is benign, the function's execution role may have permissions to access S3 buckets, DynamoDB tables, or Secrets Manager, meaning an attacker could craft malicious input to manipulate the function's behavior and exfiltrate data through side channels. The function may also be vulnerable to injection attacks if it processes user input unsafely. Mitigation includes adding API Gateway with authentication, restricting the function's resource policy, and applying input validation within the function code.",
+    "evaluation_criteria": "Must separate the concept of invocation access from data access, and explain how the function's execution role and input handling determine the actual blast radius."
+  },
+  {
+    "id": "T4-006",
+    "complexity": "L1",
+    "cloud_domain": "AWS RDS",
+    "scenario": "RDS snapshot is set to public visibility.",
+    "prompt": "Assess what data categories are exposed when a database snapshot is publicly accessible.",
+    "reasoning_focus": "Snapshot-level data exposure scope.",
+    "expected_answer": "A publicly accessible RDS snapshot allows any AWS account to copy and restore it, gaining full access to the entire database contents at the point-in-time the snapshot was taken. This includes all table data (customer records, PII, financial data), stored procedures, database user credentials (including password hashes), connection strings, and application-specific configuration stored in database tables. The attacker can restore the snapshot to their own RDS instance and query it without any access controls from the original environment. This is a critical severity finding because snapshot publicity bypasses all network-level controls (VPC, security groups) and application-layer authentication. Remediation requires immediately making the snapshot private, auditing all snapshots for public flags using AWS Config rules, and enabling the 'Block Public Access' setting for RDS at the account level.",
+    "evaluation_criteria": "Must identify that snapshot restoration bypasses all network and application-layer controls, and enumerate specific data categories exposed including credentials stored within the database."
+  },
+  {
+    "id": "T4-007",
+    "complexity": "L1",
+    "cloud_domain": "GCP Storage",
+    "scenario": "GCS bucket is publicly accessible with allUsers read permission.",
+    "prompt": "Determine the difference between listing and reading risk in an open GCS bucket.",
+    "reasoning_focus": "Object enumeration vs data content exposure.",
+    "expected_answer": "With allUsers read permission on a GCS bucket, both object listing and object content reading are enabled, but they present distinct risk profiles. Listing exposes the bucket's complete object inventory including filenames, sizes, and metadata, which reveals organizational patterns and sensitive file naming conventions. Object reading exposes the actual data contents\u2014documents, database exports, application configs, credentials files, and any other stored data. The combination means an attacker can systematically enumerate and download the entire bucket contents. Even if individual objects appear non-sensitive, bulk download and analysis can reveal patterns, credentials in configuration files, or PII in aggregated datasets. Remediation requires removing allUsers bindings, enabling uniform bucket-level access, and implementing Cloud DLP scanning to identify sensitive data already exposed.",
+    "evaluation_criteria": "Must clearly distinguish listing risk (metadata exposure, enumeration) from reading risk (data content exposure), and explain how both combined enable systematic data exfiltration."
+  },
+  {
+    "id": "T4-008",
+    "complexity": "L1",
+    "cloud_domain": "Azure Functions",
+    "scenario": "Azure Function has an HTTP trigger with anonymous authentication level.",
+    "prompt": "Evaluate the risk surface introduced by unauthenticated HTTP trigger access.",
+    "reasoning_focus": "Authentication boundary on serverless endpoints.",
+    "expected_answer": "An Azure Function with anonymous authentication level allows any internet-facing request to trigger the function without presenting a function key, host key, or Azure AD token. This exposes the function to abuse including unauthorized data retrieval if the function returns sensitive data, input injection attacks if the function processes request parameters unsafely, and denial-of-wallet attacks through excessive invocations that inflate compute costs. The function's managed identity permissions determine the blast radius\u2014if the identity has access to Key Vault secrets, SQL databases, or storage accounts, the unauthenticated endpoint becomes an indirect access vector to those resources. Mitigation includes changing the authorization level to 'Function' or 'Admin', implementing Azure API Management as a gateway, or using Azure AD authentication with proper scope validation.",
+    "evaluation_criteria": "Must identify denial-of-wallet as a risk alongside data exposure, and explain how the function's managed identity permissions extend the attack surface beyond the function itself."
+  },
+  {
+    "id": "T4-009",
+    "complexity": "L1",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM policy contains wildcard action ('*') scoped only to a specific S3 bucket ARN.",
+    "prompt": "Assess whether resource-level scoping adequately limits a wildcard action policy.",
+    "reasoning_focus": "Action wildcard vs resource scope tradeoff.",
+    "expected_answer": "Resource-level scoping to a specific S3 bucket ARN limits the blast radius but does not adequately contain the risk of a wildcard action policy. The '*' action on an S3 bucket grants not only read/write/delete on objects but also s3:PutBucketPolicy (allowing the principal to modify the bucket policy to grant access to other principals), s3:PutBucketAcl (changing access controls), and s3:DeleteBucket. An attacker with this policy could exfiltrate all data, modify bucket policies to maintain persistent access, disable logging, or enable public access. The wildcard also includes s3:PutBucketNotification which could redirect event notifications to attacker-controlled destinations. Resource scoping reduces breadth but action wildcards still provide depth of control that violates least privilege. The policy should enumerate only the specific S3 actions required by the workload.",
+    "evaluation_criteria": "Must identify specific dangerous S3 actions included in the wildcard beyond basic read/write, such as PutBucketPolicy and PutBucketAcl, and explain why resource scoping alone is insufficient."
+  },
+  {
+    "id": "T4-010",
+    "complexity": "L1",
+    "cloud_domain": "AWS CloudTrail",
+    "scenario": "CloudTrail logs are stored in an S3 bucket with broad read permissions.",
+    "prompt": "Evaluate the security implications of exposing audit logs to additional principals.",
+    "reasoning_focus": "Audit data confidentiality and operational intelligence risk.",
+    "expected_answer": "CloudTrail logs contain a comprehensive record of all API calls made in the AWS account, including the identity of the caller, the action performed, the resources affected, timestamps, and source IP addresses. Exposing these logs to additional principals provides an attacker with a complete operational map of the environment\u2014revealing which services are in use, how administrators operate, what automation exists, and when security monitoring is active. This intelligence enables targeted attacks by identifying high-value targets, understanding defensive patterns, and timing attacks during low-monitoring periods. Additionally, CloudTrail logs may contain sensitive data passed as API parameters, such as database names, resource identifiers, and configuration values. The audit log bucket should have the most restrictive access policy in the account, with access limited to the security team and SIEM ingestion roles only.",
+    "evaluation_criteria": "Must explain that audit logs provide operational intelligence beyond just compliance data, including attacker reconnaissance value for timing attacks and identifying defensive gaps."
+  },
+  {
+    "id": "T4-011",
+    "complexity": "L1",
+    "cloud_domain": "Container Registry",
+    "scenario": "A container image in a public registry contains a base application layer.",
+    "prompt": "Assess what risk a publicly accessible container image introduces beyond the application itself.",
+    "reasoning_focus": "Image layer inspection and software enumeration.",
+    "expected_answer": "A publicly accessible container image exposes far more than the application code\u2014each image layer can be inspected to reveal the complete software bill of materials, OS packages and versions, library dependencies with known CVEs, and build-time configuration. Attackers can extract hardcoded credentials, API keys, and connection strings that may have been accidentally included during the build process, even if they were deleted in a later layer (since each layer is independently accessible). The Dockerfile instructions embedded in the image metadata reveal build processes, internal registry URLs, and dependency sources. Additionally, the image reveals the exact runtime environment, enabling attackers to craft targeted exploits for specific library versions. Mitigation includes using multi-stage builds to exclude build artifacts, scanning images with tools like Trivy or Grype, and never storing secrets in image layers.",
+    "evaluation_criteria": "Must identify that deleted files in later layers are still accessible in earlier layers, and explain how image layer inspection reveals software versions enabling targeted CVE exploitation."
+  },
+  {
+    "id": "T4-012",
+    "complexity": "L1",
+    "cloud_domain": "AWS ECR",
+    "scenario": "ECR image layer inspection reveals hardcoded environment variable secrets in a Dockerfile RUN statement.",
+    "prompt": "Assess the persistence and extractability of secrets embedded in image layers.",
+    "reasoning_focus": "Container layer secret residency.",
+    "expected_answer": "Secrets embedded in a Dockerfile RUN statement are permanently persisted in the image layer filesystem and cannot be removed by subsequent layers\u2014even if a later RUN command deletes the file, the secret remains in the earlier layer's tar archive. Any principal with ECR pull access (ecr:GetDownloadUrlForLayer) can extract individual layers and inspect their contents, recovering the secrets without ever running the container. The secrets persist across all image tags that share the affected layer, meaning even if the image is 'updated' with new secrets, the old layer containing the exposed secrets remains accessible in the registry until explicitly garbage-collected. Remediation requires rebuilding the image from scratch without the secrets, using build-time secrets (Docker BuildKit --secret), deleting all affected image tags, and rotating the exposed credentials immediately.",
+    "evaluation_criteria": "Must explain layer immutability and that secrets persist even after deletion in subsequent layers, and identify that ECR pull access is sufficient to extract layer contents."
+  },
+  {
+    "id": "T4-013",
+    "complexity": "L1",
+    "cloud_domain": "Infrastructure-as-Code",
+    "scenario": "Terraform state file is stored in a public S3 bucket.",
+    "prompt": "Evaluate what categories of information a Terraform state file exposes about the infrastructure.",
+    "reasoning_focus": "State file as infrastructure inventory and secret store.",
+    "expected_answer": "A Terraform state file is one of the most sensitive artifacts in a cloud environment\u2014it contains a complete inventory of all managed resources including their IDs, ARNs, IP addresses, and current configuration. Critically, Terraform state stores resource attributes in plaintext, which includes database passwords, API keys, TLS private keys, and any other sensitive values passed as resource arguments. The state file also reveals the complete dependency graph between resources, VPC and subnet configurations, security group rules, IAM role ARNs, and DNS records. An attacker with this file has a complete infrastructure blueprint enabling them to identify the highest-value targets, understand network topology, and use extracted credentials for direct access. The state file should be stored in a private, encrypted S3 bucket with versioning, access logging, and restrictive IAM policies. Consider using Terraform's sensitive attribute marking and external secret management.",
+    "evaluation_criteria": "Must identify that Terraform state stores secrets in plaintext including database passwords and API keys, and explain that it provides a complete infrastructure inventory enabling targeted attacks."
+  },
+  {
+    "id": "T4-014",
+    "complexity": "L1",
+    "cloud_domain": "AWS CloudWatch",
+    "scenario": "CloudWatch log group has a resource policy granting broad read access to authenticated AWS accounts.",
+    "prompt": "Assess the risk surface when application logs are accessible to unintended AWS principals.",
+    "reasoning_focus": "Log data sensitivity and lateral information exposure.",
+    "expected_answer": "Application logs frequently contain sensitive data including user session tokens, API keys passed as query parameters, database query strings with PII, internal service endpoints, error messages revealing stack traces and infrastructure details, and sometimes full request/response bodies. Granting broad read access to authenticated AWS accounts means any AWS account holder globally can access these logs, effectively making them semi-public. Beyond direct data exposure, logs reveal application behavior patterns, authentication flows, internal API contracts, and error handling weaknesses that inform targeted attacks. An attacker can monitor logs in real-time using CloudWatch Logs Insights to capture session tokens or credentials as they appear. Remediation requires restricting the resource policy to specific trusted account ARNs, implementing log scrubbing to remove sensitive data before ingestion, and enabling CloudWatch Logs encryption with a customer-managed KMS key.",
+    "evaluation_criteria": "Must identify specific categories of sensitive data commonly found in application logs and explain that 'authenticated AWS accounts' effectively means any AWS account holder globally."
+  },
+  {
+    "id": "T4-015",
+    "complexity": "L1",
+    "cloud_domain": "AWS Lambda",
+    "scenario": "Lambda function environment variables are visible to all IAM users with lambda:GetFunctionConfiguration.",
+    "prompt": "Determine what data classes are at risk when function configuration is broadly readable.",
+    "reasoning_focus": "Serverless configuration confidentiality.",
+    "expected_answer": "Lambda environment variables commonly store database connection strings (with embedded credentials), API keys for third-party services, encryption keys, JWT signing secrets, and internal service URLs. When lambda:GetFunctionConfiguration is broadly granted, any IAM user in the account can retrieve these values in plaintext via the GetFunctionConfiguration API call. This effectively bypasses any network-level controls protecting the downstream services those credentials access\u2014an attacker doesn't need network access to the database if they can read the connection string and connect directly. The function's execution role ARN is also exposed, revealing what AWS permissions the function operates with. Mitigation requires using AWS Secrets Manager or SSM Parameter Store (SecureString) for sensitive values, encrypting Lambda environment variables with a customer-managed KMS key, and restricting lambda:GetFunctionConfiguration to only principals that require it.",
+    "evaluation_criteria": "Must identify specific secret types stored in Lambda environment variables and explain how credential extraction bypasses network-level controls on downstream services."
+  },
+  {
+    "id": "T4-016",
+    "complexity": "L1",
+    "cloud_domain": "GCP Compute",
+    "scenario": "GCP Compute instance has a service account with default scopes enabled.",
+    "prompt": "Assess what APIs are reachable by default when the default OAuth scope set is active.",
+    "reasoning_focus": "Default scope surface mapping.",
+    "expected_answer": "The default GCP Compute Engine OAuth scope set grants access to a broad range of Google Cloud APIs including read-only access to Cloud Storage (devstorage.read_only), read access to Compute Engine, Cloud Logging write, Cloud Monitoring write, Service Management read, and Service Control. While these are 'read-only' or limited scopes, they still allow enumeration of storage buckets and objects, compute instance metadata across the project, and writing to logs (potentially injecting false log entries). The effective permissions are the intersection of the OAuth scopes and the service account's IAM roles\u2014so if the service account has broader IAM roles, the scopes limit actual access, but if the service account has roles/editor, the default scopes still permit significant read access. Best practice is to set scopes to the minimum required (or use 'cloud-platform' scope with fine-grained IAM roles), and avoid the default compute service account entirely in favor of dedicated per-workload service accounts.",
+    "evaluation_criteria": "Must list specific APIs accessible under default scopes and explain the intersection model between OAuth scopes and IAM roles that determines effective permissions."
+  },
+  {
+    "id": "T4-017",
+    "complexity": "L1",
+    "cloud_domain": "Azure Key Vault",
+    "scenario": "Key Vault access policy grants 'Get' and 'List' for all secrets to a broad group.",
+    "prompt": "Distinguish between the operational risk of Get vs List permissions in a Key Vault context.",
+    "reasoning_focus": "Permission granularity in secret stores.",
+    "expected_answer": "The List permission on Azure Key Vault secrets allows enumeration of all secret names, versions, and metadata without accessing the actual secret values\u2014this alone provides an attacker with a complete inventory of what credentials exist, their naming conventions, and update timestamps. The Get permission allows retrieval of the actual secret values in plaintext. Combined, List+Get on all secrets gives a broad group the ability to enumerate and extract every secret in the vault, which typically includes database passwords, API keys, certificates, connection strings, and encryption keys. The critical distinction is that List without Get is an information disclosure (knowing what exists), while Get without List requires knowing the exact secret name. Together they constitute full secret store compromise. Mitigation requires applying least-privilege access policies scoped to specific secret names, using Azure RBAC instead of vault access policies for finer control, and enabling Key Vault diagnostic logging to monitor access patterns.",
+    "evaluation_criteria": "Must clearly distinguish the information disclosure risk of List (metadata enumeration) from the data access risk of Get (value retrieval), and explain how their combination constitutes full vault compromise."
+  },
+  {
+    "id": "T4-018",
+    "complexity": "L1",
+    "cloud_domain": "AWS SNS",
+    "scenario": "SNS topic has a public access policy allowing any AWS principal to subscribe.",
+    "prompt": "Assess the data exposure and abuse risk of an open subscription policy on a messaging topic.",
+    "reasoning_focus": "Pub/sub trust boundary.",
+    "expected_answer": "An SNS topic with public subscription access allows any AWS account to create subscriptions (HTTP/S, email, SQS, Lambda) and receive all messages published to the topic. If the topic carries sensitive data such as order notifications, user events, payment confirmations, or internal system alerts, any subscriber receives this data in plaintext. Beyond data exposure, an attacker can subscribe an HTTP endpoint they control to receive real-time copies of all messages, enabling passive surveillance without detection. Additionally, excessive subscriptions can be used for amplification attacks where a single publish fans out to many attacker-controlled endpoints. The open policy also allows an attacker to subscribe email addresses for spam/phishing via SNS confirmation emails. Remediation requires restricting the topic policy to specific trusted AWS account ARNs, enabling SNS message encryption with KMS, and monitoring CloudTrail for sns:Subscribe events from unknown principals.",
+    "evaluation_criteria": "Must identify both data exfiltration through unauthorized subscriptions and abuse vectors like amplification attacks and email-based phishing through SNS subscription confirmation."
+  },
+  {
+    "id": "T4-019",
+    "complexity": "L1",
+    "cloud_domain": "Kubernetes",
+    "scenario": "Kubernetes dashboard is exposed via a NodePort with no authentication.",
+    "prompt": "Evaluate the cluster control surface exposed by an unauthenticated management interface.",
+    "reasoning_focus": "Control plane access without authentication.",
+    "expected_answer": "An unauthenticated Kubernetes dashboard provides full visibility and potentially full control over the cluster depending on the dashboard's service account RBAC bindings. At minimum, an attacker can view all namespaces, pods, deployments, services, config maps, and secrets across the cluster. If the dashboard service account has cluster-admin or broad RBAC permissions, the attacker can create privileged pods, read secrets containing database credentials and API keys, modify deployments to inject malicious containers, and establish persistent access through new service accounts or CronJobs. The NodePort exposure means the dashboard is accessible on every node's IP address, expanding the attack surface. This is a critical finding equivalent to unauthenticated root access to the entire container orchestration platform. Immediate remediation requires removing NodePort exposure, enabling RBAC-based authentication, deploying the dashboard behind an authenticated ingress, and auditing the dashboard service account's permissions.",
+    "evaluation_criteria": "Must explain that the dashboard's RBAC bindings determine the blast radius, and identify specific cluster-level actions an attacker can perform including secret extraction and persistent access establishment."
+  },
+  {
+    "id": "T4-020",
+    "complexity": "L1",
+    "cloud_domain": "AWS SQS",
+    "scenario": "SQS queue allows any AWS principal to send and receive messages.",
+    "prompt": "Assess the integrity and confidentiality impact of an open SQS queue policy.",
+    "reasoning_focus": "Message queue open access risk modeling.",
+    "expected_answer": "An open SQS queue policy creates both confidentiality and integrity risks. For confidentiality, any AWS principal can call ReceiveMessage to read and consume messages, potentially extracting sensitive data like user records, transaction details, or internal commands before the legitimate consumer processes them. For integrity, any principal can call SendMessage to inject malicious messages into the queue, which the downstream consumer will process as legitimate\u2014this enables command injection, data poisoning, or triggering unintended business logic depending on how the consumer processes messages. Message consumption also creates an availability risk since messages received by an attacker become invisible to the legitimate consumer during the visibility timeout. The combination of read, write, and consume access means an attacker can intercept, modify, and re-inject messages, performing a full man-in-the-middle attack on the message pipeline. Remediation requires restricting the queue policy to specific IAM roles/accounts, enabling server-side encryption with KMS, and implementing message-level authentication or signing.",
+    "evaluation_criteria": "Must address both confidentiality (message interception) and integrity (message injection) risks, and explain how message consumption creates availability impact through visibility timeout mechanics."
+  },
+  {
+    "id": "T4-021",
+    "complexity": "L2",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM user allowed 'iam:PassRole' for specific role.",
+    "prompt": "Model escalation feasibility based on role permissions.",
+    "reasoning_focus": "PassRole abuse potential.",
+    "expected_answer": "The iam:PassRole permission allows an IAM user to assign a specified role to an AWS service (EC2, Lambda, ECS, etc.), effectively delegating that role's permissions to a service the user controls. If the target role has higher privileges than the user\u2014such as admin access, secrets manager read, or cross-account assume role\u2014the user can escalate by launching a Lambda function or EC2 instance with the high-privilege role and then interacting with that service to execute privileged operations. The escalation feasibility depends on: (1) the permissions of the passable role, (2) whether the user can create or modify services that accept the role (e.g., lambda:CreateFunction, ec2:RunInstances), and (3) whether permission boundaries constrain the effective permissions. Even a single high-privilege passable role creates a complete privilege escalation path if the user has corresponding service creation permissions. Mitigation requires restricting PassRole to specific role ARNs with least-privilege permissions and ensuring passable roles have permission boundaries.",
+    "evaluation_criteria": "Must explain the PassRole-to-service-creation escalation chain and identify that the user needs both PassRole and service creation permissions for the escalation to succeed."
+  },
+  {
+    "id": "T4-022",
+    "complexity": "L2",
+    "cloud_domain": "GCP",
+    "scenario": "Service account key discovered in repository.",
+    "prompt": "Determine which permissions require evaluation first.",
+    "reasoning_focus": "Key-based privilege scoping.",
+    "expected_answer": "When a GCP service account key is discovered in a repository, immediate triage requires evaluating permissions in priority order: (1) IAM roles bound to the service account at project, folder, and organization levels to determine the blast radius, (2) whether the account has iam.serviceAccounts.actAs on other service accounts enabling impersonation chains, (3) access to data stores (BigQuery, Cloud Storage, Cloud SQL) that may contain sensitive data, (4) roles/owner or roles/editor bindings that grant near-complete project control, and (5) whether the key is still active and has been used recently via audit logs. The key should be immediately disabled via the IAM console, not just deleted from the repository, since the key material has already been exposed. Post-rotation, audit Cloud Audit Logs for any activity using this key to assess whether it was already exploited. All resources the service account could access should be evaluated for unauthorized modifications.",
+    "evaluation_criteria": "Must prioritize IAM role evaluation and impersonation chain potential, and emphasize that disabling the key in GCP IAM is the critical remediation step rather than just removing it from the repository."
+  },
+  {
+    "id": "T4-023",
+    "complexity": "L2",
+    "cloud_domain": "Azure AD",
+    "scenario": "User can create new app registration.",
+    "prompt": "Assess potential for privilege escalation through app credentials.",
+    "reasoning_focus": "App registration abuse modeling.",
+    "expected_answer": "A user who can create Azure AD app registrations can generate new application credentials (client secrets or certificates) and request API permissions that may be granted through admin consent workflows or self-service consent policies. The escalation path involves: creating an app registration, generating a client secret, requesting high-privilege Microsoft Graph API permissions (e.g., Directory.ReadWrite.All), and either social-engineering an admin into granting consent or exploiting auto-consent policies. If the tenant has permissive consent settings, the app may immediately gain access to read directory data, manage users, or access mailboxes. The app's service principal can also be assigned Azure RBAC roles on subscriptions if the user has sufficient Azure resource management permissions. Even without admin consent, the app can be used for OAuth phishing attacks against other tenant users. Mitigation includes restricting app registration creation via Azure AD settings, requiring admin consent for all API permissions, and monitoring new app registrations via Azure AD audit logs.",
+    "evaluation_criteria": "Must identify the escalation chain from app registration to API permission acquisition via consent, and explain how tenant consent policies determine whether the escalation succeeds without admin involvement."
+  },
+  {
+    "id": "T4-024",
+    "complexity": "L2",
+    "cloud_domain": "Kubernetes",
+    "scenario": "Service account token mounted inside pod.",
+    "prompt": "Evaluate whether RBAC limits mitigate token exposure risk.",
+    "reasoning_focus": "Cluster permission boundaries.",
+    "expected_answer": "RBAC limits provide meaningful but incomplete mitigation for mounted service account tokens. The token at /var/run/secrets/kubernetes.io/serviceaccount/token allows API server authentication as the pod's service account, and RBAC determines what operations are authorized. If RBAC is properly scoped, the token can only perform actions within the service account's bound roles\u2014however, common misconfigurations include binding cluster-admin, granting wildcard verbs or resources, or applying overly broad ClusterRoleBindings instead of namespace-scoped RoleBindings. Even with minimal RBAC, the token reveals the cluster's API server endpoint and CA certificate, and can be used for reconnaissance via permitted GET operations. If the pod is compromised, RBAC limits the immediate blast radius but does not prevent the token from being exfiltrated and used externally. Mitigation includes disabling automatic token mounting (automountServiceAccountToken: false), using projected service account tokens with audience binding and expiry, and applying least-privilege RBAC with specific resource names.",
+    "evaluation_criteria": "Must identify that RBAC limits blast radius but does not prevent token exfiltration, and recommend projected tokens with audience binding as a mitigation over default mounted tokens."
+  },
+  {
+    "id": "T4-025",
+    "complexity": "L2",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM policy grants a wildcard action scoped to a specific DynamoDB table resource.",
+    "prompt": "Evaluate whether a wildcard action on a single resource can be leveraged for unintended operations beyond reads and writes.",
+    "reasoning_focus": "Wildcard action scope within resource-level constraints.",
+    "expected_answer": "A wildcard action ('dynamodb:*') on a specific DynamoDB table resource grants far more than read/write access. It includes dynamodb:DeleteTable (destroying the table entirely), dynamodb:UpdateTable (modifying capacity, encryption settings, and stream configuration), dynamodb:CreateBackup and dynamodb:RestoreTableFromBackup (enabling data exfiltration via backup export), dynamodb:EnableStream (enabling change data capture that could route data to attacker-controlled Lambda functions), and dynamodb:UpdateContinuousBackups (modifying point-in-time recovery settings to cover tracks). Additionally, dynamodb:PutResourcePolicy allows the principal to modify the table's resource policy to grant access to other principals. While resource scoping limits which tables are affected, the depth of control over a single table can lead to data destruction, exfiltration, and persistent access. The policy should enumerate only the specific DynamoDB actions required (e.g., GetItem, PutItem, Query).",
+    "evaluation_criteria": "Must identify specific DynamoDB management actions beyond CRUD that the wildcard enables, such as DeleteTable, EnableStream, and PutResourcePolicy, and explain how these enable data exfiltration or destruction."
+  },
+  {
+    "id": "T4-026",
+    "complexity": "L2",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM user has 'iam:CreatePolicyVersion' and 'iam:SetDefaultPolicyVersion' on managed policies they authored.",
+    "prompt": "Model how policy versioning rights could be used to modify effective permissions without creating new policies.",
+    "reasoning_focus": "Policy versioning as a privilege mutation vector.",
+    "expected_answer": "With iam:CreatePolicyVersion and iam:SetDefaultPolicyVersion, a user can create a new version of any managed policy they authored with arbitrary permissions (including 'Action: *', 'Resource: *') and immediately set it as the default active version. This effectively allows the user to escalate their own permissions or the permissions of any principal attached to that policy without creating new policies or roles that might trigger detection rules. The attack chain is: (1) create a new policy version with expanded permissions, (2) set it as the default version, (3) perform privileged operations, (4) optionally revert to the original version to erase evidence. Since AWS limits managed policies to 5 versions, the attacker may need to delete an older version first. This is a well-known IAM privilege escalation path. Detection requires monitoring CloudTrail for CreatePolicyVersion events and comparing policy document contents across versions.",
+    "evaluation_criteria": "Must describe the specific escalation chain of creating an overprivileged policy version and setting it as default, and identify the 5-version limit as an operational constraint the attacker must manage."
+  },
+  {
+    "id": "T4-027",
+    "complexity": "L2",
+    "cloud_domain": "AWS EC2",
+    "scenario": "EC2 instance is launched with an instance profile that has broader permissions than the application requires.",
+    "prompt": "Assess the risk surface when an instance profile role is over-permissioned relative to the running workload.",
+    "reasoning_focus": "Instance profile least-privilege gap analysis.",
+    "expected_answer": "An over-permissioned instance profile creates a privilege escalation opportunity for any attacker who compromises the application running on the instance. The instance metadata service (IMDS) provides temporary credentials for the attached role to any process on the instance, meaning an SSRF vulnerability, command injection, or compromised dependency immediately inherits the full scope of the over-permissioned role. If the role has permissions like s3:* on all buckets, iam:PassRole, or sts:AssumeRole to other accounts, the attacker's blast radius extends far beyond the compromised application. The gap between required permissions and granted permissions defines the 'excess privilege surface'\u2014every unnecessary permission is an additional capability available to an attacker. Mitigation requires implementing least-privilege by analyzing the application's actual API calls via CloudTrail, using IAM Access Analyzer to identify unused permissions, and scoping the role to specific resource ARNs.",
+    "evaluation_criteria": "Must connect SSRF/application compromise to IMDS credential retrieval, and explain how the gap between required and granted permissions defines the attacker's additional capability surface."
+  },
+  {
+    "id": "T4-028",
+    "complexity": "L2",
+    "cloud_domain": "Azure",
+    "scenario": "Azure managed identity assigned to a web app has Contributor role at the subscription level.",
+    "prompt": "Evaluate the escalation potential if the managed identity is accessible to application-layer code.",
+    "reasoning_focus": "Managed identity over-permission blast radius.",
+    "expected_answer": "The Contributor role at the subscription level grants create, update, and delete permissions on nearly all Azure resources within the subscription, excluding role assignments and policy definitions. If application-layer code can access the managed identity token (via the instance metadata endpoint at 169.254.169.254), an attacker who compromises the web app can provision new VMs for cryptomining, access Key Vault secrets (if access policies permit), modify network security groups to open backdoor ports, deploy additional web apps with malicious code, and read/modify databases. The managed identity token is obtainable by any code running in the web app context, so any vulnerability\u2014SSRF, RCE, dependency compromise\u2014immediately grants subscription-wide resource manipulation. The Contributor role cannot assign roles or modify policies, but the attacker can create new resources with their own managed identities, establishing persistent access. Remediation requires scoping the managed identity to specific resource groups and required roles only.",
+    "evaluation_criteria": "Must enumerate specific high-impact Azure operations enabled by Contributor role and explain that the identity token is accessible from application code via the instance metadata endpoint."
+  },
+  {
+    "id": "T4-029",
+    "complexity": "L2",
+    "cloud_domain": "GCP Cloud Run",
+    "scenario": "Cloud Run service is bound to a service account with project-wide Editor permissions.",
+    "prompt": "Assess the potential impact of a compromised Cloud Run service given its attached service account scope.",
+    "reasoning_focus": "Serverless service account over-privilege modeling.",
+    "expected_answer": "The Editor role (roles/editor) grants modify access to nearly all GCP resources in the project, including Cloud Storage, BigQuery, Cloud SQL, Pub/Sub, and Compute Engine. A compromised Cloud Run service can retrieve the service account's access token from the metadata server and use it to read and write to any storage bucket, query and modify BigQuery datasets, create new compute instances, publish/subscribe to Pub/Sub topics, and deploy additional Cloud Functions or Cloud Run services with the same identity. Critically, Editor can modify Cloud Run service configurations to inject persistent backdoors, update Cloud Functions source code, and modify IAM bindings on resources (though not project-level IAM). The serverless context means the attacker can rapidly scale operations without provisioning infrastructure. Remediation requires creating a dedicated service account with only the permissions the Cloud Run service needs, and removing the Editor role binding.",
+    "evaluation_criteria": "Must identify specific GCP services writable under Editor role and explain how the serverless context enables rapid, scalable abuse without infrastructure provisioning."
+  },
+  {
+    "id": "T4-030",
+    "complexity": "L2",
+    "cloud_domain": "GCP IAM",
+    "scenario": "An external contractor's GCP account has Viewer role on all projects within an organization folder.",
+    "prompt": "Model the enumeration surface available to a cross-project viewer role holder.",
+    "reasoning_focus": "Cross-project read permission risk surface.",
+    "expected_answer": "A Viewer role across all projects in an organization folder grants the contractor read access to every resource in every project, creating an extensive enumeration surface. The contractor can list all Cloud Storage buckets and objects, view BigQuery datasets and table schemas, enumerate Compute Engine instances with their network configurations and service accounts, read Cloud Functions source code, view Kubernetes cluster configurations, and access Cloud SQL instance metadata. This cross-project view enables the contractor to map the organization's entire infrastructure topology, identify the most sensitive data stores, discover inter-project service account relationships, and understand network peering configurations. Even after the contractor's engagement ends, if the role is not revoked, they retain this visibility indefinitely. The finding is amplified by the folder-level binding which automatically applies to any new projects created under the folder. Remediation requires scoping access to specific projects and specific viewer roles per service needed.",
+    "evaluation_criteria": "Must explain that folder-level bindings automatically apply to new projects and identify that cross-project visibility reveals inter-project relationships and infrastructure topology."
+  },
+  {
+    "id": "T4-031",
+    "complexity": "L2",
+    "cloud_domain": "AWS SSM",
+    "scenario": "IAM policy grants ssm:GetParameter on all Parameter Store paths including /prod/secrets/.",
+    "prompt": "Assess the risk of broad Parameter Store read access when secrets are colocated with configuration.",
+    "reasoning_focus": "Parameter namespace confidentiality boundaries.",
+    "expected_answer": "AWS Systems Manager Parameter Store uses a hierarchical path-based naming convention where both configuration values (feature flags, endpoint URLs) and secrets (database passwords, API keys) often coexist under different path prefixes. A policy granting ssm:GetParameter on all paths (Resource: 'arn:aws:ssm:*:*:parameter/*') exposes every secret stored in Parameter Store, including those under /prod/secrets/. SecureString parameters encrypted with KMS require the caller to also have kms:Decrypt on the encryption key\u2014but if a default AWS-managed key is used, any principal with GetParameter access can decrypt. The risk is compounded because Parameter Store is commonly used as the secrets backend for Lambda functions, ECS tasks, and EC2 instances, meaning extracted credentials provide access to downstream resources. Mitigation requires IAM policies with resource conditions scoping GetParameter to specific path prefixes (e.g., 'arn:aws:ssm:*:*:parameter/app/config/*'), using customer-managed KMS keys with separate key policies, and considering AWS Secrets Manager for credentials requiring rotation.",
+    "evaluation_criteria": "Must explain the path-based namespace colocation risk and that SecureString parameters with default KMS keys can still be decrypted by anyone with GetParameter access."
+  },
+  {
+    "id": "T4-032",
+    "complexity": "L2",
+    "cloud_domain": "AWS Secrets Manager",
+    "scenario": "Lambda execution role includes secretsmanager:GetSecretValue with a '*' resource.",
+    "prompt": "Evaluate the implications of a wildcard resource grant on Secrets Manager within a shared AWS account.",
+    "reasoning_focus": "Secret store broad read impact per account.",
+    "expected_answer": "A wildcard resource grant on secretsmanager:GetSecretValue allows the Lambda function to retrieve every secret in the AWS account's Secrets Manager, regardless of which application or team owns the secret. In a shared account, this may include database credentials for other applications, third-party API keys, OAuth client secrets, encryption keys, and inter-service authentication tokens. If the Lambda function is compromised through input injection or dependency vulnerabilities, the attacker gains access to every secret in the account. The impact extends beyond the Lambda's own application domain\u2014the attacker can use extracted credentials to access databases, external APIs, and services belonging to other teams. KMS key policies provide a secondary control layer, but if secrets use the default Secrets Manager KMS key (aws/secretsmanager), the GetSecretValue permission alone is sufficient. Remediation requires scoping the policy to specific secret ARNs the Lambda actually needs and using customer-managed KMS keys with restrictive key policies.",
+    "evaluation_criteria": "Must explain cross-application secret access risk in shared accounts and identify that the default Secrets Manager KMS key does not provide additional access control beyond the IAM policy."
+  },
+  {
+    "id": "T4-033",
+    "complexity": "L2",
+    "cloud_domain": "AWS S3",
+    "scenario": "S3 bucket policy trusts an IAM role ARN that belongs to a third-party vendor account.",
+    "prompt": "Assess the risk introduced by an external account trust binding in a bucket resource policy.",
+    "reasoning_focus": "Third-party trust misbinding in resource policies.",
+    "expected_answer": "Trusting a third-party vendor's IAM role ARN in an S3 bucket policy creates a dependency on the vendor's IAM security posture\u2014if the vendor's role is compromised, over-permissioned, or if the vendor reassigns the role ARN to a different entity, the trusted access persists. The risk is amplified because S3 bucket policies are evaluated independently of IAM policies, meaning the external role gains access regardless of the bucket owner's IAM configuration. If the trusted role has s3:GetObject, an attacker compromising the vendor gains full read access to bucket contents. If the trust includes s3:PutObject, the attacker can inject malicious files into the bucket. The bucket owner has no visibility into who assumes the vendor's role\u2014any principal in the vendor's account that can assume the role inherits bucket access. Mitigation requires adding conditions like aws:PrincipalOrgID or aws:SourceVpce, implementing ExternalId for cross-account role assumptions, regularly auditing third-party trust bindings, and using S3 access logging to monitor cross-account access patterns.",
+    "evaluation_criteria": "Must explain that the bucket owner depends on the vendor's IAM security posture and has no visibility into who actually assumes the trusted role within the vendor's account."
+  },
+  {
+    "id": "T4-034",
+    "complexity": "L2",
+    "cloud_domain": "Kubernetes",
+    "scenario": "RBAC role grants 'list' and 'get' on secrets in all namespaces to a CI/CD service account.",
+    "prompt": "Model the privilege surface available to a CI/CD runner that can read secrets cluster-wide.",
+    "reasoning_focus": "Namespace-wide secret read via RBAC.",
+    "expected_answer": "A CI/CD service account with cluster-wide secret read access can retrieve every Kubernetes secret across all namespaces, which typically includes TLS certificates, database credentials, API keys, OAuth tokens, image pull secrets for private registries, and inter-service authentication credentials. The CI/CD context amplifies this risk because builds are often triggered by external events (pull requests, webhooks) and run untrusted or semi-trusted code that could include secret exfiltration logic. An attacker who compromises the CI/CD pipeline or submits a malicious build configuration gains immediate access to all cluster secrets. The cluster-wide scope means a single pipeline compromise exposes secrets for every application in the cluster, not just the application being built. The service account should be scoped to only the namespace(s) the CI/CD pipeline deploys to, and secrets should use external secret management (e.g., Vault, Sealed Secrets) rather than native Kubernetes secrets where possible. Pipeline execution should be sandboxed with restricted service accounts.",
+    "evaluation_criteria": "Must identify the CI/CD pipeline as an untrusted code execution context and explain how cluster-wide secret access creates cross-application exposure from a single pipeline compromise."
+  },
+  {
+    "id": "T4-035",
+    "complexity": "L2",
+    "cloud_domain": "AWS IAM",
+    "scenario": "Developer IAM user has iam:AttachUserPolicy on themselves.",
+    "prompt": "Evaluate whether self-policy attachment rights constitute a privilege escalation path.",
+    "reasoning_focus": "Self-managed policy attachment as escalation.",
+    "expected_answer": "Self-policy attachment rights (iam:AttachUserPolicy on the user's own ARN) constitute a direct and complete privilege escalation path. The developer can attach any AWS-managed policy to themselves, including AdministratorAccess, which grants full access to all AWS services and resources. The escalation is trivial: a single API call (aws iam attach-user-policy --user-name self --policy-arn arn:aws:iam::aws:policy/AdministratorAccess) immediately grants admin access. Even if restricted to customer-managed policies, the user can attach any policy in the account. This permission is equivalent to having admin access because the user can self-grant any permission they lack. Detection requires monitoring CloudTrail for AttachUserPolicy events where the caller and target are the same principal. Mitigation requires removing iam:AttachUserPolicy from the developer's permissions entirely, or at minimum constraining it with a condition key (iam:PolicyARN) that restricts which policies can be attached, combined with a permission boundary that limits effective permissions regardless of attached policies.",
+    "evaluation_criteria": "Must explain that self-policy attachment is equivalent to admin access because any AWS-managed policy including AdministratorAccess can be attached, and identify permission boundaries as a mitigating control."
+  },
+  {
+    "id": "T4-036",
+    "complexity": "L2",
+    "cloud_domain": "GCP IAM",
+    "scenario": "Service account has iam.serviceAccounts.actAs on all service accounts within a project.",
+    "prompt": "Model the scope of privilege available through actAs over multiple service accounts.",
+    "reasoning_focus": "Service account impersonation chain scope.",
+    "expected_answer": "The iam.serviceAccounts.actAs permission allows the holder to deploy resources (Cloud Functions, Compute instances, Cloud Run services) that run as any service account in the project, effectively inheriting that service account's IAM permissions. This creates a privilege union\u2014the attacker's effective permissions become the sum of all service accounts' permissions in the project. If any service account has roles/owner, the attacker achieves full project control. The actAs permission enables deploying a Cloud Function with a high-privilege service account, invoking it to perform privileged operations, and then deleting it to cover tracks. Combined with compute.instances.create, the attacker can launch instances with any service account identity. This is one of the most critical GCP privilege escalation paths because project-wide actAs effectively grants the maximum privilege of any service account in the project. Mitigation requires restricting actAs to specific service account resource names via IAM conditions and auditing all service accounts for excessive role bindings.",
+    "evaluation_criteria": "Must explain that actAs creates a privilege union across all service accounts and identify the escalation chain through deploying services that run as high-privilege service accounts."
+  },
+  {
+    "id": "T4-037",
+    "complexity": "L2",
+    "cloud_domain": "Azure RBAC",
+    "scenario": "User Assigned Managed Identity has Contributor role on a resource group containing multiple services.",
+    "prompt": "Assess which service-level operations are enabled through the Contributor role and what operations remain restricted.",
+    "reasoning_focus": "Contributor role scope vs control plane boundaries.",
+    "expected_answer": "The Contributor role on a resource group enables creating, modifying, and deleting nearly all resources within that group\u2014including VMs, storage accounts, databases, web apps, network security groups, and Key Vaults. Specific high-impact operations include modifying NSG rules to open network access, deploying new VMs or web apps, accessing storage account keys (listKeys), and modifying application configurations. However, Contributor explicitly cannot: assign or modify RBAC role assignments (Microsoft.Authorization/roleAssignments/*), create or modify Azure Policy assignments, manage Azure Blueprints, or perform operations on resources with deny assignments. Importantly, Contributor can manage Key Vault data plane operations if access policies (not RBAC) are used for Key Vault, potentially granting secret read access. The Contributor cannot manage Azure AD objects directly. The boundary between Contributor and Owner is specifically role assignment management\u2014Contributor has nearly full resource control but cannot delegate access to others.",
+    "evaluation_criteria": "Must distinguish what Contributor can do (resource CRUD, listKeys) from what it cannot (role assignments, policy management), and identify Key Vault data plane access as a nuanced capability depending on access policy configuration."
+  },
+  {
+    "id": "T4-038",
+    "complexity": "L2",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM role has iam:CreateRole and iam:AttachRolePolicy without a permission boundary condition.",
+    "prompt": "Evaluate the escalation risk when a principal can create and equip arbitrary roles.",
+    "reasoning_focus": "Role creation without boundary constraints.",
+    "expected_answer": "A principal with iam:CreateRole and iam:AttachRolePolicy without permission boundary constraints has a direct path to full account compromise. The escalation chain is: (1) create a new IAM role with a trust policy allowing the principal to assume it, (2) attach AdministratorAccess or any other policy to the new role, (3) assume the role via sts:AssumeRole, gaining admin-level access. This bypasses any restrictions on the principal's own policies because the new role operates independently. Without a permission boundary condition (iam:PermissionsBoundary), there is no ceiling on what permissions the created role can have. Even if the principal's direct permissions are limited, they can create and assume a role with unlimited permissions. This is a well-documented AWS privilege escalation technique. Mitigation requires adding a condition to the IAM policy that mandates a specific permission boundary ARN on any created role: 'Condition': {'StringEquals': {'iam:PermissionsBoundary': 'arn:aws:iam::account:policy/BoundaryPolicy'}}.",
+    "evaluation_criteria": "Must describe the complete create-attach-assume escalation chain and explain that permission boundaries are the specific IAM control designed to prevent this escalation path."
+  },
+  {
+    "id": "T4-039",
+    "complexity": "L2",
+    "cloud_domain": "AWS Lambda",
+    "scenario": "Lambda execution role includes lambda:AddPermission on all functions in the account.",
+    "prompt": "Model how AddPermission rights could be used to create new invocation trust bindings.",
+    "reasoning_focus": "Lambda resource policy manipulation potential.",
+    "expected_answer": "The lambda:AddPermission API modifies a Lambda function's resource-based policy, which controls who can invoke the function independently of IAM identity policies. An attacker with this permission can add a statement granting any AWS account, service, or principal the ability to invoke any Lambda function in the account. This enables several attack scenarios: (1) granting an external attacker-controlled account invoke access to sensitive functions, (2) creating new event source triggers from attacker-controlled S3 buckets or SNS topics, (3) allowing any AWS service to invoke functions, enabling event injection attacks. Since resource policies persist independently of the caller's permissions, the added trust binding survives even if the attacker's access is later revoked\u2014creating persistent backdoor access to Lambda functions. The modification is logged in CloudTrail but may not trigger alerts if Lambda policy changes are not monitored. Mitigation requires restricting AddPermission to specific function ARNs and monitoring for unexpected resource policy modifications.",
+    "evaluation_criteria": "Must explain that resource-based policy modifications persist independently of the caller's access and create backdoor invocation paths that survive credential rotation."
+  },
+  {
+    "id": "T4-040",
+    "complexity": "L2",
+    "cloud_domain": "GCP",
+    "scenario": "Developer has resourcemanager.projects.setIamPolicy on a non-production project.",
+    "prompt": "Evaluate how project-level IAM write rights can be used to elevate access beyond the initial project.",
+    "reasoning_focus": "Project IAM policy write as escalation surface.",
+    "expected_answer": "The resourcemanager.projects.setIamPolicy permission allows the developer to modify the project's IAM policy to grant any role to any principal\u2014including granting themselves roles/owner on the project. Once the developer has Owner, they can create service account keys, access all project data, and modify any resource. Beyond the project boundary, escalation paths include: (1) if the project hosts shared services (databases, APIs) used by other projects, the developer gains access to those data flows, (2) if service accounts in this project have cross-project role bindings or organization-level roles, the developer can create keys for those accounts and pivot to other projects, (3) the developer can modify VPC peering or Shared VPC configurations to gain network access to other projects, and (4) they can deploy resources that impersonate service accounts with broader organization-level access. Even in a non-production project, the escalation potential depends on what trust relationships exist between projects. Mitigation requires removing setIamPolicy, using Organization Policy constraints to limit role grants, and segregating service accounts between environments.",
+    "evaluation_criteria": "Must explain escalation beyond the initial project through cross-project service account bindings, shared services, and network-level pivot paths."
+  },
+  {
+    "id": "T4-041",
+    "complexity": "L3",
+    "cloud_domain": "AWS",
+    "scenario": "SSRF in app running on EC2 instance with attached IAM role.",
+    "prompt": "Model metadata-based escalation chain.",
+    "reasoning_focus": "Metadata to IAM privilege pivot.",
+    "expected_answer": "The SSRF-to-metadata escalation chain follows a well-established pattern: (1) the attacker crafts a request causing the application to fetch http://169.254.169.254/latest/meta-data/iam/security-credentials/[role-name], retrieving temporary AccessKeyId, SecretAccessKey, and SessionToken for the attached IAM role, (2) these credentials are used externally to authenticate as the instance's role, (3) the attacker enumerates the role's permissions using iam:GetRolePolicy or by trial-and-error API calls, (4) depending on the role's permissions, the attacker can access S3 buckets, read secrets from Secrets Manager or Parameter Store, invoke other Lambda functions, assume roles in other accounts, or modify infrastructure. If the role has iam:PassRole or sts:AssumeRole, the attacker can further escalate into higher-privilege roles. If IMDSv1 is enabled (no token requirement), the SSRF is trivially exploitable with a single GET request. IMDSv2 requires a PUT request with a hop count header, which mitigates many SSRF vectors but not all (e.g., if the SSRF allows arbitrary HTTP methods). The full kill chain from SSRF to account compromise can execute in minutes.",
+    "evaluation_criteria": "Must detail the step-by-step SSRF-to-credential-retrieval chain, distinguish IMDSv1 vs IMDSv2 exploitation requirements, and identify secondary escalation paths based on the role's permissions."
+  },
+  {
+    "id": "T4-042",
+    "complexity": "L3",
+    "cloud_domain": "Kubernetes",
+    "scenario": "Low-priv pod can create new pods.",
+    "prompt": "Assess potential for privilege escalation via workload creation.",
+    "reasoning_focus": "RBAC exploitation modeling.",
+    "expected_answer": "Pod creation rights constitute a critical privilege escalation vector in Kubernetes. An attacker in a pod with 'create pods' permission can: (1) create a new pod with a privileged security context (privileged: true, hostPID: true, hostNetwork: true), gaining direct access to the node's filesystem, processes, and network, (2) mount the node's root filesystem via hostPath volumes to read SSH keys, kubelet credentials, and other node-level secrets, (3) mount service account tokens from other namespaces if RBAC doesn't restrict projected volumes, (4) use the node's kubelet credentials to access the API server with node-level permissions, and (5) schedule pods with different service accounts that have higher RBAC privileges. Even without 'privileged' container capability, mounting hostPath to /var/run/docker.sock or /var/lib/kubelet provides container escape paths. This is equivalent to node-level compromise through RBAC alone. Mitigation requires pod security admission policies, OPA/Gatekeeper constraints preventing privileged pod creation, and restricting 'create pods' to specific controllers rather than service accounts.",
+    "evaluation_criteria": "Must identify specific pod spec fields (privileged, hostPID, hostPath) that enable node-level access and explain how pod creation with controlled security context is equivalent to node compromise."
+  },
+  {
+    "id": "T4-043",
+    "complexity": "L3",
+    "cloud_domain": "Azure",
+    "scenario": "Managed identity can access Key Vault secrets.",
+    "prompt": "Model downstream service compromise potential.",
+    "reasoning_focus": "Secret propagation chain.",
+    "expected_answer": "A compromised managed identity with Key Vault secret access creates a cascading compromise chain through the secrets it can retrieve. Key Vault typically stores: database connection strings (enabling direct database access bypassing application controls), API keys for third-party services (payment processors, email providers), TLS certificates and private keys (enabling man-in-the-middle attacks), storage account keys (granting full storage access), and inter-service authentication tokens. Each extracted secret opens a new attack surface\u2014a database connection string leads to full data access, a storage account key grants complete blob/queue/table manipulation, and a certificate private key enables traffic interception. The chain propagation depends on how many downstream services rely on Key Vault secrets, but in typical architectures, Key Vault is the central secret store, making it a single point of compromise. The attacker can also modify secrets to inject backdoor credentials or redirect service connections. Monitoring requires enabling Key Vault diagnostic logging and alerting on unusual secret access patterns using Azure Sentinel.",
+    "evaluation_criteria": "Must model the cascading compromise chain where each extracted secret opens new attack surfaces, and identify Key Vault as a single point of compromise in typical architectures."
+  },
+  {
+    "id": "T4-044",
+    "complexity": "L3",
+    "cloud_domain": "GCP",
+    "scenario": "Cloud Function service account has BigQuery write access.",
+    "prompt": "Assess potential for data tampering chain.",
+    "reasoning_focus": "Serverless data impact modeling.",
+    "expected_answer": "A compromised Cloud Function with BigQuery write access enables a multi-stage data tampering chain. The attacker can: (1) modify existing table data through DML operations (UPDATE, DELETE, INSERT), corrupting analytics, financial records, or machine learning training data, (2) create new tables or views that expose data to broader audiences, (3) export table data to attacker-controlled Cloud Storage buckets using BigQuery export jobs, and (4) modify authorized views to change data access patterns. If the function processes untrusted input that is used in BigQuery queries, SQL injection can expand the write access to unintended tables. The impact is amplified because BigQuery data often feeds downstream dashboards, ML pipelines, and business decisions\u2014corrupted data propagates silently through the data pipeline. Data tampering may not be immediately detected since BigQuery's audit logging captures DML operations but organizations may not monitor for unexpected data modifications. Mitigation includes restricting the service account to specific datasets, implementing column-level security, and enabling BigQuery data change detection through scheduled query validation.",
+    "evaluation_criteria": "Must explain the downstream impact of data tampering through data pipelines and dashboards, and identify SQL injection as a vector that could expand the write scope beyond intended tables."
+  },
+  {
+    "id": "T4-045",
+    "complexity": "L3",
+    "cloud_domain": "AWS EventBridge",
+    "scenario": "EventBridge rule accepts events from a public event bus and routes them to an internal Lambda processor.",
+    "prompt": "Model how unvalidated event routing from a public bus can be used to inject untrusted payloads into internal processing chains.",
+    "reasoning_focus": "Event bus trust boundary and payload injection.",
+    "expected_answer": "A public EventBridge event bus that routes to an internal Lambda processor creates a direct injection path from the internet into internal processing logic. An attacker can craft events matching the rule's event pattern and inject arbitrary payloads that the Lambda function processes as trusted internal events. If the Lambda function performs database writes, API calls, or triggers downstream workflows based on event data without validation, the attacker can: (1) inject malicious data into databases, (2) trigger unintended business logic such as payment processing or account modifications, (3) exploit deserialization vulnerabilities in the Lambda's event parsing, and (4) use the Lambda's execution role permissions for privilege escalation. The event pattern matching provides minimal security since patterns match on structure, not on source authenticity. Mitigation requires implementing event source validation within the Lambda code, using a custom event bus with restricted PutEvents policies instead of a public bus, adding event schema validation, and implementing idempotency checks to prevent replay attacks.",
+    "evaluation_criteria": "Must explain that EventBridge event patterns provide structural matching not source authentication, and identify specific downstream impacts including database injection and business logic manipulation."
+  },
+  {
+    "id": "T4-046",
+    "complexity": "L3",
+    "cloud_domain": "AWS S3 + Lambda",
+    "scenario": "S3 bucket triggers a Lambda function on ObjectCreated events; bucket allows authenticated AWS user uploads.",
+    "prompt": "Assess the chain from S3 write access to Lambda execution and evaluate what downstream impact is achievable.",
+    "reasoning_focus": "S3 event trigger as Lambda invocation vector.",
+    "expected_answer": "The S3-to-Lambda event trigger chain allows any authenticated AWS user who can upload to the bucket to indirectly invoke the Lambda function with a controlled event payload. The attack chain: (1) attacker uploads a crafted object to the S3 bucket, (2) S3 event notification triggers the Lambda function with the object's key, size, and metadata, (3) if the Lambda function reads and processes the uploaded object (parsing CSV, JSON, XML, images), the attacker controls the data being processed. This enables: file parsing exploits (XXE in XML, formula injection in CSV, buffer overflows in image processing), command injection if the object key or metadata is used in shell commands, and path traversal if the object key is used to construct file paths. The Lambda function's execution role determines the downstream blast radius\u2014data access, secret retrieval, or further API calls all execute under the function's permissions. Mitigation requires restricting S3 bucket access to specific IAM principals, implementing input validation in the Lambda function, sandboxing file processing operations, and applying least-privilege to the Lambda execution role.",
+    "evaluation_criteria": "Must trace the complete chain from S3 upload to Lambda invocation to downstream impact, and identify specific file processing vulnerabilities (XXE, formula injection) as exploitation vectors."
+  },
+  {
+    "id": "T4-047",
+    "complexity": "L3",
+    "cloud_domain": "AWS RDS",
+    "scenario": "An RDS automated snapshot can be shared with an attacker-controlled AWS account via ModifyDBSnapshotAttribute.",
+    "prompt": "Model the data restoration chain an adversary can execute once a shared snapshot is accessible.",
+    "reasoning_focus": "Snapshot sharing as data exfiltration mechanism.",
+    "expected_answer": "Once an RDS snapshot is shared with an attacker's AWS account, the data exfiltration chain is irreversible even if sharing is later revoked, because the attacker can immediately copy the snapshot to their account. The restoration chain: (1) attacker copies the shared snapshot to their own account and region, (2) restores the snapshot to a new RDS instance in their VPC with their own master credentials, (3) connects to the restored database and extracts all data\u2014customer records, credentials, application data, stored procedures. The copy operation means revoking sharing after the fact does not prevent access since the copy is independently owned. The attacker's restored instance is completely under their control with no logging visible to the original account. If the snapshot is encrypted with a default AWS-managed KMS key, the copy may be blocked\u2014but if encrypted with a customer-managed CMK that has a key policy allowing the attacker's account, or if unencrypted, the copy succeeds. This technique enables complete database exfiltration without any network-level indicators. Detection requires monitoring CloudTrail for ModifyDBSnapshotAttribute events.",
+    "evaluation_criteria": "Must explain that snapshot copying makes the exfiltration irreversible even after sharing is revoked, and identify KMS key policies as a potential blocking control for encrypted snapshots."
+  },
+  {
+    "id": "T4-048",
+    "complexity": "L3",
+    "cloud_domain": "Container",
+    "scenario": "Docker socket is mounted into a container as a volume.",
+    "prompt": "Evaluate how access to the Docker socket from within a container enables host-level privilege chains.",
+    "reasoning_focus": "Docker socket as container escape vector.",
+    "expected_answer": "Mounting the Docker socket (/var/run/docker.sock) into a container is equivalent to granting root access to the host. The Docker socket provides full control over the Docker daemon, enabling the container to: (1) create a new privileged container with the host's root filesystem mounted (docker run -v /:/host --privileged), gaining read/write access to the entire host filesystem including /etc/shadow, SSH keys, and kubelet credentials, (2) create containers with host networking and PID namespace, enabling process injection and network interception, (3) access all other containers' filesystems and environment variables by inspecting running containers, (4) execute arbitrary commands in any running container via docker exec, and (5) modify images and registries, potentially poisoning deployment pipelines. This is a complete container escape that provides persistent host-level access. In a Kubernetes environment, host access leads to kubelet credential theft and cluster-level compromise. Mitigation requires never mounting the Docker socket into application containers and using alternatives like Kaniko for in-container builds.",
+    "evaluation_criteria": "Must explain that Docker socket access is equivalent to host root access and describe the specific escape technique of creating a privileged container with host filesystem mounted."
+  },
+  {
+    "id": "T4-049",
+    "complexity": "L3",
+    "cloud_domain": "CI/CD",
+    "scenario": "A CI/CD pipeline runner has AWS credentials injected as environment variables and builds are triggered by external pull requests.",
+    "prompt": "Model the multi-step chain from external pull request to cloud credential access.",
+    "reasoning_focus": "Supply chain CI/CD cloud key exposure.",
+    "expected_answer": "The attack chain from external pull request to cloud credential theft: (1) attacker forks the repository and submits a pull request modifying the CI/CD configuration file (e.g., .github/workflows, .gitlab-ci.yml, Jenkinsfile), (2) if the CI/CD system is configured to run pipelines on external PRs without approval, the modified pipeline executes in the runner environment, (3) the attacker's pipeline code accesses AWS credentials from environment variables (echo $AWS_ACCESS_KEY_ID, env | grep AWS) and exfiltrates them via HTTP request to an external server, (4) the attacker uses the extracted credentials externally with the full permissions of the CI/CD IAM role. Even if the CI/CD system restricts secrets from fork PRs, the attacker may still access credentials through: build cache poisoning, dependency confusion with malicious packages that exfiltrate environment variables at install time, or exploiting the build system's artifact storage. Mitigation requires requiring manual approval for external PR pipelines, using short-lived OIDC-based credentials instead of static keys, restricting secret access to protected branches only, and implementing egress filtering on runner networks.",
+    "evaluation_criteria": "Must describe the complete chain from PR submission to credential exfiltration, and identify alternative exfiltration paths beyond direct environment variable access such as dependency confusion."
+  },
+  {
+    "id": "T4-050",
+    "complexity": "L3",
+    "cloud_domain": "AWS Multi-Account",
+    "scenario": "An IAM role in a dev account has sts:AssumeRole permission targeting a role in the prod account without a condition on ExternalId.",
+    "prompt": "Model the escalation chain from dev account access to production account privilege.",
+    "reasoning_focus": "Conditional-free cross-account role assumption.",
+    "expected_answer": "Without an ExternalId condition, any principal that can assume the dev account role can then chain into the production account role, creating a two-hop escalation path. The attack chain: (1) attacker compromises any principal in the dev account that can assume the cross-account role (through SSRF, leaked credentials, or over-permissioned developer access), (2) assumes the dev account role to get temporary credentials, (3) uses those credentials to call sts:AssumeRole on the production account role without needing to provide an ExternalId, (4) gains the production role's permissions which typically include access to production databases, customer data, and production infrastructure. The missing ExternalId is particularly dangerous in the 'confused deputy' scenario where the dev account role might be assumable by multiple principals\u2014any of them can chain into production. The blast radius depends on the production role's permissions, but cross-account roles are often over-permissioned for operational convenience. Mitigation requires adding a unique ExternalId condition, restricting the dev role's trust policy to specific principals, implementing session tags for access logging, and considering AWS Resource Access Manager for more granular cross-account sharing.",
+    "evaluation_criteria": "Must explain the confused deputy problem in the context of missing ExternalId and trace the two-hop escalation chain from dev account compromise to production account access."
+  },
+  {
+    "id": "T4-051",
+    "complexity": "L3",
+    "cloud_domain": "Container Kubernetes",
+    "scenario": "Container runs as root and the pod spec does not set securityContext allowPrivilegeEscalation=false.",
+    "prompt": "Evaluate the escalation potential from container root to node-level access through kernel interfaces.",
+    "reasoning_focus": "Container root to node escalation reasoning.",
+    "expected_answer": "Running as container root with allowPrivilegeEscalation enabled exposes multiple kernel-level escape paths. The container root can: (1) exploit kernel vulnerabilities (e.g., CVE-2022-0185 filesystem context, CVE-2022-0847 DirtyPipe) to gain host root access since the container shares the host kernel, (2) abuse Linux capabilities that may be granted by default (CAP_SYS_ADMIN if privileged, CAP_NET_RAW for network attacks), (3) manipulate /proc and /sys filesystems to interact with host kernel parameters if not properly masked, (4) exploit cgroup escape techniques (e.g., notify_on_release) to execute commands on the host, and (5) use ptrace capabilities (if available) to attach to host processes sharing the same PID namespace. With allowPrivilegeEscalation=true, setuid binaries and capabilities can be gained through execve, expanding the attack surface beyond the initial capability set. Even without a known kernel CVE, the combination of root + privilege escalation + shared kernel creates a persistent risk surface. Mitigation requires setting runAsNonRoot: true, allowPrivilegeEscalation: false, dropping all capabilities, and using seccomp/AppArmor profiles.",
+    "evaluation_criteria": "Must identify specific kernel-level escape techniques (cgroup escape, kernel CVEs) and explain why sharing the host kernel is the fundamental enabler of these escalation paths."
+  },
+  {
+    "id": "T4-052",
+    "complexity": "L3",
+    "cloud_domain": "AWS IAM",
+    "scenario": "A Lambda function's execution role is bound to a new resource type that exposes additional API operations not previously considered.",
+    "prompt": "Assess how attaching an existing role to an unanticipated resource type expands the effective permission surface.",
+    "reasoning_focus": "Role reuse across resource types creating unexpected permissions.",
+    "expected_answer": "IAM policies are evaluated based on Action and Resource combinations, and a role designed for one service context may grant unintended permissions when reused with a different resource type. For example, a role with s3:* designed for a Lambda function processing S3 data also grants s3:PutBucketPolicy when the same role is attached to a new service that can invoke those operations in a different context. When the role is bound to a new resource type (e.g., an ECS task, a Glue job, or a SageMaker notebook), the effective permission surface expands because the new resource may expose different API interaction patterns\u2014a SageMaker notebook instance provides an interactive environment where all role permissions can be exercised interactively, whereas a Lambda function is constrained to code execution. The new resource type may also have different network access, execution duration, and logging characteristics that change the exploitability of the same permissions. Mitigation requires creating dedicated roles per resource type with least-privilege policies, avoiding role reuse across services, and using IAM Access Analyzer to evaluate the effective permission surface per resource binding.",
+    "evaluation_criteria": "Must explain how the same IAM permissions have different exploitability profiles depending on the resource type's interaction model, and provide specific examples of how reuse creates unexpected access."
+  },
+  {
+    "id": "T4-053",
+    "complexity": "L3",
+    "cloud_domain": "AWS Multi-Region",
+    "scenario": "IAM policies are consistent across regions, but a security group rule applied in us-east-1 is not replicated to eu-west-1 due to regional manual configuration.",
+    "prompt": "Model how regional permission inconsistency creates an exploitable asymmetry in the security perimeter.",
+    "reasoning_focus": "Cross-region security posture drift.",
+    "expected_answer": "Regional security posture drift creates exploitable asymmetry where an attacker with cross-region IAM access can target the less-protected region to achieve the same data access with reduced controls. Since IAM is global but security groups are regional, the attacker can: (1) enumerate instances across regions to identify which region has weaker security group rules, (2) target the eu-west-1 region where the restrictive security group rule was not applied, (3) access services in that region through network paths that would be blocked in us-east-1. If data is replicated across regions (RDS read replicas, S3 cross-region replication, DynamoDB global tables), the attacker accesses the same data through the less-protected region. The drift also affects compliance\u2014if us-east-1 security groups enforce PCI DSS network segmentation requirements but eu-west-1 does not, the organization's compliance posture is invalidated. Detection requires infrastructure-as-code with regional consistency validation, AWS Config rules for security group compliance, and cross-region security group comparison audits.",
+    "evaluation_criteria": "Must explain that IAM is global while security groups are regional and show how attackers exploit this asymmetry by targeting the less-protected region to access replicated data."
+  },
+  {
+    "id": "T4-054",
+    "complexity": "L3",
+    "cloud_domain": "GCP Cloud Build",
+    "scenario": "Cloud Build pipeline uses the default service account which has Editor access at the project level.",
+    "prompt": "Model how a compromised build step can leverage the Editor-level service account to modify production resources.",
+    "reasoning_focus": "Default build service account privilege chain.",
+    "expected_answer": "The default Cloud Build service account ([PROJECT_NUMBER]@cloudbuild.gserviceaccount.com) with Editor access provides near-complete project control during any build step execution. A compromised build step\u2014through malicious dependency injection, a compromised base image, or a poisoned build configuration\u2014can: (1) access and modify Cloud Storage buckets containing production data and deployment artifacts, (2) query and modify Cloud SQL databases, (3) deploy new Cloud Functions or Cloud Run services with persistent backdoors, (4) modify Pub/Sub subscriptions to intercept messages, (5) read secrets from Secret Manager (if the service account has additional secret accessor bindings), and (6) create new service account keys for persistent access that survives build completion. The build step executes in a container with the service account token available via the metadata server, making credential access trivial. Since build steps often execute third-party tools and libraries, the supply chain attack surface is large. Mitigation requires creating a custom service account with minimal permissions per build pipeline, pinning dependency versions, using binary authorization for build outputs, and implementing build provenance verification.",
+    "evaluation_criteria": "Must identify specific production resources modifiable through Editor access during build execution and explain supply chain attack vectors through dependencies, base images, and build configuration."
+  },
+  {
+    "id": "T4-055",
+    "complexity": "L3",
+    "cloud_domain": "Azure AKS",
+    "scenario": "AKS cluster uses Azure AD pod-managed identities; a pod's assigned identity has Key Vault read access.",
+    "prompt": "Model the chain from pod compromise to secret exfiltration using the pod-managed identity.",
+    "reasoning_focus": "Pod identity to vault secret chain.",
+    "expected_answer": "The pod-to-Key Vault exfiltration chain proceeds through Azure's identity infrastructure: (1) attacker compromises the pod through application vulnerability (RCE, SSRF, deserialization), (2) from within the pod, requests an Azure AD token from the instance metadata endpoint (169.254.169.254) or the pod identity webhook endpoint, specifying the Key Vault resource as the audience, (3) uses the obtained bearer token to authenticate to Key Vault's data plane API, (4) calls GET /secrets to list all secrets, then GET /secrets/{name}/{version} to retrieve each secret value, (5) exfiltrates the secret values (database credentials, API keys, certificates) to an external endpoint. The pod-managed identity (AAD Pod Identity or Workload Identity) binds the Azure AD identity to the specific pod via labels or service account annotations, but once the pod is compromised, the identity is fully accessible. If the identity has both Get and List permissions, the attacker can enumerate and extract every secret in the vault. Mitigation includes restricting Key Vault access policies to specific secret names, implementing network restrictions on Key Vault (private endpoints), enabling Key Vault diagnostic logging, and using Workload Identity Federation with shorter token lifetimes.",
+    "evaluation_criteria": "Must trace the complete chain from pod compromise through identity token acquisition to Key Vault data plane access, and distinguish between AAD Pod Identity and Workload Identity Federation mechanisms."
+  },
+  {
+    "id": "T4-056",
+    "complexity": "L3",
+    "cloud_domain": "AWS SQS + Lambda",
+    "scenario": "SQS queue is configured as a Lambda event source; queue allows unauthenticated message sends from the internet.",
+    "prompt": "Assess how unauthenticated queue writes can be chained to trigger arbitrary Lambda invocations.",
+    "reasoning_focus": "Unauthenticated queue-to-Lambda trigger chain.",
+    "expected_answer": "When SQS is configured as a Lambda event source mapping, every message sent to the queue triggers Lambda invocation with the message body as the event payload. Unauthenticated queue access means any internet user can send arbitrary messages that are automatically processed by the Lambda function. The attack chain: (1) attacker sends crafted messages to the SQS queue endpoint, (2) the Lambda event source mapping polls the queue and invokes the function with each message, (3) the Lambda function processes the attacker-controlled payload under its execution role's permissions. This enables: injection attacks if the message content is used in database queries or shell commands, denial-of-wallet through mass message sending that triggers expensive Lambda executions, data poisoning if the function writes message data to databases, and business logic abuse if the function performs actions like sending emails or processing payments. The Lambda function trusts all messages from the queue equally with no distinction between legitimate and injected messages. Mitigation requires restricting the SQS policy to specific IAM principals, implementing message-level authentication/signing, and adding input validation in the Lambda function.",
+    "evaluation_criteria": "Must explain that the Lambda event source mapping automatically invokes for every queued message without source validation, and identify denial-of-wallet as a distinct risk alongside data injection."
+  },
+  {
+    "id": "T4-057",
+    "complexity": "L3",
+    "cloud_domain": "AWS ECS",
+    "scenario": "ECS task definition mounts the host network and has a task role with EC2 metadata access.",
+    "prompt": "Model the chain from ECS task compromise to EC2 metadata credential retrieval under host networking.",
+    "reasoning_focus": "Task definition configuration to metadata pivoting.",
+    "expected_answer": "With host networking mode enabled, the ECS task shares the EC2 host's network namespace, granting direct access to the instance metadata service at 169.254.169.254. The escalation chain: (1) attacker compromises the containerized application through an application-layer vulnerability, (2) from within the container, queries the IMDS endpoint to retrieve the EC2 instance profile credentials (which may differ from and be more permissive than the ECS task role), (3) retrieves the instance's IAM role credentials including AccessKeyId, SecretAccessKey, and SessionToken, (4) uses these credentials to perform operations with the instance role's permissions, which often include EC2, ECS, ECR, and CloudWatch access. In awsvpc networking mode, the task would only access its own task role credentials\u2014but host networking bypasses this isolation. If both the task role and instance role are available, the attacker gains the union of both permission sets. Additionally, the host network exposes the task to all network traffic on the host's interfaces, enabling packet sniffing and ARP poisoning. Mitigation requires using awsvpc networking mode, enforcing IMDSv2 with hop limit 1, and separating task role from instance role permissions.",
+    "evaluation_criteria": "Must distinguish between ECS task role credentials and EC2 instance profile credentials, and explain how host networking enables access to the instance profile credentials that would be isolated under awsvpc mode."
+  },
+  {
+    "id": "T4-058",
+    "complexity": "L3",
+    "cloud_domain": "GCP GKE",
+    "scenario": "GKE nodes run with a service account that has storage.objects.create on a production GCS bucket.",
+    "prompt": "Assess how a compromised GKE node can leverage its service account to write to production storage.",
+    "reasoning_focus": "Node identity to production storage write chain.",
+    "expected_answer": "A compromised GKE node can access its service account credentials through the metadata server at 169.254.169.254, retrieving an OAuth2 access token that includes the storage.objects.create permission on the production GCS bucket. The attack chain: (1) attacker compromises any pod on the node (or achieves container escape to the node), (2) queries the metadata server for the node's service account token, (3) uses the token to write objects to the production GCS bucket. Write access to production storage enables: deploying malicious application artifacts or configuration files if the bucket serves as a deployment source, poisoning data pipelines if the bucket is an input source, overwriting legitimate files if combined with storage.objects.delete, and planting web shells or malicious scripts if the bucket backs a static website or CDN. In GKE, all pods on a node share the node's service account by default unless Workload Identity is configured, meaning any pod compromise provides this write access. Mitigation requires enabling GKE Workload Identity to assign per-pod service accounts, restricting node-level service account permissions to minimum required for kubelet operations, and implementing Cloud Storage object versioning for tamper detection.",
+    "evaluation_criteria": "Must explain that all pods on a GKE node share the node service account by default and identify Workload Identity as the mitigation to isolate per-pod credentials."
+  },
+  {
+    "id": "T4-059",
+    "complexity": "L3",
+    "cloud_domain": "AWS Step Functions",
+    "scenario": "Step Functions state machine passes execution context including sensitive input parameters to a Lambda function that logs its full event payload.",
+    "prompt": "Model the data flow chain from orchestrator input to log-based secret exposure.",
+    "reasoning_focus": "Orchestration context leakage through logging.",
+    "expected_answer": "The data leakage chain flows through three stages: (1) the Step Functions state machine receives input containing sensitive parameters (API keys, user tokens, PII) either from the initiating event or from previous state outputs, (2) the state machine's InputPath or Parameters configuration passes these values to the Lambda function as part of the event payload, (3) the Lambda function logs the entire event object (common in debugging configurations like console.log(JSON.stringify(event))), writing sensitive values to CloudWatch Logs in plaintext. Once in CloudWatch Logs, the sensitive data persists for the log group's retention period and is accessible to any principal with logs:GetLogEvents or logs:FilterLogEvents. If the log group has a broad resource policy, the exposure surface expands further. The chain is particularly insidious because each component behaves as designed\u2014Step Functions passes context, Lambda logs events, CloudWatch stores logs\u2014but the composition creates unintended secret exposure. Mitigation requires using Step Functions' ResultSelector and OutputPath to filter sensitive data from state outputs, implementing structured logging that explicitly excludes sensitive fields, and enabling CloudWatch Logs encryption with access controls.",
+    "evaluation_criteria": "Must trace the complete data flow from orchestrator input through Lambda processing to log persistence, and explain that the composition of individually correct behaviors creates the security failure."
+  },
+  {
+    "id": "T4-060",
+    "complexity": "L3",
+    "cloud_domain": "Azure Service Bus",
+    "scenario": "Service Bus namespace uses shared access signatures with Manage permissions issued to an application with a public-facing endpoint.",
+    "prompt": "Evaluate how a Manage-level SAS token exposure enables queue manipulation and subscriber hijacking.",
+    "reasoning_focus": "Messaging namespace Manage rights exploitation.",
+    "expected_answer": "A Manage-level SAS token for an Azure Service Bus namespace provides complete control over all messaging entities within the namespace. If exposed through the public-facing application, an attacker can: (1) create, modify, and delete queues and topics, disrupting message processing, (2) create new subscriptions on topics to intercept copies of all published messages (subscriber hijacking), (3) read messages from any queue using peek or receive operations, exfiltrating sensitive data in transit, (4) send malicious messages to any queue, injecting commands into downstream processing systems, (5) modify subscription filter rules to selectively route messages to attacker-controlled endpoints, and (6) delete messages from queues to cause data loss and disrupt business operations. The Manage permission encompasses Send and Listen, making it a complete compromise of the messaging plane. Unlike namespace-level keys, SAS tokens can be scoped but Manage-level tokens provide maximal access. Mitigation requires issuing least-privilege SAS tokens (Send-only or Listen-only), using Azure AD authentication instead of SAS, implementing managed identity for the application, and rotating namespace-level keys if compromise is suspected.",
+    "evaluation_criteria": "Must enumerate specific Manage-level capabilities including subscriber hijacking through subscription creation and message injection, and explain the difference between Manage, Send, and Listen permission levels."
+  },
+  {
+    "id": "T4-061",
+    "complexity": "L4",
+    "cloud_domain": "AWS Multi-Account",
+    "scenario": "Role in child account trusted by parent account.",
+    "prompt": "Model cross-account blast radius.",
+    "reasoning_focus": "Trust boundary amplification.",
+    "expected_answer": "A child account role trusted by the parent (management) account creates a bidirectional escalation risk. The direct risk is that any principal in the parent account with sts:AssumeRole targeting the child role gains access to child account resources. However, the amplified risk comes from the parent account's elevated organizational position\u2014if the child role has iam:* or administrative permissions, compromising it provides a foothold to modify IAM in the child account, potentially creating new trust relationships to other accounts. The blast radius model: (1) parent account compromise leads to child account access via role assumption, (2) child account access may chain to other accounts if the child role has cross-account AssumeRole permissions, (3) the parent account's OrganizationAccountAccessRole (default in org-created accounts) typically has AdministratorAccess in every child account. The management account is the most critical trust anchor\u2014its compromise means all member accounts are compromised. Mitigation requires restricting parent-to-child role assumption to specific principals, implementing SCPs to limit privileged operations in child accounts, and enabling CloudTrail logging for cross-account AssumeRole events.",
+    "evaluation_criteria": "Must explain bidirectional trust amplification and identify the OrganizationAccountAccessRole as a default admin path from management to member accounts."
+  },
+  {
+    "id": "T4-062",
+    "complexity": "L4",
+    "cloud_domain": "Multi-Cloud",
+    "scenario": "Repository exposes AWS and Azure credentials.",
+    "prompt": "Assess multi-cloud pivot feasibility.",
+    "reasoning_focus": "Credential reuse modeling.",
+    "expected_answer": "Exposed AWS and Azure credentials in a repository enable simultaneous multi-cloud compromise with pivot potential between environments. The attacker can: (1) use AWS credentials to enumerate S3, EC2, IAM, and identify cross-cloud integration points (VPN tunnels, API connections, shared databases), (2) use Azure credentials to access Azure AD, subscriptions, Key Vaults, and identify resources connected to AWS, (3) pivot between clouds by using discovered credentials, connection strings, or API keys stored in one cloud that grant access to the other. Common cross-cloud pivot paths include: shared secrets in key management services referencing the other cloud, hybrid network connections (VPN, ExpressRoute/Direct Connect) allowing network-level pivoting, CI/CD pipelines with deployment rights to both clouds, and federated identity configurations (Azure AD as SAML provider for AWS). The multi-cloud attack surface is multiplicative\u2014each cloud's resources extend the other's blast radius. Immediate response requires rotating credentials in both clouds simultaneously, auditing both environments for unauthorized access, and checking for credential reuse across the clouds.",
+    "evaluation_criteria": "Must identify specific cross-cloud pivot paths including shared secrets, hybrid networking, and federated identity, and explain why simultaneous rotation across both clouds is critical."
+  },
+  {
+    "id": "T4-063",
+    "complexity": "L4",
+    "cloud_domain": "Kubernetes + Cloud",
+    "scenario": "Cluster uses cloud IAM roles for service accounts.",
+    "prompt": "Model escalation across orchestration and cloud control plane.",
+    "reasoning_focus": "Hybrid trust boundary inference.",
+    "expected_answer": "Cloud IAM roles for Kubernetes service accounts (AWS IRSA, GCP Workload Identity, Azure Workload Identity) create a trust bridge between the Kubernetes RBAC plane and the cloud IAM plane, enabling escalation across both. Attack paths: (1) Kubernetes RBAC escalation\u2014if an attacker can create pods or modify service account annotations, they can bind a pod to any annotated service account, inheriting its cloud IAM role permissions, (2) Cloud IAM escalation\u2014if the cloud role has iam:PassRole/actAs or sts:AssumeRole, the attacker can chain from the Kubernetes-obtained credentials to higher-privilege cloud roles, (3) bidirectional pivot\u2014cloud credentials obtained through Kubernetes can be used to modify cloud infrastructure that hosts the cluster (node groups, networking), potentially granting cluster-admin access. The trust model relies on OIDC token validation between the cluster's identity provider and the cloud IAM, but misconfigurations in the OIDC audience or subject claim can allow cross-namespace or cross-cluster role assumption. Mitigation requires strict RBAC controls on service account modification, OIDC subject claim conditions that include namespace and service account name, and cloud-side policies that restrict roles to specific cluster identities.",
+    "evaluation_criteria": "Must model bidirectional escalation between Kubernetes RBAC and cloud IAM planes, and identify OIDC claim misconfiguration as the key vulnerability enabling cross-boundary assumption."
+  },
+  {
+    "id": "T4-064",
+    "complexity": "L4",
+    "cloud_domain": "CDN + Origin",
+    "scenario": "CDN distribution forwards all headers including authentication tokens to an origin that does not validate whether the request originated from the CDN.",
+    "prompt": "Model how origin bypass via direct IP access combined with header forwarding can undermine CDN-layer access controls.",
+    "reasoning_focus": "CDN trust assumption in origin authentication.",
+    "expected_answer": "When CDN-layer access controls (WAF rules, geo-blocking, rate limiting, authentication) are the primary security enforcement point, origin bypass completely negates these controls. The attack model: (1) attacker discovers the origin server's IP address through DNS history, certificate transparency logs, or scan-based enumeration, (2) sends requests directly to the origin IP, bypassing all CDN-layer protections, (3) if the origin trusts forwarded headers (X-Forwarded-For, Authorization), the attacker can inject arbitrary headers that the origin processes as CDN-verified. The combination means: CDN-based WAF rules are bypassed, rate limiting is circumvented, geo-restrictions are ineffective, and if the CDN handles authentication (e.g., signed URLs, token validation), the origin accepts unauthenticated requests. Additionally, if the CDN adds custom headers to indicate authenticated status (X-Authenticated-User), the attacker can forge these headers in direct requests. Mitigation requires origin firewall rules restricting access to CDN IP ranges only, implementing mutual TLS between CDN and origin, validating a shared secret header at the origin, and ensuring the origin independently validates authentication tokens rather than trusting CDN-injected headers.",
+    "evaluation_criteria": "Must explain that origin bypass negates all CDN-layer security controls and identify specific header forgery attacks including injecting CDN-trust headers in direct requests."
+  },
+  {
+    "id": "T4-065",
+    "complexity": "L4",
+    "cloud_domain": "Multi-Tenant Cloud Storage",
+    "scenario": "Multi-tenant SaaS stores all customer data in a single S3 bucket using tenant-prefixed object keys for isolation.",
+    "prompt": "Evaluate how prefix-based isolation fails as a cross-tenant boundary when bucket-level policies are misconfigured.",
+    "reasoning_focus": "Prefix-based isolation vs bucket-level policy enforcement.",
+    "expected_answer": "Prefix-based tenant isolation in S3 relies entirely on application-layer enforcement of key prefix boundaries and IAM policy conditions\u2014it is not a native isolation mechanism. Failure modes include: (1) bucket-level policies that grant ListBucket without a Condition restricting s3:prefix allow any authorized principal to enumerate all tenant prefixes and object keys, (2) IAM policies with s3:GetObject on the bucket ARN without a prefix condition grant cross-tenant object read access, (3) application-layer bugs in prefix validation (path traversal using '../', URL encoding bypasses, or null bytes) allow a tenant to access another tenant's objects, (4) S3 batch operations or inventory reports configured at bucket level expose cross-tenant metadata. The fundamental flaw is that S3 has no native tenant boundary\u2014the prefix is just a naming convention, and any misconfiguration at the bucket level collapses all tenant isolation simultaneously. A single bucket policy error exposes all tenants' data. Mitigation requires separate buckets per tenant (preferred), or strict IAM policies with s3:prefix and s3:delimiter conditions, combined with application-layer input validation and S3 access point per-tenant policies.",
+    "evaluation_criteria": "Must explain that S3 prefix isolation is a naming convention not a security boundary, and identify specific failure modes including ListBucket without prefix conditions and application-layer path traversal bypasses."
+  },
+  {
+    "id": "T4-066",
+    "complexity": "L4",
+    "cloud_domain": "Webhooks",
+    "scenario": "Multiple customer accounts share a single webhook signing secret in a SaaS platform integration layer.",
+    "prompt": "Model how a single compromised signing secret enables cross-account event forgery.",
+    "reasoning_focus": "Shared webhook secret cross-tenant trust collapse.",
+    "expected_answer": "A shared webhook signing secret means that any customer who discovers the secret (through client-side exposure, debugging, or social engineering) can forge webhook events that appear to originate from the SaaS platform for any other customer. The attack model: (1) Customer A obtains the shared signing secret from their integration configuration, (2) Customer A crafts a webhook payload impersonating events for Customer B's account (subscription changes, payment confirmations, user actions), (3) Customer A signs the forged payload with the shared HMAC secret, (4) the receiving system validates the signature successfully since the secret is identical. This enables: fraudulent payment notifications causing goods to be shipped without payment, fake user authentication events bypassing access controls, spoofed data sync events corrupting downstream systems, and denial-of-service through event flooding that appears legitimate. The single shared secret creates a trust collapse where compromising one customer's integration compromises all customers' webhook integrity. Mitigation requires unique per-customer signing secrets, including a customer identifier in the signed payload, implementing webhook payload validation beyond signature verification, and rotating secrets independently per customer.",
+    "evaluation_criteria": "Must explain that a shared signing secret allows any customer to forge events for any other customer, and identify specific cross-tenant attack scenarios like fraudulent payment notifications."
+  },
+  {
+    "id": "T4-067",
+    "complexity": "L4",
+    "cloud_domain": "AWS S3 Cross-Region Replication",
+    "scenario": "S3 cross-region replication rule is misconfigured to replicate to a destination bucket owned by a separate AWS account without validating ownership.",
+    "prompt": "Assess how incorrect replication destination binding leads to cross-account data exfiltration at rest.",
+    "reasoning_focus": "Replication policy cross-account misbinding.",
+    "expected_answer": "Misconfigured S3 cross-region replication to an attacker-controlled destination bucket creates an automated, continuous data exfiltration channel. Every object written to the source bucket is automatically replicated to the attacker's bucket, including all new uploads, modifications, and metadata changes. The replication happens at the infrastructure level without application-layer visibility, making it extremely difficult to detect through normal application monitoring. The attacker receives exact copies of all objects with full fidelity including encryption (re-encrypted under the destination's key), version history, and object metadata. The exfiltration persists until the replication rule is discovered and removed, and historical data already replicated cannot be recovered. Since replication is asynchronous but near-real-time, the attacker maintains a continuously updated mirror of the source bucket. Detection requires monitoring S3 replication metrics, auditing replication rules via AWS Config, and verifying destination bucket ownership. Mitigation includes implementing S3 Bucket Owner Full Control on replication rules and using SCPs to restrict replication to known account IDs.",
+    "evaluation_criteria": "Must explain that replication creates an automated continuous exfiltration channel at the infrastructure level and identify that already-replicated data cannot be recovered from the attacker's bucket."
+  },
+  {
+    "id": "T4-068",
+    "complexity": "L4",
+    "cloud_domain": "Identity Federation",
+    "scenario": "AWS IAM identity provider trusts a SAML assertion from an external IdP that does not validate audience restrictions.",
+    "prompt": "Model how missing audience validation in SAML federation enables cross-service token reuse.",
+    "reasoning_focus": "SAML federation audience restriction failure.",
+    "expected_answer": "When the external IdP does not validate SAML audience restrictions, assertions intended for one service provider (e.g., a SaaS application) can be replayed to AWS IAM's SAML endpoint (sts.amazonaws.com) to obtain temporary AWS credentials. The attack model: (1) attacker obtains a valid SAML assertion from the IdP by authenticating to any service that uses the same IdP (even a low-privilege application), (2) since the audience restriction is not validated, the assertion's Audience element can be modified or the assertion can be replayed to a different relying party, (3) the attacker presents the assertion to AWS STS's AssumeRoleWithSAML API, which validates the signature but may accept the assertion if the issuer matches the configured identity provider, (4) AWS returns temporary credentials for the federated role. The missing audience restriction breaks the fundamental SAML trust model where assertions should be bound to a specific service provider. This enables any user of any service sharing the IdP to potentially access AWS resources. Mitigation requires configuring the IdP to enforce strict audience restrictions matching the AWS SAML provider ARN, setting session duration limits, and implementing additional conditions in the IAM role trust policy.",
+    "evaluation_criteria": "Must explain the SAML audience restriction mechanism and how its absence enables cross-service token replay, specifically the chain from obtaining an assertion for one service to using it with AWS STS."
+  },
+  {
+    "id": "T4-069",
+    "complexity": "L4",
+    "cloud_domain": "AWS Organizations",
+    "scenario": "Org-wide SCP allows 'iam:*' actions in all member accounts without restricting the management account.",
+    "prompt": "Model how a permissive SCP creates a governance gap when management account protections are inherited inconsistently.",
+    "reasoning_focus": "SCP inheritance and management account blind spot.",
+    "expected_answer": "AWS Service Control Policies (SCPs) have a critical architectural limitation: they do not apply to the management (master) account. An SCP allowing 'iam:*' across member accounts combined with the management account's SCP exemption creates a governance gap where the management account has unrestricted IAM capabilities without the guardrails that constrain member accounts. An attacker who compromises the management account can: (1) perform any IAM operation without SCP restrictions, (2) modify SCPs themselves to weaken protections across all member accounts, (3) use the OrganizationAccountAccessRole to assume admin access in any member account, and (4) create new member accounts with full administrative access. The 'iam:*' SCP in member accounts also allows member account administrators to create roles, policies, and users without constraints\u2014enabling privilege escalation within each member account. The governance gap is that the most powerful account (management) has the fewest controls. Mitigation requires minimizing principals in the management account, restricting iam:* in member account SCPs to specific permitted actions, using delegated administrator for Organizations features, and implementing break-glass procedures for management account access.",
+    "evaluation_criteria": "Must identify that SCPs do not apply to the management account and explain how this creates a governance gap where the most privileged account has the fewest controls."
+  },
+  {
+    "id": "T4-070",
+    "complexity": "L4",
+    "cloud_domain": "AWS IAM",
+    "scenario": "IAM trust policy uses a wildcard principal ('Principal': '*') with a Condition restricting on aws:PrincipalOrgID.",
+    "prompt": "Evaluate the residual risk when a wildcard principal is used with an organizational condition as the sole restriction.",
+    "reasoning_focus": "Wildcard principal with conditional constraints risk modeling.",
+    "expected_answer": "Using 'Principal': '*' with aws:PrincipalOrgID as the sole condition restricts role assumption to any principal within the AWS Organization\u2014but the residual risk surface remains substantial. Every IAM user, role, and service-linked role across every member account in the organization can assume this role. In a large organization with hundreds of accounts and thousands of principals, this means thousands of identities can access this role, many of which may be over-permissioned, compromised, or owned by untrusted teams. Specific risks include: (1) any compromised principal in any org account can laterally move to this role, (2) service-linked roles and automated systems may assume the role unintentionally, (3) newly created accounts automatically gain access since they inherit the OrgID, (4) if the organization has vendor or partner member accounts, those accounts' principals also qualify. The PrincipalOrgID condition is a coarse filter\u2014it prevents external access but does not provide fine-grained internal access control. Mitigation requires specifying explicit principal ARNs in the trust policy, adding conditions on aws:PrincipalTag or aws:PrincipalAccount to restrict to specific accounts or tagged principals, and implementing additional conditions like sts:ExternalId.",
+    "evaluation_criteria": "Must explain that PrincipalOrgID allows access from every principal in every org account and identify that new accounts and vendor/partner accounts automatically gain access."
+  },
+  {
+    "id": "T4-071",
+    "complexity": "L4",
+    "cloud_domain": "AWS CloudTrail",
+    "scenario": "An IAM role has cloudtrail:DeleteTrail and cloudtrail:StopLogging permissions.",
+    "prompt": "Model the impact on detection capability when an adversary can disable or delete audit trails across accounts.",
+    "reasoning_focus": "Audit trail tampering as a multi-account visibility suppression chain.",
+    "expected_answer": "An adversary with cloudtrail:StopLogging and cloudtrail:DeleteTrail can systematically blind the organization's security monitoring by disabling all CloudTrail trails. The impact chain: (1) StopLogging on the organization trail stops all API event recording across every member account simultaneously, (2) all subsequent attacker actions (data exfiltration, privilege escalation, persistence establishment) generate no audit log entries, (3) DeleteTrail removes the trail configuration, requiring manual recreation and reconfiguration, (4) if CloudWatch Log integration is active, log delivery stops, disabling real-time security alerts and SIEM integration, (5) GuardDuty and other services that consume CloudTrail data lose their primary event source, degrading threat detection to baseline network and DNS monitoring only. The attacker gains a window of unmonitored access during which they can operate freely. If the attacker also deletes existing S3 log files (requiring separate s3:DeleteObject permission), forensic investigation is severely impaired. Mitigation requires SCP restrictions preventing trail deletion/stopping, CloudWatch alarms on CloudTrail status changes, log file integrity validation, and immutable log storage with S3 Object Lock.",
+    "evaluation_criteria": "Must explain the cascading impact on downstream security services (GuardDuty, SIEM) when CloudTrail is disabled and identify SCPs and S3 Object Lock as specific mitigating controls."
+  },
+  {
+    "id": "T4-072",
+    "complexity": "L4",
+    "cloud_domain": "GCP Multi-Project",
+    "scenario": "A GCP service account secret is shared across three different projects with different data sensitivity levels.",
+    "prompt": "Evaluate the cross-project blast radius when a shared service account secret is compromised.",
+    "reasoning_focus": "Shared credential blast radius across project boundaries.",
+    "expected_answer": "A shared service account key compromised in any one of the three projects grants the attacker access to all three projects simultaneously, collapsing project-level isolation boundaries. The blast radius is determined by the union of all IAM role bindings across all three projects\u2014if the service account has Viewer in a dev project, Editor in a staging project, and a custom role in a production project, all three permission sets are immediately available. The highest-sensitivity project's data is exposed through the lowest-security project's compromise. Cross-project impact: (1) the attacker can read/modify data in all three projects according to the service account's bindings, (2) if the service account has actAs permissions, the attacker can impersonate other service accounts within those projects, (3) since it's the same key across all projects, rotating the key requires coordinated changes across all three projects simultaneously to avoid service disruption. The fundamental issue is that project boundaries are not credential boundaries when keys are shared. Mitigation requires unique service accounts per project, using short-lived credentials via Workload Identity Federation, implementing project-level VPC Service Controls, and eliminating long-lived service account keys entirely.",
+    "evaluation_criteria": "Must explain that the blast radius is the union of permissions across all projects and that the weakest project's security determines the exposure of the highest-sensitivity project's data."
+  },
+  {
+    "id": "T4-073",
+    "complexity": "L4",
+    "cloud_domain": "Azure AD B2B",
+    "scenario": "External Azure AD B2B guest users can enumerate group memberships in the host tenant.",
+    "prompt": "Model how guest-level enumeration rights enable organizational reconnaissance across tenant boundaries.",
+    "reasoning_focus": "B2B guest enumeration as cross-tenant reconnaissance.",
+    "expected_answer": "Azure AD B2B guest users with group enumeration rights can map the host tenant's organizational structure, revealing security group names, distribution lists, team structures, and membership hierarchies. This reconnaissance enables: (1) identifying high-value targets by finding members of groups named 'GlobalAdmins', 'FinanceTeam', 'IncidentResponse', or 'ProductionAccess', (2) understanding the organization's access model by mapping group-to-resource relationships, (3) identifying other external guests and their access patterns, (4) discovering service accounts and their group memberships that might indicate automated processes with elevated access, and (5) planning social engineering attacks by understanding reporting structures and team compositions. By default, Azure AD allows guest users to read other users' basic properties and group memberships unless guest access restrictions are configured. The reconnaissance value is amplified because group names often directly reveal their purpose and the resources they control. Mitigation requires configuring Azure AD External Collaboration Settings to restrict guest access to 'Most restrictive', implementing Conditional Access policies for guest accounts, and reviewing group naming conventions to avoid revealing security-sensitive information in group names.",
+    "evaluation_criteria": "Must explain that Azure AD default settings allow guests to enumerate users and groups, and identify specific high-value reconnaissance targets derivable from group names and membership structures."
+  },
+  {
+    "id": "T4-074",
+    "complexity": "L4",
+    "cloud_domain": "Kubernetes Federation",
+    "scenario": "KubeFed is configured to propagate RBAC policies from a host cluster to multiple member clusters.",
+    "prompt": "Model how a misconfigured propagation policy can grant unintended permissions across all federated clusters.",
+    "reasoning_focus": "Policy propagation blast radius in federated clusters.",
+    "expected_answer": "KubeFed's policy propagation creates a single point of control where RBAC changes in the host cluster automatically replicate to all member clusters. A misconfigured propagation policy\u2014such as propagating a ClusterRoleBinding with cluster-admin to all member clusters\u2014immediately grants cluster-admin access across the entire federation. The blast radius model: (1) a single RBAC misconfiguration in the host cluster multiplies across N member clusters, (2) if the propagation target selector is overly broad (matching all clusters or all namespaces), the permission grant affects every workload in the federation, (3) an attacker who compromises the host cluster's KubeFed control plane can inject RBAC propagation rules that grant themselves persistent admin access across all member clusters, (4) removing the misconfiguration from the host cluster triggers propagation of the removal, but if the attacker has modified the member cluster's RBAC directly (bypassing federation), the backdoor persists. The centralized RBAC management means the host cluster is a critical trust anchor\u2014its compromise cascades to the entire federation. Mitigation requires strict access controls on the host cluster's KubeFed resources, implementing admission controls that validate propagated RBAC policies, and maintaining independent audit logging per cluster.",
+    "evaluation_criteria": "Must explain how host cluster RBAC changes multiply across all member clusters and identify that direct member cluster RBAC modifications can persist even after federated policy corrections."
+  },
+  {
+    "id": "T4-075",
+    "complexity": "L4",
+    "cloud_domain": "AWS API Gateway",
+    "scenario": "API Gateway custom authorizer caches authorization decisions for 5 minutes using only the Authorization header as the cache key.",
+    "prompt": "Evaluate how token caching without request context can create cross-resource authorization leakage.",
+    "reasoning_focus": "Authorization cache key collision in API Gateway.",
+    "expected_answer": "When API Gateway caches authorization decisions using only the Authorization header as the cache key, the cached IAM policy from the first request is reused for all subsequent requests with the same token, regardless of the requested resource, method, or path. This creates cross-resource authorization leakage: (1) a user authenticates to GET /api/users/own-profile and the authorizer generates a policy allowing access to their profile, (2) the same user or another user with the same token type makes a request to DELETE /api/users/other-user-id within the 5-minute cache window, (3) API Gateway serves the cached authorization result without re-evaluating the authorizer, potentially granting access to an operation the user should not be authorized for. The vulnerability is amplified when the authorizer generates resource-specific policies\u2014the cached policy from one resource context is applied to a completely different resource. Token-based caching without path/method context effectively flattens all authorization decisions for a given token into a single cached result. Mitigation requires including the request path and HTTP method in the cache key (via identity sources), reducing TTL to minimum, or disabling caching for authorizers that make context-dependent decisions.",
+    "evaluation_criteria": "Must explain the cache key collision where an authorization decision for one resource is applied to different resources within the cache window, and identify request path and method as missing cache key components."
+  },
+  {
+    "id": "T4-076",
+    "complexity": "L4",
+    "cloud_domain": "GCP VPC Service Controls",
+    "scenario": "VPC Service Controls perimeter allows API access from outside the perimeter to a BigQuery dataset via an access level that includes any authenticated Google account.",
+    "prompt": "Model how an overly permissive access level undermines perimeter-based data exfiltration controls.",
+    "reasoning_focus": "VPC-SC access level misconfiguration as perimeter bypass.",
+    "expected_answer": "VPC Service Controls perimeters are designed to prevent data exfiltration by restricting API access to resources within the perimeter to authorized networks and identities. An access level that includes 'any authenticated Google account' effectively punches a hole through the perimeter that allows any Google account holder globally to access the BigQuery dataset through the API. This negates the entire purpose of the VPC-SC perimeter for that resource\u2014the data exfiltration controls become meaningless because any attacker with a free Gmail account can query the dataset. The impact: (1) any authenticated user can run BigQuery jobs against the dataset and extract results to their own project, (2) the perimeter no longer contains data within the organization's boundary, (3) audit logs will show legitimate API access paths making detection difficult. The misconfiguration is particularly dangerous because VPC-SC is often the last line of defense against data exfiltration by insiders or compromised identities. Mitigation requires restricting access levels to specific organizational identities, corporate IP ranges, or device trust levels, and implementing access level audits using the VPC-SC Access Context Manager.",
+    "evaluation_criteria": "Must explain that the overly permissive access level negates the VPC-SC perimeter's data exfiltration controls entirely and identify that any Google account holder (including free Gmail) can access the protected resource."
+  },
+  {
+    "id": "T4-077",
+    "complexity": "L4",
+    "cloud_domain": "AWS AppSync",
+    "scenario": "AppSync GraphQL API uses IAM authorization but resolver logic does not validate whether the calling role has ownership over queried data objects.",
+    "prompt": "Evaluate how IAM authorization at the API layer fails to enforce data-level ownership when resolver logic is absent.",
+    "reasoning_focus": "API-layer vs data-layer authorization gap.",
+    "expected_answer": "IAM authorization in AppSync validates that the calling principal has permission to invoke the GraphQL API (appsync:GraphQL action) but does not inherently enforce data-level access controls. Without resolver-level ownership validation, any authenticated IAM principal can query or mutate any data object accessible through the API schema. The gap manifests as: (1) User A can query User B's private data by specifying User B's ID in the query arguments, (2) a user can modify records they don't own through mutation operations, (3) list operations return all records regardless of ownership, creating a data enumeration vulnerability. The IAM policy controls API-level access (which GraphQL operations can be invoked) but not data-level access (which specific records can be accessed). This is an IDOR (Insecure Direct Object Reference) vulnerability at the GraphQL layer. The resolver must implement ownership checks\u2014typically by comparing the caller's identity (from $ctx.identity) against the data object's owner field. Mitigation requires implementing VTL or JavaScript resolver logic that filters data based on caller identity, using DynamoDB fine-grained access control with leading keys, or implementing pipeline resolvers with authorization functions.",
+    "evaluation_criteria": "Must identify this as an IDOR vulnerability at the GraphQL layer and explain the gap between API-level authorization (who can call the API) and data-level authorization (who can access which records)."
+  },
+  {
+    "id": "T4-078",
+    "complexity": "L4",
+    "cloud_domain": "Azure DevOps",
+    "scenario": "Azure DevOps service connection uses a subscription-level service principal stored as a secret, shared across multiple pipelines in different projects.",
+    "prompt": "Model how a compromised pipeline in one project can pivot to production resources in another project using the shared service principal.",
+    "reasoning_focus": "Cross-project service connection trust chain.",
+    "expected_answer": "The shared service connection creates a lateral movement path between Azure DevOps projects through the common service principal. The attack model: (1) attacker compromises a pipeline in Project A (through malicious PR, dependency poisoning, or pipeline injection), (2) the compromised pipeline has access to the shared service connection which injects the service principal's credentials into the pipeline environment, (3) the attacker extracts the service principal credentials (client ID, client secret, tenant ID) from environment variables or Azure CLI configuration, (4) using the extracted credentials, the attacker authenticates as the service principal outside the pipeline context, gaining subscription-level access, (5) the attacker accesses production resources deployed by Project B's pipeline using the same service principal. Since the service principal has subscription-level Contributor (or similar) role, the attacker can modify any resource in the subscription. The cross-project pivot is possible because the service connection is shared, breaking project-level isolation. Mitigation requires dedicated service principals per project with minimum required permissions, using managed identity-based service connections, implementing pipeline approval gates for production deployments, and restricting service connection usage to specific pipeline definitions.",
+    "evaluation_criteria": "Must trace the complete chain from pipeline compromise in one project to production resource access in another project, and identify that extracting the service principal credentials enables out-of-pipeline access."
+  },
+  {
+    "id": "T4-079",
+    "complexity": "L4",
+    "cloud_domain": "AWS STS + OIDC",
+    "scenario": "An OIDC provider in AWS is configured with a wildcard in the sub claim condition, allowing any token issued by the IdP to assume a privileged role.",
+    "prompt": "Model how a wildcard OIDC claim condition enables cross-workload role assumption beyond the intended audience.",
+    "reasoning_focus": "OIDC claim condition wildcard trust expansion.",
+    "expected_answer": "OIDC federation with AWS STS relies on the trust policy's Condition block to restrict which OIDC tokens can assume the role. A wildcard in the sub claim condition (e.g., 'StringLike': {'token.actions.githubusercontent.com:sub': '*'}) means any token from the IdP\u2014regardless of the originating repository, workflow, branch, or environment\u2014can assume the privileged role. In the GitHub Actions context, this means: (1) any public repository using the same OIDC provider can assume the role, (2) any branch or PR (including forks) in any repository can obtain production AWS credentials, (3) the attacker creates a GitHub Actions workflow in their own repository, requests an OIDC token, and calls AssumeRoleWithWebIdentity to get AWS credentials. The wildcard effectively makes the role assumable by anyone who can create a GitHub Actions workflow, which is any GitHub user. Even for private IdPs, a wildcard sub claim means any authenticated user or service in the IdP can assume the role. Mitigation requires specific sub claim conditions (e.g., 'repo:org/repo:ref:refs/heads/main'), adding audience (aud) conditions, and implementing additional claim-based restrictions.",
+    "evaluation_criteria": "Must explain that a wildcard sub claim with GitHub Actions OIDC allows any GitHub user to assume the role from any repository, and identify the specific claim condition format needed for proper scoping."
+  },
+  {
+    "id": "T4-080",
+    "complexity": "L4",
+    "cloud_domain": "Multi-Cloud DNS",
+    "scenario": "DNS records for internal services are hosted in a public DNS zone with no split-horizon configuration, exposing internal topology to external enumeration.",
+    "prompt": "Assess how public DNS exposure of internal service records enables topology mapping and targeted trust chain attacks.",
+    "reasoning_focus": "DNS zone trust boundary and internal topology exposure.",
+    "expected_answer": "Public DNS exposure of internal service records provides attackers with a complete infrastructure topology map without requiring any authenticated access. The enumeration reveals: (1) internal service names and their IP addresses, exposing the network architecture (db-primary.internal.company.com, kafka-broker-1.internal.company.com), (2) service naming conventions that reveal technology stack and architecture decisions, (3) internal load balancer endpoints, API gateway addresses, and inter-service communication patterns, (4) the existence and location of sensitive services (vault.internal, secrets-manager.internal, admin-panel.internal). This intelligence enables targeted attacks: DNS records pointing to private IPs can be used for DNS rebinding attacks, exposed service names inform targeted phishing and social engineering, and the topology map guides lateral movement planning after initial access. If internal services use DNS-based service discovery and trust any connection from a known internal hostname, the attacker can set up matching DNS records to intercept traffic or spoof trusted services. Mitigation requires implementing split-horizon DNS (separate internal/external zones), using private DNS zones (Route 53 Private Hosted Zones, Cloud DNS private zones), and auditing public DNS records for internal service exposure.",
+    "evaluation_criteria": "Must identify specific attack techniques enabled by DNS topology exposure including DNS rebinding and service spoofing, and explain how internal service naming conventions reveal technology stack and architecture."
+  },
+  {
+    "id": "T4-081",
+    "complexity": "L5",
+    "cloud_domain": "AWS Org",
+    "scenario": "Organization SCP does not restrict privileged role assumption.",
+    "prompt": "Assess systemic governance failure impact.",
+    "reasoning_focus": "Org-level policy modeling.",
+    "expected_answer": "An AWS Organization without SCP restrictions on privileged role assumption has no centralized guardrails preventing member account administrators from escalating to any IAM role, including cross-account roles and AWS service-linked roles. The systemic impact: (1) any member account admin can create IAM roles with AdministratorAccess and assume them without organizational oversight, (2) cross-account role assumption is uncontrolled\u2014compromised principals in one account can chain into other accounts if trust policies exist, (3) there is no prevention against disabling CloudTrail, deleting security configurations, or modifying VPC flow logs, (4) the management account cannot enforce a minimum security baseline across the organization. This governance failure means the organization's security posture is determined by the weakest member account's IAM hygiene. Without SCPs restricting iam:CreateRole, iam:AttachRolePolicy, sts:AssumeRole on critical roles, and preventing security service disruption, each account operates independently with no central control. The remediation requires implementing a comprehensive SCP strategy including deny-list SCPs for dangerous actions, restricting role assumption to approved cross-account patterns, and protecting security services (CloudTrail, GuardDuty, Config) from local account admin modification.",
+    "evaluation_criteria": "Must explain that without SCPs the organization's security posture defaults to the weakest member account, and identify specific dangerous IAM actions that should be restricted at the SCP level."
+  },
+  {
+    "id": "T4-082",
+    "complexity": "L5",
+    "cloud_domain": "Serverless Architecture",
+    "scenario": "Event-driven pipeline allows unverified events to trigger payment processing.",
+    "prompt": "Model financial abuse risk.",
+    "reasoning_focus": "Event trust boundary failure.",
+    "expected_answer": "An event-driven payment processing pipeline without event source verification creates a direct path to financial fraud. The systemic risk model: (1) an attacker can inject fabricated payment success events into the pipeline, causing the system to fulfill orders, credit accounts, or release funds without actual payment, (2) event replay attacks can duplicate legitimate payment events to trigger multiple fulfillments for a single payment, (3) event modification in transit can alter payment amounts, recipient accounts, or transaction metadata, (4) the lack of idempotency in payment processing means replayed events create duplicate financial transactions. In a serverless context, the event sources (SQS, SNS, EventBridge, API Gateway) each have different trust models, and failure to validate event authenticity at the payment processor means any source that can publish to the event bus can trigger financial operations. The financial blast radius includes: direct monetary loss from fraudulent fulfillments, compliance violations (PCI DSS requirement for authenticated payment channels), and reputational damage. Mitigation requires implementing cryptographic event signing at the source, idempotency keys for all payment operations, event source validation in the processor, transaction amount limits, velocity checks, and human approval workflows for high-value transactions.",
+    "evaluation_criteria": "Must identify event injection, replay, and modification as distinct financial fraud vectors, and explain the importance of idempotency keys and cryptographic event signing as specific countermeasures."
+  },
+  {
+    "id": "T4-083",
+    "complexity": "L5",
+    "cloud_domain": "Kubernetes Platform",
+    "scenario": "Cluster-wide admin role bound to default service account.",
+    "prompt": "Evaluate systemic compromise risk.",
+    "reasoning_focus": "Default trust misconfiguration.",
+    "expected_answer": "Binding cluster-admin to the default service account in any namespace means every pod in that namespace automatically receives cluster-admin privileges unless explicitly overridden with a different service account. The systemic compromise risk: (1) any container vulnerability in any pod in that namespace immediately escalates to cluster-admin\u2014the attacker can read all secrets, modify all deployments, create privileged pods, and access every namespace, (2) the default service account token is automatically mounted into every pod unless automountServiceAccountToken is explicitly set to false, (3) third-party workloads, sidecars, and init containers all inherit cluster-admin through the default service account, (4) a single compromised pod provides complete cluster control: modifying RBAC to create persistent backdoor accounts, deploying cryptominers across all nodes, exfiltrating all secrets, and pivoting to cloud IAM via node service accounts. If this binding exists in the kube-system namespace, infrastructure components like CoreDNS and kube-proxy also have cluster-admin, meaning a vulnerability in any infrastructure pod cascades to full cluster compromise. Remediation requires immediately removing the ClusterRoleBinding, creating dedicated service accounts per workload with least-privilege RBAC, and auditing all namespaces for similar default service account bindings.",
+    "evaluation_criteria": "Must explain that every pod in the namespace inherits cluster-admin through automatic token mounting and identify that third-party workloads and sidecars also inherit these permissions without explicit configuration."
+  },
+  {
+    "id": "T4-084",
+    "complexity": "L5",
+    "cloud_domain": "GCP Org",
+    "scenario": "Service account keys reused across multiple projects.",
+    "prompt": "Assess organization-wide blast radius.",
+    "reasoning_focus": "Key lifecycle governance.",
+    "expected_answer": "Service account keys reused across multiple GCP projects create a single credential that, when compromised, provides simultaneous access to every project where the service account has role bindings. The organization-wide blast radius: (1) the effective permission scope is the union of all IAM bindings across all projects\u2014if the account has Viewer in project A, Editor in project B, and Owner in project C, all three access levels are immediately available, (2) key rotation requires coordinated changes across all projects and all systems that use the key, creating operational fragility that discourages rotation, (3) the key's exposure surface is the widest deployment\u2014if one project stores it in a less-secure manner, the entire cross-project access is at risk, (4) compromise detection is difficult because the same key appears in audit logs across projects, making it hard to distinguish legitimate cross-project access from malicious use. The governance failure is that project-level isolation is completely bypassed by the shared credential, and the organization's data classification boundaries are invalidated. Remediation requires creating unique service accounts per project, eliminating long-lived keys in favor of Workload Identity Federation, implementing key rotation policies with organization policy constraints, and auditing all service account key usage via organization-level IAM recommendations.",
+    "evaluation_criteria": "Must explain that shared keys invalidate project-level isolation boundaries and that the security of all projects is reduced to the weakest key storage practices across any project."
+  },
+  {
+    "id": "T4-085",
+    "complexity": "L5",
+    "cloud_domain": "Identity Provider",
+    "scenario": "A centralized SSO identity provider serves authentication for all cloud environments. The IdP admin role is held by a single shared account with no MFA and no break-glass audit trail.",
+    "prompt": "Model the systemic blast radius of a centralized identity service compromise across all dependent cloud tenants and accounts.",
+    "reasoning_focus": "Identity plane single point of failure and total org trust collapse.",
+    "expected_answer": "Compromising the centralized IdP admin account grants the attacker the ability to control authentication for the entire organization across all cloud environments. The systemic blast radius: (1) the attacker can create new federated identities or modify existing ones, generating valid SAML/OIDC tokens that are trusted by AWS, Azure, and GCP simultaneously, (2) they can modify federation trust configurations to add their own signing certificates, enabling persistent access that survives credential rotation in any individual cloud, (3) they can disable MFA requirements for all users, remove conditional access policies, and weaken authentication controls organization-wide, (4) they can impersonate any user including cloud administrators, security teams, and executives across all environments, (5) the lack of MFA on the admin account means compromise via password theft, phishing, or credential stuffing is trivially achievable. The absence of break-glass audit trails means the attacker's modifications to the IdP may not be detectable. Recovery requires rebuilding the entire identity trust chain across all cloud providers\u2014a process that can take weeks and requires coordinated response across all dependent systems. Mitigation requires immediate MFA enforcement on all admin accounts, dedicated break-glass accounts with hardware security keys, comprehensive IdP audit logging to an immutable external SIEM, and federation certificate rotation procedures.",
+    "evaluation_criteria": "Must model the cascading trust collapse across all dependent cloud environments and explain that IdP compromise enables persistent access that survives individual cloud credential rotation."
+  },
+  {
+    "id": "T4-086",
+    "complexity": "L5",
+    "cloud_domain": "AWS Multi-Account Secrets",
+    "scenario": "A Secrets Manager secret is replicated from a primary account to 12 child accounts via cross-account resource policies. The primary secret has no rotation policy.",
+    "prompt": "Evaluate the systemic risk when a static secret with no rotation is the trust anchor for an entire multi-account secret replication topology.",
+    "reasoning_focus": "Secret replication breadth combined with static credential lifecycle risk.",
+    "expected_answer": "A static, non-rotating secret replicated to 12 accounts creates a persistent vulnerability that compounds over time. The systemic risk: (1) the secret's exposure probability increases linearly with each additional account\u201412 accounts mean 12x the access surface through IAM policies, application code, logs, and backup systems, (2) without rotation, a compromised secret remains valid indefinitely, giving the attacker persistent access across all 12 accounts until the breach is detected, (3) the cross-account resource policies create a dependency chain where the primary account's secret management hygiene determines the security of all child accounts, (4) if any of the 12 accounts is compromised and the secret is extracted, the attacker gains access to whatever service the secret authenticates to across all accounts simultaneously, (5) implementing rotation retroactively requires coordinating secret updates across 12 accounts and all consuming applications simultaneously to avoid service disruption. The static nature means there is no cryptographic freshness\u2014the same credential value has been in use since creation, potentially appearing in old backups, terminated employee access, and historical logs. Remediation requires implementing automated rotation with Secrets Manager rotation Lambdas, reducing replication to only accounts that genuinely need the secret, and implementing secret access monitoring across all consuming accounts.",
+    "evaluation_criteria": "Must explain how replication breadth multiplies exposure probability and how the absence of rotation creates indefinite validity for compromised credentials across all accounts."
+  },
+  {
+    "id": "T4-087",
+    "complexity": "L5",
+    "cloud_domain": "Infrastructure-as-Code",
+    "scenario": "Terraform modules deployed across environments use a shared module registry that was compromised at version v2.1.0, introducing a backdoor role binding that has drifted into 40+ production deployments.",
+    "prompt": "Model how IaC supply chain compromise with configuration drift creates a systemic persistent access condition across the entire infrastructure estate.",
+    "reasoning_focus": "IaC supply chain drift as systemic persistent compromise vector.",
+    "expected_answer": "The IaC supply chain compromise creates a uniquely persistent threat because the backdoor is embedded in the infrastructure's declared state, making it self-healing against manual remediation. The systemic impact: (1) the compromised module at v2.1.0 introduced a role binding (e.g., an IAM role trust policy or K8s ClusterRoleBinding) that grants the attacker persistent access, (2) as teams deployed using this module version, the backdoor propagated to 40+ production environments automatically through normal CI/CD pipelines, (3) terraform plan/apply operations treat the backdoor as legitimate desired state\u2014if someone manually removes the backdoor, the next terraform apply reintroduces it, (4) the backdoor persists across module version upgrades if the new version doesn't explicitly remove the injected resource, (5) configuration drift between the module and actual state may mask the backdoor's presence in terraform plan output. Detection requires: diffing module source code between known-good and compromised versions, auditing all deployments using v2.1.0+, and implementing module provenance verification. Remediation requires patching the module, running terraform apply across all 40+ deployments, verifying actual state matches desired state, and implementing Terraform module signing and provenance attestation.",
+    "evaluation_criteria": "Must explain that the backdoor is self-healing because terraform apply reinstates it as desired state, and identify that remediation requires coordinated terraform apply across all affected deployments."
+  },
+  {
+    "id": "T4-088",
+    "complexity": "L5",
+    "cloud_domain": "Multi-Tenant SaaS",
+    "scenario": "A SaaS platform runs all tenant workloads in a single Kubernetes cluster with namespace-based isolation. A cluster-level RBAC misconfiguration allows any tenant's service account to read secrets from all namespaces.",
+    "prompt": "Evaluate the systemic tenant isolation failure and assess how cross-namespace secret access undermines the entire multi-tenant trust model.",
+    "reasoning_focus": "Cluster-wide RBAC failure as complete multi-tenant isolation collapse.",
+    "expected_answer": "The cluster-wide RBAC misconfiguration represents a complete collapse of the multi-tenant isolation model, as every tenant can access every other tenant's secrets. The systemic impact: (1) any tenant's workload can enumerate and read secrets from all other tenants' namespaces, exposing database credentials, API keys, encryption keys, and session tokens, (2) a single malicious or compromised tenant can exfiltrate all other tenants' credentials simultaneously, gaining access to their databases, external services, and downstream systems, (3) the trust model failure affects all tenants equally\u2014there is no partial containment, (4) tenant data sovereignty requirements (GDPR, SOC 2, HIPAA) are violated because tenant A's credentials are accessible to tenant B, (5) the blast radius of a single pod compromise in any tenant's namespace extends to credential access for all tenants. Since Kubernetes secrets are base64-encoded (not encrypted at rest by default), the extracted values are immediately usable. Recovery requires: rotating all secrets across all tenants, notifying all tenants of the exposure, implementing proper namespace-scoped RBAC, enabling encryption at rest for etcd, and considering per-tenant cluster isolation for high-security workloads.",
+    "evaluation_criteria": "Must explain that the RBAC failure provides no partial containment\u2014all tenants are equally exposed\u2014and identify compliance implications (GDPR, SOC 2) of cross-tenant credential access."
+  },
+  {
+    "id": "T4-089",
+    "complexity": "L5",
+    "cloud_domain": "Global Load Balancer",
+    "scenario": "A global load balancer routes traffic to regional backends based on geolocation. The backend health check endpoint exposes internal service metadata and the load balancer does not require authentication for health probe origins.",
+    "prompt": "Model how unauthenticated access to health check endpoints across all global regions can be used to enumerate infrastructure topology and inform targeted attacks.",
+    "reasoning_focus": "Global infrastructure enumeration via health check endpoint abuse.",
+    "expected_answer": "Unauthenticated health check endpoints across global regions provide an attacker with a comprehensive infrastructure inventory without requiring any credentials. The enumeration model: (1) querying health endpoints in each region reveals backend service names, versions, instance counts, and availability status, (2) the metadata exposed may include internal hostnames, IP addresses, database connection status, cache cluster topology, and dependency health, (3) by systematically probing all regional endpoints, the attacker builds a complete global infrastructure map showing which services run where, their redundancy levels, and their dependency chains, (4) version information enables targeted CVE exploitation against specific service versions in specific regions, (5) health status monitoring over time reveals deployment patterns, maintenance windows, and failover behaviors. This intelligence enables targeted attacks: identifying single points of failure for DDoS targeting, finding regions with older software versions for exploit deployment, and timing attacks during maintenance windows when monitoring may be reduced. The load balancer's lack of health probe authentication means anyone can probe these endpoints at scale. Mitigation requires restricting health check endpoints to load balancer source IPs, returning minimal status information (healthy/unhealthy only), implementing health check authentication tokens, and separating detailed health metrics from basic availability probes.",
+    "evaluation_criteria": "Must explain how systematic probing across all regions builds a complete infrastructure map and identify specific tactical advantages like version-targeted CVE exploitation and maintenance window timing."
+  },
+  {
+    "id": "T4-090",
+    "complexity": "L5",
+    "cloud_domain": "Federated Identity",
+    "scenario": "A federated identity chain spans on-premises AD, Azure AD, and AWS IAM. The on-premises AD trust anchor has no MFA requirement and issues SAML assertions accepted by all downstream cloud identity providers without re-authentication.",
+    "prompt": "Model the end-to-end trust chain collapse when the on-premises AD root is compromised, assessing blast radius across the entire federated identity plane.",
+    "reasoning_focus": "Federated identity trust chain root compromise and multi-cloud blast radius.",
+    "expected_answer": "Compromising the on-premises AD root\u2014the trust anchor for the entire federated identity chain\u2014provides the attacker with the ability to generate valid authentication assertions accepted by every downstream system. The end-to-end blast radius: (1) the attacker can forge SAML assertions (Golden SAML attack) for any user, including cloud administrators, by extracting the AD FS token-signing certificate, (2) these forged assertions are accepted by Azure AD without re-authentication, granting access to all Azure subscriptions, Microsoft 365, and Azure AD-integrated applications, (3) if Azure AD is configured as an OIDC/SAML provider for AWS, the forged identities chain into AWS roles, granting access to all AWS accounts and resources, (4) no MFA requirement means the attacker needs only the signing certificate\u2014no user interaction, no second factor, no risk of detection through MFA prompts, (5) the attack persists until the token-signing certificate is rotated across the entire chain, which requires coordinated updates to AD FS, Azure AD, and all AWS IAM OIDC/SAML provider configurations. Recovery is extraordinarily complex: the signing certificate must be rotated, all active sessions invalidated, all federated trust relationships re-established, and forensic analysis performed across three identity planes simultaneously. This represents the maximum-impact identity compromise scenario.",
+    "evaluation_criteria": "Must reference Golden SAML attack specifically, explain how forged assertions chain through Azure AD to AWS, and identify certificate rotation across the entire federation chain as the critical recovery step."
+  },
+  {
+    "id": "T4-091",
+    "complexity": "L5",
+    "cloud_domain": "Service Mesh",
+    "scenario": "Istio service mesh is deployed with permissive mTLS mode (PERMISSIVE) across all namespaces. Services accepting plaintext do not validate the source service identity.",
+    "prompt": "Evaluate how permissive mTLS mode undermines zero-trust network architecture and enables unauthorized lateral movement between mesh-enrolled services.",
+    "reasoning_focus": "Service mesh mTLS mode as systemic east-west trust failure.",
+    "expected_answer": "Istio's PERMISSIVE mTLS mode accepts both mTLS-authenticated and plaintext connections, effectively creating a zero-trust architecture that trusts everything. The systemic failure: (1) any pod that can reach a service's port can send plaintext requests that are accepted without identity verification\u2014the service mesh's identity-based authorization is completely bypassed, (2) an attacker who gains network access (through pod compromise, container escape, or network policy gaps) can communicate with any mesh-enrolled service without presenting a valid SPIFFE identity, (3) Istio authorization policies that reference source principals (e.g., 'principals: [cluster.local/ns/payment/sa/api]') do not block plaintext connections because the source identity is simply absent rather than denied, (4) traffic between services is susceptible to interception, modification, and injection since plaintext connections have no encryption or integrity protection, (5) the service mesh's audit trail for plaintext connections lacks source identity information, making attack attribution impossible. The fundamental failure is that PERMISSIVE mode was designed as a migration aid but deployed as a permanent configuration. Remediation requires enabling STRICT mTLS mode, implementing PeerAuthentication policies at the mesh level, and auditing all services for plaintext connection acceptance.",
+    "evaluation_criteria": "Must explain that permissive mode bypasses identity-based authorization policies and that plaintext connections lack source identity, making audit trail attribution impossible."
+  },
+  {
+    "id": "T4-092",
+    "complexity": "L5",
+    "cloud_domain": "AWS CloudTrail",
+    "scenario": "An adversary with sufficient IAM permissions disables CloudTrail logging in the management account, stops log file validation, and deletes the CloudWatch log group used for real-time alerting.",
+    "prompt": "Assess the systemic detection and response capability failure caused by logging suppression across the organization and model what actions become undetectable in this state.",
+    "reasoning_focus": "Logging suppression as systemic detection plane neutralization.",
+    "expected_answer": "Disabling CloudTrail in the management account, combined with log validation removal and CloudWatch log group deletion, creates a comprehensive detection blind spot across the entire organization. Actions that become undetectable: (1) all IAM operations\u2014role creation, policy modifications, user creation\u2014across all accounts proceed without audit records, (2) data access operations\u2014S3 GetObject, DynamoDB GetItem, Secrets Manager GetSecretValue\u2014leave no trail, (3) infrastructure modifications\u2014security group changes, VPC modifications, instance launches\u2014are invisible, (4) cross-account role assumptions that would normally trigger GuardDuty findings are not logged. The cascading impact: GuardDuty loses its primary data source and can only detect findings from VPC Flow Logs and DNS logs, AWS Security Hub receives no new CloudTrail-based findings, SIEM integrations receive no events, and automated response playbooks that trigger on CloudTrail events cease functioning. The organization is effectively operating blind. The adversary's pre-suppression actions (the StopLogging and DeleteLogGroup API calls themselves) are the last recorded events\u2014forensic investigation can only determine when logging was disabled, not what happened afterward. Mitigation requires SCPs preventing CloudTrail modification, organization trail with S3 Object Lock, secondary logging to an immutable destination, and canary-based detection that alerts when expected log events stop arriving.",
+    "evaluation_criteria": "Must identify specific categories of actions that become undetectable and explain the cascading impact on downstream security services including GuardDuty, Security Hub, and SIEM integrations."
+  },
+  {
+    "id": "T4-093",
+    "complexity": "L5",
+    "cloud_domain": "AWS IAM Permission Boundaries",
+    "scenario": "Permission boundaries are set on all developer IAM roles but the boundary policy itself can be replaced by any principal with iam:PutRolePermissionsBoundary and no condition restricts what boundary policy can be applied.",
+    "prompt": "Model how the ability to replace permission boundaries with a permissive policy negates the entire boundary-based privilege containment design.",
+    "reasoning_focus": "Permission boundary replacement as governance control bypass.",
+    "expected_answer": "Permission boundaries are designed as an immutable ceiling on a principal's effective permissions\u2014but if the boundary itself can be replaced, the ceiling is removable, negating the entire containment design. The bypass model: (1) an attacker with iam:PutRolePermissionsBoundary creates a maximally permissive boundary policy (Effect: Allow, Action: *, Resource: *), (2) applies this permissive boundary to their own role, replacing the restrictive boundary, (3) their effective permissions are now the intersection of their identity policy and the permissive boundary\u2014effectively just their identity policy with no boundary restriction, (4) if the attacker also has iam:AttachRolePolicy or iam:CreatePolicyVersion, they can expand their identity policy to full admin access. The systemic failure is that permission boundaries are only effective when they cannot be self-modified. Without conditions restricting which boundary policies can be applied (via iam:PermissionsBoundary condition key), the entire boundary-based governance model is a false security control. Every developer role protected by boundaries is actually unbounded. Mitigation requires SCPs that deny iam:PutRolePermissionsBoundary except for specific administrative roles, IAM policy conditions restricting the boundary ARN to approved policies, and monitoring CloudTrail for PutRolePermissionsBoundary events.",
+    "evaluation_criteria": "Must explain that self-modifiable permission boundaries negate the entire containment design and identify SCPs as the appropriate control to prevent boundary replacement at the organization level."
+  },
+  {
+    "id": "T4-094",
+    "complexity": "L5",
+    "cloud_domain": "GCP Org + Billing",
+    "scenario": "GCP organization admin account is compromised. The attacker has roles/billing.admin and roles/resourcemanager.organizationAdmin, enabling them to create new projects, assign billing accounts, and deploy workloads at scale.",
+    "prompt": "Model the full org-level blast radius when both the resource management plane and billing plane are under adversary control simultaneously.",
+    "reasoning_focus": "Dual control plane compromise enabling infrastructure-scale adversary operations.",
+    "expected_answer": "Simultaneous control of the resource management and billing planes gives the adversary complete organizational control with unlimited resource provisioning capability. The full blast radius: (1) Resource plane impact\u2014the attacker can create unlimited new projects under the organization, modify IAM policies on all existing projects, create service accounts with Owner role, access all data stores, modify VPC configurations, and disable audit logging across all projects, (2) Billing plane impact\u2014the attacker can link billing accounts to new projects, enabling compute resource provisioning at the organization's expense (cryptomining at enterprise scale), modify billing alerts to prevent cost anomaly detection, and export billing data revealing the organization's entire cloud spend and resource inventory, (3) Combined impact\u2014the attacker can create shadow projects for persistent access, deploy command-and-control infrastructure billed to the victim, establish data exfiltration pipelines through new projects, and systematically compromise all existing projects through organizational IAM manipulation. The billing admin role also provides visibility into all project resource consumption, enabling the attacker to identify high-value targets by spend. Recovery requires: freezing the billing account, auditing all projects for unauthorized resources and IAM bindings, rotating all service account keys, and rebuilding organizational IAM from a known-good state.",
+    "evaluation_criteria": "Must model both resource and billing plane impacts separately and explain how their combination enables infrastructure-scale adversary operations including cryptomining at the victim's expense and shadow project persistence."
+  },
+  {
+    "id": "T4-095",
+    "complexity": "L5",
+    "cloud_domain": "AWS Control Tower",
+    "scenario": "AWS Control Tower account factory uses a shared provisioning role that can create accounts and apply baseline CloudFormation StackSets. The role is accessible to any user in the master account with basic IAM access.",
+    "prompt": "Evaluate how broad access to an account provisioning role enables an adversary to scale their presence across the entire AWS organization by creating new accounts outside normal governance controls.",
+    "reasoning_focus": "Account factory abuse as organization-scale persistence vector.",
+    "expected_answer": "Broad access to the Control Tower account factory provisioning role enables an adversary to create new AWS accounts that serve as persistent, governance-evading footholds. The attack model: (1) the adversary uses the provisioning role to create new member accounts\u2014these accounts are fully functional AWS environments with their own IAM, networking, and service access, (2) the adversary applies customized StackSets to the new accounts, deploying infrastructure with backdoor IAM roles, VPN tunnels to external networks, and data exfiltration pipelines, (3) newly created accounts inherit the organization's billing but may not immediately inherit all SCPs if the account is placed in an OU without comprehensive guardrails, (4) the adversary can create multiple accounts rapidly, establishing parallel persistence paths that survive remediation of any single account, (5) the created accounts can assume cross-account roles in existing accounts if the trust policies use PrincipalOrgID conditions. Detection is challenging because account creation is a normal Control Tower operation. The adversary achieves scale by automating account creation and baseline deployment, potentially creating dozens of persistent footholds before detection. Mitigation requires restricting account factory access to specific approved principals, implementing approval workflows for account creation, monitoring for unexpected account provisioning events, and ensuring all OUs have comprehensive SCPs applied before accounts are placed in them.",
+    "evaluation_criteria": "Must explain how newly created accounts can evade existing SCPs through OU placement and how the adversary uses automated account creation to establish parallel persistence paths at organizational scale."
+  },
+  {
+    "id": "T4-096",
+    "complexity": "L5",
+    "cloud_domain": "Multi-Cloud Data Pipeline",
+    "scenario": "A cross-cloud data pipeline moves data from GCP BigQuery to AWS S3 using a service account key stored in AWS Secrets Manager. Both platforms share an IP allowlist for the pipeline host, but the host itself has outbound internet access.",
+    "prompt": "Model the systemic data exfiltration risk when a cross-cloud pipeline host with unrestricted outbound access holds credentials for both cloud platforms.",
+    "reasoning_focus": "Cross-cloud pipeline host as dual-credential exfiltration bridge.",
+    "expected_answer": "The cross-cloud pipeline host is a critical trust junction that holds credentials for both GCP and AWS, making it the highest-value target in the infrastructure. The systemic data exfiltration model: (1) the host holds a GCP service account key (for BigQuery read access) and can retrieve AWS credentials from the instance profile or Secrets Manager\u2014compromising the host grants simultaneous access to both clouds, (2) the unrestricted outbound internet access means the attacker can exfiltrate data from either cloud to any external destination without network-level controls blocking the transfer, (3) the IP allowlist designed to restrict pipeline access actually identifies the host as a trusted source\u2014the attacker's operations from the host inherit this trusted status in both clouds, (4) the pipeline's normal data flow (BigQuery \u2192 host \u2192 S3) already involves large data transfers, so exfiltration traffic blends with legitimate pipeline traffic, making detection through volume-based anomaly detection difficult, (5) the GCP service account key stored in AWS Secrets Manager means AWS compromise leads to GCP compromise through credential retrieval. The attacker can modify the pipeline to redirect data to external destinations while maintaining normal pipeline operation to avoid detection. Mitigation requires implementing egress filtering restricting outbound traffic to known cloud API endpoints, using Workload Identity Federation instead of service account keys, implementing data loss prevention (DLP) controls on both cloud platforms, and monitoring pipeline data volumes and destination changes.",
+    "evaluation_criteria": "Must explain how the pipeline host's dual-credential position creates a single point of compromise for both clouds and how exfiltration traffic blends with legitimate pipeline data transfers to evade detection."
+  },
+  {
+    "id": "T4-097",
+    "complexity": "L5",
+    "cloud_domain": "Kubernetes Admission Control",
+    "scenario": "Kubernetes admission webhook is deployed without failure-closed policy (failurePolicy: Ignore). The webhook server experiences downtime, causing all admission decisions to be bypassed and all pod creation requests to succeed without policy evaluation.",
+    "prompt": "Assess the systemic policy enforcement failure when admission control is bypassed organization-wide due to webhook availability dependency.",
+    "reasoning_focus": "Admission webhook availability as systemic policy enforcement dependency.",
+    "expected_answer": "The failurePolicy: Ignore configuration creates a catastrophic fail-open condition where webhook downtime disables all security policy enforcement for pod admissions. The systemic impact: (1) all pod security policies enforced by the webhook are bypassed\u2014privileged containers, host network access, host PID namespace, and root execution are all permitted, (2) image policy enforcement (requiring signed images, restricting registries) is disabled, allowing deployment of any container image including known-vulnerable or malicious images, (3) resource limit enforcement is bypassed, enabling resource exhaustion attacks, (4) namespace isolation policies enforced through admission control are negated, (5) compliance controls (pod security standards, OPA/Gatekeeper policies) are completely non-functional. An attacker who can intentionally cause webhook downtime (DDoS the webhook service, delete its deployment) can deliberately trigger the fail-open condition to deploy unrestricted workloads. The fail-open window may persist undetected if monitoring does not alert on webhook availability. During this window, any deployed workload operates without policy constraints, and those workloads persist even after the webhook recovers. Mitigation requires setting failurePolicy: Fail, deploying webhook servers with high availability (multiple replicas, PDB), implementing monitoring for webhook response latency and error rates, and running periodic compliance scans to detect policy-violating workloads deployed during potential fail-open windows.",
+    "evaluation_criteria": "Must explain the fail-open behavior where webhook downtime disables all policy enforcement and identify that an attacker can intentionally cause webhook downtime to trigger the bypass condition."
+  },
+  {
+    "id": "T4-098",
+    "complexity": "L5",
+    "cloud_domain": "AWS IAM + STS",
+    "scenario": "An adversary has compromised a long-lived IAM access key for a principal with sts:AssumeRole into all roles in the organization and iam:UpdateAssumeRolePolicy. They begin rotating role trust policies to preserve access.",
+    "prompt": "Model the systemic persistence strategy available when an adversary controls both role assumption and trust policy modification across an entire AWS organization.",
+    "reasoning_focus": "Trust policy modification as durable org-wide persistence mechanism.",
+    "expected_answer": "The combination of universal sts:AssumeRole and iam:UpdateAssumeRolePolicy creates the most durable persistence mechanism in AWS\u2014the adversary can maintain access even through complete credential rotation. The persistence strategy: (1) the adversary assumes each role in the organization, modifying its trust policy to add an additional trusted principal they control (e.g., an IAM user in an external account), (2) they create new IAM roles in multiple accounts with trust policies pointing to their external account, creating redundant access paths, (3) even if the original compromised access key is revoked, the modified trust policies persist\u2014the adversary accesses the organization through any of the modified roles from their external account, (4) the adversary can modify trust policies to use broad conditions (aws:PrincipalOrgID) that survive individual role remediation, (5) the number of modified trust policies across all accounts (potentially hundreds of roles) makes complete remediation extremely difficult\u2014missing even one modified trust policy leaves a persistent backdoor. Detection requires auditing every trust policy in every account for unauthorized principal additions\u2014a process complicated by the volume of roles in a typical organization. Remediation requires: revoking the compromised key, auditing all trust policies across all accounts, removing unauthorized trust relationships, implementing SCPs restricting iam:UpdateAssumeRolePolicy, and monitoring for trust policy modifications via CloudTrail.",
+    "evaluation_criteria": "Must explain that modified trust policies persist beyond credential rotation and model the scale challenge of auditing every trust policy across every account in the organization."
+  },
+  {
+    "id": "T4-099",
+    "complexity": "L5",
+    "cloud_domain": "Azure Tenant",
+    "scenario": "Azure Global Administrator credentials are compromised. The attacker elevates access to all subscriptions via 'elevateAccess' API, then assigns themselves Owner on every subscription silently.",
+    "prompt": "Evaluate the complete Azure tenant control plane compromise: assess what resources, identities, and data become accessible and what permanent backdoors can be established.",
+    "reasoning_focus": "Tenant-level privilege escalation and persistent control plane ownership.",
+    "expected_answer": "Azure Global Administrator compromise with elevateAccess represents total tenant control plane compromise. The attacker's capabilities: (1) Identity plane\u2014full Azure AD control including creating new Global Admins, modifying all user accounts, resetting passwords, disabling MFA, creating application registrations with high-privilege API permissions, and modifying conditional access policies to exempt their access, (2) Resource plane\u2014Owner on all subscriptions grants complete control over every Azure resource: VMs, databases, storage accounts, Key Vaults, network configurations, and managed identities, (3) Data plane\u2014access to all data through storage account keys, database admin credentials, and Key Vault secrets, (4) Persistent backdoors\u2014creating new service principals with certificate-based authentication, adding federation trust configurations to external IdPs, creating additional Global Admin accounts with different authentication methods, modifying B2B settings to invite external accounts with permanent access, and establishing Azure Lighthouse delegations that survive even Global Admin credential rotation. The elevateAccess API grants User Access Administrator at the tenant root scope, which is the highest RBAC scope in Azure\u2014the attacker can then assign any role at any scope. Recovery requires identifying and removing all unauthorized identities, role assignments, and federation trusts\u2014a process that can take weeks in complex tenants.",
+    "evaluation_criteria": "Must identify the elevateAccess API as granting User Access Administrator at tenant root scope and enumerate specific persistent backdoor mechanisms including federation trust modifications and Azure Lighthouse delegations."
+  },
+  {
+    "id": "T4-100",
+    "complexity": "L5",
+    "cloud_domain": "Cloud Control Plane",
+    "scenario": "A threat actor has achieved persistent access to cloud control plane credentials (AWS Organization management account, GCP Org Admin, Azure Global Admin) across all three major cloud providers simultaneously through a compromised CI/CD platform with cross-cloud deployment rights.",
+    "prompt": "Model the maximum achievable blast radius and persistence footprint when all three major cloud control planes are simultaneously under adversary influence via a single compromised CI/CD platform.",
+    "reasoning_focus": "Total multi-cloud control plane compromise: systemic blast radius, persistence, and recovery complexity modeling.",
+    "expected_answer": "Simultaneous compromise of all three cloud control planes through a CI/CD platform represents the maximum theoretical blast radius in cloud security. The adversary's capabilities span the entire digital estate: (1) AWS\u2014full Organization control including all member accounts, the ability to create new accounts, modify SCPs, disable CloudTrail, access all data stores, and establish persistence through modified trust policies and backdoor roles across every account, (2) GCP\u2014complete organization control including all projects, billing manipulation for cryptomining at scale, data access across all storage and compute resources, and persistence through service account key creation and IAM binding modifications, (3) Azure\u2014total tenant control including all subscriptions, Azure AD identity manipulation, data access across all resources, and persistence through federation trust modifications, service principal creation, and Lighthouse delegations, (4) Cross-cloud amplification\u2014credentials and secrets in one cloud that reference another cloud (connection strings, API keys, VPN configurations) create bidirectional pivot paths, and the adversary can establish cross-cloud data exfiltration channels that are difficult to detect from any single cloud's monitoring. The CI/CD origin means the adversary potentially has access to all application source code, infrastructure-as-code, and deployment pipelines, enabling supply chain attacks that persist through future deployments. Recovery requires a coordinated multi-cloud incident response across all three platforms simultaneously, credential rotation for every identity in every cloud, audit of every trust relationship, and rebuilding CI/CD infrastructure from scratch with new credentials\u2014a process that could take months for a large organization.",
+    "evaluation_criteria": "Must model the blast radius across all three clouds simultaneously, identify cross-cloud amplification through shared credentials, and explain why recovery requires months-long coordinated multi-cloud incident response."
+  }
+]

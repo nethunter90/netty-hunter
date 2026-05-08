@@ -25,6 +25,8 @@ export interface JsonPrompt {
   reasoning_requirement?: string;
   // business-logic (T5) fields
   domain?: string;
+  // cloud-security (T4) fields
+  cloud_domain?: string;
   // chain_scenarios fields
   chain_steps?: string;
   impact_level?: string;
@@ -73,7 +75,11 @@ export class JsonPromptLoader {
   }
 
   getByDomain(auth_domain: string): JsonPrompt[] {
-    return this.prompts.filter(p => p.auth_domain === auth_domain || p.domain === auth_domain);
+    return this.prompts.filter(p => p.auth_domain === auth_domain || p.domain === auth_domain || p.cloud_domain === auth_domain);
+  }
+
+  getByCloudDomain(cloud_domain: string): JsonPrompt[] {
+    return this.prompts.filter(p => p.cloud_domain === cloud_domain);
   }
 
   getByCategory(category: string): JsonPrompt[] {
@@ -112,7 +118,22 @@ export class JsonPromptLoader {
       if (sections.length >= maxEntries) break;
     }
 
-    // 2. Business-logic domain entries (T5 — business-logic.json)
+    // 2. Cloud-security domain entries (T4 — cloud-security.json)
+    if (sections.length < maxEntries) {
+      const cloudDomains = this.vulnClassToCloudDomains(vulnClass);
+      for (const cd of cloudDomains) {
+        const cdPrompts = this.getByCloudDomain(cd)
+          .filter(p => !sections.includes(p))
+          .sort((a, b) => {
+            const order = ['L1', 'L2', 'L3', 'L4', 'L5'];
+            return order.indexOf(a.complexity ?? 'L3') - order.indexOf(b.complexity ?? 'L3');
+          });
+        sections.push(...cdPrompts);
+        if (sections.length >= maxEntries) break;
+      }
+    }
+
+    // 3. Business-logic domain entries (T5 — business-logic.json)
     if (sections.length < maxEntries) {
       const bizDomains = this.vulnClassToBusinessDomains(vulnClass);
       for (const bd of bizDomains) {
@@ -153,11 +174,13 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.domain ?? p.category ?? 'general';
+      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.category ?? 'general';
       if (group !== lastGroup) {
         let header: string;
         if (p.auth_domain) {
           header = `Auth Domain Knowledge: ${p.auth_domain}`;
+        } else if (p.cloud_domain) {
+          header = `Cloud Security Knowledge: ${p.cloud_domain}`;
         } else if (p.domain) {
           header = `Business Logic Knowledge: ${p.domain}`;
         } else if (p.category === 'chain_scenarios') {
@@ -206,6 +229,27 @@ export class JsonPromptLoader {
       websocket:        ['WebSocket Auth'],
       misconfig:        ['API Keys', 'CORS'],
       open_redirect:    ['OAuth2', 'SAML'],
+    };
+    return map[vulnClass] ?? [];
+  }
+
+  private vulnClassToCloudDomains(vulnClass: string): string[] {
+    const map: Record<string, string[]> = {
+      ssrf:             ['AWS EC2', 'AWS S3', 'GCP Compute', 'Azure', 'Kubernetes + Cloud'],
+      iam_escalation:   ['AWS IAM', 'AWS IAM + STS', 'AWS IAM Permission Boundaries', 'GCP IAM', 'Azure AD', 'Azure RBAC'],
+      info_disclosure:  ['AWS CloudTrail', 'AWS CloudWatch', 'AWS Lambda', 'AWS SSM', 'Infrastructure-as-Code', 'Container Registry'],
+      credential:       ['AWS Secrets Manager', 'AWS SSM', 'Azure Key Vault', 'GCP IAM', 'CI/CD'],
+      privilege_esc:    ['AWS IAM', 'GCP IAM', 'Azure AD', 'Kubernetes', 'AWS Organizations', 'AWS Org'],
+      misconfig:        ['AWS S3', 'GCP Storage', 'Azure Storage', 'Kubernetes', 'Service Mesh'],
+      container_escape: ['Container', 'Container Kubernetes', 'Kubernetes', 'Kubernetes Platform', 'Docker'],
+      cloud_pivot:      ['AWS Multi-Account', 'Multi-Cloud', 'Kubernetes + Cloud', 'Federated Identity', 'Identity Federation'],
+      auth_bypass:      ['Identity Provider', 'Azure AD', 'AWS STS + OIDC', 'Identity Federation', 'Federated Identity'],
+      supply_chain:     ['CI/CD', 'Infrastructure-as-Code', 'Container Registry', 'AWS ECR'],
+      data_exposure:    ['AWS RDS', 'AWS S3', 'GCP Storage', 'Azure Storage', 'Multi-Tenant Cloud Storage', 'Multi-Tenant SaaS'],
+      network:          ['AWS API Gateway', 'CDN + Origin', 'Multi-Cloud DNS', 'Global Load Balancer'],
+      serverless:       ['AWS Lambda', 'Serverless', 'Serverless Architecture', 'GCP Cloud Run', 'Azure Functions'],
+      event_injection:  ['AWS EventBridge', 'AWS SQS', 'AWS SQS + Lambda', 'AWS S3 + Lambda', 'Azure Service Bus', 'Webhooks'],
+      monitoring:       ['AWS CloudTrail', 'AWS Organizations', 'AWS Org'],
     };
     return map[vulnClass] ?? [];
   }
