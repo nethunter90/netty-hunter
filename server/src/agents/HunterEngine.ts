@@ -20,6 +20,7 @@ import ROIModel from "../intelligence/ROIModel";
 import { promptKB } from "../intelligence/PromptKnowledgeBase";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
+import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
 
 const execFileAsync = promisify(execFile);
 
@@ -432,6 +433,12 @@ export class HunterEngine extends EventEmitter {
       current_findings: `${this.state.confirmedFindings.length} confirmed, ${this.state.observations.length} observations`,
     });
 
+    const hasSecurityObs = this.state.observations.some(o => o.tags.includes('security'));
+    const authKnowledge = jsonPromptLoader.getContextBlock(
+      hasSecurityObs ? 'auth_bypass' : 'info_disclosure',
+      2
+    );
+
     const prompt = `You are a bug bounty hunter analyzing a web application.
 
 Target: ${this.state.targetUrl}
@@ -445,7 +452,7 @@ Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 ${toolKnowledge.getSummaryBlock()}
-
+${authKnowledge ? `\n${authKnowledge}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
