@@ -33,6 +33,8 @@ export interface JsonPrompt {
   // defensive_awareness fields
   signal_observed?: string;
   level?: string;
+  // engagement-signals (T6) fields
+  signal_type?: string;
 }
 
 export class JsonPromptLoader {
@@ -158,12 +160,14 @@ export class JsonPromptLoader {
       const matched = this.prompts.filter(p =>
         p.category !== 'api_auth_chains' &&
         !p.domain &&
+        !p.cloud_domain &&
         !sections.includes(p) &&
-        p.category !== undefined &&
+        (p.category !== undefined || p.signal_type !== undefined) &&
         kwLower.some(k =>
           (p.scenario ?? '').toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
           (p.chain_steps ?? '').toLowerCase().includes(k) ||
+          (p.signal_type ?? '').toLowerCase().includes(k) ||
           p.prompt.toLowerCase().includes(k)
         )
       );
@@ -177,7 +181,7 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.category ?? 'general';
+      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? 'general';
       if (group !== lastGroup) {
         let header: string;
         if (p.auth_domain) {
@@ -186,6 +190,8 @@ export class JsonPromptLoader {
           header = `Cloud Security Knowledge: ${p.cloud_domain}`;
         } else if (p.domain) {
           header = `Business Logic Knowledge: ${p.domain}`;
+        } else if (p.signal_type) {
+          header = `Engagement Signal: ${p.signal_type}`;
         } else if (p.category === 'chain_scenarios') {
           header = `Attack Chain Scenario`;
         } else {
