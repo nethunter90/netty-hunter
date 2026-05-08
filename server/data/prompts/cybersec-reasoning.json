@@ -1,0 +1,402 @@
+[
+  {
+    "id": 1,
+    "prompt": "A user deposits $500 in a bank with 5% annual simple interest. How much will they have after 3 years?",
+    "expected_answer": "The total after 3 years is $575. Using the simple interest formula I = P × r × t, the interest earned is $500 × 0.05 × 3 = $75. Adding this to the principal gives $500 + $75 = $575. This differs from compound interest, which would yield slightly more since interest would accrue on previously earned interest. In cybersecurity contexts, understanding financial calculations is critical for detecting business logic flaws in banking applications where attackers might manipulate interest computation parameters.",
+    "reasoning_requirement": "Apply simple interest: principal + principal*rate*time.",
+    "evaluation_criteria": "Uses simple (not compound) interest; computes $500*(0.05*3)=75; total 575.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 2,
+    "prompt": "If a password policy requires 8 characters including at least 1 uppercase letter and 1 number, is 'Password1' compliant?",
+    "expected_answer": "Yes, 'Password1' is technically compliant with the stated policy requirements. It meets the minimum 8-character length (it has 9 characters), contains the uppercase letter 'P', and includes the digit '1'. However, from a security perspective, this password is extremely weak despite being policy-compliant because it follows a predictable pattern (capitalized dictionary word + single digit) that is highly susceptible to rule-based dictionary attacks. This illustrates that password policy compliance alone does not guarantee strong credentials, and organizations should supplement policies with breach-password checks and entropy requirements.",
+    "reasoning_requirement": "Check length and character class constraints.",
+    "evaluation_criteria": "Confirms length≥8; includes uppercase 'P'; includes digit '1'.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 3,
+    "prompt": "A web server receives 200 requests per second (RPS) but its tested capacity is 150 RPS. What risk is most immediate?",
+    "expected_answer": "The most immediate risk is service degradation leading to a denial-of-service condition. When incoming traffic at 200 RPS exceeds the server's tested capacity of 150 RPS, the server will experience resource exhaustion, causing increased response latency, request queuing, timeout errors, and potential crashes. This 33% overload can cascade into complete service unavailability if the server lacks proper load shedding or backpressure mechanisms. From a threat modeling perspective, this scenario could be organic traffic growth or a deliberate volumetric DoS attack, and mitigation strategies include load balancing, auto-scaling, rate limiting, and CDN-based traffic absorption.",
+    "reasoning_requirement": "Compare demand vs capacity and infer impact.",
+    "evaluation_criteria": "Identifies overload leads to timeouts/errors and potential DoS condition.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 4,
+    "prompt": "Three workers complete a task in 6 hours. How long would six equally productive workers take?",
+    "expected_answer": "Six equally productive workers would complete the task in 3 hours. This follows the inverse proportionality principle: doubling the workforce halves the time for a fixed amount of work (6 hours × 3/6 = 3 hours). The total work can be quantified as 18 worker-hours, so 18 ÷ 6 = 3 hours. In cybersecurity operations, this type of reasoning applies to parallelized brute-force attacks, distributed scanning, and estimating how adding more compute resources to password cracking or hash table generation reduces time proportionally.",
+    "reasoning_requirement": "Use inverse proportionality between workers and time for fixed work.",
+    "evaluation_criteria": "Recognizes doubling workers halves time: 6 hours*(3/6)=3.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 5,
+    "prompt": "An online account locks for 15 minutes after 5 failed login attempts. An attacker can try 10,000 passwords per minute. Is an online brute-force attack feasible?",
+    "expected_answer": "No, the account lockout mechanism makes an online brute-force attack impractical despite the attacker's high-speed capability. The lockout policy limits the attacker to only 5 attempts every 15 minutes, which translates to roughly 20 attempts per hour — rendering the 10,000 passwords/minute capability irrelevant for online attacks against a single account. At this throttled rate, exhausting even a modest password space would take an prohibitively long time. However, the attacker could pivot to credential stuffing across many accounts simultaneously, attempt offline attacks against stolen hashes, or try to identify lockout bypass vulnerabilities, so additional controls like CAPTCHA, IP-based throttling, and anomaly detection remain essential.",
+    "reasoning_requirement": "Account for lockout throttling vs attempt rate.",
+    "evaluation_criteria": "Notes attacker cannot sustain high attempt rate due to lockouts; feasibility reduced drastically.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 6,
+    "prompt": "A company's phishing filter catches 70% of malicious emails. Out of 1,000 phishing emails sent to employees, how many are expected to reach inboxes?",
+    "expected_answer": "Approximately 300 phishing emails are expected to reach employee inboxes. With a 70% detection rate, the filter misses 30% of malicious emails, so 1,000 × 0.30 = 300 emails pass through undetected. This represents a significant residual risk because even a single successful phishing email can lead to credential compromise, malware deployment, or data exfiltration. Defense-in-depth principles demand layered controls including security awareness training, endpoint detection, email authentication (SPF/DKIM/DMARC), and sandboxing to address the 30% gap that technical filters cannot catch.",
+    "reasoning_requirement": "Compute complement of detection rate and apply to total.",
+    "evaluation_criteria": "Calculates 30% of 1,000 = 300.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 7,
+    "prompt": "You must choose one control to reduce credential theft risk the most: MFA, longer passwords, or weekly password changes. Which is best?",
+    "expected_answer": "Multi-factor authentication (MFA) is the most effective single control for reducing credential theft risk. MFA fundamentally changes the threat model by requiring an attacker to compromise an additional authentication factor beyond the password, making stolen credentials alone insufficient for account access. Longer passwords increase entropy and resist brute-force attacks but do not protect against phishing, keylogging, or credential database breaches where the password is captured directly. Weekly password changes are widely considered counterproductive by modern standards (NIST SP 800-63B) as they encourage weaker passwords and predictable rotation patterns. MFA provides the strongest defense because it addresses the broadest range of credential theft vectors including phishing, credential stuffing, and password reuse attacks.",
+    "reasoning_requirement": "Compare controls by impact on credential misuse after theft.",
+    "evaluation_criteria": "Selects MFA as strongest general mitigation; explains it blocks reuse of stolen passwords.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 8,
+    "prompt": "A log shows repeated requests to /api/users/123 then /api/users/124 etc. The user is not an admin. What vulnerability should you suspect?",
+    "expected_answer": "This pattern strongly indicates an Insecure Direct Object Reference (IDOR) vulnerability, a subset of broken access control (OWASP A01:2021). The sequential enumeration of user IDs suggests the attacker is testing whether the API enforces authorization checks on individual resource access, attempting to view or modify other users' data by simply incrementing the identifier. The vulnerability exists because the application uses predictable, sequential identifiers without verifying that the authenticated user is authorized to access each specific resource. Mitigation requires implementing proper authorization checks on every API endpoint, using non-sequential identifiers (UUIDs), and applying rate limiting to detect enumeration patterns.",
+    "reasoning_requirement": "Infer object enumeration and access control weakness from sequential IDs.",
+    "evaluation_criteria": "Names IDOR/broken access control and relates to predictable identifiers.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 9,
+    "prompt": "A system stores passwords using unsalted MD5 hashes. What is the main problem?",
+    "expected_answer": "Unsalted MD5 hashing creates severe password security vulnerabilities on multiple levels. MD5 is a cryptographically broken fast hash function that modern GPUs can compute at billions of hashes per second, making brute-force attacks trivially fast. Without salting, identical passwords produce identical hashes across all users, enabling attackers to use precomputed rainbow tables to crack large numbers of passwords simultaneously. Additionally, unsalted hashes allow attackers to identify users sharing the same password by comparing hash values. The industry standard mitigation is to use a purpose-built password hashing algorithm such as bcrypt, scrypt, or Argon2, which incorporate automatic salting, configurable work factors, and memory-hardness to resist GPU-accelerated attacks.",
+    "reasoning_requirement": "Reason about hashing speed, salting, and precomputation attacks.",
+    "evaluation_criteria": "Mentions MD5 is weak/fast; lack of salt allows reuse/precomputed attacks; recommends slow salted hash.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 10,
+    "prompt": "An attacker can inject '<script>alert(1)</script>' into a comment field and it runs for other users viewing the page. What type of vulnerability is this?",
+    "expected_answer": "This is a Stored (Persistent) Cross-Site Scripting (XSS) vulnerability, classified as one of the most dangerous XSS variants. The payload is permanently stored in the application's database through the comment field and automatically executes in every victim's browser when they view the page, requiring no additional attacker interaction after the initial injection. Unlike reflected XSS which requires tricking users into clicking a crafted link, stored XSS has a much broader blast radius since every user who views the affected page becomes a victim. The impact can include session hijacking via cookie theft, keylogging, credential harvesting, defacement, and malware distribution. Mitigation requires output encoding/escaping, input validation, Content Security Policy headers, and HttpOnly cookie flags as defense-in-depth measures.",
+    "reasoning_requirement": "Classify XSS based on persistence and victim trigger.",
+    "evaluation_criteria": "Identifies stored (persistent) XSS because payload is saved and affects others later.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 11,
+    "prompt": "A firewall blocks inbound traffic except ports 80 and 443. A service is accidentally exposed on port 8080. What is the likely outcome?",
+    "expected_answer": "The service on port 8080 is likely not reachable from the internet because the firewall's default-deny policy blocks all inbound traffic except explicitly allowed ports 80 and 443. This demonstrates the defense-in-depth value of network-layer controls — even when an application misconfiguration occurs, the firewall acts as a compensating control preventing direct external access. However, the service may still be accessible from internal networks, through reverse proxies forwarding traffic from ports 80/443, or via firewall rule misconfigurations like NAT traversal or IPv6 bypass. Security teams should still remediate the exposed service because relying on a single control layer violates defense-in-depth principles, and firewall rules can change over time.",
+    "reasoning_requirement": "Map firewall policy to exposure surface.",
+    "evaluation_criteria": "Concludes inbound 8080 blocked; notes exceptions like internal access/NAT misconfig could change.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 12,
+    "prompt": "A user claims they never performed a transaction, but the system lacks audit logs. Which security property is missing?",
+    "expected_answer": "The missing security property is non-repudiation, which is closely tied to accountability and auditability. Non-repudiation ensures that a party cannot deny having performed an action, typically enforced through comprehensive audit logging, digital signatures, or cryptographic proof of transactions. Without audit logs, the organization cannot definitively prove whether the user performed the transaction or whether it was initiated by an unauthorized party, creating both a security and a legal liability gap. This scenario also highlights a failure in the accountability principle, as the system cannot attribute actions to specific identities. Implementing tamper-evident audit logging with timestamps, user identifiers, and action details is essential for forensic investigation, regulatory compliance, and dispute resolution.",
+    "reasoning_requirement": "Match scenario to security property definitions.",
+    "evaluation_criteria": "Links inability to prove actions to missing non-repudiation/accountability controls.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 13,
+    "prompt": "A site uses JWTs without validating the signature. What is the risk?",
+    "expected_answer": "Failing to validate JWT signatures creates a critical authentication bypass vulnerability that allows complete token forgery. An attacker can modify the JWT payload to escalate privileges (e.g., changing 'role: user' to 'role: admin'), impersonate other users by altering the subject claim, or extend token expiration indefinitely. This vulnerability is especially dangerous because JWTs are self-contained tokens — if the server trusts claims without verifying the cryptographic signature, there is no other mechanism to detect tampering. Common attack variants include the 'alg: none' bypass where the attacker sets the algorithm to none, and key confusion attacks where RSA public keys are used as HMAC secrets. Mitigation requires strict signature validation, algorithm whitelisting, and proper key management on every request.",
+    "reasoning_requirement": "Connect signature validation to token integrity and trust.",
+    "evaluation_criteria": "States attacker can craft JWT claims (e.g., admin) without signature checks.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 14,
+    "prompt": "A database query is built as: \"SELECT * FROM users WHERE name='\"+input+\"'\". What vulnerability is most likely?",
+    "expected_answer": "This code is vulnerable to SQL injection (SQLi), one of the most critical and prevalent web application vulnerabilities (OWASP A03:2021). The string concatenation of user input directly into the SQL query allows an attacker to inject arbitrary SQL commands — for example, inputting \"' OR '1'='1\" would return all users, while \"'; DROP TABLE users; --\" could destroy data. The impact ranges from unauthorized data access and data exfiltration to complete database compromise, authentication bypass, and potentially remote code execution through database-specific features like xp_cmdshell. The definitive fix is to use parameterized queries (prepared statements) which separate SQL logic from data, ensuring user input is always treated as a literal value rather than executable code. Additional defense layers include input validation, stored procedures, least-privilege database accounts, and web application firewalls.",
+    "reasoning_requirement": "Identify unsafe string concatenation into SQL context.",
+    "evaluation_criteria": "Calls out SQLi and suggests parameterized queries/prepared statements.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 15,
+    "prompt": "A company wants to minimize blast radius if one service is compromised. Should they prefer a shared admin account or unique least-privilege service accounts?",
+    "expected_answer": "Unique least-privilege service accounts are the correct choice for minimizing blast radius after a compromise. The principle of least privilege dictates that each service should operate with only the minimum permissions required for its specific function, ensuring that a compromised service cannot access resources beyond its defined scope. Shared admin accounts create catastrophic risk because compromising any single service grants the attacker full administrative access across the entire infrastructure, enabling unrestricted lateral movement. Unique accounts also provide superior auditability since actions can be attributed to specific services, enabling faster incident detection and forensic analysis. This approach aligns with zero-trust architecture principles and microsegmentation strategies where each component is independently authenticated and authorized.",
+    "reasoning_requirement": "Reason about privilege separation and lateral movement.",
+    "evaluation_criteria": "Chooses least privilege to limit access and containment; avoids shared creds.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 16,
+    "prompt": "A vulnerability has CVSS impact score high but is hard to exploit (needs physical access). Should risk be considered lower than a remotely exploitable issue?",
+    "expected_answer": "Yes, the practical risk should generally be considered lower than a remotely exploitable vulnerability, even with the same impact score. Risk is fundamentally a function of both impact and likelihood, and the physical access requirement dramatically reduces the attack surface and the pool of potential threat actors capable of exploitation. The CVSS base score itself accounts for this through the Attack Vector metric, where physical access scores lower than network-accessible vectors. However, risk assessment must consider the specific threat model — in environments like data centers, ATMs, or IoT deployments where physical access by adversaries is plausible, the risk could be significantly higher. A comprehensive risk evaluation should also factor in compensating controls like physical security measures, surveillance, and tamper-evident hardware.",
+    "reasoning_requirement": "Balance impact with exploitability and threat model.",
+    "evaluation_criteria": "Explains risk depends on likelihood and exposure; physical access reduces likelihood.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 17,
+    "prompt": "A user's session cookie lacks the HttpOnly flag. What attack becomes easier?",
+    "expected_answer": "Without the HttpOnly flag, session cookie theft via Cross-Site Scripting (XSS) attacks becomes significantly easier. The HttpOnly flag instructs browsers to prevent JavaScript from accessing the cookie through document.cookie, which serves as a critical defense-in-depth measure against XSS-based session hijacking. When this flag is absent, any successful XSS payload can read the session cookie and exfiltrate it to an attacker-controlled server, enabling full session takeover and account impersonation. This is particularly dangerous because it converts what might be a limited XSS impact into a complete authentication compromise. Mitigation includes setting HttpOnly and Secure flags on all session cookies, implementing robust XSS prevention through output encoding, and deploying Content Security Policy headers as additional protection layers.",
+    "reasoning_requirement": "Connect cookie flags to script access protections.",
+    "evaluation_criteria": "Notes HttpOnly blocks JS access; without it, XSS can read/steal session cookie.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 18,
+    "prompt": "A company backs up data daily but never tests restores. What is the risk?",
+    "expected_answer": "The critical risk is that backups may be corrupt, incomplete, or otherwise unusable when a disaster recovery scenario demands them. Untested backups create a false sense of security — organizations assume their Recovery Time Objective (RTO) and Recovery Point Objective (RPO) targets are achievable, but without validation, backup integrity, compatibility, and restore procedures remain unverified. Common failure modes include silent backup corruption, schema incompatibilities after application updates, encryption key loss, insufficient storage for full restores, and procedural gaps where staff lack experience executing recovery operations. In ransomware incidents specifically, organizations have discovered too late that their backups were also encrypted or that restoration takes days instead of the expected hours. Best practices mandate regular restore testing, automated integrity verification, and documented recovery runbooks with defined success criteria.",
+    "reasoning_requirement": "Assess control effectiveness beyond presence.",
+    "evaluation_criteria": "Highlights integrity/restore testing is required; otherwise RTO/RPO assumptions may fail.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 19,
+    "prompt": "You see DNS queries for many random-looking subdomains like a1b2c3.example.com. What should you suspect?",
+    "expected_answer": "This pattern strongly suggests DNS tunneling for data exfiltration or command-and-control (C2) communication, or alternatively Domain Generation Algorithm (DGA) activity from malware beaconing. In DNS tunneling, attackers encode stolen data or C2 commands within subdomain labels, leveraging the fact that DNS traffic is often permitted through firewalls and rarely inspected deeply. The high entropy, random-appearing subdomain strings are characteristic of encoded payloads being transmitted through the DNS protocol. DGA-based malware generates algorithmically predictable but seemingly random domain names to locate its C2 infrastructure, making it resilient to domain takedowns. Detection strategies include monitoring for unusual DNS query volumes, high subdomain entropy analysis, abnormal TXT record sizes, and correlating with threat intelligence feeds for known malicious domains.",
+    "reasoning_requirement": "Interpret anomalous DNS patterns and possible exfiltration.",
+    "evaluation_criteria": "Mentions tunneling/exfil or malware domain-generation; notes need for context.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 20,
+    "prompt": "If 2FA codes are sent by SMS, what is a common weakness compared to authenticator apps?",
+    "expected_answer": "SMS-based 2FA is vulnerable to SIM swapping attacks and SS7 protocol interception, making it fundamentally weaker than authenticator app-based TOTP codes. In a SIM swap attack, an adversary socially engineers the victim's mobile carrier into transferring the phone number to an attacker-controlled SIM card, thereby receiving all SMS messages including 2FA codes. The SS7 (Signaling System 7) protocol that underpins telecom routing has known vulnerabilities that allow sophisticated attackers to intercept SMS messages in transit without physical access to the device. Additionally, SMS codes can be compromised through malware on the device, real-time phishing proxies that relay codes, and are subject to delivery failures and delays. TOTP authenticator apps generate codes locally using a shared secret and cryptographic algorithm, eliminating the network transmission vector entirely and providing superior security against these attack classes.",
+    "reasoning_requirement": "Compare second-factor channels and attack surfaces.",
+    "evaluation_criteria": "Explains SMS can be hijacked via SIM swap/interception; apps/hardware reduce this.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 21,
+    "prompt": "A user can upload files and the server stores them in a web-accessible directory without validation. What is a major risk?",
+    "expected_answer": "The primary risk is remote code execution (RCE) through malicious file uploads, which represents one of the most severe web application vulnerabilities. An attacker can upload a web shell (e.g., a PHP, JSP, or ASPX script) that, when accessed through the web server, executes arbitrary commands on the server with the web server's privileges. Without validation, attackers can bypass intended restrictions by uploading files with executable extensions, embedding malicious content in seemingly benign file types, or exploiting MIME type mismatches. The impact extends beyond code execution to include malware hosting and distribution, defacement, pivoting into the internal network, and using the server as a platform for further attacks. Effective mitigations include file type whitelisting with magic byte verification, storing uploads outside the web root, stripping executable permissions, using randomized filenames, and serving files through a separate domain with restrictive Content-Type headers.",
+    "reasoning_requirement": "Reason about file handling, execution, and exposure.",
+    "evaluation_criteria": "Mentions unrestricted upload can allow webshell/executable content and public access.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 22,
+    "prompt": "An API rate limit is 60 requests/minute per IP. An attacker uses 1,000 IPs. What does this illustrate?",
+    "expected_answer": "This scenario illustrates the fundamental limitation of IP-based rate limiting against distributed adversaries. With 1,000 source IPs, the attacker achieves an effective rate of 60,000 requests per minute while each individual IP remains within the allowed threshold, completely circumventing the per-IP rate limit. Attackers commonly achieve this distribution through botnets, cloud infrastructure, residential proxy networks, or compromised IoT devices. This highlights that IP-based controls are a necessary but insufficient defense layer. Effective mitigation requires multi-dimensional rate limiting that includes per-account limits, behavioral analysis detecting automated patterns, device fingerprinting, CAPTCHA challenges for suspicious activity, and application-layer bot detection solutions that analyze request timing, headers, and interaction patterns beyond the source IP.",
+    "reasoning_requirement": "Evaluate control against distributed adversary.",
+    "evaluation_criteria": "Notes need for account-based limits, behavioral detection, bot mitigation.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 23,
+    "prompt": "A company encrypts disks but stores the decryption key on the same machine in plain text. Does this meaningfully improve security?",
+    "expected_answer": "This configuration provides only marginal security improvement and fundamentally undermines the purpose of disk encryption. Encryption's security guarantee depends entirely on the confidentiality of the decryption key — storing the key in plaintext on the same machine means any attacker who gains access to the system can trivially decrypt the data, negating the encryption's value for most threat scenarios. The only threat this mitigates is physical theft of the disk alone (removed from the machine), where the key file remains on a separate storage device. For meaningful protection, keys should be managed through a Hardware Security Module (HSM), Trusted Platform Module (TPM), remote key management service, or at minimum encrypted with a passphrase that must be provided at boot time. This scenario is a classic example of a security control that creates compliance checkbox satisfaction without delivering substantive risk reduction.",
+    "reasoning_requirement": "Reason about threat model and key management.",
+    "evaluation_criteria": "Explains encryption is only as strong as key protection; local plaintext key negates.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 24,
+    "prompt": "A web form includes a hidden field 'price=10'. By changing it to 'price=1', a user pays less. What vulnerability is this?",
+    "expected_answer": "This is a client-side parameter tampering vulnerability combined with a business logic flaw, where the server improperly trusts client-supplied pricing data. Hidden HTML form fields provide no security whatsoever — they are fully visible and modifiable through browser developer tools, proxy interception tools like Burp Suite, or simple HTTP request manipulation. The fundamental security principle violated is that all client-side data must be treated as untrusted input, and security-critical values like pricing must be enforced server-side. This type of vulnerability can lead to significant financial losses, and its impact scales with transaction volume. Remediation requires server-side price validation against an authoritative data source (product catalog/database), implementing integrity checks on order parameters, and monitoring for pricing anomalies in transaction logs.",
+    "reasoning_requirement": "Identify client-side trust issue in pricing logic.",
+    "evaluation_criteria": "States server must enforce price; hidden fields are attacker-controlled.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 25,
+    "prompt": "A user reports: 'I can view other users' invoices by changing invoiceId in the URL'. What severity is likely?",
+    "expected_answer": "This vulnerability should be classified as High severity, representing a broken access control / IDOR (Insecure Direct Object Reference) issue that enables unauthorized access to sensitive financial data across user accounts. Invoice data typically contains personally identifiable information (PII) such as names, addresses, email addresses, and financial details, making this a potential data breach with regulatory implications under GDPR, CCPA, and similar frameworks. The severity assessment considers the ease of exploitation (simple parameter manipulation requiring no special tools), the breadth of impact (potentially all user invoices are accessible), and the sensitivity of exposed data. If the vulnerability also allows modification or deletion of invoices, the severity escalates to Critical. Immediate remediation requires implementing proper authorization checks that verify the authenticated user owns the requested resource before returning data, combined with monitoring for enumeration patterns in access logs.",
+    "reasoning_requirement": "Map unauthorized data access to impact severity.",
+    "evaluation_criteria": "Recognizes sensitive data exposure across accounts; severity depends on data sensitivity and scope.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 26,
+    "prompt": "A company wants confidentiality for stored customer SSNs. Should they hash or encrypt them?",
+    "expected_answer": "The company should use encryption rather than hashing for storing customer Social Security Numbers. Hashing is a one-way function designed to be irreversible, which means hashed SSNs cannot be retrieved for legitimate business purposes such as identity verification, tax reporting, or customer service operations that require displaying partial SSN information. Encryption, being a reversible transformation with proper key management, preserves the ability to decrypt and use the original values when authorized. However, SSNs have very low entropy (only ~1 billion possible values), which makes them vulnerable to brute-force reversal even when hashed — an attacker could hash all possible SSNs and build a complete lookup table in minutes. Strong encryption with AES-256, combined with robust key management using HSMs, strict access controls, and field-level encryption, provides both confidentiality and the necessary recoverability for legitimate business operations while meeting PCI-like compliance standards.",
+    "reasoning_requirement": "Distinguish hashing (one-way) vs reversible encryption needs.",
+    "evaluation_criteria": "Explains SSNs may need retrieval; hashing prevents retrieval; encryption provides confidentiality with key control.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 27,
+    "prompt": "An S3 bucket is publicly readable and contains internal backups. What is the primary risk?",
+    "expected_answer": "The primary risk is a severe data breach through unauthorized exposure of sensitive internal data to the public internet. Internal backups typically contain a treasure trove of sensitive information including database dumps with user credentials and PII, configuration files with API keys and secrets, application source code, internal documentation, and potentially encryption keys or certificates. Publicly readable S3 buckets have been the root cause of numerous high-profile data breaches, as automated scanners continuously probe for misconfigured cloud storage. The exposure may violate data protection regulations (GDPR, HIPAA, PCI DSS) resulting in significant fines and legal liability. Immediate remediation requires removing public access via bucket policies and ACLs, enabling S3 Block Public Access at the account level, auditing access logs to determine if data was already exfiltrated, rotating any exposed credentials, and implementing automated cloud security posture management (CSPM) to prevent recurrence.",
+    "reasoning_requirement": "Connect public access to confidentiality loss.",
+    "evaluation_criteria": "Mentions backups often contain secrets/PII; recommends restricting ACL/policies.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 28,
+    "prompt": "A user can reset their password by answering security questions like 'mother's maiden name'. Why is this weak?",
+    "expected_answer": "Knowledge-based security questions like 'mother's maiden name' are fundamentally weak authentication factors because the answers are often easily obtainable through open-source intelligence (OSINT) gathering. Social media profiles, public records, genealogy websites, and data broker services frequently expose this information, making it trivially accessible to motivated attackers. These questions also suffer from low entropy — there are a limited number of common surnames, and cultural patterns make answers statistically predictable. Furthermore, answers are static and cannot be changed if compromised (unlike passwords), and users often provide the same answers across multiple services, enabling credential reuse attacks. Social engineering attacks can also elicit these answers through pretexting or phishing. Modern security frameworks recommend replacing security questions with stronger recovery mechanisms such as email/SMS verification codes, recovery keys, trusted device verification, or identity proofing through official documentation.",
+    "reasoning_requirement": "Reason about entropy and publicly knowable info.",
+    "evaluation_criteria": "Notes low secrecy and social engineering risk; recommends stronger reset methods.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 29,
+    "prompt": "A web app uses CSP (Content Security Policy). What type of vulnerability does CSP primarily mitigate?",
+    "expected_answer": "Content Security Policy (CSP) primarily mitigates the impact of Cross-Site Scripting (XSS) vulnerabilities by restricting which scripts, styles, and resources the browser is allowed to load and execute. CSP works by defining a whitelist of trusted content sources through HTTP headers, blocking inline scripts and eval() by default, and preventing the browser from executing injected malicious code even if an XSS vulnerability exists in the application. This makes CSP a powerful defense-in-depth layer rather than a primary fix — it reduces the exploitability of XSS rather than eliminating the underlying vulnerability. A well-configured CSP with nonce-based or hash-based script allowlisting can effectively neutralize most XSS payloads. However, CSP is not a complete solution: it requires careful configuration to avoid bypasses through whitelisted CDNs or JSONP endpoints, does not prevent DOM-based XSS in all cases, and must be complemented by proper output encoding and input validation.",
+    "reasoning_requirement": "Relate CSP to restricting script sources and execution.",
+    "evaluation_criteria": "Explains CSP reduces ability to run injected scripts though it's not a complete fix.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 30,
+    "prompt": "A pentester finds an open redirect: /redirect?url=http://evil.com. What is the realistic impact?",
+    "expected_answer": "An open redirect vulnerability enables phishing attacks by abusing the trusted domain's reputation to redirect victims to attacker-controlled malicious sites. Users are more likely to click links that appear to originate from a legitimate domain, and the redirect makes the initial URL pass visual inspection and email security filters. Beyond phishing facilitation, open redirects can have escalated impact in OAuth/OpenID Connect flows where the redirect_uri parameter is validated — an open redirect on an allowed domain can be chained to steal authorization codes or access tokens during the authentication callback. Additional impacts include bypassing domain-based security controls like SSRF filters, CSP restrictions, or referrer-based access controls. While typically rated as Low-Medium severity in isolation, the chaining potential with OAuth flows or SSRF can elevate the impact to High, making context-dependent assessment essential during triage.",
+    "reasoning_requirement": "Assess common impacts of open redirects.",
+    "evaluation_criteria": "Mentions social engineering and potential OAuth/token redirect issues if used in auth flows.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 31,
+    "prompt": "A login page returns 'user not found' for invalid usernames and 'wrong password' otherwise. What risk does this create?",
+    "expected_answer": "This differential error messaging enables username enumeration, allowing attackers to determine which usernames (or email addresses) are registered in the system. By observing distinct responses for invalid usernames versus incorrect passwords, an attacker can systematically probe the login endpoint to build a list of valid accounts, which then becomes the target list for credential stuffing, brute-force, phishing, or social engineering attacks. Username enumeration also leaks privacy-sensitive information — confirming someone has an account on a dating site, political platform, or healthcare portal can have real-world consequences. Mitigation requires returning a generic, identical error message such as 'Invalid username or password' for both cases, ensuring consistent response timing to prevent timing-based enumeration, implementing rate limiting and CAPTCHA on the login endpoint, and monitoring for high-volume failed authentication patterns.",
+    "reasoning_requirement": "Infer information leakage from distinct error messages.",
+    "evaluation_criteria": "Identifies enumeration and suggests generic errors and rate limiting.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 32,
+    "prompt": "A system grants permissions directly to users rather than roles. What problem commonly arises at scale?",
+    "expected_answer": "Direct user-to-permission assignments create permission sprawl and administrative complexity that becomes unmanageable as the organization scales. Without role-based access control (RBAC), administrators must individually manage permissions for every user across every resource, leading to inconsistent access patterns, orphaned permissions when responsibilities change, and extreme difficulty in auditing who has access to what. When an employee changes departments or leaves the organization, there is no role template to revoke — each permission must be individually identified and removed, frequently resulting in accumulated excess privileges that violate the principle of least privilege. Compliance audits become extremely expensive as reviewers must examine each user's individual permission set rather than validating role definitions. The solution is implementing RBAC or attribute-based access control (ABAC), where permissions are assigned to roles and roles are assigned to users, enabling consistent, auditable, and scalable access management.",
+    "reasoning_requirement": "Reason about manageability and least privilege enforcement.",
+    "evaluation_criteria": "Explains role-based access control improves governance and auditing.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 33,
+    "prompt": "A company uses the same API key in mobile apps for all users. What is the risk?",
+    "expected_answer": "Embedding a shared API key in a mobile application creates a critical security vulnerability because mobile apps are client-side software that can be reverse-engineered to extract the key. Attackers can decompile APK/IPA files, use runtime interception tools like Frida, or simply monitor network traffic to extract the API key, which then grants them the same access as any legitimate user. Since all users share the same key, there is no way to revoke access for a single compromised instance without disrupting all users, and the key cannot be rotated without updating every deployed app version. Additionally, shared keys prevent meaningful attribution of API usage to individual users, making abuse detection and rate limiting per-user impossible. The proper architecture uses per-user OAuth tokens or API keys issued after authentication, with the shared secret remaining only on the server side, enabling individual revocation, usage tracking, and granular access control.",
+    "reasoning_requirement": "Reason about client-side secrecy and shared credentials.",
+    "evaluation_criteria": "Notes mobile apps can be reverse engineered; shared keys enable unauthorized calls; use per-user auth.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 34,
+    "prompt": "A security team must prioritize patches: one remote RCE on internet-facing system vs one local privilege escalation on internal-only system. Which first?",
+    "expected_answer": "The remote code execution (RCE) vulnerability on the internet-facing system should be prioritized first due to its significantly higher risk exposure. An internet-facing system with an RCE vulnerability is accessible to every attacker on the internet, requires no prior access or authentication to exploit, and successful exploitation grants the attacker an initial foothold into the network — making it the highest-priority threat in virtually all risk frameworks. The local privilege escalation on an internal system, while serious, requires the attacker to already have some level of access to the internal network, representing a later stage in the attack chain. However, in environments where the internal system is known to be actively compromised or the RCE has compensating controls (WAF, network segmentation), the prioritization could shift. A risk-based approach considers CVSS scores, active exploitation in the wild (KEV catalog), asset criticality, and existing compensating controls to make the final determination.",
+    "reasoning_requirement": "Prioritize by exposure and potential impact path.",
+    "evaluation_criteria": "Chooses higher exposure/likelihood; notes context (compensating controls) may affect decision.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 35,
+    "prompt": "A site allows unlimited password reset requests to any email address. What abuse is possible?",
+    "expected_answer": "Unlimited password reset requests create multiple abuse vectors spanning denial-of-service and security compromise scenarios. An attacker can weaponize this for email bombing by flooding a victim's inbox with thousands of reset emails, causing disruption, obscuring other important notifications, and potentially triggering email provider rate limits or spam filters against the organization's mail server. From a security perspective, if reset tokens have insufficient entropy or predictable generation patterns, high-volume requests may enable token prediction or collision attacks. Additionally, attackers can use the reset endpoint for username/email enumeration by observing differential responses between registered and unregistered addresses. The functionality can also be abused as a social engineering vector, conditioning victims to click reset links habitually. Mitigations include rate limiting per email address and per IP, implementing CAPTCHA on reset forms, using exponential backoff for repeated requests, and ensuring reset tokens are cryptographically random with short expiration windows.",
+    "reasoning_requirement": "Consider nuisance and security impacts of unthrottled resets.",
+    "evaluation_criteria": "Mentions rate limiting, CAPTCHA, and notification controls.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 36,
+    "prompt": "An org stores secrets in source code repositories. What is the best mitigation?",
+    "expected_answer": "The primary mitigation is to immediately move all secrets to a dedicated secret management solution such as HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, or similar platforms, and rotate all exposed credentials. Secrets committed to source code repositories persist in git history even after deletion from the current codebase, meaning a simple file edit is insufficient — the entire git history must be considered compromised. Organizations should implement automated secret scanning in CI/CD pipelines using tools like git-secrets, truffleHog, or GitHub's built-in secret scanning to prevent future commits containing credentials. Environment variables and secret injection at runtime should replace hardcoded values, with access to secrets governed by the principle of least privilege and comprehensive audit logging. A comprehensive response plan includes identifying all exposed secrets through historical repository analysis, rotating every compromised credential, and establishing pre-commit hooks and pull request checks as preventive guardrails.",
+    "reasoning_requirement": "Reason about secret sprawl and rotation.",
+    "evaluation_criteria": "Recommends secret vaulting, scanning, least privilege, and key rotation.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 37,
+    "prompt": "A user downloads a 'free PDF' and their endpoint begins encrypting files. What incident is this?",
+    "expected_answer": "This is a ransomware infection, a type of malware attack where the malicious payload, disguised as a legitimate PDF document, executes and systematically encrypts the victim's files to extort a ransom payment for the decryption key. The attack vector is social engineering through a trojanized file — the 'free PDF' likely contained an embedded executable, malicious macro, or exploited a PDF reader vulnerability to achieve code execution. Immediate incident response actions include isolating the affected endpoint from the network to prevent lateral spread, identifying the ransomware variant to determine if decryption tools exist, preserving forensic evidence, and assessing the scope of encrypted files across network shares and cloud storage. The organization should not pay the ransom as it funds criminal operations and provides no guarantee of data recovery. Prevention strategies include endpoint detection and response (EDR) solutions, application whitelisting, user security awareness training, regular tested backups stored offline, and email attachment sandboxing.",
+    "reasoning_requirement": "Classify by observed behavior.",
+    "evaluation_criteria": "Identifies ransomware; suggests isolation and incident response actions.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 38,
+    "prompt": "An attacker intercepts traffic on public Wi-Fi and alters responses. HTTPS would have prevented this. What attack is this?",
+    "expected_answer": "This is a Man-in-the-Middle (MITM) attack, where the attacker positions themselves between the victim and the intended server to intercept, read, and modify network traffic in transit. On public Wi-Fi, this is commonly achieved through ARP spoofing, rogue access point deployment (evil twin), or DNS poisoning, allowing the attacker to transparently proxy all communications. The ability to alter responses demonstrates active MITM capabilities beyond passive eavesdropping, enabling injection of malicious content, credential harvesting through modified login pages, and session manipulation. HTTPS prevents this attack through TLS encryption (ensuring confidentiality), certificate validation (ensuring authenticity of the server), and message authentication codes (ensuring integrity against tampering). However, HTTPS protection can be undermined by SSL stripping attacks if HSTS is not implemented, compromised certificate authorities, or victim acceptance of invalid certificate warnings. Additional protections include VPN usage on untrusted networks and certificate pinning for sensitive applications.",
+    "reasoning_requirement": "Match interception/modification to attack class.",
+    "evaluation_criteria": "Correctly names MITM and explains encryption/integrity protection of HTTPS.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 39,
+    "prompt": "A service accepts a serialized object from clients and deserializes it with a vulnerable library. What risk arises?",
+    "expected_answer": "The primary risk is remote code execution (RCE) through insecure deserialization, ranked in the OWASP Top 10 as one of the most dangerous vulnerability classes. When a vulnerable library deserializes untrusted data, an attacker can craft malicious serialized objects containing gadget chains — sequences of existing class methods that, when triggered during deserialization, execute arbitrary code on the server. This vulnerability has been exploited in major frameworks including Java (Apache Commons Collections), .NET (BinaryFormatter), PHP (unserialize), and Python (pickle). The impact is typically complete server compromise with the privileges of the application process, enabling data theft, lateral movement, and persistent backdoor installation. Mitigation strategies include avoiding deserialization of untrusted data entirely, using safe data formats like JSON with strict schema validation, implementing integrity checks (HMAC signatures) on serialized data, maintaining up-to-date libraries, and deploying runtime application self-protection (RASP) to detect exploitation attempts.",
+    "reasoning_requirement": "Connect untrusted deserialization to gadget chains/code execution.",
+    "evaluation_criteria": "Identifies insecure deserialization; recommends avoid/validate, use safe formats, patch libs.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 40,
+    "prompt": "A bug bounty report claims 'clickjacking' on a settings page without sensitive actions. Does severity likely high?",
+    "expected_answer": "The severity is likely Low or Informational unless the clickjacking can be chained with sensitive state-changing actions. Clickjacking requires an attacker to overlay the target page in an invisible iframe and trick victims into clicking UI elements they cannot see, but the practical impact depends entirely on what actions can be triggered on the framed page. A settings page without sensitive actions (no password changes, no permission modifications, no financial transactions) offers limited exploitation value, as the attacker can only trick users into toggling non-critical preferences. Bug bounty programs typically rate standalone clickjacking as Low/Informational, with many programs explicitly excluding it unless demonstrable impact is proven. However, if the page can be combined with CSRF tokens or if future sensitive features are added to that page, the risk could increase. Proper mitigation remains straightforward: implement X-Frame-Options: DENY or Content-Security-Policy: frame-ancestors 'none' headers to prevent framing entirely.",
+    "reasoning_requirement": "Assess impact based on whether actions are protected and exploitable.",
+    "evaluation_criteria": "Explains clickjacking severity depends on sensitive state-changing actions and defenses like framebusting/CSP.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 41,
+    "prompt": "A company wants to ensure only intended recipients can read an emailed file. Is encrypting the email attachment enough if the password is sent in the same email thread?",
+    "expected_answer": "No, sending the encryption password in the same email thread fundamentally defeats the purpose of encrypting the attachment. If an attacker compromises the email account, intercepts the email in transit, or gains access to the email server, they obtain both the encrypted file and its decryption password simultaneously, rendering the encryption meaningless. This violates the security principle of channel separation — the decryption key must be transmitted through a different communication channel (such as SMS, phone call, or a separate secure messaging platform) to ensure that compromising one channel does not expose both the ciphertext and the key. A more robust approach would use end-to-end encrypted email (PGP/S-MIME), secure file sharing platforms with access controls and expiring links, or enterprise rights management solutions that enforce server-side access policies independent of the file's distribution path.",
+    "reasoning_requirement": "Evaluate key/password delivery channel security.",
+    "evaluation_criteria": "Notes sending password in same channel negates benefit; use separate channel or secure sharing.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 42,
+    "prompt": "An employee plugs an unknown USB drive into a workstation. What control best reduces malware risk?",
+    "expected_answer": "The most effective control is a combination of USB device control policies and endpoint protection, implementing defense-in-depth against removable media threats. Device control software can enforce whitelisting of authorized USB devices by vendor ID, product ID, or serial number, preventing unrecognized drives from mounting entirely. Endpoint Detection and Response (EDR) solutions provide runtime protection by scanning mounted devices, blocking autorun execution, and detecting malicious payloads through behavioral analysis. Group Policy or MDM configurations should disable AutoPlay/AutoRun to prevent automatic execution of malicious payloads upon insertion. Additionally, security awareness training is critical to address the human factor — employees should understand that unknown USB drives may contain malware deliberately planted as a social engineering attack (USB drop attacks). Physical USB port locks or disabled ports via BIOS settings provide additional hardware-level controls for high-security environments.",
+    "reasoning_requirement": "Identify practical preventive controls.",
+    "evaluation_criteria": "Mentions restricting removable media, EDR/AV, and user training as layered defenses.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 43,
+    "prompt": "A database user account used by the web app has admin privileges. What principle is violated?",
+    "expected_answer": "This configuration violates the Principle of Least Privilege, a foundational security concept requiring that every entity operates with the minimum permissions necessary to perform its intended function. A web application typically only needs SELECT, INSERT, UPDATE, and DELETE permissions on specific tables — granting full administrative privileges (CREATE, DROP, ALTER, GRANT, file system access, stored procedure creation) vastly exceeds these requirements and creates severe security implications. If the web application is compromised through SQL injection or other vulnerabilities, the attacker inherits full database administrator capabilities, enabling them to exfiltrate the entire database, modify or destroy data, create backdoor accounts, access the underlying file system, and potentially achieve operating system command execution through database-specific features. Remediation involves creating a dedicated database user with granular permissions restricted to only the specific tables and operations the application requires, implementing separate accounts for administrative tasks, and auditing database access patterns regularly.",
+    "reasoning_requirement": "Match excessive permissions to core principle.",
+    "evaluation_criteria": "States app accounts should have minimal permissions required for operations.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 44,
+    "prompt": "A company adds security headers including HSTS. What does HSTS do?",
+    "expected_answer": "HTTP Strict Transport Security (HSTS) instructs web browsers to exclusively use HTTPS connections when communicating with the domain, preventing protocol downgrade attacks and accidental plaintext HTTP communication. Once a browser receives the HSTS header (Strict-Transport-Security), it automatically converts all subsequent HTTP requests to HTTPS for the specified max-age duration, even if the user types 'http://' or clicks an HTTP link. This effectively mitigates SSL stripping attacks where a MITM attacker intercepts the initial HTTP request and proxies the connection as plaintext, which was famously demonstrated by the sslstrip tool. HSTS with the includeSubDomains directive extends protection to all subdomains, and the preload directive allows the domain to be included in browser-hardcoded HSTS lists, protecting even the very first connection before any header is received. The combination of HSTS with properly configured TLS certificates, OCSP stapling, and certificate transparency monitoring provides comprehensive transport layer security.",
+    "reasoning_requirement": "Explain security header function and threat mitigated.",
+    "evaluation_criteria": "Notes it reduces SSL stripping/downgrade attacks by enforcing HTTPS.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 45,
+    "prompt": "A user can request /download?file=../../etc/passwd and it returns file contents. What vulnerability is present?",
+    "expected_answer": "This is a Path Traversal (Directory Traversal) vulnerability that allows an attacker to access files outside the intended directory by using relative path sequences like '../' to navigate the file system hierarchy. The successful retrieval of /etc/passwd demonstrates that the application fails to properly sanitize or validate file path parameters, and the web server process has sufficient filesystem permissions to read sensitive system files. While /etc/passwd on modern systems contains usernames but not password hashes, the vulnerability likely extends to reading any file accessible to the web server process, including application source code, configuration files with database credentials, private keys, and other sensitive data. In severe cases, this can be chained with log poisoning or file inclusion vulnerabilities to achieve remote code execution. Mitigation requires implementing a strict allowlist of permitted files, using a base directory with canonical path resolution to prevent traversal, stripping or rejecting path separator characters, and running the web server with minimal filesystem permissions following the principle of least privilege.",
+    "reasoning_requirement": "Identify traversal patterns and impact.",
+    "evaluation_criteria": "Recognizes '../' traversal and unauthorized file read; suggests allowlist and safe path handling.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 46,
+    "prompt": "A program stores credit card numbers and wants to reduce compliance burden. What approach helps most?",
+    "expected_answer": "The most effective approach is tokenization combined with outsourcing payment processing to a PCI DSS-compliant payment processor, thereby removing credit card data from the organization's environment entirely. Tokenization replaces sensitive card numbers with non-sensitive placeholder tokens that have no exploitable value if compromised, while the actual card data is stored securely by the payment processor. This dramatically reduces PCI DSS compliance scope because the organization no longer stores, processes, or transmits cardholder data — the most burdensome aspect of PCI compliance. Payment processors like Stripe, Braintree, and Adyen provide client-side tokenization (e.g., Stripe Elements) where card numbers are submitted directly to the processor's servers without ever touching the merchant's infrastructure. This approach also reduces breach liability and insurance costs, as compromised tokens cannot be used to conduct fraudulent transactions. Organizations should additionally implement point-to-point encryption (P2PE) for any remaining card-present transactions.",
+    "reasoning_requirement": "Reason about reducing scope and sensitive data retention.",
+    "evaluation_criteria": "Mentions minimizing data collection, tokenization, and using PCI-compliant processors.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 47,
+    "prompt": "A bug bounty hunter finds a reflected XSS that requires a user to click a crafted link. Is it always critical?",
+    "expected_answer": "No, reflected XSS is not always critical — its severity depends heavily on the application context, available mitigations, and the specific impact achievable through exploitation. Key factors that influence severity include whether session cookies are protected by the HttpOnly flag (preventing cookie theft), whether a Content Security Policy is enforced (potentially blocking script execution), the sensitivity of the affected page and accessible data, and whether the application handles authentication tokens or sensitive operations. The user interaction requirement (clicking a crafted link) also reduces the exploitability score compared to stored XSS. In some contexts, reflected XSS can be critical — for example, on an authentication page where it enables credential harvesting, or in applications without CSP where it enables full session hijacking. Conversely, reflected XSS on a public marketing page with strong CSP, HttpOnly cookies, and no sensitive data access may warrant only Medium or Low severity. Bug bounty programs increasingly evaluate XSS impact case-by-case rather than applying blanket severity ratings.",
+    "reasoning_requirement": "Evaluate exploit prerequisites, impact, and defenses.",
+    "evaluation_criteria": "Considers CSP, HttpOnly cookies, sensitive endpoints, user interaction requirement, and potential impact.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 48,
+    "prompt": "A system uses 4-digit PINs for account recovery. If an attacker can try 100 guesses per hour with no lockout, what is the expected time to succeed on average?",
+    "expected_answer": "The expected average time to successfully brute-force the PIN is approximately 50 hours. A 4-digit PIN has 10,000 possible combinations (0000-9999), and on average, a brute-force attack succeeds after trying half the keyspace, which is approximately 5,000 attempts. At a rate of 100 guesses per hour, 5,000 attempts ÷ 100 attempts/hour = 50 hours of sustained attack effort. This represents a trivially small keyspace by security standards, making the system fundamentally insecure for account recovery without additional controls. Even in the worst case, exhausting the entire keyspace takes only 100 hours. Effective mitigations include implementing account lockout or exponential backoff after failed attempts, using longer PINs or alphanumeric recovery codes, adding rate limiting per IP and per account, requiring additional verification factors, and setting short expiration windows on recovery PINs to limit the available attack window.",
+    "reasoning_requirement": "Compute average guesses needed and divide by rate.",
+    "evaluation_criteria": "Notes 10,000 possibilities; average ~5,000 guesses; 5,000/100 = 50 hours.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 49,
+    "prompt": "A company logs full URLs including query parameters, and tokens are passed in URLs. What is the issue?",
+    "expected_answer": "Passing sensitive tokens in URLs and logging full URLs creates multiple security exposure vectors for credential leakage. URL query parameters containing tokens are recorded in server access logs, proxy logs, CDN logs, browser history, and web analytics platforms, dramatically expanding the attack surface for token compromise. Additionally, the full URL including tokens is transmitted in the HTTP Referer header when users navigate to external links, potentially exposing credentials to third-party services. Shared workstations, browser sync features, and shoulder surfing further increase the risk of token exposure through URL bars. This violates the security principle of minimizing credential exposure across system boundaries. Remediation requires transmitting tokens in HTTP Authorization headers or POST request bodies instead of URL parameters, implementing log redaction for any URLs that might contain sensitive data, configuring Referrer-Policy headers to prevent token leakage, and ensuring tokens have short expiration times to limit the window of exploitation if exposed.",
+    "reasoning_requirement": "Trace where URL tokens propagate (logs, analytics, referrer headers).",
+    "evaluation_criteria": "Explains tokens in URLs can leak; recommends Authorization headers and redaction.",
+    "category": "cybersec_reasoning"
+  },
+  {
+    "id": 50,
+    "prompt": "A security team must choose between blocking all macros or allowing signed macros only. Which is a balanced approach?",
+    "expected_answer": "Allowing only digitally signed macros from trusted publishers represents the balanced approach between security and business functionality. Macros are one of the most prevalent malware delivery vectors, with malicious Office documents accounting for a significant percentage of phishing payloads — blocking all macros would eliminate this attack surface entirely but may disrupt legitimate business workflows that depend on macro automation. The signed-only policy ensures that only macros from verified, trusted code-signing certificates are permitted to execute, providing cryptographic assurance of the macro's origin and integrity while blocking unsigned malicious payloads. Organizations should maintain a carefully managed list of trusted publishers, implement certificate lifecycle management, and combine this control with additional protections including Protected View for external documents, Attack Surface Reduction (ASR) rules, and endpoint detection capabilities. This approach aligns with the principle of minimal functionality while acknowledging that complete macro prohibition may not be operationally feasible for all organizations.",
+    "reasoning_requirement": "Balance usability with risk reduction using trust controls.",
+    "evaluation_criteria": "Recognizes macros are a major malware vector; signed-only reduces risk while preserving some business use.",
+    "category": "cybersec_reasoning"
+  }
+]

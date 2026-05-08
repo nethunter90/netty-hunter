@@ -11,7 +11,7 @@ import logger from '../utils/logger';
 export interface JsonPrompt {
   id: number | string;
   category?: string;
-  scenario: string;
+  scenario?: string;
   prompt: string;
   expected_answer: string;
   evaluation_criteria: string;
@@ -30,6 +30,9 @@ export interface JsonPrompt {
   // chain_scenarios fields
   chain_steps?: string;
   impact_level?: string;
+  // defensive_awareness fields
+  signal_observed?: string;
+  level?: string;
 }
 
 export class JsonPromptLoader {
@@ -158,7 +161,7 @@ export class JsonPromptLoader {
         !sections.includes(p) &&
         p.category !== undefined &&
         kwLower.some(k =>
-          p.scenario.toLowerCase().includes(k) ||
+          (p.scenario ?? '').toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
           (p.chain_steps ?? '').toLowerCase().includes(k) ||
           p.prompt.toLowerCase().includes(k)
@@ -201,8 +204,9 @@ export class JsonPromptLoader {
       const focus = p.reasoning_focus ?? p.reasoning_requirement ?? p.objective ?? '';
       const answerExcerpt = p.expected_answer.slice(0, 200).replace(/\n/g, ' ');
 
-      lines.push(`${tag} ${p.scenario}`);
+      lines.push(`${tag} ${p.scenario ?? p.prompt.slice(0, 150)}`);
       if (p.chain_steps) lines.push(`  Chain: ${p.chain_steps}`);
+      if (p.signal_observed) lines.push(`  Signal: ${p.signal_observed}`);
       if (p.impact_level) lines.push(`  Impact: ${p.impact_level}`);
       if (focus) lines.push(`  Focus: ${focus}`);
       lines.push(`  Answer excerpt: ${answerExcerpt}...`);
