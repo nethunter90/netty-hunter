@@ -9,8 +9,8 @@ import * as path from 'path';
 import logger from '../utils/logger';
 
 export interface JsonPrompt {
-  id: number;
-  category: string;
+  id: number | string;
+  category?: string;
   scenario: string;
   prompt: string;
   expected_answer: string;
@@ -23,6 +23,8 @@ export interface JsonPrompt {
   // attack_paths / bounty_patterns fields
   objective?: string;
   reasoning_requirement?: string;
+  // business-logic (T5) fields
+  domain?: string;
 }
 
 export class JsonPromptLoader {
@@ -68,11 +70,15 @@ export class JsonPromptLoader {
   }
 
   getByDomain(auth_domain: string): JsonPrompt[] {
-    return this.prompts.filter(p => p.auth_domain === auth_domain);
+    return this.prompts.filter(p => p.auth_domain === auth_domain || p.domain === auth_domain);
   }
 
   getByCategory(category: string): JsonPrompt[] {
     return this.prompts.filter(p => p.category === category);
+  }
+
+  getByBusinessDomain(domain: string): JsonPrompt[] {
+    return this.prompts.filter(p => p.domain === domain);
   }
 
   getByComplexity(level: string): JsonPrompt[] {
@@ -103,12 +109,28 @@ export class JsonPromptLoader {
       if (sections.length >= maxEntries) break;
     }
 
-    // 2. Keyword-matched entries from attack_paths / bounty_patterns
+    // 2. Business-logic domain entries (T5 — business-logic.json)
+    if (sections.length < maxEntries) {
+      const bizDomains = this.vulnClassToBusinessDomains(vulnClass);
+      for (const bd of bizDomains) {
+        const bdPrompts = this.getByBusinessDomain(bd)
+          .filter(p => !sections.includes(p))
+          .sort((a, b) => {
+            const order = ['L1', 'L2', 'L3', 'L4', 'L5'];
+            return order.indexOf(a.complexity ?? 'L3') - order.indexOf(b.complexity ?? 'L3');
+          });
+        sections.push(...bdPrompts);
+        if (sections.length >= maxEntries) break;
+      }
+    }
+
+    // 3. Keyword-matched entries from attack_paths / bounty_patterns
     if (sections.length < maxEntries) {
       const keywords = this.vulnClassToKeywords(vulnClass);
       const kwLower = keywords.map(k => k.toLowerCase());
       const matched = this.prompts.filter(p =>
         p.category !== 'api_auth_chains' &&
+        !p.domain &&
         !sections.includes(p) &&
         kwLower.some(k =>
           p.scenario.toLowerCase().includes(k) ||
@@ -126,16 +148,26 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.category;
+      const group = p.auth_domain ?? p.domain ?? p.category ?? 'general';
       if (group !== lastGroup) {
-        const header = p.auth_domain
-          ? `Auth Domain Knowledge: ${p.auth_domain}`
-          : `Attack Pattern Knowledge: ${p.category.replace(/_/g, ' ')}`;
+        let header: string;
+        if (p.auth_domain) {
+          header = `Auth Domain Knowledge: ${p.auth_domain}`;
+        } else if (p.domain) {
+          header = `Business Logic Knowledge: ${p.domain}`;
+        } else {
+          header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
+        }
         lines.push(`\n=== ${header} ===`);
         lastGroup = group;
       }
 
-      const tag = p.prompt_id ? `[${p.prompt_id} ${p.complexity}]` : `[#${p.id}]`;
+      const idStr = typeof p.id === 'string' ? p.id : `#${p.id}`;
+      const tag = p.prompt_id
+        ? `[${p.prompt_id} ${p.complexity}]`
+        : p.complexity
+          ? `[${idStr} ${p.complexity}]`
+          : `[${idStr}]`;
       const focus = p.reasoning_focus ?? p.reasoning_requirement ?? p.objective ?? '';
       const answerExcerpt = p.expected_answer.slice(0, 200).replace(/\n/g, ' ');
 
@@ -165,6 +197,26 @@ export class JsonPromptLoader {
       websocket:        ['WebSocket Auth'],
       misconfig:        ['API Keys', 'CORS'],
       open_redirect:    ['OAuth2', 'SAML'],
+    };
+    return map[vulnClass] ?? [];
+  }
+
+  private vulnClassToBusinessDomains(vulnClass: string): string[] {
+    const map: Record<string, string[]> = {
+      business_logic:   ['Rewards', 'Coupons', 'Subscription', 'Refunds', 'Marketplace', 'Cart', 'Referrals', 'Gift Cards', 'Pricing', 'Promotions', 'Cashback', 'Affiliate'],
+      race_condition:   ['Fintech', 'Fintech Core', 'Marketplace', 'E-commerce', 'Flash Sales', 'Payments', 'Escrow'],
+      idor:             ['Marketplace', 'E-commerce', 'Subscription SaaS', 'Enterprise SaaS', 'Marketplace SaaS'],
+      payment_fraud:    ['Fintech', 'Fintech Core', 'Fintech Platform', 'Fintech API', 'Payments', 'Cryptocurrency', 'Lending', 'Escrow', 'Payroll'],
+      promo_abuse:      ['Coupons', 'Promotions', 'Referrals', 'Gift Cards', 'Cashback', 'Affiliate', 'Flash Sales'],
+      logic_flaw:       ['Subscription', 'Tax', 'Shipping', 'Digital Goods', 'Auctions', 'Travel', 'Gaming', 'Insurance', 'Token Economy'],
+      info_disclosure:  ['Fintech Reporting', 'Invoicing', 'Global Platform', 'Enterprise SaaS'],
+      auth_bypass:      ['Token Economy', 'Token Lifecycle', 'Microservices'],
+      sqli:             ['E-commerce', 'Marketplace', 'Enterprise SaaS'],
+      ssrf:             ['Microservices', 'Global Platform'],
+      travel:           ['Travel', 'Travel Platform'],
+      gaming:           ['Gaming', 'Token Economy', 'Token Lifecycle'],
+      lending:          ['Lending', 'Fintech Core', 'Fintech Platform'],
+      crypto:           ['Cryptocurrency', 'Token Economy', 'Token Lifecycle'],
     };
     return map[vulnClass] ?? [];
   }
