@@ -35,6 +35,8 @@ export interface JsonPrompt {
   level?: string;
   // engagement-signals (T6) fields
   signal_type?: string;
+  // kali_tool_interpretation (T2) fields
+  tool?: string;
 }
 
 export class JsonPromptLoader {
