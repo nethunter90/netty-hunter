@@ -18,6 +18,8 @@ import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
 import { promptKB } from "../intelligence/PromptKnowledgeBase";
+import { toolKnowledge } from "../lib/hunter/tool-knowledge";
+import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 
 const execFileAsync = promisify(execFile);
 
@@ -228,6 +230,7 @@ export class HunterEngine extends EventEmitter {
   private scopeGuard = ScopeGuard.getInstance();
   private modelRouter = ModelRouter.getInstance();
   private roiModel = new ROIModel();
+  private rlWiring = new ReinforcementWiring();
   private toolLastUsed: Map<string, number> = new Map();
   private dbSessionId = 0;
   private campaignId = 0;
@@ -293,6 +296,11 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
+    this.rlWiring.onHuntStart({
+      sessionId: sessionUuid,
+      programId: params.programId,
+      programType: "web_app",
+    });
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
 
@@ -348,6 +356,14 @@ export class HunterEngine extends EventEmitter {
     }
 
     this.state.phase = "complete";
+    this.rlWiring.onHuntComplete({
+      sessionId: this.state.sessionId,
+      programId: this.state.programId,
+      programType: "web_app",
+      confirmedFindings: this.state.confirmedFindings.length,
+      totalProbes: this.state.probes.length,
+      chainIds: [],
+    });
     await this.persistResults();
     this.emit("hunt:complete", {
       sessionId: this.state.sessionId,
@@ -428,6 +444,8 @@ Previously tested hypotheses: ${this.state.hypotheses.length}
 Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
+${toolKnowledge.getSummaryBlock()}
+
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
@@ -503,6 +521,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
       this.state.probes.push(result);
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
+      this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result });
     }
   }
@@ -522,12 +541,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
         if (newConfidence > 0.7) {
           hypothesis.status = "confirmed";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
           await this.persistFinding(confirmed);
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
         } else {
           // Gray zone (0.2–0.7): re-queue with a different tool, up to 2 retries
           hypothesis.retryCount = (hypothesis.retryCount || 0) + 1;
@@ -548,6 +569,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       } else {
         if (relatedProbes.length > 0) {
           hypothesis.status = "rejected";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
           // Record miss in ROI model so success rates decay appropriately
           this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
         } else {

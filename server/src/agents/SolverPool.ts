@@ -12,6 +12,7 @@ import { promisify } from "util";
 import axios from "axios";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
+import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { db } from "../db";
 import { solverResults } from "../db/schema";
 
@@ -761,6 +762,8 @@ class StrategyCoordinator {
 
 Endpoint: ${endpoint}
 Observations: ${JSON.stringify(observations, null, 2)}
+
+${toolKnowledge.getSummaryBlock()}
 
 Determine which vulnerability classes to test. Consider:
 - What technologies are present?
