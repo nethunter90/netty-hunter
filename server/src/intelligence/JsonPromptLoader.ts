@@ -25,6 +25,9 @@ export interface JsonPrompt {
   reasoning_requirement?: string;
   // business-logic (T5) fields
   domain?: string;
+  // chain_scenarios fields
+  chain_steps?: string;
+  impact_level?: string;
 }
 
 export class JsonPromptLoader {
@@ -132,9 +135,11 @@ export class JsonPromptLoader {
         p.category !== 'api_auth_chains' &&
         !p.domain &&
         !sections.includes(p) &&
+        p.category !== undefined &&
         kwLower.some(k =>
           p.scenario.toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
+          (p.chain_steps ?? '').toLowerCase().includes(k) ||
           p.prompt.toLowerCase().includes(k)
         )
       );
@@ -155,6 +160,8 @@ export class JsonPromptLoader {
           header = `Auth Domain Knowledge: ${p.auth_domain}`;
         } else if (p.domain) {
           header = `Business Logic Knowledge: ${p.domain}`;
+        } else if (p.category === 'chain_scenarios') {
+          header = `Attack Chain Scenario`;
         } else {
           header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
         }
@@ -172,6 +179,8 @@ export class JsonPromptLoader {
       const answerExcerpt = p.expected_answer.slice(0, 200).replace(/\n/g, ' ');
 
       lines.push(`${tag} ${p.scenario}`);
+      if (p.chain_steps) lines.push(`  Chain: ${p.chain_steps}`);
+      if (p.impact_level) lines.push(`  Impact: ${p.impact_level}`);
       if (focus) lines.push(`  Focus: ${focus}`);
       lines.push(`  Answer excerpt: ${answerExcerpt}...`);
     }
