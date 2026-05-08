@@ -2,6 +2,7 @@
  * JSON Prompt Loader
  * Singleton that reads all *.json files from server/data/prompts/ at startup.
  * Provides structured domain knowledge for injection into AI reasoning prompts.
+ * Handles multiple file schemas: api_auth_chains, attack_paths, bounty_patterns.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -9,15 +10,19 @@ import logger from '../utils/logger';
 
 export interface JsonPrompt {
   id: number;
-  prompt_id: string;
-  complexity: string;
-  auth_domain: string;
+  category: string;
   scenario: string;
   prompt: string;
-  reasoning_focus: string;
   expected_answer: string;
   evaluation_criteria: string;
-  category: string;
+  // api_auth_chains fields
+  prompt_id?: string;
+  complexity?: string;
+  auth_domain?: string;
+  reasoning_focus?: string;
+  // attack_paths / bounty_patterns fields
+  objective?: string;
+  reasoning_requirement?: string;
 }
 
 export class JsonPromptLoader {
@@ -80,39 +85,62 @@ export class JsonPromptLoader {
 
   /**
    * Returns a formatted context block for injection into AI prompts.
-   * Maps the vuln class to relevant auth domains and picks up to maxEntries
-   * prompts, preferring L1-L2 (concrete, attack-focused examples).
+   * Combines domain-matched entries (api_auth_chains) with keyword-matched entries
+   * (attack_paths, bounty_patterns) for the given vuln class.
    */
   getContextBlock(vulnClass: string, maxEntries = 3): string {
-    const domains = this.vulnClassToDomains(vulnClass);
-    if (domains.length === 0) return '';
+    const sections: JsonPrompt[] = [];
 
-    const candidates: JsonPrompt[] = [];
+    // 1. Auth domain entries (api_auth_chains)
+    const domains = this.vulnClassToDomains(vulnClass);
     for (const domain of domains) {
-      const domainPrompts = this.getByDomain(domain);
-      // Prefer lower complexity (more concrete) for context injection
-      const sorted = domainPrompts.sort((a, b) => {
-        const levelOrder = ['L1', 'L2', 'L3', 'L4', 'L5'];
-        return levelOrder.indexOf(a.complexity) - levelOrder.indexOf(b.complexity);
-      });
-      candidates.push(...sorted);
-      if (candidates.length >= maxEntries) break;
+      const domainPrompts = this.getByDomain(domain)
+        .sort((a, b) => {
+          const order = ['L1', 'L2', 'L3', 'L4', 'L5'];
+          return order.indexOf(a.complexity ?? 'L3') - order.indexOf(b.complexity ?? 'L3');
+        });
+      sections.push(...domainPrompts);
+      if (sections.length >= maxEntries) break;
     }
 
-    const selected = candidates.slice(0, maxEntries);
+    // 2. Keyword-matched entries from attack_paths / bounty_patterns
+    if (sections.length < maxEntries) {
+      const keywords = this.vulnClassToKeywords(vulnClass);
+      const kwLower = keywords.map(k => k.toLowerCase());
+      const matched = this.prompts.filter(p =>
+        p.category !== 'api_auth_chains' &&
+        !sections.includes(p) &&
+        kwLower.some(k =>
+          p.scenario.toLowerCase().includes(k) ||
+          (p.objective ?? '').toLowerCase().includes(k) ||
+          p.prompt.toLowerCase().includes(k)
+        )
+      );
+      sections.push(...matched);
+    }
+
+    const selected = sections.slice(0, maxEntries);
     if (selected.length === 0) return '';
 
     const lines: string[] = [];
-    let lastDomain = '';
+    let lastGroup = '';
 
     for (const p of selected) {
-      if (p.auth_domain !== lastDomain) {
-        lines.push(`\n=== Auth Domain Knowledge: ${p.auth_domain} ===`);
-        lastDomain = p.auth_domain;
+      const group = p.auth_domain ?? p.category;
+      if (group !== lastGroup) {
+        const header = p.auth_domain
+          ? `Auth Domain Knowledge: ${p.auth_domain}`
+          : `Attack Pattern Knowledge: ${p.category.replace(/_/g, ' ')}`;
+        lines.push(`\n=== ${header} ===`);
+        lastGroup = group;
       }
+
+      const tag = p.prompt_id ? `[${p.prompt_id} ${p.complexity}]` : `[#${p.id}]`;
+      const focus = p.reasoning_focus ?? p.reasoning_requirement ?? p.objective ?? '';
       const answerExcerpt = p.expected_answer.slice(0, 200).replace(/\n/g, ' ');
-      lines.push(`[${p.prompt_id} ${p.complexity}] ${p.scenario}`);
-      lines.push(`  Focus: ${p.reasoning_focus}`);
+
+      lines.push(`${tag} ${p.scenario}`);
+      if (focus) lines.push(`  Focus: ${focus}`);
       lines.push(`  Answer excerpt: ${answerExcerpt}...`);
     }
 
@@ -139,6 +167,24 @@ export class JsonPromptLoader {
       open_redirect:    ['OAuth2', 'SAML'],
     };
     return map[vulnClass] ?? [];
+  }
+
+  private vulnClassToKeywords(vulnClass: string): string[] {
+    const map: Record<string, string[]> = {
+      sqli:             ['sql', 'injection', 'database', 'mysql', 'mssql'],
+      xss:              ['xss', 'cross-site scripting', 'javascript', 'script injection'],
+      ssrf:             ['ssrf', 'server-side request', 'internal ip', 'metadata'],
+      idor:             ['idor', 'direct object', 'sequential id', 'predictable'],
+      rce:              ['rce', 'remote code', 'command injection', 'code execution'],
+      lfi:              ['lfi', 'file inclusion', 'path traversal', 'directory traversal'],
+      auth_bypass:      ['authentication bypass', 'privilege escalation', 'admin access'],
+      info_disclosure:  ['information disclosure', 'stack trace', 'error message', 'debug'],
+      misconfig:        ['misconfiguration', 'default credentials', 'open redirect'],
+      cors:             ['cors', 'cross-origin'],
+      csrf:             ['csrf', 'cross-site request forgery', 'state parameter'],
+      weak_credentials: ['weak password', 'brute force', 'credential', 'spray'],
+    };
+    return map[vulnClass] ?? [vulnClass.replace(/_/g, ' ')];
   }
 }
 
