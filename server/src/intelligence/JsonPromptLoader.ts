@@ -39,6 +39,8 @@ export interface JsonPrompt {
   tool?: string;
   // tool-chain-reasoning (T9) fields
   tools_involved?: string[];
+  // access-level-scenarios (T7) fields
+  access_level?: string;
 }
 
 export class JsonPromptLoader {
@@ -166,7 +168,7 @@ export class JsonPromptLoader {
         !p.domain &&
         !p.cloud_domain &&
         !sections.includes(p) &&
-        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined) &&
+        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined || p.access_level !== undefined) &&
         kwLower.some(k =>
           (p.scenario ?? '').toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
@@ -185,7 +187,7 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : 'general');
+      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? 'general';
       if (group !== lastGroup) {
         let header: string;
         if (p.auth_domain) {
@@ -200,6 +202,8 @@ export class JsonPromptLoader {
           header = `Attack Chain Scenario`;
         } else if (p.tools_involved) {
           header = `Tool Chain Reasoning: ${p.tools_involved.slice(0, 2).join(' + ')}`;
+        } else if (p.access_level) {
+          header = `Access Level Scenario: ${p.access_level}`;
         } else {
           header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
         }
@@ -218,6 +222,7 @@ export class JsonPromptLoader {
 
       lines.push(`${tag} ${p.scenario ?? p.prompt.slice(0, 150)}`);
       if (p.tools_involved) lines.push(`  Tools: ${p.tools_involved.join(', ')}`);
+      if (p.access_level) lines.push(`  Access: ${p.access_level}`);
       if (p.chain_steps) lines.push(`  Chain: ${p.chain_steps}`);
       if (p.signal_observed) lines.push(`  Signal: ${p.signal_observed}`);
       if (p.impact_level) lines.push(`  Impact: ${p.impact_level}`);
