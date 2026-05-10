@@ -21,6 +21,8 @@ import { promptKB } from "../intelligence/PromptKnowledgeBase";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
+import { stealthCoordinator } from "../lib/stealth";
+import { temporalDecay } from "../lib/hunter/temporal-decay";
 
 const execFileAsync = promisify(execFile);
 
@@ -604,6 +606,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const lastUsed = this.toolLastUsed.get(toolName) || 0;
     const waitTime = (tool.rateLimit * 1000) - (Date.now() - lastUsed);
     if (waitTime > 0) await new Promise(r => setTimeout(r, Math.min(waitTime, 5000)));
+
+    // Decay-aware timing: honour stealth coordinator recommendation before probing
+    try {
+      const domain = new URL(url).hostname;
+      const vendor = (this.state as unknown as Record<string, string>).detectedWafVendor ?? 'generic';
+      const status = stealthCoordinator.getStatus(this.state.sessionId, domain, vendor);
+      const decayState = temporalDecay.getDecayState(this.state.sessionId, domain, vendor);
+      if (decayState.recommendedWaitMs > 0) {
+        logger.debug('[HunterEngine] stealth timing delay', { status, waitMs: decayState.recommendedWaitMs });
+        await new Promise(r => setTimeout(r, Math.min(decayState.recommendedWaitMs, 30_000)));
+      }
+    } catch { /* non-critical — URL may not be parseable */ }
 
     const { bin, args } = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
     const cmdString = `${bin} ${args.join(" ")}`;
