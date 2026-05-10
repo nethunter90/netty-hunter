@@ -6,6 +6,7 @@
 import axios from 'axios';
 import { WarmupPlan, temporalDecay } from '../hunter/temporal-decay';
 import { BehavioralMimicry } from './behavioral-mimicry';
+import { ScopeGuard } from '../../middleware/scopeGuard';
 import logger from '../../utils/logger';
 
 export interface WarmupResult {
@@ -29,10 +30,11 @@ export class SessionWarmup {
    * Execute the warmup plan by firing benign-looking requests.
    * dryRun=true returns a plan without sending any HTTP traffic.
    */
-  async execute(plan: WarmupPlan, options: { dryRun?: boolean } = {}): Promise<WarmupResult> {
-    const { dryRun = false } = options;
+  async execute(plan: WarmupPlan, options: { dryRun?: boolean; programId?: number } = {}): Promise<WarmupResult> {
+    const { dryRun = false, programId } = options;
     const start = Date.now();
     const session = this.mimicry.buildSession(plan.domain);
+    const scopeGuard = ScopeGuard.getInstance();
     let fired = 0;
 
     if (dryRun) {
@@ -48,6 +50,15 @@ export class SessionWarmup {
     for (let i = 0; i < plan.paths.length; i++) {
       const path = plan.paths[i % plan.paths.length];
       const url = `https://${plan.domain}${path}`;
+
+      // Scope gate: skip any URL that is out-of-scope for the program
+      if (programId !== undefined) {
+        const { allowed, reason } = await scopeGuard.isInScope(url, programId);
+        if (!allowed) {
+          logger.warn('[SessionWarmup] skipping out-of-scope warmup URL', { url, reason });
+          continue;
+        }
+      }
       const referrer = session.referrerChain[Math.min(i, session.referrerChain.length - 1)];
       const headers = this.mimicry.buildHeaders(session, referrer);
 
@@ -100,9 +111,9 @@ export class SessionWarmup {
   }
 
   /** Convenience: build + execute a warmup for a domain/vendor pair. */
-  async warmup(domain: string, vendor: string, dryRun = false): Promise<WarmupResult> {
+  async warmup(domain: string, vendor: string, dryRun = false, programId?: number): Promise<WarmupResult> {
     const plan = temporalDecay.getWarmupPlan(domain, vendor);
     plan.paths = this.sampleNormalPaths(domain, plan.requestCount);
-    return this.execute(plan, { dryRun });
+    return this.execute(plan, { dryRun, programId });
   }
 }

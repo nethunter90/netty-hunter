@@ -15,6 +15,7 @@ import { eq, and } from "drizzle-orm";
 import logger from "../utils/logger";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { stealthCoordinator } from "../lib/stealth";
+import { ScopeGuard } from "../middleware/scopeGuard";
 
 export interface WAFDetectionResult {
   detected: boolean;
@@ -307,8 +308,19 @@ export class IntelligenceSynthesizer {
   private correlations = new RuleCorrelationMatrix();
   private vendorProfiles = new VendorEvasionProfiles();
 
-  async synthesize(url: string, payload: string, sessionId = 'default'): Promise<UnifiedIntelligence> {
+  async synthesize(url: string, payload: string, sessionId = 'default', programId?: number): Promise<UnifiedIntelligence> {
     const domain = new URL(url).hostname;
+
+    // Scope gate: fail-closed before any HTTP traffic is sent
+    if (programId !== undefined) {
+      const scopeGuard = ScopeGuard.getInstance();
+      const { allowed, reason } = await scopeGuard.isInScope(url, programId);
+      if (!allowed) {
+        logger.warn('WAFBypass synthesize blocked by scope guard', { url, programId, reason });
+        throw new Error(`Out of scope: ${reason}`);
+      }
+    }
+
     const { waf } = await this.fingerprinter.fingerprint(url);
     const recommendedTechs = this.library.recommendTechniques(waf.vendor);
     const variants = this.library.generateVariants(payload, recommendedTechs);

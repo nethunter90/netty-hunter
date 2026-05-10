@@ -115,9 +115,9 @@ export class StealthCoordinator {
     };
   }
 
-  /** Execute warmup for a domain/vendor before probing. */
-  async runWarmup(domain: string, vendor: string, dryRun = false): Promise<WarmupResult> {
-    return this.warmup.warmup(domain, vendor, dryRun);
+  /** Execute warmup for a domain/vendor before probing. programId enforces scope on every request. */
+  async runWarmup(domain: string, vendor: string, dryRun = false, programId?: number): Promise<WarmupResult> {
+    return this.warmup.warmup(domain, vendor, dryRun, programId);
   }
 
   /** Record probe outcome so timing and decay engines can update state. */
