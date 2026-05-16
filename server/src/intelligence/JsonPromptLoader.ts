@@ -41,6 +41,8 @@ export interface JsonPrompt {
   tools_involved?: string[];
   // access-level-scenarios (T7) fields
   access_level?: string;
+  // vulnerability-severity-reasoning (T8) fields
+  vulnerability_type?: string;
 }
 
 export class JsonPromptLoader {
@@ -168,12 +170,13 @@ export class JsonPromptLoader {
         !p.domain &&
         !p.cloud_domain &&
         !sections.includes(p) &&
-        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined || p.access_level !== undefined) &&
+        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined || p.access_level !== undefined || p.vulnerability_type !== undefined) &&
         kwLower.some(k =>
           (p.scenario ?? '').toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
           (p.chain_steps ?? '').toLowerCase().includes(k) ||
           (p.signal_type ?? '').toLowerCase().includes(k) ||
+          (p.vulnerability_type ?? '').toLowerCase().includes(k) ||
           p.prompt.toLowerCase().includes(k)
         )
       );
@@ -187,7 +190,7 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? 'general';
+      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? p.vulnerability_type ?? 'general';
       if (group !== lastGroup) {
         let header: string;
         if (p.auth_domain) {
@@ -204,6 +207,8 @@ export class JsonPromptLoader {
           header = `Tool Chain Reasoning: ${p.tools_involved.slice(0, 2).join(' + ')}`;
         } else if (p.access_level) {
           header = `Access Level Scenario: ${p.access_level}`;
+        } else if (p.vulnerability_type) {
+          header = `Severity Reasoning: ${p.vulnerability_type}`;
         } else {
           header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
         }
