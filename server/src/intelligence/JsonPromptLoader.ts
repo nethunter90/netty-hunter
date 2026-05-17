@@ -43,6 +43,8 @@ export interface JsonPrompt {
   access_level?: string;
   // vulnerability-severity-reasoning (T8) fields
   vulnerability_type?: string;
+  // engagement-decision-reasoning (T10) fields
+  engagement_context?: string;
 }
 
 export class JsonPromptLoader {
@@ -170,13 +172,14 @@ export class JsonPromptLoader {
         !p.domain &&
         !p.cloud_domain &&
         !sections.includes(p) &&
-        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined || p.access_level !== undefined || p.vulnerability_type !== undefined) &&
+        (p.category !== undefined || p.signal_type !== undefined || p.tools_involved !== undefined || p.access_level !== undefined || p.vulnerability_type !== undefined || p.engagement_context !== undefined) &&
         kwLower.some(k =>
           (p.scenario ?? '').toLowerCase().includes(k) ||
           (p.objective ?? '').toLowerCase().includes(k) ||
           (p.chain_steps ?? '').toLowerCase().includes(k) ||
           (p.signal_type ?? '').toLowerCase().includes(k) ||
           (p.vulnerability_type ?? '').toLowerCase().includes(k) ||
+          (p.engagement_context ?? '').toLowerCase().includes(k) ||
           p.prompt.toLowerCase().includes(k)
         )
       );
@@ -190,7 +193,7 @@ export class JsonPromptLoader {
     let lastGroup = '';
 
     for (const p of selected) {
-      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? p.vulnerability_type ?? 'general';
+      const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? p.vulnerability_type ?? p.engagement_context ?? 'general';
       if (group !== lastGroup) {
         let header: string;
         if (p.auth_domain) {
@@ -209,6 +212,8 @@ export class JsonPromptLoader {
           header = `Access Level Scenario: ${p.access_level}`;
         } else if (p.vulnerability_type) {
           header = `Severity Reasoning: ${p.vulnerability_type}`;
+        } else if (p.engagement_context) {
+          header = `Engagement Decision: ${p.engagement_context}`;
         } else {
           header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
         }
@@ -228,6 +233,7 @@ export class JsonPromptLoader {
       lines.push(`${tag} ${p.scenario ?? p.prompt.slice(0, 150)}`);
       if (p.tools_involved) lines.push(`  Tools: ${p.tools_involved.join(', ')}`);
       if (p.access_level) lines.push(`  Access: ${p.access_level}`);
+      if (p.engagement_context) lines.push(`  Context: ${p.engagement_context}`);
       if (p.chain_steps) lines.push(`  Chain: ${p.chain_steps}`);
       if (p.signal_observed) lines.push(`  Signal: ${p.signal_observed}`);
       if (p.impact_level) lines.push(`  Impact: ${p.impact_level}`);
