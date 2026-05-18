@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events';
-import logger from '../../utils/logger';
 
 export interface CircuitState {
   tool: string;
@@ -7,17 +6,32 @@ export interface CircuitState {
   failures: number;
   successes: number;
   lastFailure?: string;
+  lastError?: string;
   openedAt?: string;
 }
 
 export class CircuitBreaker extends EventEmitter {
   private circuits: Map<string, CircuitState> = new Map();
-  private readonly failureThreshold = 3;
-  private readonly cooldownMs = 60000;
+  private failureThreshold = 3;
+  private cooldownMs = 60000;
+
+  private static FALLBACKS: Record<string, string> = {
+    'sqlmap': 'nuclei',
+    'nuclei': 'nikto',
+    'nikto': 'nuclei',
+    'nmap': 'masscan',
+    'masscan': 'nmap',
+    'gobuster': 'ffuf',
+    'ffuf': 'gobuster',
+    'hydra': 'nuclei',
+    'amass': 'subfinder',
+    'subfinder': 'amass'
+  };
 
   recordSuccess(tool: string) {
     const circuit = this.getCircuit(tool);
     circuit.successes++;
+
     if (circuit.state === 'half_open' && circuit.successes >= 2) {
       this.closeCircuit(tool);
     }
@@ -26,16 +40,20 @@ export class CircuitBreaker extends EventEmitter {
   recordFailure(tool: string, error: string) {
     const circuit = this.getCircuit(tool);
     circuit.failures++;
-    circuit.lastFailure = error;
+    circuit.lastFailure = new Date().toISOString();
+    circuit.lastError = error;
+
     if (circuit.failures >= this.failureThreshold) {
       this.openCircuit(tool);
     }
   }
 
-  canExecute(tool: string): { allowed: boolean; fallback?: string } {
+  canExecute(tool: string): { allowed: boolean; fallback?: string; reason?: string } {
     const circuit = this.getCircuit(tool);
 
-    if (circuit.state === 'closed') return { allowed: true };
+    if (circuit.state === 'closed') {
+      return { allowed: true };
+    }
 
     if (circuit.state === 'open') {
       if (circuit.openedAt) {
@@ -44,30 +62,27 @@ export class CircuitBreaker extends EventEmitter {
           circuit.state = 'half_open';
           circuit.successes = 0;
           circuit.failures = 0;
-          return { allowed: true };
+          return { allowed: true, reason: 'Circuit half-open, testing recovery' };
         }
       }
-      return { allowed: false, fallback: this.getFallback(tool) };
+
+      return {
+        allowed: false,
+        fallback: CircuitBreaker.FALLBACKS[tool],
+        reason: `Circuit open: ${circuit.failures} failures, last error: ${circuit.lastError}`
+      };
     }
 
-    return { allowed: true };
-  }
-
-  private getFallback(tool: string): string | undefined {
-    const fallbacks: Record<string, string> = {
-      sqlmap: 'nuclei',
-      nuclei: 'nikto',
-      nmap: 'masscan'
-    };
-    return fallbacks[tool];
+    return { allowed: true, reason: 'Circuit half-open' };
   }
 
   private openCircuit(tool: string) {
     const circuit = this.getCircuit(tool);
     circuit.state = 'open';
     circuit.openedAt = new Date().toISOString();
-    this.emit('circuit:opened', { tool });
-    logger.warn(`[Brain] Circuit breaker opened for ${tool}`);
+
+    this.emit('circuit:opened', { tool, failures: circuit.failures, lastError: circuit.lastError });
+    console.warn(`[Circuit Breaker] ${tool} circuit OPENED after ${circuit.failures} failures`);
   }
 
   private closeCircuit(tool: string) {
@@ -76,19 +91,54 @@ export class CircuitBreaker extends EventEmitter {
     circuit.failures = 0;
     circuit.successes = 0;
     circuit.openedAt = undefined;
+
     this.emit('circuit:closed', { tool });
-    logger.info(`[Brain] Circuit breaker closed for ${tool}`);
+    console.log(`[Circuit Breaker] ${tool} circuit CLOSED (recovered)`);
   }
 
   private getCircuit(tool: string): CircuitState {
     if (!this.circuits.has(tool)) {
-      this.circuits.set(tool, { tool, state: 'closed', failures: 0, successes: 0 });
+      this.circuits.set(tool, {
+        tool,
+        state: 'closed',
+        failures: 0,
+        successes: 0
+      });
     }
     return this.circuits.get(tool)!;
   }
 
   getState(tool: string): CircuitState {
     return this.getCircuit(tool);
+  }
+
+  getAllStates(): CircuitState[] {
+    return Array.from(this.circuits.values());
+  }
+
+  resetCircuit(tool: string) {
+    this.circuits.delete(tool);
+    this.emit('circuit:reset', { tool });
+  }
+
+  resetAll() {
+    this.circuits.clear();
+    this.emit('circuit:reset-all', {});
+  }
+
+  getStats(): {
+    total: number;
+    open: number;
+    closed: number;
+    halfOpen: number;
+  } {
+    const states = this.getAllStates();
+    return {
+      total: states.length,
+      open: states.filter(s => s.state === 'open').length,
+      closed: states.filter(s => s.state === 'closed').length,
+      halfOpen: states.filter(s => s.state === 'half_open').length
+    };
   }
 }
 
