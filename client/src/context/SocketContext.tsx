@@ -2,7 +2,11 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '../lib/socket';
 
-const SocketContext = createContext<Socket | null>(null);
+interface SocketContextValue {
+  socket: Socket | null;
+}
+
+const SocketContext = createContext<SocketContextValue>({ socket: null });
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -11,9 +15,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     setSocket(getSocket());
   }, []);
 
-  return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
+  return <SocketContext.Provider value={{ socket }}>{children}</SocketContext.Provider>;
 }
 
-export function useSharedSocket(): Socket | null {
+export function useSharedSocket(): SocketContextValue {
   return useContext(SocketContext);
 }
