@@ -435,17 +435,32 @@ export class HunterEngine extends EventEmitter {
       current_findings: `${this.state.confirmedFindings.length} confirmed, ${this.state.observations.length} observations`,
     });
 
-    const hasSecurityObs = this.state.observations.some(o => o.tags.includes('security'));
-    const authKnowledge = jsonPromptLoader.getContextBlock(
-      hasSecurityObs ? 'auth_bypass' : 'info_disclosure',
-      2
-    );
+    // Build a rich query text from actual observation signals for semantic retrieval
+    const recentObs = this.state.observations.slice(-10);
+    const obsTags = [...new Set(recentObs.flatMap(o => o.tags))].join(', ');
+    const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.vulnClass ?? ''))].join(', ');
+    const semanticQuery = [
+      `Target: ${this.state.targetUrl}`,
+      obsTags ? `Signals observed: ${obsTags}` : '',
+      confirmedClasses ? `Confirmed vulnerability classes: ${confirmedClasses}` : '',
+      `Hypothesizing: what vulnerabilities are most likely on this target`,
+    ].filter(Boolean).join('. ');
 
-    const prompt = `You are a bug bounty hunter analyzing a web application.
+    const domainKnowledge = await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7);
+
+    const prompt = `You are an expert security researcher performing bug bounty hunting. \
+Think step by step before generating hypotheses.
+
+Step 1 — Interpret the observations: what do the signals imply about the stack, \
+authentication model, and likely attack surface?
+Step 2 — Identify prerequisite conditions: which vulnerability classes have their \
+preconditions already satisfied by what you've observed?
+Step 3 — Estimate what confirming evidence would look like for each candidate class.
+Step 4 — Output your hypotheses as JSON.
 
 Target: ${this.state.targetUrl}
 Observations (anomaly-sorted):
-${JSON.stringify(this.state.observations.slice(-10), null, 2)}
+${JSON.stringify(recentObs, null, 2)}
 
 Current confirmed findings: ${this.state.confirmedFindings.length}
 Previously tested hypotheses: ${this.state.hypotheses.length}
@@ -454,7 +469,7 @@ Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 ${toolKnowledge.getSummaryBlock()}
-${authKnowledge ? `\n${authKnowledge}\n` : ''}
+${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)

@@ -3,9 +3,15 @@
  * Singleton that reads all *.json files from server/data/prompts/ at startup.
  * Provides structured domain knowledge for injection into AI reasoning prompts.
  * Handles multiple file schemas: api_auth_chains, attack_paths, bounty_patterns.
+ *
+ * Semantic retrieval: on first call to getContextBlockAsync(), pre-computes
+ * embeddings via Ollama (nomic-embed-text) and caches them to disk.
+ * Falls back to keyword filtering if Ollama is unavailable.
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
+import axios from 'axios';
 import logger from '../utils/logger';
 
 export interface JsonPrompt {
@@ -47,12 +53,30 @@ export interface JsonPrompt {
   engagement_context?: string;
 }
 
+interface EmbeddingCache {
+  hash: string;
+  model: string;
+  entries: { key: string; embedding: number[] }[];
+}
+
 export class JsonPromptLoader {
   private static instance: JsonPromptLoader;
   private prompts: JsonPrompt[] = [];
   private loaded = false;
 
-  private constructor() {}
+  // Semantic retrieval state
+  private embeddings: Map<string, number[]> = new Map();
+  private embeddingsReady = false;
+  private embeddingInitPromise: Promise<void> | null = null;
+  private readonly ollamaBase: string;
+  private readonly embedModel: string;
+  private readonly cacheFile: string;
+
+  private constructor() {
+    this.ollamaBase = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    this.embedModel = process.env.EMBED_MODEL || 'nomic-embed-text';
+    this.cacheFile = path.resolve(__dirname, '../../../data/prompt-embeddings-cache.json');
+  }
 
   static getInstance(): JsonPromptLoader {
     if (!JsonPromptLoader.instance) {
@@ -89,6 +113,185 @@ export class JsonPromptLoader {
     logger.info('[JsonPromptLoader] Loaded prompts', { count: this.prompts.length, files: files.length });
   }
 
+  // ─── Semantic retrieval ───────────────────────────────────────────────────────
+
+  /**
+   * Pre-computes embeddings for all loaded prompts. Caches to disk; only
+   * re-embeds when the prompt files change. Safe to call multiple times.
+   */
+  async initEmbeddings(): Promise<void> {
+    if (this.embeddingsReady) return;
+    if (this.embeddingInitPromise) return this.embeddingInitPromise;
+
+    this.embeddingInitPromise = this._doInitEmbeddings().catch(err => {
+      logger.warn('[JsonPromptLoader] Embedding init failed, falling back to keyword search', { err: String(err) });
+      this.embeddingInitPromise = null;
+    });
+    return this.embeddingInitPromise;
+  }
+
+  private async _doInitEmbeddings(): Promise<void> {
+    const hash = this.computePromptsHash();
+    const cached = this.loadEmbeddingCache(hash);
+
+    if (cached) {
+      for (const e of cached.entries) {
+        this.embeddings.set(e.key, e.embedding);
+      }
+      this.embeddingsReady = true;
+      logger.info('[JsonPromptLoader] Loaded embeddings from cache', { count: this.embeddings.size });
+      return;
+    }
+
+    logger.info('[JsonPromptLoader] Computing embeddings for all prompts (first run — please wait)', {
+      count: this.prompts.length, model: this.embedModel,
+    });
+
+    const entries: { key: string; embedding: number[] }[] = [];
+    const chunkSize = 8;
+
+    for (let i = 0; i < this.prompts.length; i += chunkSize) {
+      const chunk = this.prompts.slice(i, i + chunkSize);
+      const results = await Promise.all(chunk.map(async p => {
+        const key = this.entryKey(p);
+        const text = this.buildEntryText(p);
+        const embedding = await this.embedText(text);
+        return { key, embedding };
+      }));
+      for (const r of results) {
+        this.embeddings.set(r.key, r.embedding);
+        entries.push(r);
+      }
+
+      if ((i / chunkSize) % 20 === 0 && i > 0) {
+        logger.info('[JsonPromptLoader] Embedding progress', { done: i, total: this.prompts.length });
+      }
+    }
+
+    this.saveEmbeddingCache({ hash, model: this.embedModel, entries });
+    this.embeddingsReady = true;
+    logger.info('[JsonPromptLoader] Embeddings ready', { count: this.embeddings.size });
+  }
+
+  /**
+   * Semantic context retrieval. Embeds the query text and returns the
+   * most relevant prompt examples. Falls back to keyword search if embeddings
+   * are not yet ready.
+   */
+  async getContextBlockAsync(queryText: string, maxEntries = 7): Promise<string> {
+    if (!this.embeddingsReady) {
+      // Kick off init in background, return keyword result for now
+      void this.initEmbeddings();
+      const vulnHint = this.extractVulnHint(queryText);
+      return this.getContextBlock(vulnHint, maxEntries);
+    }
+
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await this.embedText(queryText);
+    } catch {
+      const vulnHint = this.extractVulnHint(queryText);
+      return this.getContextBlock(vulnHint, maxEntries);
+    }
+
+    // Score every prompt by cosine similarity
+    const scored: { prompt: JsonPrompt; score: number }[] = [];
+    for (const p of this.prompts) {
+      const key = this.entryKey(p);
+      const emb = this.embeddings.get(key);
+      if (!emb) continue;
+      const score = this.cosineSimilarity(queryEmbedding, emb);
+      scored.push({ prompt: p, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const selected = scored.slice(0, maxEntries).map(s => s.prompt);
+
+    return this.renderContextBlock(selected);
+  }
+
+  private buildEntryText(p: JsonPrompt): string {
+    const parts: string[] = [];
+    if (p.scenario)          parts.push(`Scenario: ${p.scenario}`);
+    if (p.objective)         parts.push(`Objective: ${p.objective}`);
+    if (p.reasoning_focus)   parts.push(`Focus: ${p.reasoning_focus}`);
+    if (p.auth_domain)       parts.push(`Auth domain: ${p.auth_domain}`);
+    if (p.cloud_domain)      parts.push(`Cloud domain: ${p.cloud_domain}`);
+    if (p.domain)            parts.push(`Business domain: ${p.domain}`);
+    if (p.vulnerability_type) parts.push(`Vulnerability: ${p.vulnerability_type}`);
+    if (p.engagement_context) parts.push(`Context: ${p.engagement_context}`);
+    if (p.signal_type)       parts.push(`Signal: ${p.signal_type}`);
+    if (p.chain_steps)       parts.push(`Chain: ${p.chain_steps}`);
+    if (p.tools_involved)    parts.push(`Tools: ${p.tools_involved.join(', ')}`);
+    if (p.access_level)      parts.push(`Access: ${p.access_level}`);
+    parts.push(`Prompt: ${p.prompt.slice(0, 300)}`);
+    parts.push(`Answer: ${p.expected_answer.slice(0, 300)}`);
+    return parts.join('. ');
+  }
+
+  private entryKey(p: JsonPrompt): string {
+    return String(p.id) + ':' + (p.category ?? '') + ':' + (p.auth_domain ?? p.domain ?? p.cloud_domain ?? '');
+  }
+
+  private async embedText(text: string): Promise<number[]> {
+    const resp = await axios.post(
+      `${this.ollamaBase}/api/embeddings`,
+      { model: this.embedModel, prompt: text },
+      { timeout: 15000 }
+    );
+    return resp.data.embedding as number[];
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dot = 0, normA = 0, normB = 0;
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      dot   += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
+  private computePromptsHash(): string {
+    const dataDir = path.resolve(__dirname, '../../../data/prompts');
+    const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.json')).sort();
+    const hash = crypto.createHash('sha256');
+    for (const f of files) {
+      hash.update(fs.readFileSync(path.join(dataDir, f)));
+    }
+    return hash.digest('hex');
+  }
+
+  private loadEmbeddingCache(hash: string): EmbeddingCache | null {
+    try {
+      if (!fs.existsSync(this.cacheFile)) return null;
+      const cache = JSON.parse(fs.readFileSync(this.cacheFile, 'utf-8')) as EmbeddingCache;
+      if (cache.hash !== hash || cache.model !== this.embedModel) return null;
+      return cache;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveEmbeddingCache(cache: EmbeddingCache): void {
+    try {
+      fs.writeFileSync(this.cacheFile, JSON.stringify(cache), 'utf-8');
+    } catch (err) {
+      logger.warn('[JsonPromptLoader] Failed to save embedding cache', { err });
+    }
+  }
+
+  private extractVulnHint(queryText: string): string {
+    const classes = ['sqli', 'xss', 'ssrf', 'idor', 'rce', 'lfi', 'auth_bypass',
+                     'info_disclosure', 'misconfig', 'cors', 'csrf', 'jwt', 'oauth'];
+    const lower = queryText.toLowerCase();
+    return classes.find(c => lower.includes(c)) ?? 'info_disclosure';
+  }
+
+  // ─── Structured retrieval (sync fallback) ────────────────────────────────────
+
   getByDomain(auth_domain: string): JsonPrompt[] {
     return this.prompts.filter(p => p.auth_domain === auth_domain || p.domain === auth_domain || p.cloud_domain === auth_domain);
   }
@@ -114,14 +317,13 @@ export class JsonPromptLoader {
   }
 
   /**
-   * Returns a formatted context block for injection into AI prompts.
-   * Combines domain-matched entries (api_auth_chains) with keyword-matched entries
-   * (attack_paths, bounty_patterns) for the given vuln class.
+   * Sync keyword/domain fallback — used when embeddings aren't ready and as a
+   * direct call for callers that don't need semantic precision.
    */
   getContextBlock(vulnClass: string, maxEntries = 3): string {
     const sections: JsonPrompt[] = [];
 
-    // 1. Auth domain entries (api_auth_chains)
+    // 1. Auth domain entries
     const domains = this.vulnClassToDomains(vulnClass);
     for (const domain of domains) {
       const domainPrompts = this.getByDomain(domain)
@@ -133,7 +335,7 @@ export class JsonPromptLoader {
       if (sections.length >= maxEntries) break;
     }
 
-    // 2. Cloud-security domain entries (T4 — cloud-security.json)
+    // 2. Cloud-security domain entries
     if (sections.length < maxEntries) {
       const cloudDomains = this.vulnClassToCloudDomains(vulnClass);
       for (const cd of cloudDomains) {
@@ -148,7 +350,7 @@ export class JsonPromptLoader {
       }
     }
 
-    // 3. Business-logic domain entries (T5 — business-logic.json)
+    // 3. Business-logic domain entries
     if (sections.length < maxEntries) {
       const bizDomains = this.vulnClassToBusinessDomains(vulnClass);
       for (const bd of bizDomains) {
@@ -163,7 +365,7 @@ export class JsonPromptLoader {
       }
     }
 
-    // 3. Keyword-matched entries from attack_paths / bounty_patterns
+    // 4. Keyword fallback
     if (sections.length < maxEntries) {
       const keywords = this.vulnClassToKeywords(vulnClass);
       const kwLower = keywords.map(k => k.toLowerCase());
@@ -186,7 +388,10 @@ export class JsonPromptLoader {
       sections.push(...matched);
     }
 
-    const selected = sections.slice(0, maxEntries);
+    return this.renderContextBlock(sections.slice(0, maxEntries));
+  }
+
+  private renderContextBlock(selected: JsonPrompt[]): string {
     if (selected.length === 0) return '';
 
     const lines: string[] = [];
@@ -196,27 +401,16 @@ export class JsonPromptLoader {
       const group = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? (p.tools_involved ? p.tools_involved[0] : null) ?? p.access_level ?? p.vulnerability_type ?? p.engagement_context ?? 'general';
       if (group !== lastGroup) {
         let header: string;
-        if (p.auth_domain) {
-          header = `Auth Domain Knowledge: ${p.auth_domain}`;
-        } else if (p.cloud_domain) {
-          header = `Cloud Security Knowledge: ${p.cloud_domain}`;
-        } else if (p.domain) {
-          header = `Business Logic Knowledge: ${p.domain}`;
-        } else if (p.signal_type) {
-          header = `Engagement Signal: ${p.signal_type}`;
-        } else if (p.category === 'chain_scenarios') {
-          header = `Attack Chain Scenario`;
-        } else if (p.tools_involved) {
-          header = `Tool Chain Reasoning: ${p.tools_involved.slice(0, 2).join(' + ')}`;
-        } else if (p.access_level) {
-          header = `Access Level Scenario: ${p.access_level}`;
-        } else if (p.vulnerability_type) {
-          header = `Severity Reasoning: ${p.vulnerability_type}`;
-        } else if (p.engagement_context) {
-          header = `Engagement Decision: ${p.engagement_context}`;
-        } else {
-          header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
-        }
+        if (p.auth_domain)           header = `Auth Domain Knowledge: ${p.auth_domain}`;
+        else if (p.cloud_domain)     header = `Cloud Security Knowledge: ${p.cloud_domain}`;
+        else if (p.domain)           header = `Business Logic Knowledge: ${p.domain}`;
+        else if (p.signal_type)      header = `Engagement Signal: ${p.signal_type}`;
+        else if (p.category === 'chain_scenarios') header = `Attack Chain Scenario`;
+        else if (p.tools_involved)   header = `Tool Chain Reasoning: ${p.tools_involved.slice(0, 2).join(' + ')}`;
+        else if (p.access_level)     header = `Access Level Scenario: ${p.access_level}`;
+        else if (p.vulnerability_type) header = `Severity Reasoning: ${p.vulnerability_type}`;
+        else if (p.engagement_context) header = `Engagement Decision: ${p.engagement_context}`;
+        else                         header = `Attack Pattern Knowledge: ${(p.category ?? 'general').replace(/_/g, ' ')}`;
         lines.push(`\n=== ${header} ===`);
         lastGroup = group;
       }
@@ -231,13 +425,13 @@ export class JsonPromptLoader {
       const answerExcerpt = p.expected_answer.slice(0, 200).replace(/\n/g, ' ');
 
       lines.push(`${tag} ${p.scenario ?? p.prompt.slice(0, 150)}`);
-      if (p.tools_involved) lines.push(`  Tools: ${p.tools_involved.join(', ')}`);
-      if (p.access_level) lines.push(`  Access: ${p.access_level}`);
+      if (p.tools_involved)     lines.push(`  Tools: ${p.tools_involved.join(', ')}`);
+      if (p.access_level)       lines.push(`  Access: ${p.access_level}`);
       if (p.engagement_context) lines.push(`  Context: ${p.engagement_context}`);
-      if (p.chain_steps) lines.push(`  Chain: ${p.chain_steps}`);
-      if (p.signal_observed) lines.push(`  Signal: ${p.signal_observed}`);
-      if (p.impact_level) lines.push(`  Impact: ${p.impact_level}`);
-      if (focus) lines.push(`  Focus: ${focus}`);
+      if (p.chain_steps)        lines.push(`  Chain: ${p.chain_steps}`);
+      if (p.signal_observed)    lines.push(`  Signal: ${p.signal_observed}`);
+      if (p.impact_level)       lines.push(`  Impact: ${p.impact_level}`);
+      if (focus)                lines.push(`  Focus: ${focus}`);
       lines.push(`  Answer excerpt: ${answerExcerpt}...`);
     }
 
