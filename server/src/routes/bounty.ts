@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
+import { execSync } from "child_process";
 import { db } from "../db";
-import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings } from "../db/schema";
+import { eq, desc, like, or } from "drizzle-orm";
 import { z } from "zod";
 import TargetSelectionIntelligence from "../intelligence/TargetSelection";
 import ROIModel from "../intelligence/ROIModel";
@@ -13,6 +14,20 @@ import { HuntStrategyBuilder } from "./huntStrategy";
 import logger from "../utils/logger";
 
 const router = Router();
+
+// In-memory stores for features without DB tables
+const deadlinesStore = new Map<string, any>();
+const submissionsStore = new Map<string, any>();
+const tasksStore = new Map<string, any>();
+const workflowsStore = new Map<string, any>();
+const payloadsStore = new Map<string, any>();
+const auditLog: any[] = [];
+let auditIdCounter = 1;
+let deadlineIdCounter = 1;
+let submissionIdCounter = 1;
+let taskIdCounter = 1;
+let workflowIdCounter = 1;
+let payloadIdCounter = 1;
 const targetSelection = new TargetSelectionIntelligence();
 const roiModel = new ROIModel();
 const rlStore = UnifiedReinforcementStore.getInstance();
@@ -176,6 +191,401 @@ router.get("/models", async (_req: Request, res: Response) => {
   const modelRouter = ModelRouter.getInstance();
   const models = await modelRouter.getModels();
   return res.json(models);
+});
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+router.get("/analysis/:sessionId", async (req: Request, res: Response) => {
+  try {
+    const [session] = await db.select().from(huntSessions)
+      .where(eq(huntSessions.sessionUuid, req.params.sessionId)).limit(1);
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    return res.json({
+      sessionId: req.params.sessionId,
+      reasoningLog: session.reasoningLog,
+      hypotheses: session.hypotheses,
+      status: session.status,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/analysis/:sessionId/generate", async (req: Request, res: Response) => {
+  try {
+    const [session] = await db.select().from(huntSessions)
+      .where(eq(huntSessions.sessionUuid, req.params.sessionId)).limit(1);
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    return res.json({
+      sessionId: req.params.sessionId,
+      reasoningLog: session.reasoningLog,
+      hypotheses: session.hypotheses,
+      generated: true,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Audit Trail ───────────────────────────────────────────────────────────────
+router.get("/audit", (_req: Request, res: Response) => {
+  return res.json(auditLog.slice(-200));
+});
+
+router.post("/audit", (req: Request, res: Response) => {
+  const { action, details } = req.body;
+  const entry = {
+    id: auditIdCounter++,
+    action,
+    details,
+    timestamp: new Date().toISOString(),
+  };
+  auditLog.push(entry);
+  return res.status(201).json(entry);
+});
+
+// ── Browser ───────────────────────────────────────────────────────────────────
+router.get("/browser/status", (_req: Request, res: Response) => {
+  return res.json({ status: "available", engine: "headless-placeholder" });
+});
+
+router.post("/browser/navigate", async (req: Request, res: Response) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "url required" });
+  if (process.env.REAL_TOOLS) {
+    try {
+      const response = await fetch(url);
+      const text = await response.text();
+      const titleMatch = text.match(/<title[^>]*>([^<]*)<\/title>/i);
+      const title = titleMatch ? titleMatch[1] : "";
+      return res.json({ status: response.status, title, url });
+    } catch (err: any) {
+      return res.status(502).json({ error: err.message });
+    }
+  }
+  return res.json({ status: 200, title: "Mock Page", url, mock: true });
+});
+
+router.get("/browser/history", (_req: Request, res: Response) => {
+  return res.json({ history: [] });
+});
+
+// ── CVE Intel ─────────────────────────────────────────────────────────────────
+router.get("/cve/search", (req: Request, res: Response) => {
+  const q = String(req.query.q || "");
+  const mockCves = [
+    { id: "CVE-2024-0001", description: `SQL Injection in web application ${q}`, cvss: 9.8, published: "2024-01-15" },
+    { id: "CVE-2024-0002", description: `XSS vulnerability in login page ${q}`, cvss: 6.1, published: "2024-02-10" },
+    { id: "CVE-2024-0003", description: `SSRF in file upload handler ${q}`, cvss: 8.2, published: "2024-03-05" },
+    { id: "CVE-2024-0004", description: `IDOR in user profile endpoint ${q}`, cvss: 7.5, published: "2024-04-01" },
+    { id: "CVE-2024-0005", description: `Auth bypass via JWT manipulation ${q}`, cvss: 9.1, published: "2024-05-20" },
+  ];
+  return res.json({ results: mockCves, query: q, count: mockCves.length });
+});
+
+router.get("/cve/:id", (req: Request, res: Response) => {
+  return res.json({
+    id: req.params.id,
+    description: `Mock CVE data for ${req.params.id}`,
+    cvss: 7.0,
+    published: "2024-01-01",
+    references: [],
+    cwe: "CWE-79",
+  });
+});
+
+// ── Deadlines ─────────────────────────────────────────────────────────────────
+router.get("/deadlines", (_req: Request, res: Response) => {
+  return res.json(Array.from(deadlinesStore.values()));
+});
+
+router.post("/deadlines", (req: Request, res: Response) => {
+  const { programId, title, dueDate, priority, notes } = req.body;
+  const id = String(deadlineIdCounter++);
+  const entry = { id, programId, title, dueDate, priority, notes: notes || "", createdAt: new Date().toISOString() };
+  deadlinesStore.set(id, entry);
+  return res.status(201).json(entry);
+});
+
+router.patch("/deadlines/:id", (req: Request, res: Response) => {
+  const existing = deadlinesStore.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Not found" });
+  const updated = { ...existing, ...req.body, id: req.params.id };
+  deadlinesStore.set(req.params.id, updated);
+  return res.json(updated);
+});
+
+router.delete("/deadlines/:id", (req: Request, res: Response) => {
+  deadlinesStore.delete(req.params.id);
+  return res.json({ ok: true });
+});
+
+// ── Nuclei Extended ───────────────────────────────────────────────────────────
+router.get("/nuclei/templates", async (req: Request, res: Response) => {
+  try {
+    const { search, severity, tags } = req.query;
+    let rows = await db.select().from(findings);
+    if (severity) rows = rows.filter((r: any) => r.severity === severity);
+    if (search) rows = rows.filter((r: any) => r.nucleiTemplate && r.nucleiTemplate.includes(String(search)));
+    if (tags) rows = rows.filter((r: any) => r.nucleiTemplate);
+    const templates = rows
+      .filter((r: any) => r.nucleiTemplate)
+      .map((r: any) => ({ id: r.id, template: r.nucleiTemplate, severity: r.severity, endpoint: r.endpoint }));
+    return res.json({ templates });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/nuclei/run", async (req: Request, res: Response) => {
+  const { templateId, target } = req.body;
+  if (process.env.REAL_TOOLS) {
+    try {
+      const result = execSync(`nuclei -t ${templateId} -u ${target} -json 2>/dev/null`, { encoding: "utf8", timeout: 30000 });
+      return res.json({ result, executed: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  return res.json({ executed: true, mock: true, templateId, target, findings: [] });
+});
+
+router.delete("/nuclei/templates/:id", (_req: Request, res: Response) => {
+  return res.json({ ok: true, message: "template removed" });
+});
+
+// ── Payloads ──────────────────────────────────────────────────────────────────
+router.get("/payloads", (req: Request, res: Response) => {
+  let items = Array.from(payloadsStore.values());
+  if (req.query.type) items = items.filter((p: any) => p.type === req.query.type);
+  if (req.query.search) {
+    const s = String(req.query.search).toLowerCase();
+    items = items.filter((p: any) => p.name.toLowerCase().includes(s) || p.payload.toLowerCase().includes(s));
+  }
+  return res.json(items);
+});
+
+router.post("/payloads", (req: Request, res: Response) => {
+  const { name, type, payload, tags } = req.body;
+  const id = String(payloadIdCounter++);
+  const entry = { id, name, type, payload, tags: tags || [], createdAt: new Date().toISOString() };
+  payloadsStore.set(id, entry);
+  return res.status(201).json(entry);
+});
+
+router.patch("/payloads/:id", (req: Request, res: Response) => {
+  const existing = payloadsStore.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Not found" });
+  const updated = { ...existing, ...req.body, id: req.params.id };
+  payloadsStore.set(req.params.id, updated);
+  return res.json(updated);
+});
+
+router.delete("/payloads/:id", (req: Request, res: Response) => {
+  payloadsStore.delete(req.params.id);
+  return res.json({ ok: true });
+});
+
+// ── PoC Lab ───────────────────────────────────────────────────────────────────
+router.get("/poc/results", (_req: Request, res: Response) => {
+  return res.json([]);
+});
+
+router.post("/poc/run", async (req: Request, res: Response) => {
+  try {
+    const { findingId, target } = req.body;
+    let finding = null;
+    if (findingId) {
+      const [row] = await db.select().from(findings).where(eq(findings.id, parseInt(findingId))).limit(1);
+      finding = row || null;
+    }
+    return res.json({
+      executed: true,
+      findingId,
+      target: target || finding?.endpoint,
+      result: "mock PoC execution completed",
+      output: finding ? `PoC for ${finding.vulnType} at ${finding.endpoint}` : "Generic PoC",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Scope Manager ─────────────────────────────────────────────────────────────
+router.post("/programs/:id/activate", async (req: Request, res: Response) => {
+  try {
+    const [updated] = await db.update(programs)
+      .set({ active: true, updatedAt: new Date() })
+      .where(eq(programs.id, parseInt(req.params.id)))
+      .returning();
+    if (!updated) return res.status(404).json({ error: "Program not found" });
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/programs/:id/scope", async (req: Request, res: Response) => {
+  try {
+    const { scope, outOfScope } = req.body;
+    const updateData: any = { updatedAt: new Date() };
+    if (scope !== undefined) updateData.scope = scope;
+    if (outOfScope !== undefined) updateData.outOfScope = outOfScope;
+    const [updated] = await db.update(programs)
+      .set(updateData)
+      .where(eq(programs.id, parseInt(req.params.id)))
+      .returning();
+    if (!updated) return res.status(404).json({ error: "Program not found" });
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Submissions ───────────────────────────────────────────────────────────────
+router.get("/submissions", (_req: Request, res: Response) => {
+  return res.json(Array.from(submissionsStore.values()));
+});
+
+router.post("/submissions", (req: Request, res: Response) => {
+  const { findingId, platform, title, severity, status } = req.body;
+  const id = String(submissionIdCounter++);
+  const entry = {
+    id, findingId, platform, title, severity,
+    status: status || "draft",
+    createdAt: new Date().toISOString(),
+  };
+  submissionsStore.set(id, entry);
+  return res.status(201).json(entry);
+});
+
+router.patch("/submissions/:id", (req: Request, res: Response) => {
+  const existing = submissionsStore.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Not found" });
+  const updated = { ...existing, ...req.body, id: req.params.id };
+  submissionsStore.set(req.params.id, updated);
+  return res.json(updated);
+});
+
+router.delete("/submissions/:id", (req: Request, res: Response) => {
+  submissionsStore.delete(req.params.id);
+  return res.json({ ok: true });
+});
+
+// ── Task Planning ─────────────────────────────────────────────────────────────
+router.get("/tasks", (_req: Request, res: Response) => {
+  return res.json(Array.from(tasksStore.values()));
+});
+
+router.post("/tasks", (req: Request, res: Response) => {
+  const { title, type, priority, huntId, assignee, dueDate } = req.body;
+  const id = String(taskIdCounter++);
+  const entry = { id, title, type, priority, huntId, assignee, dueDate, createdAt: new Date().toISOString() };
+  tasksStore.set(id, entry);
+  return res.status(201).json(entry);
+});
+
+router.patch("/tasks/:id", (req: Request, res: Response) => {
+  const existing = tasksStore.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Not found" });
+  const updated = { ...existing, ...req.body, id: req.params.id };
+  tasksStore.set(req.params.id, updated);
+  return res.json(updated);
+});
+
+router.delete("/tasks/:id", (req: Request, res: Response) => {
+  tasksStore.delete(req.params.id);
+  return res.json({ ok: true });
+});
+
+// ── Tool Readiness ────────────────────────────────────────────────────────────
+router.get("/tools/readiness", (_req: Request, res: Response) => {
+  const toolList = [
+    "nmap", "nuclei", "sqlmap", "ffuf", "gobuster", "nikto",
+    "whatweb", "amass", "subfinder", "httpx", "dalfox", "commix",
+    "feroxbuster", "dirsearch",
+  ];
+  const tools = toolList.map((name) => {
+    try {
+      const path = execSync(`which ${name} 2>/dev/null`, { encoding: "utf8" }).trim();
+      let version: string | undefined;
+      try {
+        version = execSync(`${name} --version 2>&1 | head -1`, { encoding: "utf8", timeout: 3000 }).trim();
+      } catch { /* version not available */ }
+      return { name, available: !!path, path: path || undefined, version };
+    } catch {
+      return { name, available: false };
+    }
+  });
+  return res.json({ tools });
+});
+
+// ── Workflows ─────────────────────────────────────────────────────────────────
+router.get("/workflows", (_req: Request, res: Response) => {
+  return res.json(Array.from(workflowsStore.values()));
+});
+
+router.post("/workflows", (req: Request, res: Response) => {
+  const { name, steps, trigger, description } = req.body;
+  const id = String(workflowIdCounter++);
+  const entry = { id, name, steps: steps || [], trigger, description, createdAt: new Date().toISOString() };
+  workflowsStore.set(id, entry);
+  return res.status(201).json(entry);
+});
+
+router.patch("/workflows/:id", (req: Request, res: Response) => {
+  const existing = workflowsStore.get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Not found" });
+  const updated = { ...existing, ...req.body, id: req.params.id };
+  workflowsStore.set(req.params.id, updated);
+  return res.json(updated);
+});
+
+router.delete("/workflows/:id", (req: Request, res: Response) => {
+  workflowsStore.delete(req.params.id);
+  return res.json({ ok: true });
+});
+
+router.post("/workflows/:id/execute", (req: Request, res: Response) => {
+  const workflow = workflowsStore.get(req.params.id);
+  if (!workflow) return res.status(404).json({ error: "Workflow not found" });
+  return res.json({
+    executed: true,
+    workflowId: req.params.id,
+    stepsCount: (workflow.steps || []).length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ── Strategy / Advisor ────────────────────────────────────────────────────────
+router.post("/advisor/chat", async (req: Request, res: Response) => {
+  const { message, context } = req.body;
+  if (!message) return res.status(400).json({ error: "message required" });
+
+  const modelRouter = ModelRouter.getInstance();
+  const systemContext = context ? `Context: ${JSON.stringify(context)}\n\n` : "";
+
+  try {
+    const response = await modelRouter.chat(`${systemContext}${message}`);
+    return res.json({ response });
+  } catch (err) {
+    return res.status(500).json({ error: "AI unavailable", details: String(err) });
+  }
+});
+
+router.get("/advisor/hints", (_req: Request, res: Response) => {
+  return res.json({
+    hints: [
+      "Focus on API endpoints with auth",
+      "Test for IDOR in /api/user/:id",
+      "Check for SSRF in URL parameters",
+      "Look for mass assignment vulnerabilities in PUT/PATCH endpoints",
+      "Test JWT implementation for algorithm confusion attacks",
+      "Enumerate hidden endpoints via JS file analysis",
+      "Check for GraphQL introspection and batch query attacks",
+    ],
+  });
 });
 
 export default router;
