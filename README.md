@@ -33,7 +33,7 @@ A full 6-layer multi-agent hunt pipeline with event-driven coordination, distrib
 - **Mission Memory**: Central per-hunt memory store — tracks domains, subdomains, endpoints, technologies, vulnerabilities, credentials, and notes
 - **Agent Registry**: Tracks all active agents — status management, claim tracking, invocation recording, hunt-scoped queries
 - **Endpoint Claims**: Distributed lock manager with timeout-based claim expiration to prevent duplicate work across concurrent agents
-- **Tool Parsers**: 20+ parsers for nmap, nuclei, sqlmap, nikto, nikto, whatweb output → standardized vulnerability and endpoint data structures
+- **Tool Parsers**: 20+ parsers for nmap, nuclei, sqlmap, nikto, whatweb output → standardized vulnerability and endpoint data structures
 - **Pass-K Evaluator**: Runs agents k times and selects best result by confidence threshold; per-agent k configurations
 - **Prompt Loader**: Template management with file persistence, variable substitution, and per-template confidence thresholds
 - **Temporal Event Bus**: Urgency-decay event correlation with dead-letter queue; preemptive signaling for critical findings; integrates with Hunt Cortex
@@ -128,16 +128,60 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 #### Bounty Intelligence (`lib/bounty-intelligence/`)
 
-Pre-hunt and cross-hunt analytics for program selection, payout maximization, and duplicate avoidance.
+Pre-hunt and cross-hunt analytics for program selection, payout maximization, and duplicate avoidance. All data persisted to `server/workspace/bounty-intelligence/`.
 
-- **Program Fetcher**: Monitors bug bounty programs for scope changes, new targets, and rule updates; maintains fetch history and change records per program
-- **Cross-Campaign Learning**: Learns attack patterns across multiple campaigns — technique similarity detection, technology-specific playbook recommendations, and campaign outcome indexing
-- **Tool Synergy Engine**: Maps which tool combinations produce the highest finding rates for specific vulnerability types and target tech stacks; generates ranked playbook recommendations
-- **Failure Prediction Engine**: ML-based prediction of tool and technique failure modes based on historical execution data; reduces wasted probe budget
+- **Program Fetcher**: Monitors bug bounty programs for scope changes, new targets, and rule updates; maintains fetch history and change records per program; pre-seeded with HackerOne, Bugcrowd, Intigriti, YesWeHack, Tesla, and security program configs
+- **Cross-Campaign Learning**: Learns attack patterns across multiple campaigns — technique similarity detection, technology-specific playbook recommendations, and campaign outcome indexing; 6 pre-seeded campaign profiles
+- **Tool Synergy Engine**: Maps which tool combinations produce the highest finding rates for specific vulnerability types and target tech stacks; generates ranked playbook recommendations; pre-seeded tool effectiveness data
+- **Failure Prediction Engine**: ML-based prediction of tool and technique failure modes based on historical execution data; pre-seeded base rates, conditional probabilities, and model accuracy data
 - **Payout Optimization**: Estimates expected payout per vulnerability class and target type; generates escalation chains to maximize bounty value from a confirmed finding
 - **Predictive Duplicate Avoidance**: Heatmap-based duplicate prediction — tracks which vulnerability classes have been heavily reported on a given program and steers the hunt away
 - **Triage Predictor**: Predicts triage outcomes (accepted/duplicate/informational/N/A) based on submission timing, program history, and finding type
 - **Intelligence Types**: Shared type definitions — CampaignOutcome, ExecutionPhase, HuntGoal, IntelligenceEvent, DefenseProfile, and 15+ supporting interfaces
+
+---
+
+#### Missions (`/api/missions`)
+
+User-driven mission board for launching and tracking structured security missions. All data persisted to `server/workspace/missions/` as `msn-*.json` files.
+
+- **Mission CRUD**: Create, list, get, update, delete missions with full schema — name, target, type, priority, goal, threat level, stealth config, in/out-of-scope
+- **Mission Types**: 4 templates with pre-built tool step chains — `recon` (subfinder→nmap→whatweb→ffuf), `full-scan` (nmap→nuclei→nikto), `vulnerability` (nuclei→sqlmap→dalfox), `exploitation` (searchsploit→commix)
+- **Step Execution Tracking**: Per-step status, output, timing, and duration; progress auto-computed; mission auto-completes when all steps finish
+- **Evidence & Findings**: Append evidence items and findings to running missions; each with typed ID, timestamp, and step reference
+- **Attack Path**: Auto-generated attack path visualization data mirroring the step sequence
+- **Pre-seeded**: 2 completed missions in workspace — full recon run on testsite.com, nmap scan on Juice Shop localhost
+
+---
+
+#### Workspace (`server/workspace/`)
+
+Persistent file-based storage for all runtime data. Survives server restarts. Organized by feature area.
+
+```
+workspace/
+├── bounty-intelligence/     # Program configs, campaign profiles, ML training data, synergy scores
+├── missions/                # msn-*.json mission records with steps, findings, evidence
+├── deadlines/               # Bug bounty program deadlines
+├── payloads/                # Payload library entries (pre-seeded with XSS, SQLi, SSRF, etc.)
+├── submissions/             # Submission tracking records
+├── tasks/                   # Task planning items
+├── workflows/               # Workflow definitions and execution history
+├── poc-results/             # Proof-of-concept execution results
+├── reports/                 # Saved report drafts
+├── analysis/                # Hunt analysis output
+├── scopes/                  # Scope definitions
+├── nuclei-templates/        # Custom Nuclei YAML templates
+├── extensions/              # Installed extensions manifest
+├── exploit-development/     # Python exploit scaffolding, XSS/SQLi payload lists, PoC stubs
+├── sentinel-recon/          # Python port/service scanner with async scan engine and tests
+├── test-project/            # HTML/JS/CSS test project workspace
+└── react---vite/            # React+Vite project workspace
+```
+
+- **exploit-development/**: Python exploit framework scaffold with `exploit.py`, `requirements.txt`, XSS and SQLi payload wordlists, and PoC directory
+- **sentinel-recon/**: Full async Python scanner (`scanner.py`, `main.py`) with banner grabbing, service detection, JSON output, and unit tests; includes a saved scan result
+- **Extensions**: Plugin manifest at `extensions/installed.json`; currently tracks installed tools (e.g., prettier)
 
 ---
 
@@ -214,6 +258,8 @@ Pre-hunt and cross-hunt analytics for program selection, payout maximization, an
 - Hunter page: session manager with Attack Path Visualizer, WAF Intel tab, Reports tab
 - Intelligence suite: autonomy radar charts, RL stats, WAF profiles, exploit chains
 - Reports & AI chat assistant
+- **Bounty section** (10 nav items): BountyIntelligence, Analysis, Submissions, Scope, DraftReports, NucleiTemplates, Payloads, Deadlines, BackwardHunt, ToolReadiness, BrowserView, AuditTrail, AIAdvisor, WorkflowBuilder, TaskPlanning, CVEIntel, PoCLab, HuntReplay, CTFBenchmark, SyncStatus — plus standalone CampaignIntelligence, PlaybookLibrary, StrategyAdvisor views
+- **Missions section**: MissionBoard with live hunt monitor, mission details panel, offensive graph visualization, stealth indicator, tool validator, and launch modal
 
 ---
 
@@ -222,11 +268,16 @@ Pre-hunt and cross-hunt analytics for program selection, payout maximization, an
 | Prefix | Description |
 |---|---|
 | `POST /api/auth/*` | Login, logout, register |
-| `GET/POST /api/hunt/*` | Hunt sessions, start/stop, state |
-| `GET/POST /api/bounty/*` | Programs, targets, findings |
+| `GET/POST /api/hunt/*` | Hunt sessions, start/stop, state, findings |
+| `GET/POST /api/bounty/*` | Programs, ROI ranking, RL stats, autonomy, exploit chains, WAF profiles, hunt templates, AI chat, analysis, audit trail, browser, CVE intel, deadlines, nuclei, payloads, PoC lab, scope, submissions, tasks, tool readiness, workflows |
 | `POST /api/orchestration/run` | Start full 6-layer orchestrated hunt |
 | `GET /api/orchestration/:id` | Live orchestration state |
-| `GET /api/hunter/*` | Hunter engine state, strategies |
+| `GET /api/hunter/*` | Hunter engine sessions, strategies, solvers, validation gate, plan memory, backward hunt, ROI, target selection, static analysis, exploit chains, reinforcement, autonomy maturity |
+| `GET/POST /api/missions/*` | Mission CRUD, start/stop, step updates, findings, evidence |
+| `GET/POST /api/bounty-intelligence/*` | Scope analysis, payout estimation, duplicate detection, report coaching, submission optimization, program fetcher, campaign learning, tool synergy, triage prediction, full pipeline |
+| `GET/POST /api/reasoning/*` | Decision traces, calibration stats, hunt cortex health, lab runs, adaptive thresholds, divergence analysis |
+| `GET/POST /api/graph/*` | Offensive graph nodes/edges, shortest path, per-hunt summaries |
+| `GET/POST /api/intelligence/*` | Playbooks, tool selection, strategy planning, attack paths, MITRE techniques, pivot evaluation |
 | `GET /api/governance/stats` | Governance decision counts by pillar/verdict/risk |
 | `GET /api/governance/pillars` | All 8 pillar definitions |
 | `GET /api/governance/decisions` | Filterable decision log |
@@ -264,6 +315,8 @@ npm run db:push
 # Start development
 npm run dev
 ```
+
+The `server/workspace/` directory is pre-seeded with bounty programs, campaign profiles, ML training data, missions, payloads, and project scaffolding — no manual setup required.
 
 ### Environment Variables
 
@@ -304,7 +357,7 @@ The platform integrates with 39 Kali Linux security tools across 8 categories:
 | Exploitation | metasploit, searchsploit |
 | Misc | curl, wget, jq, git |
 
-All tools are executed through the **Tool Runner** stealth layer — each invocation gets per-tool stealth flags, timing profile delays, and optional proxy routing based on the active stealth mode.
+All tools are executed through the **Tool Runner** stealth layer — each invocation gets per-tool stealth flags, timing profile delays, and optional proxy routing based on the active stealth mode. Tool availability is queryable live via `GET /api/bounty/tools/readiness`.
 
 ---
 
@@ -318,6 +371,7 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **Adversarial graph reasoning** — findings, techniques, tools, and endpoints are nodes in a live attack graph updated in real time
 - **Goal-first backward planning** — strategy selection starts from the desired vulnerability class and works backward through prerequisite chains
 - **Operational stealth by default** — all tool executions go through the stealth layer; timing, flags, and rate limits are never caller-controlled
+- **File-backed workspace persistence** — deadlines, payloads, submissions, tasks, workflows, missions, and audit log survive server restarts; no DB migration required for operational data
 - **No mocks on Kali Linux** — real tool execution when `REAL_TOOLS=true`
 - **Self-learning** — every hunt improves model calibration via the Unified Reinforcement Store, Adaptive Threshold Tuner, Decision Journal, and Cross-Campaign Learning
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions
