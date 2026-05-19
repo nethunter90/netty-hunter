@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012549-nvj5tkkx8",
+  "name": "Basic Command Injection",
+  "category": "rce",
+  "payload": "; id",
+  "description": "Simple command injection test",
+  "tags": [
+    "basic",
+    "unix"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.549Z",
+  "updatedAt": "2026-02-07T19:03:32.550Z"
+}

@@ -1,0 +1,22 @@
+{
+  "recon": {
+    "no-waf": 1,
+    "no-csp": 1,
+    "rest-api": 1
+  },
+  "scanning": {
+    "no-waf": 1,
+    "no-csp": 1,
+    "rest-api": 1
+  },
+  "exploitation": {
+    "no-waf": 1,
+    "no-csp": 1,
+    "rest-api": 1
+  },
+  "reporting": {
+    "no-waf": 1,
+    "no-csp": 1,
+    "rest-api": 1
+  }
+}

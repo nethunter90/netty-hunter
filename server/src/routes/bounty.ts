@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
 import { execSync } from "child_process";
+import fs from "fs/promises";
+import path from "path";
 import { db } from "../db";
 import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings } from "../db/schema";
 import { eq, desc, like, or } from "drizzle-orm";
@@ -15,19 +17,63 @@ import logger from "../utils/logger";
 
 const router = Router();
 
-// In-memory stores for features without DB tables
-const deadlinesStore = new Map<string, any>();
-const submissionsStore = new Map<string, any>();
-const tasksStore = new Map<string, any>();
-const workflowsStore = new Map<string, any>();
-const payloadsStore = new Map<string, any>();
-const auditLog: any[] = [];
-let auditIdCounter = 1;
-let deadlineIdCounter = 1;
-let submissionIdCounter = 1;
-let taskIdCounter = 1;
-let workflowIdCounter = 1;
-let payloadIdCounter = 1;
+// ── File-backed workspace stores ─────────────────────────────────────────────
+const WS = path.join(process.cwd(), "workspace");
+const STORE_DIRS: Record<string, string> = {
+  deadlines:   path.join(WS, "deadlines"),
+  submissions: path.join(WS, "submissions"),
+  tasks:       path.join(WS, "tasks"),
+  workflows:   path.join(WS, "workflows"),
+  payloads:    path.join(WS, "payloads"),
+  audit:       path.join(WS, "audit"),
+};
+
+async function wsEnsure(dir: string) {
+  await fs.mkdir(dir, { recursive: true });
+}
+
+async function wsReadAll(store: string): Promise<any[]> {
+  const dir = STORE_DIRS[store];
+  await wsEnsure(dir);
+  const files = await fs.readdir(dir).catch(() => [] as string[]);
+  const items = await Promise.all(
+    files.filter(f => f.endsWith(".json")).map(async f => {
+      try { return JSON.parse(await fs.readFile(path.join(dir, f), "utf8")); }
+      catch { return null; }
+    })
+  );
+  return items.filter(Boolean);
+}
+
+async function wsWrite(store: string, id: string, data: any) {
+  const dir = STORE_DIRS[store];
+  await wsEnsure(dir);
+  await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(data, null, 2));
+}
+
+async function wsDelete(store: string, id: string) {
+  await fs.unlink(path.join(STORE_DIRS[store], `${id}.json`)).catch(() => {});
+}
+
+async function wsFind(store: string, id: string): Promise<any | null> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(STORE_DIRS[store], `${id}.json`), "utf8"));
+  } catch { return null; }
+}
+
+// Audit log (append-only, single file)
+const AUDIT_FILE = path.join(WS, "audit", "log.json");
+async function appendAudit(entry: any) {
+  await wsEnsure(STORE_DIRS.audit);
+  let log: any[] = [];
+  try { log = JSON.parse(await fs.readFile(AUDIT_FILE, "utf8")); } catch {}
+  log.push(entry);
+  if (log.length > 1000) log = log.slice(-1000);
+  await fs.writeFile(AUDIT_FILE, JSON.stringify(log, null, 2));
+}
+async function readAudit(): Promise<any[]> {
+  try { return JSON.parse(await fs.readFile(AUDIT_FILE, "utf8")); } catch { return []; }
+}
 const targetSelection = new TargetSelectionIntelligence();
 const roiModel = new ROIModel();
 const rlStore = UnifiedReinforcementStore.getInstance();
@@ -228,19 +274,20 @@ router.post("/analysis/:sessionId/generate", async (req: Request, res: Response)
 });
 
 // ── Audit Trail ───────────────────────────────────────────────────────────────
-router.get("/audit", (_req: Request, res: Response) => {
-  return res.json(auditLog.slice(-200));
+router.get("/audit", async (_req: Request, res: Response) => {
+  const log = await readAudit();
+  return res.json(log.slice(-200));
 });
 
-router.post("/audit", (req: Request, res: Response) => {
+router.post("/audit", async (req: Request, res: Response) => {
   const { action, details } = req.body;
   const entry = {
-    id: auditIdCounter++,
+    id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     action,
     details,
     timestamp: new Date().toISOString(),
   };
-  auditLog.push(entry);
+  await appendAudit(entry);
   return res.status(201).json(entry);
 });
 
@@ -295,28 +342,28 @@ router.get("/cve/:id", (req: Request, res: Response) => {
 });
 
 // ── Deadlines ─────────────────────────────────────────────────────────────────
-router.get("/deadlines", (_req: Request, res: Response) => {
-  return res.json(Array.from(deadlinesStore.values()));
+router.get("/deadlines", async (_req: Request, res: Response) => {
+  return res.json(await wsReadAll("deadlines"));
 });
 
-router.post("/deadlines", (req: Request, res: Response) => {
+router.post("/deadlines", async (req: Request, res: Response) => {
   const { programId, title, dueDate, priority, notes } = req.body;
-  const id = String(deadlineIdCounter++);
+  const id = `deadline-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const entry = { id, programId, title, dueDate, priority, notes: notes || "", createdAt: new Date().toISOString() };
-  deadlinesStore.set(id, entry);
+  await wsWrite("deadlines", id, entry);
   return res.status(201).json(entry);
 });
 
-router.patch("/deadlines/:id", (req: Request, res: Response) => {
-  const existing = deadlinesStore.get(req.params.id);
+router.patch("/deadlines/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("deadlines", req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
-  deadlinesStore.set(req.params.id, updated);
+  await wsWrite("deadlines", req.params.id, updated);
   return res.json(updated);
 });
 
-router.delete("/deadlines/:id", (req: Request, res: Response) => {
-  deadlinesStore.delete(req.params.id);
+router.delete("/deadlines/:id", async (req: Request, res: Response) => {
+  await wsDelete("deadlines", req.params.id);
   return res.json({ ok: true });
 });
 
@@ -355,34 +402,34 @@ router.delete("/nuclei/templates/:id", (_req: Request, res: Response) => {
 });
 
 // ── Payloads ──────────────────────────────────────────────────────────────────
-router.get("/payloads", (req: Request, res: Response) => {
-  let items = Array.from(payloadsStore.values());
+router.get("/payloads", async (req: Request, res: Response) => {
+  let items = await wsReadAll("payloads");
   if (req.query.type) items = items.filter((p: any) => p.type === req.query.type);
   if (req.query.search) {
     const s = String(req.query.search).toLowerCase();
-    items = items.filter((p: any) => p.name.toLowerCase().includes(s) || p.payload.toLowerCase().includes(s));
+    items = items.filter((p: any) => (p.name || "").toLowerCase().includes(s) || (p.payload || "").toLowerCase().includes(s));
   }
   return res.json(items);
 });
 
-router.post("/payloads", (req: Request, res: Response) => {
+router.post("/payloads", async (req: Request, res: Response) => {
   const { name, type, payload, tags } = req.body;
-  const id = String(payloadIdCounter++);
+  const id = `payload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const entry = { id, name, type, payload, tags: tags || [], createdAt: new Date().toISOString() };
-  payloadsStore.set(id, entry);
+  await wsWrite("payloads", id, entry);
   return res.status(201).json(entry);
 });
 
-router.patch("/payloads/:id", (req: Request, res: Response) => {
-  const existing = payloadsStore.get(req.params.id);
+router.patch("/payloads/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("payloads", req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
-  payloadsStore.set(req.params.id, updated);
+  await wsWrite("payloads", req.params.id, updated);
   return res.json(updated);
 });
 
-router.delete("/payloads/:id", (req: Request, res: Response) => {
-  payloadsStore.delete(req.params.id);
+router.delete("/payloads/:id", async (req: Request, res: Response) => {
+  await wsDelete("payloads", req.params.id);
   return res.json({ ok: true });
 });
 
@@ -444,58 +491,54 @@ router.patch("/programs/:id/scope", async (req: Request, res: Response) => {
 });
 
 // ── Submissions ───────────────────────────────────────────────────────────────
-router.get("/submissions", (_req: Request, res: Response) => {
-  return res.json(Array.from(submissionsStore.values()));
+router.get("/submissions", async (_req: Request, res: Response) => {
+  return res.json(await wsReadAll("submissions"));
 });
 
-router.post("/submissions", (req: Request, res: Response) => {
+router.post("/submissions", async (req: Request, res: Response) => {
   const { findingId, platform, title, severity, status } = req.body;
-  const id = String(submissionIdCounter++);
-  const entry = {
-    id, findingId, platform, title, severity,
-    status: status || "draft",
-    createdAt: new Date().toISOString(),
-  };
-  submissionsStore.set(id, entry);
+  const id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const entry = { id, findingId, platform, title, severity, status: status || "draft", createdAt: new Date().toISOString() };
+  await wsWrite("submissions", id, entry);
   return res.status(201).json(entry);
 });
 
-router.patch("/submissions/:id", (req: Request, res: Response) => {
-  const existing = submissionsStore.get(req.params.id);
+router.patch("/submissions/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("submissions", req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
-  submissionsStore.set(req.params.id, updated);
+  await wsWrite("submissions", req.params.id, updated);
   return res.json(updated);
 });
 
-router.delete("/submissions/:id", (req: Request, res: Response) => {
-  submissionsStore.delete(req.params.id);
+router.delete("/submissions/:id", async (req: Request, res: Response) => {
+  await wsDelete("submissions", req.params.id);
   return res.json({ ok: true });
 });
 
 // ── Task Planning ─────────────────────────────────────────────────────────────
-router.get("/tasks", (_req: Request, res: Response) => {
-  return res.json(Array.from(tasksStore.values()));
+router.get("/tasks", async (_req: Request, res: Response) => {
+  return res.json(await wsReadAll("tasks"));
 });
 
-router.post("/tasks", (req: Request, res: Response) => {
+router.post("/tasks", async (req: Request, res: Response) => {
   const { title, type, priority, huntId, assignee, dueDate } = req.body;
-  const id = String(taskIdCounter++);
+  const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const entry = { id, title, type, priority, huntId, assignee, dueDate, createdAt: new Date().toISOString() };
-  tasksStore.set(id, entry);
+  await wsWrite("tasks", id, entry);
   return res.status(201).json(entry);
 });
 
-router.patch("/tasks/:id", (req: Request, res: Response) => {
-  const existing = tasksStore.get(req.params.id);
+router.patch("/tasks/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("tasks", req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
-  tasksStore.set(req.params.id, updated);
+  await wsWrite("tasks", req.params.id, updated);
   return res.json(updated);
 });
 
-router.delete("/tasks/:id", (req: Request, res: Response) => {
-  tasksStore.delete(req.params.id);
+router.delete("/tasks/:id", async (req: Request, res: Response) => {
+  await wsDelete("tasks", req.params.id);
   return res.json({ ok: true });
 });
 
@@ -522,33 +565,33 @@ router.get("/tools/readiness", (_req: Request, res: Response) => {
 });
 
 // ── Workflows ─────────────────────────────────────────────────────────────────
-router.get("/workflows", (_req: Request, res: Response) => {
-  return res.json(Array.from(workflowsStore.values()));
+router.get("/workflows", async (_req: Request, res: Response) => {
+  return res.json(await wsReadAll("workflows"));
 });
 
-router.post("/workflows", (req: Request, res: Response) => {
+router.post("/workflows", async (req: Request, res: Response) => {
   const { name, steps, trigger, description } = req.body;
-  const id = String(workflowIdCounter++);
+  const id = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const entry = { id, name, steps: steps || [], trigger, description, createdAt: new Date().toISOString() };
-  workflowsStore.set(id, entry);
+  await wsWrite("workflows", id, entry);
   return res.status(201).json(entry);
 });
 
-router.patch("/workflows/:id", (req: Request, res: Response) => {
-  const existing = workflowsStore.get(req.params.id);
+router.patch("/workflows/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("workflows", req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
-  workflowsStore.set(req.params.id, updated);
+  await wsWrite("workflows", req.params.id, updated);
   return res.json(updated);
 });
 
-router.delete("/workflows/:id", (req: Request, res: Response) => {
-  workflowsStore.delete(req.params.id);
+router.delete("/workflows/:id", async (req: Request, res: Response) => {
+  await wsDelete("workflows", req.params.id);
   return res.json({ ok: true });
 });
 
-router.post("/workflows/:id/execute", (req: Request, res: Response) => {
-  const workflow = workflowsStore.get(req.params.id);
+router.post("/workflows/:id/execute", async (req: Request, res: Response) => {
+  const workflow = await wsFind("workflows", req.params.id);
   if (!workflow) return res.status(404).json({ error: "Workflow not found" });
   return res.json({
     executed: true,

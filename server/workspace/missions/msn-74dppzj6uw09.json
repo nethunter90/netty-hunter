@@ -1,0 +1,88 @@
+{
+  "id": "msn-74dppzj6uw09",
+  "name": "Recon on testsite.com",
+  "target": "testsite.com",
+  "type": "recon",
+  "status": "completed",
+  "priority": "high",
+  "steps": [
+    {
+      "id": "msn-irsrxircfik9",
+      "name": "Subdomain Enumeration",
+      "tool": "subfinder",
+      "status": "completed",
+      "output": "[subfinder] Scan completed against testsite.com. 14 items processed.",
+      "startedAt": "2026-02-07T22:44:40.290Z",
+      "completedAt": "2026-02-07T22:44:42.331Z",
+      "duration": 2040
+    },
+    {
+      "id": "msn-6m5l309ejz13",
+      "name": "Port Scanning",
+      "tool": "nmap",
+      "status": "completed",
+      "output": "[nmap] Scan completed against testsite.com. 15 items processed.",
+      "startedAt": "2026-02-07T22:44:42.333Z",
+      "completedAt": "2026-02-07T22:44:44.731Z",
+      "duration": 2398
+    },
+    {
+      "id": "msn-r897wb73yvah",
+      "name": "Technology Detection",
+      "tool": "whatweb",
+      "status": "completed",
+      "output": "[whatweb] Scan completed against testsite.com. 42 items processed.",
+      "startedAt": "2026-02-07T22:44:44.732Z",
+      "completedAt": "2026-02-07T22:44:47.236Z",
+      "duration": 2493
+    },
+    {
+      "id": "msn-8q9dasgznqig",
+      "name": "Directory Bruteforce",
+      "tool": "ffuf",
+      "status": "completed",
+      "output": "[ffuf] Scan completed against testsite.com. 47 items processed.",
+      "startedAt": "2026-02-07T22:44:47.237Z",
+      "completedAt": "2026-02-07T22:44:50.821Z",
+      "duration": 3581
+    },
+    {
+      "id": "msn-k1l40edy5iym",
+      "name": "Content Discovery",
+      "tool": "gobuster",
+      "status": "completed",
+      "output": "[gobuster] Scan completed against testsite.com. 37 items processed.",
+      "startedAt": "2026-02-07T22:44:50.825Z",
+      "completedAt": "2026-02-07T22:44:53.754Z",
+      "duration": 2928
+    }
+  ],
+  "findings": [
+    {
+      "id": "msn-jaw2khi3e2pf",
+      "type": "outdated_software",
+      "severity": "medium",
+      "title": "Outdated software version on testsite.com",
+      "description": "Server running vulnerable software version",
+      "evidence": "Detected by subfinder during Subdomain Enumeration",
+      "stepId": "msn-irsrxircfik9",
+      "timestamp": "2026-02-07T22:44:42.331Z"
+    },
+    {
+      "id": "msn-71j4h5ivo5t2",
+      "type": "subdomain",
+      "severity": "info",
+      "title": "Subdomain discovered on testsite.com",
+      "description": "Found active subdomain via DNS enumeration",
+      "evidence": "Detected by ffuf during Directory Bruteforce",
+      "stepId": "msn-8q9dasgznqig",
+      "timestamp": "2026-02-07T22:44:50.821Z"
+    }
+  ],
+  "config": {},
+  "progress": 100,
+  "createdAt": "2026-02-07T22:44:36.248Z",
+  "startedAt": "2026-02-07T22:44:40.287Z",
+  "completedAt": "2026-02-07T22:44:53.755Z",
+  "error": null
+}

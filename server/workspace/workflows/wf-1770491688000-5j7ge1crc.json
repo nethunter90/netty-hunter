@@ -1,0 +1,27 @@
+{
+  "id": "wf-1770491688000-5j7ge1crc",
+  "name": "Full Site Assessment",
+  "description": "Complete site security scan",
+  "steps": [
+    {
+      "id": "s1",
+      "name": "Port Scan",
+      "type": "scan",
+      "tool": null,
+      "config": {},
+      "critical": true
+    },
+    {
+      "id": "s2",
+      "name": "Analyze Results",
+      "type": "analyze",
+      "tool": null,
+      "config": {},
+      "critical": false
+    }
+  ],
+  "trigger": "manual",
+  "status": "draft",
+  "createdAt": "2026-02-07T19:14:48.000Z",
+  "updatedAt": "2026-02-07T19:14:48.000Z"
+}

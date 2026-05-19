@@ -1,0 +1,62 @@
+[
+  {
+    "id": "88ace860-ebe3-4dab-8d77-c60cdfb0fee0",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 6,
+    "completedAt": "2026-02-10T20:23:29.765Z"
+  },
+  {
+    "id": "8e047f71-c1ef-4f20-b8f4-d4d0e7494343",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 6,
+    "completedAt": "2026-02-11T00:30:03.092Z"
+  },
+  {
+    "id": "48357039-c2db-4bc3-b3b5-57d6bc5f8d55",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 2,
+    "completedAt": "2026-02-11T01:27:33.752Z"
+  },
+  {
+    "id": "1ab3495e-0d67-43af-b48f-8ff8ef2e99d1",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 146,
+    "completedAt": "2026-02-11T01:43:15.399Z"
+  },
+  {
+    "id": "15cf4ab4-ec94-4fe1-a3c9-0f3321743ef4",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 144,
+    "completedAt": "2026-02-11T02:05:39.568Z"
+  },
+  {
+    "id": "5f89cdb9-7ef2-4f13-bfc5-9b8a56e8feeb",
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "stackHash": "2n0c",
+    "wafType": null,
+    "outcome": "success",
+    "findingCount": 144,
+    "completedAt": "2026-02-11T02:12:12.716Z"
+  }
+]

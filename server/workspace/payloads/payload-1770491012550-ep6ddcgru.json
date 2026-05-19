@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012550-ep6ddcgru",
+  "name": "SSRF localhost",
+  "category": "ssrf",
+  "payload": "http://127.0.0.1:80",
+  "description": "SSRF to localhost",
+  "tags": [
+    "localhost",
+    "internal"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.550Z",
+  "updatedAt": "2026-02-07T19:03:32.550Z"
+}

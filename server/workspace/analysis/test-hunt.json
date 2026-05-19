@@ -1,0 +1,33 @@
+{
+  "huntId": "test-hunt",
+  "vulnerabilityDistribution": {
+    "critical": 2,
+    "high": 5,
+    "medium": 8,
+    "low": 12,
+    "info": 3
+  },
+  "severityBreakdown": {
+    "critical": 2,
+    "high": 5,
+    "medium": 8,
+    "low": 12,
+    "info": 3
+  },
+  "attackSurface": [
+    "web-application",
+    "api-endpoints",
+    "authentication-flow",
+    "file-upload"
+  ],
+  "recommendations": [
+    "Implement input validation on all user-facing forms",
+    "Enable Content Security Policy headers",
+    "Review authentication token handling",
+    "Add rate limiting to API endpoints",
+    "Conduct regular dependency vulnerability scanning"
+  ],
+  "totalFindings": 30,
+  "generatedAt": "2026-02-07T19:14:48.235Z",
+  "sample": true
+}

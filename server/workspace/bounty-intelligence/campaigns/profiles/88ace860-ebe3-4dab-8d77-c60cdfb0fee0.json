@@ -1,0 +1,173 @@
+{
+  "id": "88ace860-ebe3-4dab-8d77-c60cdfb0fee0",
+  "target": {
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "techStack": {
+      "language": null,
+      "framework": null,
+      "server": null,
+      "database": null,
+      "cdn": null,
+      "jsLibraries": []
+    },
+    "defensePosture": {
+      "wafType": null,
+      "wafStrictness": "moderate",
+      "rateLimiting": {
+        "detected": false,
+        "threshold": null,
+        "resetWindow": null
+      },
+      "errorVerbosity": "standard",
+      "cspPolicy": {
+        "present": false,
+        "strictness": "none",
+        "reportOnly": false
+      },
+      "securityHeaders": {
+        "hsts": false,
+        "xFrameOptions": false,
+        "xContentType": false,
+        "referrerPolicy": null
+      },
+      "cookieFlags": {
+        "httpOnly": false,
+        "secure": false,
+        "sameSite": null
+      },
+      "authMechanisms": [],
+      "apiStyle": "rest"
+    }
+  },
+  "hunt": {
+    "goal": "find-vulns",
+    "startedAt": "2026-02-10T20:22:59.704Z",
+    "completedAt": "2026-02-10T20:23:29.765Z",
+    "durationMinutes": 1,
+    "tasksExecuted": 3,
+    "toolsUsed": [
+      "nginx",
+      "React"
+    ]
+  },
+  "techniques": [
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://www.http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://www.http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "https://www.http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    }
+  ],
+  "findings": [
+    {
+      "id": "d39cd797-a7fd-4ef8-9caf-573863644ebc",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    },
+    {
+      "id": "6ffd9b0d-2fca-49a7-951f-62b0283e4025",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://www.http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    },
+    {
+      "id": "fc3933d8-e228-44cd-b4cf-25ac122c9f97",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    },
+    {
+      "id": "3a1ce85a-3149-43bf-9f25-67c45ebd1d2a",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://www.http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    },
+    {
+      "id": "4e0837bd-9705-4e78-8cd4-4decc07984c6",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    },
+    {
+      "id": "1d2596b6-2e16-4f93-9266-99017957c80d",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "https://www.http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-10T20:23:29.765Z"
+    }
+  ],
+  "outcome": "success"
+}

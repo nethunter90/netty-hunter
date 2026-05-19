@@ -1,0 +1,15 @@
+{
+  "id": "task-1770491688039-99i1bpupp",
+  "huntId": null,
+  "title": "Run nmap scan",
+  "description": "Full port scan",
+  "priority": "high",
+  "phase": "reconnaissance",
+  "status": "pending",
+  "estimatedTime": 30,
+  "actualTime": null,
+  "dependencies": [],
+  "notes": "",
+  "createdAt": "2026-02-07T19:14:48.039Z",
+  "updatedAt": "2026-02-07T19:14:48.039Z"
+}

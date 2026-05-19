@@ -1,0 +1,13 @@
+{
+  "id": "sub-1770491688106-3udni0vgy",
+  "huntId": null,
+  "platform": "hackerone",
+  "title": "XSS in login form",
+  "severity": "high",
+  "status": "draft",
+  "payout": 500,
+  "description": "Reflected XSS found",
+  "submittedAt": "2026-02-07T19:14:48.106Z",
+  "updatedAt": "2026-02-07T19:14:48.106Z",
+  "resolvedAt": null
+}

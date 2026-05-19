@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012549-32bwofqpo",
+  "name": "SQL Boolean Blind",
+  "category": "sqli",
+  "payload": "' AND 1=1--",
+  "description": "Boolean-based blind SQL injection",
+  "tags": [
+    "blind",
+    "boolean"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.549Z",
+  "updatedAt": "2026-02-07T19:03:32.549Z"
+}

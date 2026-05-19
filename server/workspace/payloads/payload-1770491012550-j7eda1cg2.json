@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012550-j7eda1cg2",
+  "name": "LFI /etc/passwd",
+  "category": "lfi",
+  "payload": "../../../etc/passwd",
+  "description": "Local file inclusion test",
+  "tags": [
+    "linux",
+    "etc"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.550Z",
+  "updatedAt": "2026-02-07T19:03:32.550Z"
+}

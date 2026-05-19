@@ -1,0 +1,57 @@
+{
+  "id": "msn-62h666dhm1w0",
+  "name": "Verify-Hunt-JuiceShop",
+  "target": "http://localhost:3000",
+  "type": "full-scan",
+  "status": "completed",
+  "priority": "medium",
+  "steps": [
+    {
+      "id": "msn-urgn6zgdis8o",
+      "name": "Custom Scan",
+      "tool": "nmap",
+      "status": "completed",
+      "output": "Starting Nmap 7.94 ( https://nmap.org ) at 2026-02-11 04:14 UTC\nNmap done: 0 IP addresses (0 hosts up) scanned in 0.03 seconds\n",
+      "startedAt": "2026-02-11T04:14:56.815Z",
+      "completedAt": "2026-02-11T04:14:56.904Z",
+      "duration": 72
+    }
+  ],
+  "findings": [],
+  "config": {},
+  "progress": 100,
+  "createdAt": "2026-02-11T04:14:46.412Z",
+  "startedAt": "2026-02-11T04:14:56.813Z",
+  "completedAt": "2026-02-11T04:14:56.906Z",
+  "error": null,
+  "goal": "General",
+  "threatLevel": "medium",
+  "evidence": [
+    {
+      "id": "msn-7fpnuowfkuq9",
+      "type": "scan_output",
+      "data": "Starting Nmap 7.94 ( https://nmap.org ) at 2026-02-11 04:14 UTC\nNmap done: 0 IP addresses (0 hosts up) scanned in 0.03 seconds\n",
+      "stepId": "msn-urgn6zgdis8o",
+      "timestamp": "2026-02-11T04:14:56.904Z"
+    }
+  ],
+  "attackPath": [
+    {
+      "step": 1,
+      "phase": "Custom Scan",
+      "status": "completed",
+      "description": "Queued for execution"
+    }
+  ],
+  "currentTask": null,
+  "stealthStatus": {
+    "mode": "aggressive",
+    "detections": 0
+  },
+  "scope": {
+    "inScope": [
+      "http://localhost:3000"
+    ],
+    "outOfScope": []
+  }
+}
