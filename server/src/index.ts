@@ -16,6 +16,10 @@ import orchestrationRoutes from "./routes/orchestration";
 import hunterRoutes from "./routes/hunter";
 import governanceRoutes from "./routes/governance";
 import missionsRoutes from "./routes/missions";
+import bountyIntelligenceRoutes from "./routes/bounty-intelligence";
+import reasoningRoutes from "./routes/reasoning";
+import graphRoutes from "./routes/graph";
+import intelligenceRoutes from "./routes/intelligence";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -119,6 +123,10 @@ app.use("/api/orchestration", requireAuth, orchestrationRoutes);
 app.use("/api/hunter", requireAuth, hunterRoutes);
 app.use("/api/governance", requireAuth, governanceRoutes);
 app.use("/api/missions", requireAuth, missionsRoutes);
+app.use("/api/bounty-intelligence", requireAuth, bountyIntelligenceRoutes);
+app.use("/api/reasoning", requireAuth, reasoningRoutes);
+app.use("/api/graph", requireAuth, graphRoutes);
+app.use("/api/intelligence", requireAuth, intelligenceRoutes);
 
 // Health check
 app.get("/health", (_req, res) => res.json({
