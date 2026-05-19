@@ -19,6 +19,28 @@
 
 ---
 
+#### Orchestration Layer (`lib/orchestration/`)
+
+A full 6-layer multi-agent hunt pipeline with event-driven coordination, distributed locking, and AI-powered cognitive agents.
+
+- **Layer 1 — Hunt Orchestrator**: Central coordinator managing hunt lifecycle across recon, scanning, exploitation, and reporting phases; drives dynamic phase transitions and integrates with meta-reasoner and decision trace logger
+- **Layer 2 — Agent Loop**: Agent lifecycle management — creation, tool queue execution, scan completion tracking, and results ingestion for all 39 integrated tools; imports stealth flags and timing profiles per tool invocation
+- **Layer 3 — Event Bus**: Typed pub-sub with specialized publication methods for findings, endpoint characterizations, defense detections, and phase completions; persists event history per hunt
+- **Layer 4 — Cognitive Agents**: AI-powered OrchestratorAgent, TaskPlannerAgent, AnalystAgent, ResearcherAgent, CoverageValidatorAgent — all backed by the AI bridge and mission memory
+- **Layer 5 — Meta Agents**: 10 specialized concrete agents — ReconAgent, ExploitAgent, CredentialAgent, IntelAgent, BlueTeamAgent, PivotAgent, ReportAgent, WordlistAgent, SimGenAgent, SmartAgent; each with metadata profiles and tool chain awareness
+- **Layer 5 — CodeGen Agent**: Self-modifying agent for code generation and TypeScript validation with approval gates and risk classification; writes and validates its own output before committing
+- **Layer 6 — AI Bridge**: Ollama integration for agent prompting with template management, confidence thresholds, and simulation fallback when no model is available
+- **Mission Memory**: Central per-hunt memory store — tracks domains, subdomains, endpoints, technologies, vulnerabilities, credentials, and notes
+- **Agent Registry**: Tracks all active agents — status management, claim tracking, invocation recording, hunt-scoped queries
+- **Endpoint Claims**: Distributed lock manager with timeout-based claim expiration to prevent duplicate work across concurrent agents
+- **Tool Parsers**: 20+ parsers for nmap, nuclei, sqlmap, nikto, nikto, whatweb output → standardized vulnerability and endpoint data structures
+- **Pass-K Evaluator**: Runs agents k times and selects best result by confidence threshold; per-agent k configurations
+- **Prompt Loader**: Template management with file persistence, variable substitution, and per-template confidence thresholds
+- **Temporal Event Bus**: Urgency-decay event correlation with dead-letter queue; preemptive signaling for critical findings; integrates with Hunt Cortex
+- **Mission Chain Manager**: Stub interface for exploit chain management and endpoint injection (full implementation pending desktop-agent cognitive modules)
+
+---
+
 #### Governance Layer (`/api/governance`)
 
 An independent 8-pillar governance system that audits, constrains, and monitors all agent behavior.
@@ -43,11 +65,12 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 - **MITRE Prerequisite Tree**: ATT&CK technique dependency graph — identifies prerequisite chains, choke points, and technique orderings; queryable by capability or technique ID
 - **Offensive Graph DB**: In-memory + PostgreSQL attack graph with typed nodes (endpoint, vulnerability, technique, tool, credential) and weighted edges (exploits, targets, discovered_by, derived_from, produces); full traversal and shortest-path queries
 - **Graph Wiring**: Event-driven graph population — listens to `vulnerability_found`, `tool_completed`, `phase_changed`, `endpoint_characterized` events and automatically builds the attack graph in real time
+- **Hunt Lab Runner**: Runs hunts against lab profiles (OWASP Juice Shop) with determinism checking, outcome scoring, and adaptive threshold feedback
+- **Offline Fallback**: Tiered fallback decision logic when orchestrator is unavailable — uses reasoning engine, hunt cortex signals, and tool fallback chains from seed knowledge
 - **Hunt Strategy Builder**: Auto-populates structured execution plans based on hunt goals, selects optimal tool chains, orders steps by phase, and supports dynamic step injection and mid-hunt adaptation
 - **Hunt Template Library**: 10 built-in templates (recon_first, xss_focus, api_abuse, sqli_hunt, ssrf_hunt, auth_testing, cloud_exposure, logic_flaws, subdomain_takeover, full_spectrum) with seed hypotheses and intelligence overrides
 - **Tool Knowledge System**: Structured profiles for 39 integrated security tools and 10 tool chain pipelines, injected into the AI reasoning loop at runtime
 - **Static Analysis Feed**: Lightweight pre-hunt pattern matching — route extraction for 5 frameworks, 24+ dangerous sink patterns, dependency CVE checking, config scanning; generates seed hypotheses for the Hunter Engine
-- **Backward Hunt Engine**: Goal-first hunting methodology working backward from desired outcomes using pre-built attack trees
 - **External Plan Memory**: Attack plans stored outside context window, retrieved at budget checkpoints with auto-adaptation to maintain strategic coherence
 - **External APIs**: VirusTotal, AbuseIPDB, Shodan, MITRE ATT&CK clients with simulated fallbacks when no API key is configured; used for passive enrichment during target intelligence phase
 
@@ -63,12 +86,58 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 
 ---
 
+#### Stealth Layer (`lib/stealth/`)
+
+Two complementary stealth systems merged into one module — the existing WAF/behavioral evasion layer plus a new operational stealth layer for tool execution, network presence, and agent self-awareness.
+
+**Existing evasion modules:**
+- **StealthCoordinator**: Full probe preparation pipeline — timing (decay-aware) → mimicry headers → AI WAF evasion variants → traffic normalization; per-domain session management with 30-minute rotation
+- **BehavioralMimicry**: Human-like request patterns, referrer chains, and browser fingerprint simulation
+- **AI WAF Evasion**: AI-generated payload variants ranked by confidence for WAF bypass
+- **TimingEngine**: Decay-aware probe timing with anomaly score tracking
+- **SessionWarmup**: Pre-hunt session establishment to build baseline traffic profile
+- **TrafficNormalizer**: URL and request normalization toward expected baseline
+
+**New operational stealth modules:**
+- **Tool Runner**: Executes all 39 tools with per-tool stealth flags (rate limits, delays, randomization, proxy routing); 4 stealth profiles — aggressive, balanced, stealth, ultrastealth
+- **Timing Obfuscation**: Circadian-aware delay injection with jitter, burst penalty, and risk multipliers across recon/exploit/scan action types
+- **Tool Priority**: Dynamic tool priority scoring based on stealth mode, past success, and WAF detection state
+- **Network Stealth**: Request routing, proxy management, and network-level evasion for all outbound probe traffic
+- **Stealth Analyzer**: Real-time detection risk scoring across all active probes; feeds auto-adjuster
+- **Stealth Alert State**: Alert level state machine — tracks escalating detection signals and recommends mode changes
+- **Auto-Adjuster**: Automatic stealth mode upgrades when alert state rises; downgrades after quiet periods
+- **Dynamic Rate Limiter**: Per-domain adaptive rate limiting that responds to response time shifts and error rate spikes
+- **Agent Awareness**: Agent self-monitoring — tracks own footprint, request patterns, and detection probability
+- **Log Scrubber**: Removes sensitive data from all log output before persistence
+- **Cleanup Manager**: Post-hunt artifact cleanup — temp files, cached payloads, session state
+- **Training Integration**: Records tool execution outcomes for reinforcement learning feedback loop
+- **Vision Agent**: Screen/viewport capture integration for UI-based vulnerability validation
+- **Window Manager**: Application window management for desktop agent UI interactions
+- **Agent UI Interactor**: Playwright-based UI automation for browser-level agent actions
+
+---
+
 #### Verification & Validation
 
 - **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data, annotating hypotheses with conflict context and reducing confidence
 - **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
+
+---
+
+#### Bounty Intelligence (`lib/bounty-intelligence/`)
+
+Pre-hunt and cross-hunt analytics for program selection, payout maximization, and duplicate avoidance.
+
+- **Program Fetcher**: Monitors bug bounty programs for scope changes, new targets, and rule updates; maintains fetch history and change records per program
+- **Cross-Campaign Learning**: Learns attack patterns across multiple campaigns — technique similarity detection, technology-specific playbook recommendations, and campaign outcome indexing
+- **Tool Synergy Engine**: Maps which tool combinations produce the highest finding rates for specific vulnerability types and target tech stacks; generates ranked playbook recommendations
+- **Failure Prediction Engine**: ML-based prediction of tool and technique failure modes based on historical execution data; reduces wasted probe budget
+- **Payout Optimization**: Estimates expected payout per vulnerability class and target type; generates escalation chains to maximize bounty value from a confirmed finding
+- **Predictive Duplicate Avoidance**: Heatmap-based duplicate prediction — tracks which vulnerability classes have been heavily reported on a given program and steers the hunt away
+- **Triage Predictor**: Predicts triage outcomes (accepted/duplicate/informational/N/A) based on submission timing, program history, and finding type
+- **Intelligence Types**: Shared type definitions — CampaignOutcome, ExecutionPhase, HuntGoal, IntelligenceEvent, DefenseProfile, and 15+ supporting interfaces
 
 ---
 
@@ -91,18 +160,25 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 
 #### AI Reasoning Knowledge Base
 
-- **JsonPromptLoader**: Singleton prompt knowledge base loading all `*.json` from `server/data/prompts/` — grouped by vulnerability type, engagement context, and domain; used to inject structured reasoning examples into the AI loop at runtime
-- **10 Prompt Datasets (T1–T10)**:
-  - T1 – Recon & OSINT (100 entries)
-  - T2 – Injection vulnerabilities (100 entries)
-  - T3 – Authentication & session (100 entries)
-  - T4 – Logic flaws (100 entries)
-  - T5 – API security (100 entries)
-  - T6 – Client-side (100 entries)
-  - T7 – Infrastructure (100 entries)
-  - T8 – Governance & compliance (100 entries)
-  - T9 – Exploit chain reasoning (100 entries)
-  - T10 – Engagement decision reasoning across 5 complexity levels and 9 engagement contexts (100 entries)
+- **JsonPromptLoader**: Singleton prompt knowledge base with semantic retrieval via `nomic-embed-text` embeddings — pre-computes 768-dim embeddings for all 1,785 prompt entries at startup, caches to disk, and retrieves the 7 most contextually relevant examples per hypothesis cycle via cosine similarity; falls back to keyword/domain filtering when embedding model is unavailable
+- **18 Prompt Datasets (1,785 total entries)**:
+  - kali-tool-reasoning — tool selection and execution reasoning (100)
+  - kali-tool-interpretation — tool output interpretation (100)
+  - kali-tools — tool profiles and capability mapping (50)
+  - api-auth-chains — JWT, OAuth2, SAML, CORS, MFA, GraphQL auth chains (100)
+  - cloud-security — AWS, GCP, Azure, Kubernetes attack scenarios (100)
+  - business-logic — fintech, marketplace, SaaS logic flaw patterns (100)
+  - engagement-signals — defensive signal recognition and response (100)
+  - access-level-scenarios — privilege escalation and access boundary testing (100)
+  - vulnerability-severity-reasoning — impact and severity assessment (100)
+  - tool-chain-reasoning — multi-tool orchestration and pivot logic (100)
+  - engagement-decision-reasoning — 5 complexity levels × 9 engagement contexts (100)
+  - attack-paths — multi-step attack path construction (200)
+  - chain-scenarios — full exploit chain scenarios (255)
+  - bounty-patterns — program-specific hunting patterns (100)
+  - core-security-logic — fundamental security reasoning primitives (100)
+  - cybersec-reasoning — general security analysis reasoning (50)
+  - defensive-awareness — blue team detection awareness (30)
 - **Seed Knowledge**: Hardcoded MITRE ATT&CK techniques, attack paths, tool fallback chains, tool categories, intent patterns, goal payout data, hunt goal paths, and pivot playbooks — injected at module load, no DB required
 
 ---
@@ -168,8 +244,9 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 
 - Node.js 20+
 - PostgreSQL 15+
-- Ollama (with at least one model: `ollama pull llama3.2`)
-- Kali Linux recommended (for tool integrations: nmap, nuclei, sqlmap, ffuf, gobuster, nikto, whatweb)
+- Ollama with at least one reasoning model: `ollama pull llama3.2`
+- Ollama embedding model for semantic prompt retrieval: `ollama pull nomic-embed-text`
+- Kali Linux recommended (for tool integrations: nmap, nuclei, sqlmap, ffuf, gobuster, nikto, whatweb, httpx)
 
 ### Install
 
@@ -195,10 +272,14 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/netty_hunter
 SESSION_SECRET=your-random-secret-minimum-32-chars
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3.2
+OLLAMA_REASONING_MODEL=deepseek-r1:7b
 PORT=3001
 
-# Optional — enables real Kali tool execution
+# Enables real Kali tool execution (default: mock mode)
 REAL_TOOLS=true
+
+# Embedding model for semantic prompt retrieval (~274MB, CPU-friendly)
+EMBED_MODEL=nomic-embed-text
 
 # Optional — external threat intel
 VIRUSTOTAL_API_KEY=
@@ -223,17 +304,22 @@ The platform integrates with 39 Kali Linux security tools across 8 categories:
 | Exploitation | metasploit, searchsploit |
 | Misc | curl, wget, jq, git |
 
+All tools are executed through the **Tool Runner** stealth layer — each invocation gets per-tool stealth flags, timing profile delays, and optional proxy routing based on the active stealth mode.
+
 ---
 
 ## Architecture Principles
 
 - **Fail-closed scope validation** — ScopeGuard and GovernanceProxy block all out-of-scope requests at every invocation; governance is never optional
 - **8-pillar governance** — every agent decision is audited against named ethical and operational pillars with full replay data
+- **6-layer orchestration** — every hunt passes through a structured pipeline from governance gate to intelligence harvest; no layer can be bypassed
 - **Mandatory browser validation** — high-severity findings MUST pass Playwright replay before reporting
 - **Anti-hallucination pipeline** — 4-layer deduplication prevents false positives; verification lifecycle degrades stale findings automatically
 - **Adversarial graph reasoning** — findings, techniques, tools, and endpoints are nodes in a live attack graph updated in real time
 - **Goal-first backward planning** — strategy selection starts from the desired vulnerability class and works backward through prerequisite chains
+- **Operational stealth by default** — all tool executions go through the stealth layer; timing, flags, and rate limits are never caller-controlled
 - **No mocks on Kali Linux** — real tool execution when `REAL_TOOLS=true`
-- **Self-learning** — every hunt improves model calibration via the Unified Reinforcement Store, Adaptive Threshold Tuner, and Decision Journal
+- **Self-learning** — every hunt improves model calibration via the Unified Reinforcement Store, Adaptive Threshold Tuner, Decision Journal, and Cross-Campaign Learning
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions
 - **Prompt injection hardening** — all external input to agents passes through the PromptInjectionDetector before AI processing
+- **Semantic reasoning examples** — the AI loop receives the 7 most contextually relevant prompt examples per hypothesis cycle via embedding-based retrieval, not keyword matching
