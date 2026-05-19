@@ -1,12 +1,7 @@
 import { offensiveGraphDB, NodeType, EdgeRelationship } from './offensive-graph-db';
-import { eventBus } from './event-bus';
-import { reasoningEngine } from './reasoning-engine';
-
-interface AgentEvent {
-  huntId?: string;
-  agentId?: string;
-  data?: Record<string, unknown>;
-}
+import { eventBus } from '../orchestration/layer3-event-bus';
+import { missionMemory } from '../orchestration/mission-memory';
+import type { AgentEvent } from '../orchestration/types';
 
 class GraphWiring {
   private wired = false;
@@ -75,7 +70,7 @@ class GraphWiring {
     }
 
     const toolName = vuln.discoveredBy || event.data?.tool || 'unknown-tool';
-    const toolNode = await offensiveGraphDB.addNode(huntId, 'tool', toolName as string, {
+    const toolNode = await offensiveGraphDB.addNode(huntId, 'tool', toolName, {
       confidence: 0.9,
       properties: { agentType: event.agentId },
     });
@@ -108,8 +103,8 @@ class GraphWiring {
     const huntId = event.huntId;
     if (!huntId) return;
 
-    const toolName = (event.data?.tool || event.agentId || 'unknown') as string;
-    const target = (event.data?.target || '') as string;
+    const toolName = event.data?.tool || event.agentId || 'unknown';
+    const target = event.data?.target || '';
 
     const toolNode = await offensiveGraphDB.addNode(huntId, 'tool', toolName, {
       confidence: 0.9,
@@ -132,13 +127,18 @@ class GraphWiring {
     const huntId = event.huntId;
     if (!huntId) return;
 
-    const memory = reasoningEngine.getMissionMemory(huntId);
+    const memory = missionMemory.get(huntId);
     if (!memory) return;
 
-    for (const [url] of memory.discoveredEndpoints) {
-      await offensiveGraphDB.addNode(huntId, 'endpoint', url, {
+    for (const ep of memory.endpoints) {
+      await offensiveGraphDB.addNode(huntId, 'endpoint', ep.url, {
         confidence: 0.9,
-        properties: { method: 'GET' },
+        properties: {
+          method: ep.method || 'GET',
+          statusCode: ep.statusCode,
+          title: ep.title,
+          discoveredBy: ep.discoveredBy,
+        },
       });
     }
   }
@@ -162,7 +162,7 @@ class GraphWiring {
     if (ep.discoveredBy === 'chain-reasoner') {
       const parentUrl = ep.properties?.parentEndpoint || event.data?.parentEndpoint;
       if (parentUrl) {
-        const parentNode = offensiveGraphDB.findNode(huntId, 'endpoint', parentUrl as string);
+        const parentNode = offensiveGraphDB.findNode(huntId, 'endpoint', parentUrl);
         if (parentNode) {
           await offensiveGraphDB.addEdge(huntId, parentNode.id, epNode.id, 'derived_from', {
             weight: 1.5,
@@ -174,43 +174,63 @@ class GraphWiring {
   }
 
   async populateFromMemory(huntId: string): Promise<{ nodes: number; edges: number }> {
-    const memory = reasoningEngine.getMissionMemory(huntId);
+    const memory = missionMemory.get(huntId);
     if (!memory) return { nodes: 0, edges: 0 };
 
     let nodeCount = 0;
     let edgeCount = 0;
 
-    for (const [url] of memory.discoveredEndpoints) {
-      await offensiveGraphDB.addNode(huntId, 'endpoint', url, {
+    for (const ep of memory.endpoints) {
+      await offensiveGraphDB.addNode(huntId, 'endpoint', ep.url, {
         confidence: 0.9,
-        properties: { method: 'GET' },
+        properties: {
+          method: ep.method || 'GET',
+          statusCode: ep.statusCode,
+          title: ep.title,
+          discoveredBy: ep.discoveredBy,
+        },
       });
       nodeCount++;
     }
 
-    for (const [vulnKey] of memory.discoveredVulnerabilities) {
-      const vulnNode = await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnKey, {
-        severity: 'medium',
+    for (const vuln of memory.vulnerabilities) {
+      const vulnNode = await offensiveGraphDB.addNode(huntId, 'vulnerability', vuln.type || 'unknown', {
+        severity: vuln.severity || 'medium',
         confidence: 0.7,
-        properties: { description: vulnKey },
+        properties: {
+          description: vuln.description,
+          endpoint: vuln.endpoint,
+          evidence: typeof vuln.evidence === 'string' ? vuln.evidence.slice(0, 500) : '',
+        },
       });
       nodeCount++;
 
-      const technique = mapVulnToTechnique(vulnKey);
+      if (vuln.endpoint) {
+        const epNode = offensiveGraphDB.findNode(huntId, 'endpoint', vuln.endpoint);
+        if (epNode) {
+          await offensiveGraphDB.addEdge(huntId, epNode.id, vulnNode.id, 'targets', {
+            weight: SEVERITY_WEIGHT[vuln.severity] || 2,
+          });
+          edgeCount++;
+        }
+      }
+
+      const technique = mapVulnToTechnique(vuln.type || '');
       if (technique) {
         const techNode = await offensiveGraphDB.addNode(huntId, 'technique', technique, {
           confidence: 0.8,
         });
         nodeCount++;
         await offensiveGraphDB.addEdge(huntId, techNode.id, vulnNode.id, 'exploits', {
-          weight: 2,
+          weight: SEVERITY_WEIGHT[vuln.severity] || 2,
         });
         edgeCount++;
       }
     }
 
-    for (const [techKey] of memory.discoveredTechnologies) {
-      await offensiveGraphDB.addNode(huntId, 'technique', `tech:${techKey}`, {
+    for (const tech of memory.technologies) {
+      const techLabel = typeof tech === 'string' ? tech : (tech as any).name || String(tech);
+      await offensiveGraphDB.addNode(huntId, 'technique', `tech:${techLabel}`, {
         confidence: 0.6,
         properties: { category: 'technology-stack' },
       });

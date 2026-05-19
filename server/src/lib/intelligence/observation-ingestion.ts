@@ -1,9 +1,5 @@
 import { ModelRouter } from '../../intelligence/ModelRouter';
 
-// ============================================================
-// OBSERVATION TYPES
-// ============================================================
-
 export interface Observation {
   id: string;
   timestamp: string;
@@ -72,9 +68,12 @@ export interface Pattern {
   actionable: boolean;
 }
 
-// ============================================================
-// EXPECTATION ENGINE
-// ============================================================
+export interface IngestedObservation {
+  observation: Observation;
+  intelligence: ExtractedIntelligence;
+  expectationResult?: ExpectationResult;
+  ingestedAt: string;
+}
 
 interface GoalExpectations {
   goal: string;
@@ -225,7 +224,7 @@ export class ExpectationEngine {
       }
     });
 
-    const confidence = met.length / (met.length + unmet.length);
+    const confidence = met.length / (met.length + unmet.length) || 0;
     const recommendations = this.generateRecommendations(expectations, met, unmet);
 
     return { goal, met, unmet, confidence, recommendations };
@@ -252,13 +251,23 @@ export class ExpectationEngine {
 
     return recommendations;
   }
+
+  getExpectations(goal: string): GoalExpectations | undefined {
+    return this.expectations.get(goal);
+  }
+
+  getAllGoals(): string[] {
+    return Array.from(this.expectations.keys());
+  }
 }
 
-// ============================================================
-// INTELLIGENCE EXTRACTORS
-// ============================================================
-
 export class IntelligenceExtractor {
+  private ollama: ModelRouter;
+
+  constructor(_ollamaUrl: string) {
+    this.ollama = ModelRouter.getInstance();
+  }
+
   async extract(observation: Observation): Promise<ExtractedIntelligence> {
     switch (observation.type) {
       case 'nmap':
@@ -284,8 +293,13 @@ export class IntelligenceExtractor {
   private extractFromNmap(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.8
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.8
     };
 
     const portRegex = /(\d+)\/tcp\s+open\s+([^\s]+)/g;
@@ -293,19 +307,30 @@ export class IntelligenceExtractor {
     while ((match = portRegex.exec(output)) !== null) {
       const port = match[1];
       const service = match[2];
+
       intelligence.endpoints.push({
         url: `${observation.target}:${port}`,
         method: 'TCP',
         parameters: [],
         authenticated: false,
-        riskLevel: this.assessPortRisk(parseInt(port))
+        riskLevel: this.assessPortRisk(parseInt(port), service)
       });
+
       intelligence.technologies.push({
         name: service,
         category: this.categorizeService(service),
         confidence: 0.9,
         evidence: [`Port ${port} running ${service}`]
       });
+    }
+
+    const versionRegex = /([^\s]+)\s+([\d.]+)/g;
+    let vMatch: RegExpExecArray | null;
+    while ((vMatch = versionRegex.exec(output)) !== null) {
+      const tech = intelligence.technologies.find(t => t.name === vMatch![1]);
+      if (tech) {
+        tech.version = vMatch[2];
+      }
     }
 
     if (output.includes('vsftpd 2.3.4')) {
@@ -325,14 +350,20 @@ export class IntelligenceExtractor {
   private extractFromSqlmap(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.9
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.9
     };
 
     if (output.includes('is vulnerable')) {
+      const severityMatch = output.match(/risk:\s*(\w+)/i);
       intelligence.vulnerabilities.push({
         type: 'SQL Injection',
-        severity: 'high',
+        severity: (severityMatch?.[1]?.toLowerCase() as any) || 'high',
         confidence: 0.95,
         location: observation.target || 'unknown',
         evidence: output.slice(0, 500),
@@ -367,8 +398,13 @@ export class IntelligenceExtractor {
   private extractFromNuclei(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.95
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.95
     };
 
     try {
@@ -393,7 +429,7 @@ export class IntelligenceExtractor {
           if (severityMatch && nameMatch) {
             intelligence.vulnerabilities.push({
               type: nameMatch[1].trim(),
-              severity: severityMatch[1].toLowerCase() as VulnerabilityIndicator['severity'],
+              severity: severityMatch[1].toLowerCase() as any,
               confidence: 0.85,
               location: observation.target || 'unknown',
               evidence: line,
@@ -410,8 +446,13 @@ export class IntelligenceExtractor {
   private extractFromDirectoryBruteforce(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.8
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.8
     };
 
     const lines = output.split('\n');
@@ -461,17 +502,22 @@ export class IntelligenceExtractor {
   private extractFromWebFingerprint(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.85
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.85
     };
 
-    const techPatterns: Array<{ pattern: RegExp; name: string; category: TechnologyDetection['category'] }> = [
-      { pattern: /nginx[\/\s]*([\d.]+)?/i, name: 'nginx', category: 'server' },
-      { pattern: /apache[\/\s]*([\d.]+)?/i, name: 'apache', category: 'server' },
-      { pattern: /php[\/\s]*([\d.]+)?/i, name: 'php', category: 'language' },
-      { pattern: /wordpress[\/\s]*([\d.]+)?/i, name: 'wordpress', category: 'cms' },
-      { pattern: /react[\/\s]*([\d.]+)?/i, name: 'react', category: 'framework' },
-      { pattern: /cloudflare/i, name: 'cloudflare', category: 'cdn' }
+    const techPatterns = [
+      { pattern: /nginx[\/\s]*([\d.]+)?/i, name: 'nginx', category: 'server' as const },
+      { pattern: /apache[\/\s]*([\d.]+)?/i, name: 'apache', category: 'server' as const },
+      { pattern: /php[\/\s]*([\d.]+)?/i, name: 'php', category: 'language' as const },
+      { pattern: /wordpress[\/\s]*([\d.]+)?/i, name: 'wordpress', category: 'cms' as const },
+      { pattern: /react[\/\s]*([\d.]+)?/i, name: 'react', category: 'framework' as const },
+      { pattern: /cloudflare/i, name: 'cloudflare', category: 'cdn' as const }
     ];
 
     for (const { pattern, name, category } of techPatterns) {
@@ -488,10 +534,21 @@ export class IntelligenceExtractor {
     }
 
     if (output.match(/X-Frame-Options/i)) {
-      intelligence.defenseSignals.push({ type: 'csp', detected: true, severity: 'low', evidence: 'X-Frame-Options header present' });
+      intelligence.defenseSignals.push({
+        type: 'csp',
+        detected: true,
+        severity: 'low',
+        evidence: 'X-Frame-Options header present'
+      });
     }
+
     if (output.match(/Strict-Transport-Security/i)) {
-      intelligence.defenseSignals.push({ type: 'hsts', detected: true, severity: 'low', evidence: 'HSTS header present' });
+      intelligence.defenseSignals.push({
+        type: 'hsts',
+        detected: true,
+        severity: 'low',
+        evidence: 'HSTS header present'
+      });
     }
 
     return intelligence;
@@ -500,8 +557,13 @@ export class IntelligenceExtractor {
   private extractFromSubdomainEnum(observation: Observation): ExtractedIntelligence {
     const output = observation.rawOutput;
     const intelligence: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0.95
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0.95
     };
 
     const lines = output.split('\n');
@@ -523,57 +585,71 @@ export class IntelligenceExtractor {
 
   private async extractWithAI(observation: Observation): Promise<ExtractedIntelligence> {
     try {
-      const router = ModelRouter.getInstance();
-      const prompt = `Extract security intelligence from this tool output. Return JSON only with this exact structure:
+      const content = await this.ollama.generate(
+        `Extract security intelligence from this tool output. Return JSON with:
 {
-  "technologies": [{"name": "", "version": "", "category": "server|framework|language|database|cdn|waf|cms", "confidence": 0.9, "evidence": []}],
-  "defenseSignals": [],
-  "vulnerabilities": [{"type": "", "severity": "critical|high|medium|low|info", "confidence": 0, "location": "", "evidence": ""}],
-  "endpoints": [{"url": "", "method": "GET", "parameters": [], "authenticated": false, "riskLevel": "high|medium|low"}],
-  "credentials": [],
-  "patterns": [],
-  "confidence": 0.7
+  "technologies": [{"name": "", "version": "", "category": ""}],
+  "vulnerabilities": [{"type": "", "severity": "", "confidence": 0}],
+  "endpoints": [{"url": "", "riskLevel": "high|medium|low"}]
 }
 
-Tool output:
-${observation.rawOutput.slice(0, 2000)}`;
+Output:
+${observation.rawOutput.slice(0, 2000)}`,
+        'analyze'
+      );
 
-      const response = await router.reason(prompt);
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON in response');
-      return JSON.parse(jsonMatch[0]);
+      return JSON.parse(content);
     } catch {
       return {
-        technologies: [], defenseSignals: [], vulnerabilities: [],
-        endpoints: [], credentials: [], patterns: [], confidence: 0.5
+        technologies: [],
+        defenseSignals: [],
+        vulnerabilities: [],
+        endpoints: [],
+        credentials: [],
+        patterns: [],
+        confidence: 0.5
       };
     }
   }
 
-  private assessPortRisk(port: number): 'high' | 'medium' | 'low' {
-    if ([21, 23, 3389, 445, 139].includes(port)) return 'high';
-    if ([22, 3306, 5432, 27017].includes(port)) return 'medium';
+  private assessPortRisk(port: number, _service: string): 'high' | 'medium' | 'low' {
+    const highRiskPorts = [21, 23, 3389, 445, 139];
+    const mediumRiskPorts = [22, 3306, 5432, 27017];
+    if (highRiskPorts.includes(port)) return 'high';
+    if (mediumRiskPorts.includes(port)) return 'medium';
     return 'low';
   }
 
   private categorizeService(service: string): TechnologyDetection['category'] {
-    const map: Record<string, TechnologyDetection['category']> = {
-      http: 'server', https: 'server', ssh: 'server', ftp: 'server',
-      mysql: 'database', postgresql: 'database', mongodb: 'database'
+    const categories: Record<string, TechnologyDetection['category']> = {
+      'http': 'server',
+      'https': 'server',
+      'ssh': 'server',
+      'ftp': 'server',
+      'mysql': 'database',
+      'postgresql': 'database',
+      'mongodb': 'database'
     };
-    return map[service.toLowerCase()] || 'server';
+    return categories[service.toLowerCase()] || 'server';
   }
 
   private assessEndpointRisk(path: string, status: number): 'high' | 'medium' | 'low' {
-    if (['/admin', '/api', '/.git', '/config', '/backup', '/.env'].some(p => path.includes(p))) return 'high';
-    if (['/login', '/upload', '/search'].some(p => path.includes(p))) return 'medium';
+    const highRiskPaths = ['/admin', '/api', '/.git', '/config', '/backup', '/.env'];
+    const mediumRiskPaths = ['/login', '/upload', '/search'];
+    if (highRiskPaths.some(p => path.includes(p))) return 'high';
+    if (mediumRiskPaths.some(p => path.includes(p))) return 'medium';
     if (status === 401 || status === 403) return 'high';
     return 'low';
   }
 
   private assessSubdomainRisk(subdomain: string): 'high' | 'medium' | 'low' {
-    const highRisk = ['admin', 'dev', 'staging', 'test', 'internal', 'api'];
-    if (subdomain.split('.').some(p => highRisk.includes(p.toLowerCase()))) return 'high';
+    const highRiskSubdomains = ['admin', 'dev', 'staging', 'test', 'internal', 'api'];
+    const parts = subdomain.split('.');
+    for (const part of parts) {
+      if (highRiskSubdomains.includes(part.toLowerCase())) {
+        return 'high';
+      }
+    }
     return 'medium';
   }
 
@@ -592,35 +668,27 @@ ${observation.rawOutput.slice(0, 2000)}`;
   }
 }
 
-// ============================================================
-// OBSERVATION INGESTION COORDINATOR
-// ============================================================
-
-export interface IngestedObservation {
-  observation: Observation;
-  intelligence: ExtractedIntelligence;
-  expectationResult?: {
-    goal: string;
-    met: string[];
-    unmet: string[];
-    confidence: number;
-    recommendations: string[];
-  };
-  ingestedAt: string;
-}
-
 export class ObservationIngestion {
-  private extractor = new IntelligenceExtractor();
-  private expectationEngine = new ExpectationEngine();
+  private extractor: IntelligenceExtractor;
+  private expectationEngine: ExpectationEngine;
   private observations: Observation[] = [];
+
+  constructor(ollamaUrl: string) {
+    this.extractor = new IntelligenceExtractor(ollamaUrl);
+    this.expectationEngine = new ExpectationEngine();
+  }
 
   async ingest(observation: Observation): Promise<IngestedObservation> {
     this.observations.push(observation);
+
     const intelligence = await this.extractor.extract(observation);
 
-    let expectationResult: IngestedObservation['expectationResult'];
+    let expectationResult: ExpectationResult | undefined;
     if (observation.huntGoal) {
-      expectationResult = this.expectationEngine.checkExpectations(observation.huntGoal, intelligence);
+      expectationResult = this.expectationEngine.checkExpectations(
+        observation.huntGoal,
+        intelligence
+      );
     }
 
     return {
@@ -632,24 +700,38 @@ export class ObservationIngestion {
   }
 
   getObservations(missionId?: string): Observation[] {
-    if (missionId) return this.observations.filter(o => o.missionId === missionId);
+    if (missionId) {
+      return this.observations.filter(o => o.missionId === missionId);
+    }
     return this.observations;
   }
 
+  getExpectationEngine(): ExpectationEngine {
+    return this.expectationEngine;
+  }
+
   async aggregateIntelligence(missionId: string): Promise<ExtractedIntelligence> {
-    const missionObs = this.observations.filter(o => o.missionId === missionId);
+    const missionObservations = this.observations.filter(o => o.missionId === missionId);
+
     const aggregated: ExtractedIntelligence = {
-      technologies: [], defenseSignals: [], vulnerabilities: [],
-      endpoints: [], credentials: [], patterns: [], confidence: 0
+      technologies: [],
+      defenseSignals: [],
+      vulnerabilities: [],
+      endpoints: [],
+      credentials: [],
+      patterns: [],
+      confidence: 0
     };
 
-    for (const obs of missionObs) {
+    for (const obs of missionObservations) {
       const intel = await this.extractor.extract(obs);
+
       intel.technologies.forEach(tech => {
         if (!aggregated.technologies.find(t => t.name === tech.name)) {
           aggregated.technologies.push(tech);
         }
       });
+
       aggregated.defenseSignals.push(...intel.defenseSignals);
       aggregated.vulnerabilities.push(...intel.vulnerabilities);
       aggregated.endpoints.push(...intel.endpoints);
@@ -657,7 +739,8 @@ export class ObservationIngestion {
       aggregated.patterns.push(...intel.patterns);
     }
 
-    aggregated.confidence = missionObs.length > 0 ? 0.8 : 0;
+    aggregated.confidence = missionObservations.length > 0 ? 0.8 : 0;
+
     return aggregated;
   }
 }

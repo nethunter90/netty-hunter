@@ -1,7 +1,9 @@
 import { EventEmitter } from 'events';
 import { reasoningEngine } from './reasoning-engine';
 import { decisionEngine } from './decision-engine';
-import { eventBus } from './event-bus';
+import { huntOrchestrator } from '../orchestration/layer1-hunt-orchestrator';
+import { missionMemory } from '../orchestration/mission-memory';
+import { eventBus } from '../orchestration/layer3-event-bus';
 import { huntCortex, SignalType, CortexSignal } from './hunt-cortex';
 import { decisionJournal } from './decision-journal';
 import { adaptiveThresholdTuner } from './adaptive-threshold-tuner';
@@ -322,6 +324,8 @@ export class MetaReasoner extends EventEmitter {
     const evidenceProb = likelihood * prior + (1 - likelihood) * (1 - prior);
     let posterior = (likelihood * prior) / Math.max(evidenceProb, 0.001);
 
+    const timeSinceStart = (Date.now() - state.startedAt) / 1000;
+    const decayCycles = Math.floor(timeSinceStart / 30);
     const lastEvidenceAge = state.findingsTimeline.length > 0
       ? state.cycleCount - state.findingsTimeline[state.findingsTimeline.length - 1].cycle
       : state.cycleCount;
@@ -369,7 +373,8 @@ export class MetaReasoner extends EventEmitter {
       return { expectedByNow: [], actuallyFound: [], missing: [], confidence: 0 };
     }
 
-    const goal = reasoningEngine.getMissionMemory(huntId)?.goal || '';
+    const hunt = huntOrchestrator.getHunt(huntId);
+    const goal = hunt?.goal || '';
     const expectations = GOAL_EXPECTATIONS[goal] || [];
 
     const expectedByNow: string[] = [];
@@ -398,6 +403,45 @@ export class MetaReasoner extends EventEmitter {
   private getActualFindings(huntId: string): string[] {
     const findings: string[] = [];
 
+    const memory = missionMemory.get(huntId);
+    if (memory) {
+      if (memory.endpoints.length > 0) findings.push('endpoints_discovered');
+      if (memory.technologies.length > 0) findings.push('tech_identified');
+      if (memory.subdomains.length > 0) findings.push('subdomains_found');
+      if (memory.credentials.length > 0) findings.push('credentials_found');
+
+      if (memory.endpoints.some(e => e.url.includes('/api'))) findings.push('api_endpoints_found');
+      if (memory.endpoints.some(e => e.url.includes('/admin'))) findings.push('admin_panel_found');
+      if (memory.endpoints.some(e => e.url.includes('login') || e.url.includes('auth'))) {
+        findings.push('auth_endpoints_found');
+      }
+
+      for (const vuln of memory.vulnerabilities) {
+        const t = vuln.type.toLowerCase();
+        if (t.includes('sql')) {
+          findings.push('injectable_param_candidate', 'sqli_confirmed');
+        }
+        if (t.includes('xss')) {
+          findings.push('reflected_params_found', 'xss_confirmed');
+        }
+        if (t.includes('ssrf')) {
+          findings.push('internal_interaction', 'ssrf_confirmed');
+        }
+        if (t.includes('rce') || t.includes('command')) {
+          findings.push('command_injection_candidate', 'rce_confirmed');
+        }
+        if (t.includes('auth') || t.includes('bypass')) {
+          findings.push('auth_bypass_confirmed', 'unauthorized_access');
+        }
+        if (t.includes('idor')) {
+          findings.push('idor_confirmed', 'data_leak');
+        }
+        if (vuln.exploitable) {
+          findings.push('exploitable_vuln_found');
+        }
+      }
+    }
+
     const reasoningMemory = reasoningEngine.getMissionMemory(huntId);
     if (reasoningMemory) {
       if (reasoningMemory.discoveredEndpoints.size > 0) findings.push('endpoints_discovered');
@@ -407,8 +451,6 @@ export class MetaReasoner extends EventEmitter {
       Array.from(reasoningMemory.discoveredEndpoints.keys()).forEach(key => {
         if (key.includes('?') || key.includes('=')) findings.push('parameters_found');
         if (key.includes('/api')) findings.push('api_schema_found');
-        if (key.includes('/admin')) findings.push('admin_panel_found');
-        if (key.includes('login') || key.includes('auth')) findings.push('auth_endpoints_found');
       });
 
       Array.from(reasoningMemory.discoveredTechnologies.keys()).forEach(key => {
@@ -422,16 +464,6 @@ export class MetaReasoner extends EventEmitter {
         if (lower.includes('aws') || lower.includes('azure') || lower.includes('gcp')) {
           findings.push('cloud_infra_found');
         }
-      });
-
-      Array.from(reasoningMemory.discoveredVulnerabilities.keys()).forEach(vulnKey => {
-        const t = vulnKey.toLowerCase();
-        if (t.includes('sql')) findings.push('injectable_param_candidate', 'sqli_confirmed');
-        if (t.includes('xss')) findings.push('reflected_params_found', 'xss_confirmed');
-        if (t.includes('ssrf')) findings.push('internal_interaction', 'ssrf_confirmed');
-        if (t.includes('rce') || t.includes('command')) findings.push('command_injection_candidate', 'rce_confirmed');
-        if (t.includes('auth') || t.includes('bypass')) findings.push('auth_bypass_confirmed', 'unauthorized_access');
-        if (t.includes('idor')) findings.push('idor_confirmed', 'data_leak');
       });
     }
 
@@ -618,7 +650,8 @@ export class MetaReasoner extends EventEmitter {
     }
 
     const health = huntCortex.computeHuntHealth(huntId);
-    const targetType = reasoningEngine.getMissionMemory(huntId)?.goal || 'General';
+    const hunt = huntOrchestrator.getHunt(huntId);
+    const targetType = hunt?.goal || 'General';
     const thresholds = await adaptiveThresholdTuner.getThresholds(targetType);
     const recommendations: string[] = [];
 
@@ -772,7 +805,7 @@ export class MetaReasoner extends EventEmitter {
     return decision;
   }
 
-  private async logDecision(huntId: string, state: HuntState, decision: StrategyDecision, health: Record<string, unknown>): Promise<void> {
+  private async logDecision(huntId: string, state: HuntState, decision: StrategyDecision, health: Record<string, any>): Promise<void> {
     try {
       const profile = { complexityScore: 0.5, volatilityScore: 0.5, attackSurfaceBreadth: 0.5 };
       await decisionJournal.log({
@@ -792,6 +825,12 @@ export class MetaReasoner extends EventEmitter {
 
   private getCurrentFindingsCount(huntId: string): number {
     let count = 0;
+    const memory = missionMemory.get(huntId);
+    if (memory) {
+      count += memory.vulnerabilities.length;
+      count += memory.endpoints.length;
+      count += memory.technologies.length;
+    }
     const reasoningMemory = reasoningEngine.getMissionMemory(huntId);
     if (reasoningMemory) {
       count += reasoningMemory.discoveredVulnerabilities.size;
@@ -802,17 +841,18 @@ export class MetaReasoner extends EventEmitter {
   }
 
   private buildHuntContext(huntId: string, state: HuntState): HuntContext {
-    const reasoningMemory = reasoningEngine.getMissionMemory(huntId);
+    const hunt = huntOrchestrator.getHunt(huntId);
+    const memory = missionMemory.get(huntId);
 
     return {
-      phase: 'recon',
-      findingsCount: this.getCurrentFindingsCount(huntId),
-      endpointCount: reasoningMemory?.discoveredEndpoints.size || 0,
-      techCount: reasoningMemory?.discoveredTechnologies.size || 0,
-      vulnCount: reasoningMemory?.discoveredVulnerabilities.size || 0,
+      phase: hunt?.phase || 'recon',
+      findingsCount: hunt?.findings.length || 0,
+      endpointCount: memory?.endpoints.length || 0,
+      techCount: memory?.technologies.length || 0,
+      vulnCount: memory?.vulnerabilities.length || 0,
       cycleCount: state.cycleCount,
       elapsedTime: Date.now() - state.startedAt,
-      goal: reasoningMemory?.goal || '',
+      goal: hunt?.goal || '',
     };
   }
 
@@ -831,9 +871,9 @@ export class MetaReasoner extends EventEmitter {
   }
 
   initializeHuntState(huntId: string, initialStrategy?: string): HuntState {
-    const goal = reasoningEngine.getMissionMemory(huntId)?.goal || '';
+    const hunt = huntOrchestrator.getHunt(huntId);
     const strategy = initialStrategy
-      || GOAL_TO_INITIAL_STRATEGY[goal]
+      || GOAL_TO_INITIAL_STRATEGY[hunt?.goal || '']
       || 'port_scan';
 
     const state: HuntState = {
@@ -850,15 +890,16 @@ export class MetaReasoner extends EventEmitter {
 
     this.huntStates.set(huntId, state);
     try {
-      if (goal) {
-        backwardPlanner.planHunt(huntId, goal);
+      const hunt = huntOrchestrator.getHunt(huntId);
+      if (hunt?.goal) {
+        backwardPlanner.planHunt(huntId, hunt.goal);
       }
     } catch (_e) {}
     decisionTraceLogger.recordEvent({
       huntId,
       eventType: 'hunt_start',
       sourceSystem: 'meta-reasoner',
-      data: { initialStrategy: strategy, goal },
+      data: { initialStrategy: strategy, goal: hunt?.goal || '' },
       confidenceAtEvent: 0.5,
       reasoning: `Hunt initialized with strategy '${strategy}'`,
     });
@@ -879,16 +920,17 @@ export class MetaReasoner extends EventEmitter {
     }
 
     const timer = setInterval(() => {
-      if (!this.huntStates.has(huntId)) {
+      const hunt = huntOrchestrator.getHunt(huntId);
+      if (!hunt || hunt.status !== 'active') {
         this.stopMonitoring(huntId);
         return;
       }
 
       const basicDecision = this.evaluate(huntId);
-
+      
       this.evaluateEnriched(huntId).then(enrichedDecision => {
         const decision = enrichedDecision.action !== 'continue' ? enrichedDecision : basicDecision;
-
+        
         eventBus.publish(
           'meta:evaluation',
           'meta-reasoner',
@@ -997,10 +1039,11 @@ export class MetaReasoner extends EventEmitter {
 
   async completeHunt(huntId: string, finalScore: number): Promise<void> {
     await decisionJournal.backfillOutcomes(huntId, finalScore);
-
-    const targetType = reasoningEngine.getMissionMemory(huntId)?.goal || 'General';
+    
+    const hunt = huntOrchestrator.getHunt(huntId);
+    const targetType = hunt?.goal || 'General';
     await adaptiveThresholdTuner.learnFromHunt(huntId, targetType, finalScore);
-
+    
     huntCortex.broadcast({
       signalType: SignalType.FINDING_CONFIRMED,
       sourceSystem: 'meta-reasoner',
@@ -1008,7 +1051,7 @@ export class MetaReasoner extends EventEmitter {
       payload: { finalScore, action: 'hunt_completed' },
       confidence: finalScore,
     });
-
+    
     decisionTraceLogger.recordEvent({
       huntId,
       eventType: 'hunt_complete',

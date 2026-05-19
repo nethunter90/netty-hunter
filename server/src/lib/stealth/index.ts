@@ -146,3 +146,21 @@ export class StealthCoordinator {
 }
 
 export const stealthCoordinator = StealthCoordinator.getInstance();
+
+// ── New stealth modules ────────────────────────────────────────────────────────
+export { stealthLogger } from './stealth-logger';
+export { stealthAnalyzer } from './stealth-analyzer';
+export { stealthAlertState } from './stealth-alert-state';
+export { autoAdjuster } from './auto-adjuster';
+export { timingObfuscation } from './timing-obfuscation';
+export { toolRunner } from './tool-runner';
+export { toolPriority } from './tool-priority';
+export { networkStealth } from './network-stealth';
+export { humanSimulator } from './agent-ui-interactor';
+export { windowManager } from './window-manager';
+export { visionAgent } from './vision-agent';
+export { agentAwareness } from './agent-awareness';
+export { logScrubber } from './log-scrubber';
+export { cleanupManager } from './cleanup-manager';
+export { trainingIntegration } from './training-integration';
+export { dynamicRateLimiter } from './dynamic-rate-limiter';
