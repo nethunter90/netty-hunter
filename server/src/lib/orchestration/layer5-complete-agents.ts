@@ -102,7 +102,7 @@ export class ReconAgent extends CompleteMetaAgent {
         if (isReal) {
           const { url: hxUrl } = parseTarget(target);
           try {
-            const { runHttpxProbe } = await import('../utils/httpx-compat');
+            const { runHttpxProbe } = await import('../../utils/httpx-compat');
             const stdout = await runHttpxProbe(hxUrl, '-status-code -title', 120000);
             const lines = stdout.trim().split('\n').filter(Boolean);
             if (lines.length > 0) {

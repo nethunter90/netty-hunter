@@ -2078,7 +2078,7 @@ export class BountyIntelligenceService extends EventEmitter {
   private async reconEndpoints(domain: string, subdomains: SubdomainInfo[], depth: string, isReal: boolean): Promise<EndpointInfo[]> {
     if (isReal) {
       try {
-        const { runHttpxProbe } = await import('../utils/httpx-compat');
+        const { runHttpxProbe } = await import('../../utils/httpx-compat');
         const stdout = await runHttpxProbe(
           [domain, ...subdomains.slice(0, 5).map(s => s.hostname)],
           '-status-code -content-type -json',

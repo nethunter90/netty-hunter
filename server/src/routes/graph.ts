@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { offensiveGraphDb } from "../lib/intelligence/offensive-graph-db";
+import { offensiveGraphDB as offensiveGraphDb } from "../lib/intelligence/offensive-graph-db";
 
 const router = Router();
 

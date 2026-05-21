@@ -164,7 +164,7 @@ export class ReconAgent extends MetaAgent {
     const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
 
     if (isReal() && await toolExists('httpx')) {
-      const { runHttpxProbe } = await import('../utils/httpx-compat');
+      const { runHttpxProbe } = await import('../../utils/httpx-compat');
       const stdout = await runHttpxProbe(host, '-json', 120000);
       const lines = stdout.trim().split('\n').filter(Boolean);
       return {

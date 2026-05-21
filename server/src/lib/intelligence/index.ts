@@ -10,7 +10,7 @@ export class AutonomousBrain {
   private initialized: boolean = false;
 
   constructor() {
-    this.ingestion = new ObservationIngestion();
+    this.ingestion = new ObservationIngestion(process.env.OLLAMA_URL || 'http://localhost:11434');
     this.setupEventHandlers();
     graphWiring.initialize();
     this.initialized = true;
