@@ -32,8 +32,9 @@ class JuiceShopDocker {
 
   async spawn(): Promise<{ ok: boolean; containerId?: string; error?: string }> {
     try {
-      // Stop any existing stale container first
-      await execAsync(`docker stop ${CONTAINER_NAME}`, { timeout: 15000 }).catch(() => {});
+      if (await this.isRunning()) {
+        await execAsync(`docker stop ${CONTAINER_NAME}`, { timeout: 15000 });
+      }
       const { stdout } = await execAsync(
         `docker run -d --name ${CONTAINER_NAME} --rm -p ${JUICE_SHOP_PORT}:${JUICE_SHOP_PORT} ${JUICE_SHOP_IMAGE}`,
         { timeout: 60000 }
@@ -62,7 +63,7 @@ class JuiceShopDocker {
       } catch {
         // not ready yet
       }
-      await new Promise(r => setTimeout(r, 2000));
+      if (Date.now() < deadline) await new Promise(r => setTimeout(r, 2000));
     }
     return false;
   }
@@ -97,7 +98,7 @@ class JuiceShopDocker {
       port: JUICE_SHOP_PORT,
       url: JUICE_SHOP_URL,
       solved,
-      total: 31,
+      total: 32,
     };
   }
 }

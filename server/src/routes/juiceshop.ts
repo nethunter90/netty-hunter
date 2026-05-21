@@ -9,11 +9,13 @@ import { huntLabRunner } from '../lib/intelligence/hunt-lab-runner';
 const router = Router();
 const LAB_RUNS_DIR = path.join(process.cwd(), 'workspace', 'lab-runs');
 
-// In-memory abort flag per run
 const abortFlags = new Map<string, boolean>();
 
+let dirReady = false;
 async function ensureDir() {
+  if (dirReady) return;
   await fs.mkdir(LAB_RUNS_DIR, { recursive: true });
+  dirReady = true;
 }
 
 async function saveRun(run: any): Promise<void> {
@@ -70,7 +72,6 @@ function buildChallenges() {
   };
 }
 
-// Run hardcoded probes against known Juice Shop endpoints
 async function runHardcodedBenchmark(
   challenges: any[],
   difficulty: number | null,
@@ -78,6 +79,11 @@ async function runHardcodedBenchmark(
 ): Promise<any[]> {
   const filtered = difficulty ? challenges.filter(c => c.difficulty === difficulty) : challenges;
   const results: any[] = [];
+
+  // Single reachability check before the loop to avoid N×3s timeouts when offline
+  const isReachable = await fetch(JUICE_SHOP_URL, {
+    signal: AbortSignal.timeout(3000),
+  }).then(r => r.ok).catch(() => false);
 
   for (const c of filtered) {
     if (abortFlags.get(runId)) break;
@@ -88,14 +94,13 @@ async function runHardcodedBenchmark(
     let evidence = '';
     let error: string | undefined;
 
-    try {
-      const isReachable = await fetch(JUICE_SHOP_URL, {
-        signal: AbortSignal.timeout(3000),
-      }).then(r => r.ok).catch(() => false);
-
-      if (isReachable) {
-        // Each category gets a representative probe
-        if (c.category === 'SQL Injection') {
+    if (!isReachable) {
+      error = 'Juice Shop not reachable';
+    } else {
+      try {
+        // Category names match lab-profiles.ts: Injection, XSS, Broken Auth, SSRF,
+        // PII Exposure, Broken Access Control, Security Misconfiguration
+        if (c.category === 'Injection') {
           const url = `${JUICE_SHOP_URL}/rest/products/search?q=';SELECT * FROM Users--`;
           const r = await fetch(url, { signal: AbortSignal.timeout(5000) }).catch(() => null);
           detected = r !== null && (r.status === 200 || r.status === 500);
@@ -106,7 +111,7 @@ async function runHardcodedBenchmark(
           const body = r ? await r.text().catch(() => '') : '';
           detected = body.includes('<script>') || body.includes('alert(1)');
           evidence = detected ? 'XSS payload reflected in response' : 'Payload not reflected';
-        } else if (c.category === 'Authentication') {
+        } else if (c.category === 'Broken Auth') {
           const r = await fetch(`${JUICE_SHOP_URL}/rest/user/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -115,7 +120,7 @@ async function runHardcodedBenchmark(
           }).catch(() => null);
           detected = r !== null && r.status === 200;
           evidence = detected ? 'Login bypass succeeded with SQLi payload' : `HTTP ${r?.status || 'ERR'}`;
-        } else if (c.category === 'Sensitive Data Exposure') {
+        } else if (c.category === 'PII Exposure') {
           const r = await fetch(`${JUICE_SHOP_URL}/ftp/`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
           detected = r !== null && r.status === 200;
           evidence = detected ? 'FTP directory listing exposed' : `HTTP ${r?.status || 'ERR'}`;
@@ -123,17 +128,18 @@ async function runHardcodedBenchmark(
           const r = await fetch(`${JUICE_SHOP_URL}/api/Challenges?status=open`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
           detected = r !== null && r.ok;
           evidence = detected ? 'Challenge API accessible' : 'No access';
+        } else if (c.category === 'Broken Access Control') {
+          const r = await fetch(`${JUICE_SHOP_URL}/api/Users`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+          detected = r !== null && r.ok;
+          evidence = detected ? 'User list API accessible without auth' : `HTTP ${r?.status || 'ERR'}`;
         } else {
-          // Generic: just check the app is reachable
           detected = isReachable;
-          evidence = detected ? 'Application endpoint reachable' : 'Unreachable';
+          evidence = 'Application endpoint reachable';
           technique = 'reachability';
         }
-      } else {
-        error = 'Juice Shop not reachable';
+      } catch (e: any) {
+        error = e.message;
       }
-    } catch (e: any) {
-      error = e.message;
     }
 
     results.push({
@@ -271,61 +277,72 @@ router.post('/stop', async (_req: Request, res: Response) => {
 
 // POST /benchmark/run
 router.post('/benchmark/run', async (req: Request, res: Response) => {
+  const { mode = 'hardcoded', difficulty } = req.body as {
+    mode?: 'hardcoded' | 'adaptive' | 'hybrid';
+    difficulty?: number;
+  };
+
+  if (!['hardcoded', 'adaptive', 'hybrid'].includes(mode)) {
+    return res.status(400).json({ error: `Invalid mode: ${mode}. Must be hardcoded, adaptive, or hybrid.` });
+  }
+
+  const runId = uuidv4();
+  abortFlags.set(runId, false);
+
   try {
-    const { mode = 'hardcoded', difficulty } = req.body as {
-      mode?: 'hardcoded' | 'adaptive' | 'hybrid';
-      difficulty?: number;
-    };
-
-    const runId = uuidv4();
-    abortFlags.set(runId, false);
-
-    const { challenges, stats } = buildChallenges();
+    const { challenges } = buildChallenges();
     const startedAt = new Date().toISOString();
 
+    let ollamaAvailable = false;
     let results: any[];
 
     if (mode === 'adaptive' || mode === 'hybrid') {
-      // Use hunt orchestrator for AI-driven mode
-      const labResult = await huntLabRunner.runHunt(
-        'juice-shop',
-        'Find SQL injection, XSS, authentication bypass, and sensitive data exposure vulnerabilities',
-        { stealthMode: 'aggressive', resourceClass: 'standard' }
-      );
-      const findings = labResult.metrics?.findings || [];
-      results = huntFindingsToResults(findings, challenges);
+      ollamaAvailable = await fetch('http://localhost:11434/api/tags', {
+        signal: AbortSignal.timeout(2000),
+      }).then(r => r.ok).catch(() => false);
 
-      if (mode === 'hybrid') {
-        // Supplement AI results with hardcoded probes for missed challenges
-        const missedChallenges = challenges.filter(c =>
-          !results.find(r => r.challengeId === c.id && r.status === 'passed')
+      if (ollamaAvailable) {
+        const labResult = await huntLabRunner.runHunt(
+          'juice-shop',
+          'Find SQL injection, XSS, authentication bypass, and sensitive data exposure vulnerabilities',
+          { stealthMode: 'aggressive', resourceClass: 'standard' }
         );
-        if (missedChallenges.length > 0) {
-          const hardcodedResults = await runHardcodedBenchmark(missedChallenges, null, runId);
-          const passedHardcoded = hardcodedResults.filter(r => r.status === 'passed');
-          for (const hr of passedHardcoded) {
-            const idx = results.findIndex(r => r.challengeId === hr.challengeId);
-            if (idx !== -1) results[idx] = { ...hr, scanMode: 'hybrid' as const };
+        const findings = labResult.metrics?.findings || [];
+        results = huntFindingsToResults(findings, challenges);
+
+        if (mode === 'hybrid') {
+          const missedChallenges = challenges.filter(c =>
+            !results.find(r => r.challengeId === c.id && r.status === 'passed')
+          );
+          if (missedChallenges.length > 0) {
+            const hardcodedResults = await runHardcodedBenchmark(missedChallenges, null, runId);
+            for (const hr of hardcodedResults.filter(r => r.status === 'passed')) {
+              const idx = results.findIndex(r => r.challengeId === hr.challengeId);
+              if (idx !== -1) results[idx] = { ...hr, scanMode: 'hybrid' as const };
+            }
           }
         }
+      } else {
+        results = await runHardcodedBenchmark(challenges, difficulty ?? null, runId);
       }
     } else {
       results = await runHardcodedBenchmark(challenges, difficulty ?? null, runId);
     }
 
-    abortFlags.delete(runId);
-
-    // Compute summary stats
-    const passed = results.filter(r => r.status === 'passed');
-    const failed = results.filter(r => r.status === 'failed');
-    const adaptivePassed = results.filter(r => r.adaptiveScanResult?.detected);
-    const totalScore = results.reduce((s, r) => s + r.score, 0);
-    const maxPossibleScore = results.reduce((s, r) => s + r.maxScore, 0);
-    const passRate = results.length > 0 ? Math.round((passed.length / results.length) * 100) : 0;
-
+    // Compute summary stats in a single pass
+    let passedCount = 0, failedCount = 0, adaptivePassedCount = 0;
+    let totalScore = 0, maxPossibleScore = 0, totalExecutionTimeMs = 0;
     const byDifficulty: Record<number, any> = {};
     const byCategory: Record<string, any> = {};
+
     for (const r of results) {
+      if (r.status === 'passed') passedCount++;
+      else if (r.status === 'failed') failedCount++;
+      if (r.adaptiveScanResult?.detected) adaptivePassedCount++;
+      totalScore += r.score;
+      maxPossibleScore += r.maxScore;
+      totalExecutionTimeMs += r.scanResult?.executionTimeMs || 0;
+
       if (!byDifficulty[r.difficulty]) byDifficulty[r.difficulty] = { passed: 0, total: 0, score: 0, maxScore: 0 };
       byDifficulty[r.difficulty].total++;
       byDifficulty[r.difficulty].maxScore += r.maxScore;
@@ -342,36 +359,40 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
       status: 'completed' as const,
       targetUrl: JUICE_SHOP_URL,
       scanMode: mode,
-      ollamaAvailable: mode !== 'hardcoded',
+      ollamaAvailable,
       startedAt,
       completedAt: new Date().toISOString(),
       results,
       totalScore,
       maxPossibleScore,
-      passRate,
+      passRate: results.length > 0 ? Math.round((passedCount / results.length) * 100) : 0,
       byDifficulty,
       byCategory,
       challengeCount: results.length,
-      passedCount: passed.length,
-      failedCount: failed.length,
-      adaptivePassedCount: adaptivePassed.length,
-      totalExecutionTimeMs: results.reduce((s, r) => s + (r.scanResult?.executionTimeMs || 0), 0),
-      totalLLMCalls: mode !== 'hardcoded' ? 1 : 0,
+      passedCount,
+      failedCount,
+      adaptivePassedCount,
+      totalExecutionTimeMs,
+      totalLLMCalls: ollamaAvailable ? 1 : 0,
       totalLLMTimeMs: 0,
     };
 
     await saveRun(run);
     return res.json(run);
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: (err as Error).message });
+  } finally {
+    abortFlags.delete(runId);
   }
 });
 
 // POST /benchmark/abort
 router.post('/benchmark/abort', (req: Request, res: Response) => {
-  // Set all pending run flags to aborted
-  for (const [id] of abortFlags) {
-    abortFlags.set(id, true);
+  const { runId } = req.body as { runId?: string };
+  if (runId) {
+    abortFlags.set(runId, true);
+  } else {
+    for (const [id] of abortFlags) abortFlags.set(id, true);
   }
   return res.json({ ok: true });
 });

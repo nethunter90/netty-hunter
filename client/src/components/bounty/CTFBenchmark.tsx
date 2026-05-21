@@ -553,7 +553,7 @@ export function CTFBenchmark() {
   };
 
   const stopJuiceShop = async () => {
-    await csrfFetch('/api/juiceshop/stop', { method: 'POST' });
+    try { await csrfFetch('/api/juiceshop/stop', { method: 'POST' }); } catch {}
     loadJSData();
   };
 
@@ -659,7 +659,7 @@ export function CTFBenchmark() {
                     {jsSpawning ? 'Starting...' : 'Start Lab'}
                   </button>
                 )}
-                {jsStatus?.running && (
+                {jsStatus?.running && !jsRunning && (
                   <button
                     onClick={stopJuiceShop}
                     data-testid="button-stop-lab"
