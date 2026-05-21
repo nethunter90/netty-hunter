@@ -338,6 +338,7 @@ export function CTFBenchmark() {
   const [jsHistory, setJsHistory] = useState<JSBenchmarkRun[]>([]);
   const [jsRunning, setJsRunning] = useState(false);
   const [jsStatus, setJsStatus] = useState<{ running: boolean; total: number; solved: number } | null>(null);
+  const [jsSpawning, setJsSpawning] = useState(false);
   const [jsScanMode, setJsScanMode] = useState<'hardcoded' | 'adaptive' | 'hybrid'>('hybrid');
   const [ollamaAvailable, setOllamaAvailable] = useState(false);
 
@@ -545,6 +546,17 @@ export function CTFBenchmark() {
     } catch {}
   };
 
+  const spawnJuiceShop = async () => {
+    setJsSpawning(true);
+    try { await csrfFetch('/api/juiceshop/spawn', { method: 'POST' }); loadJSData(); }
+    finally { setJsSpawning(false); }
+  };
+
+  const stopJuiceShop = async () => {
+    await csrfFetch('/api/juiceshop/stop', { method: 'POST' });
+    loadJSData();
+  };
+
   const cloneXBOWRepo = async () => {
     setXbowCloning(true);
     try {
@@ -637,6 +649,25 @@ export function CTFBenchmark() {
               <button onClick={abortJSRun} data-testid="button-abort-js" className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded font-medium">Abort</button>
             ) : (
               <div className="flex items-center gap-1.5">
+                {!jsStatus?.running && (
+                  <button
+                    onClick={spawnJuiceShop}
+                    disabled={jsSpawning}
+                    data-testid="button-start-lab"
+                    className="px-3 py-1.5 text-xs bg-green-700 hover:bg-green-600 disabled:bg-gray-700 text-white rounded font-medium"
+                  >
+                    {jsSpawning ? 'Starting...' : 'Start Lab'}
+                  </button>
+                )}
+                {jsStatus?.running && (
+                  <button
+                    onClick={stopJuiceShop}
+                    data-testid="button-stop-lab"
+                    className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-700 text-white rounded font-medium"
+                  >
+                    Stop Lab
+                  </button>
+                )}
                 <select
                   value={jsScanMode}
                   onChange={e => setJsScanMode(e.target.value as any)}
