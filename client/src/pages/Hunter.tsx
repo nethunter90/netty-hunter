@@ -681,7 +681,7 @@ export default function Hunter() {
         hunterROI.getGlobal(),
         hunterROI.getThresholds(),
       ]);
-      setRoi({ globalStats: gRes.data, thresholds: tRes.data });
+      setRoi({ globalStats: gRes.data, thresholds: tRes.data.thresholds ?? tRes.data });
     } catch {/* ignore */}
   }, []);
 
