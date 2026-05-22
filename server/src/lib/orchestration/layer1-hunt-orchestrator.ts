@@ -4,7 +4,7 @@ import { missionMemory } from './mission-memory';
 import { agentLoop } from './layer2-agent-loop';
 import { eventBus } from './layer3-event-bus';
 import { agentRegistry } from './agent-registry';
-import { coverageValidator } from './layer4-cognitive-agents';
+import { coverageValidator, taskPlannerAgent, analystAgent } from './layer4-cognitive-agents';
 import { missionChainManager, _registerHuntOrchestrator } from './mission-chain-manager';
 import { metaReasoner } from '../intelligence/meta-reasoning';
 import { decisionTraceLogger } from '../intelligence/decision-trace';
@@ -110,6 +110,11 @@ export class HuntOrchestrator {
           const agentId = agentLoop.createAgent('scanner', huntId);
           agentLoop.startAgent(agentId);
         }
+        // Ask task planner to build a structured scan plan from discovered endpoints
+        try {
+          const endpoints = (memory?.endpoints || []).map(e => typeof e === 'string' ? e : String(e));
+          await taskPlannerAgent.createPlan(hunt.goal, endpoints);
+        } catch { /* non-critical */ }
         console.log(`[HuntOrchestrator] Scanning ${endpointCount} endpoints with ${agentCount} scanner agents (stealth=${hunt.stealthMode}, resource=${hunt.resourceClass})`);
         break;
       }
@@ -141,6 +146,10 @@ export class HuntOrchestrator {
       }
 
       case 'reporting':
+        // Surface cross-finding patterns before generating the final report
+        try {
+          await analystAgent.findPatterns(huntId);
+        } catch { /* non-critical */ }
         await this.generateReport(huntId);
         await this.completeHunt(huntId);
         break;

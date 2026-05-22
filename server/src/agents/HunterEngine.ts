@@ -307,6 +307,12 @@ export class HunterEngine extends EventEmitter {
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
 
+    // Run stealth warmup before probing so WAF/CDN fingerprinting is pre-loaded
+    try {
+      const domain = new URL(params.targetUrl).hostname;
+      await stealthCoordinator.runWarmup(domain, 'generic', false, params.programId);
+    } catch { /* non-critical — target may not be reachable yet */ }
+
     // Run the main loop asynchronously
     this.runLoop().catch(err => {
       logger.error("Hunt loop error", { sessionUuid, err });
@@ -482,6 +488,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     try {
       const response = await this.modelRouter.reason(prompt);
+      // Guard against prompt injection in LLM output before parsing
+      try {
+        const { promptInjectionDetector } = await import('../governance');
+        const injection = promptInjectionDetector.detect(response, 'hunter-engine', 'HunterEngine');
+        if (!injection.safe) {
+          logger.warn('[HunterEngine] Prompt injection detected in model response', { score: injection.score, reasons: injection.reasons });
+        }
+      } catch { /* non-critical — governance unavailable */ }
       const parsed = JSON.parse(response.match(/\[[\s\S]+\]/)?.[0] || "[]");
 
       const newHypotheses: Hypothesis[] = parsed.map((h: Record<string, unknown>) => ({
@@ -642,10 +656,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
-      // Feed raw output to autonomous brain
+      // Feed raw output to autonomous brain and close the RL feedback loop
       try {
         const { getAutonomousBrain } = await import('../lib/intelligence');
-        await getAutonomousBrain().processObservation({
+        const brain = getAutonomousBrain();
+        await brain.processObservation({
           id: `obs-${Date.now()}`,
           timestamp: new Date().toISOString(),
           source: 'tool',
@@ -655,10 +670,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
           huntGoal: hypothesis?.vulnClass,
           target: url,
         });
+        brain.recordActionResult(this.state.sessionId, toolName, true, `tool succeeded: ${parsed.found ? 'finding' : 'no finding'}`);
       } catch { /* non-critical */ }
       return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
       const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
+      try {
+        const { getAutonomousBrain } = await import('../lib/intelligence');
+        getAutonomousBrain().recordActionResult(this.state.sessionId, toolName, false, error.killed ? 'timeout' : (error.message || 'unknown error'));
+      } catch { /* non-critical */ }
       if (error.killed) return { timeout: true, duration: 30000, command: cmdString };
       const output = (error.stdout || "") + (error.stderr || "");
       this.toolLastUsed.set(toolName, Date.now());

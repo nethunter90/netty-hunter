@@ -34,6 +34,7 @@ import { DraftReportGenerator } from "../intelligence/ReportGenerator";
 import { NucleiTemplateGenerator } from "../intelligence/NucleiGenerator";
 import { HuntStrategyBuilder } from "../routes/huntStrategy";
 import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
+import { bountyIntelligenceService } from "../lib/bounty-intelligence";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -621,10 +622,24 @@ export class CampaignOrchestrator extends EventEmitter {
       }
     }
 
-    // 6b. Update reinforcement store
+    // 6b. Update reinforcement store + bounty intelligence memory
     for (const { finding } of verifiedFindings) {
       try {
         await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true);
+      } catch { /* non-critical */ }
+      // Feed verified finding into bounty intelligence so duplicate detection and
+      // payout estimation improve over time
+      try {
+        await bountyIntelligenceService.addKnownFinding({
+          id: String(finding.id),
+          title: `${finding.vulnType} on ${String(finding.targetId || params.targetUrl)}`,
+          endpoint: String(finding.targetId || params.targetUrl),
+          vulnerabilityType: finding.vulnType,
+          severity: finding.severity ?? 'medium',
+          program: String(params.programId),
+          reportDate: finding.createdAt.toISOString(),
+          status: 'accepted',
+        });
       } catch { /* non-critical */ }
     }
 

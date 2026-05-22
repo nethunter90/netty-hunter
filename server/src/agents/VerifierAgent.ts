@@ -234,6 +234,14 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
 
     try {
       const response = await this.modelRouter.reason(prompt);
+      // Scan L4 AI output for prompt injection before trusting the parsed result
+      try {
+        const { promptInjectionDetector } = await import('../governance');
+        const check = promptInjectionDetector.detect(response, 'verifier-l4', 'Layer4AIConfirmation');
+        if (!check.safe) {
+          logger.warn('[VerifierAgent] Prompt injection in L4 response', { score: check.score, reasons: check.reasons });
+        }
+      } catch { /* non-critical */ }
       const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
       return {
         confirmed: Boolean(parsed.confirmed),
