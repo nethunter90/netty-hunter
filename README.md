@@ -34,7 +34,7 @@ A full 6-layer multi-agent hunt pipeline with event-driven coordination, distrib
 - **Agent Registry**: Tracks all active agents — status management, claim tracking, invocation recording, hunt-scoped queries
 - **Endpoint Claims**: Distributed lock manager with timeout-based claim expiration to prevent duplicate work across concurrent agents
 - **Tool Parsers**: 20+ parsers for nmap, nuclei, sqlmap, nikto, whatweb output → standardized vulnerability and endpoint data structures
-- **Pass-K Evaluator**: Runs agents k times and selects best result by confidence threshold; per-agent k configurations
+- **Pass-K Evaluator**: Runs exploit agents up to k times and selects the best result by confidence threshold; k is dynamically resolved per-agent and per-resource-class — `enterprise` → base+1 (max 4), `standard` → base, `lightweight` → floor(base/2); payout override: ≥$5k→k=3, ≥$1k→k=2, <$1k→k=1; retries stop early when confidence ≥ 0.8; deterministic agents (recon, scanner) always run once
 - **Prompt Loader**: Template management with file persistence, variable substitution, and per-template confidence thresholds
 - **Temporal Event Bus**: Urgency-decay event correlation with dead-letter queue; preemptive signaling for critical findings; integrates with Hunt Cortex
 - **Mission Chain Manager**: Stub interface for exploit chain management and endpoint injection (full implementation pending desktop-agent cognitive modules)
@@ -50,7 +50,7 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 - **PromptInjectionDetector**: 35 trigger keywords, 12 regex patterns, 4 semantic categories (jailbreak, role override, data exfil, system bypass); scores and flags all agent inputs
 - **DesktopAgentGovernance**: Path traversal detection, dangerous command blocking, tool allowlist validation for any host-level agent actions
 - **DriftDetector**: Snapshot-based drift analysis — compares recent verdict/risk/pillar distributions against rolling baseline; auto-snapshots every 5 minutes
-- **DecisionLogger**: Daily NDJSON decision log files with full replay data — reconstruct any historical governance decision with complete context
+- **DecisionLogger**: Daily NDJSON decision log files with write-ahead log (WAL) for crash safety — every decision is written to `decisions-wal.ndjson` before entering the in-memory buffer; the WAL is cleared only after a successful flush to the daily log; on startup, any unflushed WAL entries are replayed into the daily log before normal operation resumes, enabling full Mission Memory reconstruction after an abrupt crash; `getStats()` exposes live WAL entry count
 - **SelfAttestationService**: Agents justify their own decisions with confidence scores; builds per-agent justification trails queryable by pillar
 - **14 REST endpoints**: stats, pillars, decisions, logged decisions, audit log, drift analysis, proxy requests/stats/contracts, injection stats/check, attestations
 
@@ -59,7 +59,7 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 #### Intelligence & Planning
 
 - **Meta-Reasoner**: Bayesian hypothesis confidence tracking with information-gain rate monitoring; detects plateaus and executes weighted strategy pivots via a 10-node strategy graph with historical success weighting; integrates backward planner and decision journal for past-hunt replay
-- **Contextual Tool Selector**: Cosine similarity ranking across 39 tools using multi-dimensional context vectors (goal alignment, tech stack, phase, past success rates, circuit breaker state)
+- **Contextual Tool Selector**: Cosine similarity ranking across 39 tools using multi-dimensional context vectors (goal alignment, tech stack, phase, past success rates, circuit breaker state); tools on open circuits are filtered from results before ranking is returned — open-circuit tools are dropped and their configured fallback tool is substituted if one exists
 - **BackwardPlanner**: Goal-first attack path ranking — works backward from target objective using expected-value weighted attack trees; suggests pivots when current strategy is exhausted
 - **Hunt Cortex**: Signal bus with composite hunt health scoring across 5 dimensions (novelty, missed events, verification degradation, negative evidence, signal count); publishes typed signals to all subscribers
 - **MITRE Prerequisite Tree**: ATT&CK technique dependency graph — identifies prerequisite chains, choke points, and technique orderings; queryable by capability or technique ID
@@ -191,7 +191,7 @@ workspace/
 - **Adaptive Threshold Tuner**: Learns per-goal-type optimal thresholds (health floor, novelty floor, max degraded verifications, max missed events) from hunt outcome scores; persists and evolves per target class
 - **Decision Trace Logger**: 17-event-type audit trail (hunt_start, meta_pivot, meta_evaluation, hunt_complete, etc.) with confidence-at-event recording; feeds calibration analysis and pivot pattern extraction
 - **Hunt Cortex Health Metrics**: Real-time composite hunt health scoring; integrated with meta-reasoner to trigger stabilize/accelerate/pivot decisions when health subsystems degrade
-- **Closed RL Feedback Loop**: `brain.recordActionResult()` is called in `HunterEngine.runTool()` on both success and failure paths, so the circuit breaker and reasoning engine receive tool outcome signals and adapt tool selection in subsequent iterations
+- **Closed RL Feedback Loop**: `brain.recordActionResult()` is called in `HunterEngine.runTool()` on both success and failure paths, so the circuit breaker and reasoning engine receive tool outcome signals and adapt tool selection in subsequent iterations; when a circuit opens, a `FALLBACK_USED` signal is broadcast to Hunt Cortex, degrading the composite health score and triggering the meta-reasoner; every 3 iterations `HunterEngine.runLoop()` checks hunt health — if below 0.4, calls `metaReasoner.evaluateEnriched()` and injects `backwardPlanner` pivot paths as new hypotheses when the decision is `pivot`
 - **Post-Hunt Extraction Pipeline**: Wires the Reasoning Reinforcement flywheel into hunt completion — Phase 1 captures confidence calibration per finding, Phase 2 extracts high-scoring operational chains, Phase 3 aggregates cross-hunt patterns and emits ROI-ranked chain stats
 - **Unified Reinforcement Store**: Cross-hunt self-learning across 5 domains: Tool Success Rates, Framework-Vuln Matrix, Program Type Heuristics, Confidence Calibration, and Exploration Tracking — all with temporal decay
 - **Exploit Chain Intelligence**: Tracks the full lifecycle of multi-step attack sequences across sessions — chain success/failure rates, replay recommendations, pattern avoidance, cross-hunt ROI ranking
@@ -375,6 +375,8 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **Goal-first backward planning** — strategy selection starts from the desired vulnerability class and works backward through prerequisite chains
 - **Operational stealth by default** — all tool executions go through the stealth layer; timing, flags, and rate limits are never caller-controlled
 - **File-backed workspace persistence** — deadlines, payloads, submissions, tasks, workflows, missions, and audit log survive server restarts; no DB migration required for operational data
+- **Crash-safe audit trail** — DecisionLogger WAL ensures no governance decision is lost even on abrupt server termination; WAL is replayed on next startup before normal operation begins
+- **Budget-aware inference** — Pass-K Evaluator scales exploit agent retries by resource class and expected payout so a $500 target on a lightweight scan costs 1 LLM call while a $10k target on enterprise class gets up to 4 attempts
 - **No mocks on Kali Linux** — real tool execution when `REAL_TOOLS=true`
 - **Self-learning** — every hunt improves model calibration via the Unified Reinforcement Store, Adaptive Threshold Tuner, Decision Journal, and Cross-Campaign Learning
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions
