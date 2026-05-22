@@ -1,5 +1,6 @@
 import { reasoningEngine, MissionMemory } from './reasoning-engine';
 import { huntCortex, SignalType } from './hunt-cortex';
+import { circuitBreaker } from './circuit-breaker';
 
 export interface Implication {
   condition: string;
@@ -829,8 +830,20 @@ export class ContextualToolSelector {
       }
     }
 
-    if (deduped.length > 0) {
-      const topTool = deduped[0];
+    // Filter out tools on open circuits; substitute fallback tool if one exists
+    const circuitFiltered: RankedTool[] = [];
+    for (const rt of deduped) {
+      const circuit = circuitBreaker.canExecute(rt.tool);
+      if (circuit.allowed) {
+        circuitFiltered.push(rt);
+      } else if (circuit.fallback) {
+        circuitFiltered.push({ ...rt, tool: circuit.fallback, rationale: `${rt.rationale} [circuit fallback: ${circuit.fallback}]` });
+      }
+      // tools with no fallback are silently dropped — the circuit is open
+    }
+
+    if (circuitFiltered.length > 0) {
+      const topTool = circuitFiltered[0];
       const noveltyScore = this.calculateNovelty(topTool.tool, knownFacts);
       huntCortex.broadcast({
         signalType: SignalType.TOOL_NOVELTY,
@@ -841,7 +854,7 @@ export class ContextualToolSelector {
       });
     }
 
-    return deduped;
+    return circuitFiltered;
   }
 
   recordResult(

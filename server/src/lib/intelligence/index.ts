@@ -3,6 +3,7 @@ import { reasoningEngine } from './reasoning-engine';
 import { decisionEngine } from './decision-engine';
 import { circuitBreaker } from './circuit-breaker';
 import { graphWiring } from './graph-wiring';
+import { huntCortex, SignalType } from './hunt-cortex';
 import logger from '../../utils/logger';
 
 export class AutonomousBrain {
@@ -24,6 +25,14 @@ export class AutonomousBrain {
 
     circuitBreaker.on('circuit:opened', ({ tool }: { tool: string }) => {
       logger.warn(`[Brain] Circuit breaker opened for ${tool}`);
+      // Degrade hunt health so meta-reasoner sees increased fallback pressure
+      huntCortex.broadcast({
+        signalType: SignalType.FALLBACK_USED,
+        sourceSystem: 'circuit-breaker',
+        huntId: null,
+        payload: { tool, reason: 'circuit_opened' },
+        confidence: 1.0,
+      });
     });
 
     circuitBreaker.on('circuit:closed', ({ tool }: { tool: string }) => {

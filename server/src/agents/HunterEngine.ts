@@ -23,6 +23,9 @@ import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
 import { stealthCoordinator } from "../lib/stealth";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
+import { huntCortex } from "../lib/intelligence/hunt-cortex";
+import { metaReasoner } from "../lib/intelligence/meta-reasoning";
+import { backwardPlanner } from "../lib/intelligence/backward-planner";
 
 const execFileAsync = promisify(execFile);
 
@@ -361,6 +364,34 @@ export class HunterEngine extends EventEmitter {
         }
       } catch (err) {
         logger.error("Hunt phase error", { phase: this.state.phase, err });
+      }
+
+      // Every 3 iterations check hunt health and trigger meta-reasoner pivot if degraded
+      if (this.state.iteration % 3 === 0) {
+        try {
+          const health = huntCortex.computeHuntHealth(this.state.sessionId);
+          if (health.health < 0.4) {
+            const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
+            if (decision.action === 'pivot') {
+              const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
+              const pivotHypotheses = paths.slice(0, 2).map(p => ({
+                id: uuidv4(),
+                vulnClass: p.path.vulnerability,
+                targetUrl: this.state.targetUrl,
+                reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
+                confidence: Math.min(0.85, p.adjustedLikelihood),
+                priority: Math.min(10, Math.round(p.path.priority)),
+                evidence: [],
+                status: 'pending' as const,
+                createdAt: Date.now(),
+              }));
+              this.state.hypotheses.push(...pivotHypotheses);
+              this.state.phase = 'probe';
+              this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
+              logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
+            }
+          }
+        } catch { /* non-critical — health check failure must not stop the hunt */ }
       }
     }
 
