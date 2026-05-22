@@ -17,6 +17,7 @@ import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import type { SolverResult } from "./SolverPool";
 import { getBrowserLaunchArgs, getFingerprintInitScript, getRandomUserAgent } from "../lib/stealth/browser-fingerprint";
+import { SimHashDedup } from "../lib/intelligence/simhash";
 
 export interface VerificationResult {
   findingId: string;
@@ -32,6 +33,7 @@ export interface VerificationResult {
 // ─── Layer 1: Static Deduplication ───────────────────────────────────────────
 class Layer1Dedup {
   private hashCache = new Set<string>();
+  private simHash = new SimHashDedup();
 
   computeHash(result: SolverResult): string {
     const normalized = {
@@ -42,12 +44,17 @@ class Layer1Dedup {
     return crypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
   }
 
-  async check(hash: string): Promise<{ isDuplicate: boolean; existingHash?: string }> {
+  computeSimHash(result: SolverResult): bigint {
+    const text = `${result.endpoint} ${result.vulnClass} ${result.payload.toLowerCase().slice(0, 200)}`;
+    return this.simHash.computeSimHash(text);
+  }
+
+  async check(hash: string, simhash: bigint): Promise<{ isDuplicate: boolean; existingHash?: string }> {
     if (this.hashCache.has(hash)) {
       return { isDuplicate: true, existingHash: hash };
     }
 
-    // Check DB
+    // Check DB for exact duplicate
     const existing = await db.select({ id: findings.id })
       .from(findings)
       .where(eq(findings.dedupHash, hash))
@@ -56,6 +63,12 @@ class Layer1Dedup {
     if (existing.length > 0) {
       this.hashCache.add(hash);
       return { isDuplicate: true, existingHash: hash };
+    }
+
+    // Near-duplicate check via SimHash (same vuln class + similar endpoint/payload)
+    if (this.simHash.isDuplicate(simhash)) {
+      this.hashCache.add(hash);
+      return { isDuplicate: true, existingHash: "simhash-near-duplicate" };
     }
 
     this.hashCache.add(hash);
@@ -310,6 +323,7 @@ export class VerifierAgent {
   async verify(result: SolverResult): Promise<VerificationResult> {
     const findingId = result.taskId;
     const dedupHash = this.layer1.computeHash(result);
+    const simhash = this.layer1.computeSimHash(result);
 
     logger.info("VerifierAgent: Starting 4-layer verification", {
       findingId,
@@ -317,8 +331,8 @@ export class VerifierAgent {
       vulnClass: result.vulnClass,
     });
 
-    // Layer 1: Deduplication
-    const l1 = await this.layer1.check(dedupHash);
+    // Layer 1: Deduplication (exact SHA-256 + SimHash near-duplicate)
+    const l1 = await this.layer1.check(dedupHash, simhash);
     if (l1.isDuplicate) {
       logger.info("VerifierAgent: L1 deduplicated", { findingId, hash: dedupHash });
       return {
