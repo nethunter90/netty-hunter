@@ -604,7 +604,7 @@ class CSRFSolver extends BaseSolver {
 }
 
 class AuthBypassSolver extends BaseSolver {
-  private readonly bypassHeaders = [
+  private readonly bypassHeaders: Record<string, string>[] = [
     { "X-Original-URL": "/admin" },
     { "X-Forwarded-For": "127.0.0.1" },
     { "X-Remote-IP": "127.0.0.1" },

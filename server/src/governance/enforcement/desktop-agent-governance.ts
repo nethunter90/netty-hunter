@@ -221,11 +221,11 @@ export class DesktopAgentGovernance {
     };
   }
 
-  validateTool(toolName: string, args: string[], agentId: string, agentName: string, huntId?: string): {
+  async validateTool(toolName: string, args: string[], agentId: string, agentName: string, huntId?: string): Promise<{
     allowed: boolean;
     risk: RiskLevel;
     reason: string;
-  } {
+  }> {
     const normalizedTool = toolName.toLowerCase().trim();
 
     if (!ALLOWED_TOOLS.has(normalizedTool)) {
@@ -250,7 +250,7 @@ export class DesktopAgentGovernance {
 
     const argsStr = args.join(' ');
     for (const target of args) {
-      const scopeCheck = this.governance.verifyScope(target, huntId);
+      const scopeCheck = await this.governance.verifyScope(target, huntId);
       if (!scopeCheck.inScope) {
         this.governance.recordDecision({
           agentId,

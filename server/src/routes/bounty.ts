@@ -449,9 +449,9 @@ router.post("/poc/run", async (req: Request, res: Response) => {
     return res.json({
       executed: true,
       findingId,
-      target: target || finding?.endpoint,
+      target: target || finding?.exploitPayload?.split('\n')[0] || 'unknown',
       result: "mock PoC execution completed",
-      output: finding ? `PoC for ${finding.vulnType} at ${finding.endpoint}` : "Generic PoC",
+      output: finding ? `PoC for ${finding.vulnType}` : "Generic PoC",
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {

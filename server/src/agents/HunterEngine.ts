@@ -250,7 +250,7 @@ export class HunterEngine extends EventEmitter {
     targetUrl: string;
     programId: number;
     campaignId: number;
-    targetId: number;
+    targetId?: number;
     sessionId?: string;
     maxIterations?: number;
     budget?: Partial<HuntState["budget"]>;
@@ -258,7 +258,7 @@ export class HunterEngine extends EventEmitter {
   }): Promise<string> {
     const sessionUuid = params.sessionId || uuidv4();
     this.campaignId = params.campaignId;
-    this.targetId = params.targetId;
+    this.targetId = params.targetId ?? 0;
 
     this.state = {
       sessionId: sessionUuid,
@@ -282,7 +282,7 @@ export class HunterEngine extends EventEmitter {
     // Persist session and capture the real DB ID
     const [session] = await db.insert(huntSessions).values({
       campaignId: params.campaignId,
-      targetId: params.targetId,
+      targetId: params.targetId ?? 0,
       sessionUuid,
       phase: "observe",
       status: "running",
@@ -484,7 +484,7 @@ export class HunterEngine extends EventEmitter {
     // Build a rich query text from actual observation signals for semantic retrieval
     const recentObs = this.state.observations.slice(-10);
     const obsTags = [...new Set(recentObs.flatMap(o => o.tags))].join(', ');
-    const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.vulnClass ?? ''))].join(', ');
+    const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.hypothesis.vulnClass ?? ''))].join(', ');
     const semanticQuery = [
       `Target: ${this.state.targetUrl}`,
       obsTags ? `Signals observed: ${obsTags}` : '',

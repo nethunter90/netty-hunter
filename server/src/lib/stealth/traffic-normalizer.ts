@@ -107,7 +107,7 @@ export class TrafficNormalizer {
       // Add a common benign param to increase param count toward baseline if below avg
       if (params.length < profile.avgParamCount - 1) {
         const boostParam = profile.paramNamePatterns[Math.floor(Math.random() * profile.paramNamePatterns.length)];
-        parsed.set(boostParam, '1');
+        parsed.searchParams.set(boostParam, '1');
         normalizedUrl = parsed.toString();
         suggestions.push(`Added benign param '${boostParam}=1' to normalize param count toward baseline`);
       }

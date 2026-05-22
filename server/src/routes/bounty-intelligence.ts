@@ -289,10 +289,10 @@ router.post("/campaigns/record", async (req: Request, res: Response) => {
 
 router.get("/campaigns/recommendations", async (req: Request, res: Response) => {
   try {
-    const { techStack } = req.query;
-    const targetProfile: Record<string, any> = {};
+    const { techStack, domain } = req.query;
+    const targetProfile = { domain: (domain as string) || 'unknown' } as { domain: string; techStack?: unknown };
     if (techStack) targetProfile.techStack = techStack;
-    const results = await service.campaignLearning.findSimilar(targetProfile, 10);
+    const results = await service.campaignLearning.findSimilar(targetProfile as Parameters<typeof service.campaignLearning.findSimilar>[0], 10);
     res.json({ recommendations: results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
