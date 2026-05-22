@@ -26,7 +26,7 @@ A full 6-layer multi-agent hunt pipeline with event-driven coordination, distrib
 - **Layer 1 — Hunt Orchestrator**: Central coordinator managing hunt lifecycle across recon, scanning, exploitation, and reporting phases; drives dynamic phase transitions and integrates with meta-reasoner and decision trace logger
 - **Layer 2 — Agent Loop**: Agent lifecycle management — creation, tool queue execution, scan completion tracking, and results ingestion for all 39 integrated tools; imports stealth flags and timing profiles per tool invocation
 - **Layer 3 — Event Bus**: Typed pub-sub with specialized publication methods for findings, endpoint characterizations, defense detections, and phase completions; persists event history per hunt
-- **Layer 4 — Cognitive Agents**: AI-powered OrchestratorAgent, TaskPlannerAgent, AnalystAgent, ResearcherAgent, CoverageValidatorAgent — all backed by the AI bridge and mission memory
+- **Layer 4 — Cognitive Agents**: AI-powered OrchestratorAgent, TaskPlannerAgent, AnalystAgent, ResearcherAgent, CoverageValidatorAgent — all backed by the AI bridge and mission memory; TaskPlannerAgent.createPlan() is called at scanning phase entry to build a structured scan plan from discovered endpoints; AnalystAgent.findPatterns() is called before report generation to surface cross-finding patterns
 - **Layer 5 — Meta Agents**: 10 specialized concrete agents — ReconAgent, ExploitAgent, CredentialAgent, IntelAgent, BlueTeamAgent, PivotAgent, ReportAgent, WordlistAgent, SimGenAgent, SmartAgent; each with metadata profiles and tool chain awareness
 - **Layer 5 — CodeGen Agent**: Self-modifying agent for code generation and TypeScript validation with approval gates and risk classification; writes and validates its own output before committing
 - **Layer 6 — AI Bridge**: Ollama integration for agent prompting with template management, confidence thresholds, and simulation fallback when no model is available
@@ -95,7 +95,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 - **BehavioralMimicry**: Human-like request patterns, referrer chains, and browser fingerprint simulation
 - **AI WAF Evasion**: AI-generated payload variants ranked by confidence for WAF bypass
 - **TimingEngine**: Decay-aware probe timing with anomaly score tracking
-- **SessionWarmup**: Pre-hunt session establishment to build baseline traffic profile
+- **SessionWarmup**: Pre-hunt session establishment to build baseline traffic profile; automatically triggered via `stealthCoordinator.runWarmup()` at the start of every `HunterEngine.startHunt()` call so WAF/CDN fingerprinting is pre-loaded before the first probe
 - **TrafficNormalizer**: URL and request normalization toward expected baseline
 
 **New operational stealth modules:**
@@ -119,7 +119,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 #### Verification & Validation
 
-- **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation
+- **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation; Layer 4 AI response is scanned by PromptInjectionDetector before the parsed verdict is trusted
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data, annotating hypotheses with conflict context and reducing confidence
 - **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
@@ -135,7 +135,7 @@ Pre-hunt and cross-hunt analytics for program selection, payout maximization, an
 - **Tool Synergy Engine**: Maps which tool combinations produce the highest finding rates for specific vulnerability types and target tech stacks; generates ranked playbook recommendations; pre-seeded tool effectiveness data
 - **Failure Prediction Engine**: ML-based prediction of tool and technique failure modes based on historical execution data; pre-seeded base rates, conditional probabilities, and model accuracy data
 - **Payout Optimization**: Estimates expected payout per vulnerability class and target type; generates escalation chains to maximize bounty value from a confirmed finding
-- **Predictive Duplicate Avoidance**: Heatmap-based duplicate prediction — tracks which vulnerability classes have been heavily reported on a given program and steers the hunt away
+- **Predictive Duplicate Avoidance**: Heatmap-based duplicate prediction — tracks which vulnerability classes have been heavily reported on a given program and steers the hunt away; `addKnownFinding()` is called automatically from `CampaignOrchestrator.layer6_intelligenceHarvest()` for every verified finding so the duplicate knowledge base grows with each completed hunt
 - **Triage Predictor**: Predicts triage outcomes (accepted/duplicate/informational/N/A) based on submission timing, program history, and finding type
 - **Intelligence Types**: Shared type definitions — CampaignOutcome, ExecutionPhase, HuntGoal, IntelligenceEvent, DefenseProfile, and 15+ supporting interfaces
 
@@ -191,6 +191,7 @@ workspace/
 - **Adaptive Threshold Tuner**: Learns per-goal-type optimal thresholds (health floor, novelty floor, max degraded verifications, max missed events) from hunt outcome scores; persists and evolves per target class
 - **Decision Trace Logger**: 17-event-type audit trail (hunt_start, meta_pivot, meta_evaluation, hunt_complete, etc.) with confidence-at-event recording; feeds calibration analysis and pivot pattern extraction
 - **Hunt Cortex Health Metrics**: Real-time composite hunt health scoring; integrated with meta-reasoner to trigger stabilize/accelerate/pivot decisions when health subsystems degrade
+- **Closed RL Feedback Loop**: `brain.recordActionResult()` is called in `HunterEngine.runTool()` on both success and failure paths, so the circuit breaker and reasoning engine receive tool outcome signals and adapt tool selection in subsequent iterations
 - **Post-Hunt Extraction Pipeline**: Wires the Reasoning Reinforcement flywheel into hunt completion — Phase 1 captures confidence calibration per finding, Phase 2 extracts high-scoring operational chains, Phase 3 aggregates cross-hunt patterns and emits ROI-ranked chain stats
 - **Unified Reinforcement Store**: Cross-hunt self-learning across 5 domains: Tool Success Rates, Framework-Vuln Matrix, Program Type Heuristics, Confidence Calibration, and Exploration Tracking — all with temporal decay
 - **Exploit Chain Intelligence**: Tracks the full lifecycle of multi-step attack sequences across sessions — chain success/failure rates, replay recommendations, pattern avoidance, cross-hunt ROI ranking
@@ -198,7 +199,8 @@ workspace/
 - **ROI Model**: Calculates expected value per vulnerability type and auto-tunes confidence thresholds based on historical verification pass rates
 - **Autonomy Maturity Tracking System**: Tracks genuine autonomy maturity via Brier snapshots, rolling trend analysis, reinforcement noise detection, and exploration suffocation guard; produces composite Autonomy Maturity Score with auto-generated milestone reports
 - **Per-Domain Autonomy Gating**: Tracks autonomy independently across 6 operational domains — global autonomy level capped by the weakest-performing domain to prevent subsystem degradation
-- **Lab Profiles**: OWASP Juice Shop ground-truth vulnerability profiles with LabScorer — measures finding quality against known-answer datasets for calibration validation
+- **Lab Profiles**: OWASP Juice Shop ground-truth vulnerability profiles (32 challenges across 7 categories) with LabScorer — measures finding quality against known-answer datasets for calibration validation
+- **Juice Shop Lab** (`/api/juiceshop/*`): Full Docker lifecycle management for the OWASP Juice Shop CTF lab — spawn/stop container, poll readiness, run hardcoded or adaptive benchmark scans against 32 challenges, persist run history to `workspace/lab-runs/`; CTFBenchmark UI provides Start Lab / Stop Lab buttons and live scan results with difficulty and category breakdowns
 
 ---
 
@@ -276,6 +278,7 @@ workspace/
 | `GET/POST /api/missions/*` | Mission CRUD, start/stop, step updates, findings, evidence |
 | `GET/POST /api/bounty-intelligence/*` | Scope analysis, payout estimation, duplicate detection, report coaching, submission optimization, program fetcher, campaign learning, tool synergy, triage prediction, full pipeline |
 | `GET/POST /api/reasoning/*` | Decision traces, calibration stats, hunt cortex health, lab runs, adaptive thresholds, divergence analysis |
+| `GET/POST /api/juiceshop/*` | Juice Shop Docker lifecycle (spawn/stop/status), challenge list, benchmark run (hardcoded/adaptive/hybrid), abort, run history |
 | `GET/POST /api/graph/*` | Offensive graph nodes/edges, shortest path, per-hunt summaries |
 | `GET/POST /api/intelligence/*` | Playbooks, tool selection, strategy planning, attack paths, MITRE techniques, pivot evaluation |
 | `GET /api/governance/stats` | Governance decision counts by pillar/verdict/risk |
@@ -375,5 +378,5 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **No mocks on Kali Linux** — real tool execution when `REAL_TOOLS=true`
 - **Self-learning** — every hunt improves model calibration via the Unified Reinforcement Store, Adaptive Threshold Tuner, Decision Journal, and Cross-Campaign Learning
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions
-- **Prompt injection hardening** — all external input to agents passes through the PromptInjectionDetector before AI processing
+- **Prompt injection hardening** — all LLM outputs in the hot path (HunterEngine hypothesis generation, VerifierAgent Layer 4 AI confirmation) are scanned by PromptInjectionDetector before parsing; untrusted model responses are flagged and logged before their content is trusted
 - **Semantic reasoning examples** — the AI loop receives the 7 most contextually relevant prompt examples per hypothesis cycle via embedding-based retrieval, not keyword matching
