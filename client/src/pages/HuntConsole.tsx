@@ -69,7 +69,7 @@ export default function HuntConsole() {
         }
         if (event === "hunt:finding_confirmed") {
           setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
-          toast.success(`Finding confirmed: ${String((data.finding as Record<string, unknown>)?.hypothesis?.vulnClass || "unknown")}`);
+          toast.success(`Finding confirmed: ${String((data.finding as any)?.hypothesis?.vulnClass || "unknown")}`);
         }
         if (event === "hunt:complete") {
           setActiveSessions(prev => prev.map(s =>
@@ -94,7 +94,7 @@ export default function HuntConsole() {
       case "hunt:observations": return `Generated ${Number(data.count || 0)} observations (anomaly-sorted)`;
       case "hunt:hypotheses": return `Generated ${Number(data.count || 0)} hypotheses`;
       case "hunt:probing": return `Probing: ${String(data.vulnClass || "")} → ${String(data.hypothesisId || "").slice(0, 8)}...`;
-      case "hunt:finding_confirmed": return `FINDING CONFIRMED: ${String((data.finding as Record<string, unknown>)?.hypothesis?.vulnClass || "?")} [${String((data.finding as Record<string, unknown>)?.severity || "")}]`;
+      case "hunt:finding_confirmed": return `FINDING CONFIRMED: ${String((data.finding as any)?.hypothesis?.vulnClass || "?")} [${String((data.finding as any)?.severity || "")}]`;
       case "hunt:complete": return `Hunt complete: ${Number(data.findings || 0)} findings in ${Number(data.iterations || 0)} iterations`;
       case "hunt:error": return `ERROR: ${String(data.error || "")}`;
       case "solver:started": return `Solver spawned: ${String(data.vulnClass || "")}`;

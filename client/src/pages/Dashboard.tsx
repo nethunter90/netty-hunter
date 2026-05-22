@@ -127,7 +127,7 @@ export default function Dashboard() {
                 <div className="text-[10px] text-hack-dim font-mono">{String((autonomy as Record<string, unknown>).maturityLevel || "Nascent")}</div>
               </div>
               {/* Domain bars */}
-              {autonomy.domainScores && Object.entries(autonomy.domainScores as Record<string, Record<string, unknown>>).slice(0, 4).map(([domain, ds]) => (
+              {!!(autonomy.domainScores) && Object.entries(autonomy.domainScores as Record<string, Record<string, unknown>>).slice(0, 4).map(([domain, ds]) => (
                 <div key={domain}>
                   <div className="flex justify-between text-[9px] font-mono text-hack-dim mb-0.5">
                     <span>{domain.replace(/_/g, " ")}</span>
