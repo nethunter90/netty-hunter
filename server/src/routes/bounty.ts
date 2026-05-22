@@ -107,7 +107,9 @@ router.post("/programs", async (req: Request, res: Response) => {
 });
 
 router.get("/programs/:id", async (req: Request, res: Response) => {
-  const [program] = await db.select().from(programs).where(eq(programs.id, parseInt(req.params.id))).limit(1);
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
+  const [program] = await db.select().from(programs).where(eq(programs.id, id)).limit(1);
   if (!program) return res.status(404).json({ error: "Program not found" });
 
   const targetList = await db.select().from(targets).where(eq(targets.programId, program.id));
@@ -115,17 +117,21 @@ router.get("/programs/:id", async (req: Request, res: Response) => {
 });
 
 router.patch("/programs/:id", async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
   const parsed = ProgramSchema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const [updated] = await db.update(programs)
     .set({ ...parsed.data, updatedAt: new Date() })
-    .where(eq(programs.id, parseInt(req.params.id))).returning();
+    .where(eq(programs.id, id)).returning();
   if (!updated) return res.status(404).json({ error: "Not found" });
   return res.json(updated);
 });
 
 router.delete("/programs/:id", async (req: Request, res: Response) => {
-  await db.update(programs).set({ active: false }).where(eq(programs.id, parseInt(req.params.id)));
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
+  await db.update(programs).set({ active: false }).where(eq(programs.id, id));
   return res.json({ ok: true });
 });
 
@@ -462,9 +468,11 @@ router.post("/poc/run", async (req: Request, res: Response) => {
 // ── Scope Manager ─────────────────────────────────────────────────────────────
 router.post("/programs/:id/activate", async (req: Request, res: Response) => {
   try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
     const [updated] = await db.update(programs)
       .set({ active: true, updatedAt: new Date() })
-      .where(eq(programs.id, parseInt(req.params.id)))
+      .where(eq(programs.id, id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Program not found" });
     return res.json(updated);
@@ -475,13 +483,15 @@ router.post("/programs/:id/activate", async (req: Request, res: Response) => {
 
 router.patch("/programs/:id/scope", async (req: Request, res: Response) => {
   try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
     const { scope, outOfScope } = req.body;
     const updateData: any = { updatedAt: new Date() };
     if (scope !== undefined) updateData.scope = scope;
     if (outOfScope !== undefined) updateData.outOfScope = outOfScope;
     const [updated] = await db.update(programs)
       .set(updateData)
-      .where(eq(programs.id, parseInt(req.params.id)))
+      .where(eq(programs.id, id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Program not found" });
     return res.json(updated);
