@@ -4,6 +4,7 @@ import * as path from 'path';
 import { GovernanceDecision } from './types';
 
 const DECISIONS_DIR = path.join(process.cwd(), 'logs', 'governance-decisions');
+const WAL_FILE = path.join(DECISIONS_DIR, 'decisions-wal.ndjson');
 
 export class DecisionLogger {
   private buffer: GovernanceDecision[] = [];
@@ -12,6 +13,7 @@ export class DecisionLogger {
 
   constructor() {
     this.ensureDir();
+    this.replayWAL();
     this.rotateFile();
     this.flushInterval = setInterval(() => this.flush(), 5000);
   }
@@ -22,12 +24,45 @@ export class DecisionLogger {
     } catch {}
   }
 
+  // On startup: replay any decisions that were buffered but not flushed before a crash
+  private replayWAL(): void {
+    if (!fs.existsSync(WAL_FILE)) return;
+    try {
+      const content = fs.readFileSync(WAL_FILE, 'utf-8');
+      if (!content.trim()) return;
+      const decisions = content
+        .split('\n')
+        .filter(l => l.trim())
+        .map(l => { try { return JSON.parse(l) as GovernanceDecision; } catch { return null; } })
+        .filter((d): d is GovernanceDecision => d !== null);
+      if (decisions.length > 0) {
+        this.rotateFile();
+        const lines = decisions.map(d => JSON.stringify(d)).join('\n') + '\n';
+        fs.appendFileSync(this.currentFile, lines);
+        fs.writeFileSync(WAL_FILE, ''); // clear WAL after successful replay
+        console.log(`[DecisionLogger] WAL replay: recovered ${decisions.length} decisions`);
+      }
+    } catch (err) {
+      console.error('[DecisionLogger] WAL replay error:', err);
+    }
+  }
+
   private rotateFile(): void {
     const date = new Date().toISOString().split('T')[0];
     this.currentFile = path.join(DECISIONS_DIR, `decisions-${date}.ndjson`);
   }
 
   log(decision: GovernanceDecision): void {
+    // WAL write first — if process crashes between here and flush(), the decision
+    // survives and will be replayed into the daily log on next startup
+    try {
+      const line = JSON.stringify({
+        ...decision,
+        timestamp: decision.timestamp instanceof Date ? decision.timestamp.toISOString() : decision.timestamp,
+      }) + '\n';
+      fs.appendFileSync(WAL_FILE, line);
+    } catch { /* WAL failure is non-fatal; decision still buffered for next flush */ }
+
     this.buffer.push(decision);
     if (this.buffer.length >= 50) {
       this.flush();
@@ -46,8 +81,12 @@ export class DecisionLogger {
 
     try {
       fs.appendFileSync(this.currentFile, lines);
+      // Clear WAL only after the daily log write succeeds — a crash between the
+      // appendFileSync above and here would leave WAL intact for replay
+      fs.writeFileSync(WAL_FILE, '');
     } catch (err) {
       console.error('[DecisionLogger] Write error:', err);
+      return; // keep buffer so next flush cycle retries
     }
 
     this.buffer = [];
@@ -128,12 +167,22 @@ export class DecisionLogger {
     buffered: number;
     availableDates: string[];
     currentFile: string;
+    walEntries: number;
   } {
+    let walEntries = 0;
+    try {
+      if (fs.existsSync(WAL_FILE)) {
+        const content = fs.readFileSync(WAL_FILE, 'utf-8');
+        walEntries = content.split('\n').filter(l => l.trim()).length;
+      }
+    } catch {}
+
     return {
       totalLogged: this.readDecisions().length + this.buffer.length,
       buffered: this.buffer.length,
       availableDates: this.getAvailableDates(),
-      currentFile: this.currentFile
+      currentFile: this.currentFile,
+      walEntries,
     };
   }
 
@@ -145,3 +194,4 @@ export class DecisionLogger {
     }
   }
 }
+

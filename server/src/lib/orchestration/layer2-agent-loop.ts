@@ -8,6 +8,7 @@ import { metaAgents } from './layer5-meta-agents';
 import { nmapToFindings, extractInjectableTargets } from './tool-parsers';
 import { toolRunner } from '../stealth/tool-runner';
 import { timingObfuscation } from '../stealth/timing-obfuscation';
+import { passKEvaluator } from './pass-k-evaluator';
 
 interface HuntConfig {
   stealthMode: StealthLevel;
@@ -434,11 +435,29 @@ export class AgentLoop {
           }
         }
 
-        const result = await metaAgent.execute(agent.id, {
-          tool,
-          target,
-          parameters
-        });
+        // Exploit agents benefit from multiple attempts (pass-k); others run once.
+        // k is scaled by resource class so lightweight hunts don't burn LLM budget.
+        const isHighVariance = agent.type === 'exploit';
+        const k = isHighVariance
+          ? passKEvaluator.resolveK(agent.type, huntConfig.resourceClass as 'lightweight' | 'standard' | 'enterprise')
+          : 1;
+
+        let result = await metaAgent.execute(agent.id, { tool, target, parameters });
+        let bestConfidence: number = (result.result && typeof result.result === 'object' && 'confidence' in result.result)
+          ? (result.result as any).confidence
+          : (result.success ? 0.6 : 0);
+
+        for (let attempt = 1; attempt < k; attempt++) {
+          if (bestConfidence >= 0.8) break; // already high-confidence — skip remaining attempts
+          const retry = await metaAgent.execute(agent.id, { tool, target, parameters });
+          const retryConf: number = (retry.result && typeof retry.result === 'object' && 'confidence' in retry.result)
+            ? (retry.result as any).confidence
+            : (retry.success ? 0.6 : 0);
+          if (retryConf > bestConfidence) {
+            result = retry;
+            bestConfidence = retryConf;
+          }
+        }
 
         didWork = true;
         this.completedScans.add(runKey);
