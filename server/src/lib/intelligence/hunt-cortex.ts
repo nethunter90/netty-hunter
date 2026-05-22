@@ -5,6 +5,7 @@ import { decisionTraceLogger } from './decision-trace';
 export enum SignalType {
   TOOL_NOVELTY = 'TOOL_NOVELTY',
   TOOL_NEGATIVE_EVIDENCE = 'TOOL_NEGATIVE_EVIDENCE',
+  TOOL_PARSE_ERROR = 'TOOL_PARSE_ERROR',
   VERIFICATION_DEGRADED = 'VERIFICATION_DEGRADED',
   VERIFICATION_FAILED = 'VERIFICATION_FAILED',
   EVENT_EXPIRED = 'EVENT_EXPIRED',
@@ -31,13 +32,30 @@ class HuntCortex extends EventEmitter {
   private signalBuffer: CortexSignal[] = [];
   private subscribers: Map<string, Array<(signal: CortexSignal) => void>> = new Map();
   private windowSeconds: number = 300;
+  private recentFingerprints: Map<string, number> = new Map();
+  private readonly DEDUP_WINDOW_MS = 1000;
 
   constructor() {
     super();
     this.setMaxListeners(100);
   }
 
+  private isDuplicate(signal: CortexSignal): boolean {
+    const fp = `${signal.signalType}:${signal.huntId}:${signal.sourceSystem}`;
+    const now = Date.now();
+    const last = this.recentFingerprints.get(fp);
+    if (last !== undefined && now - last < this.DEDUP_WINDOW_MS) return true;
+    this.recentFingerprints.set(fp, now);
+    if (this.recentFingerprints.size > 500) {
+      for (const [k, t] of this.recentFingerprints) {
+        if (now - t > this.DEDUP_WINDOW_MS * 2) this.recentFingerprints.delete(k);
+      }
+    }
+    return false;
+  }
+
   async broadcast(signal: CortexSignal): Promise<void> {
+    if (this.isDuplicate(signal)) return;
     if (!signal.id) {
       signal.id = `sig-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }

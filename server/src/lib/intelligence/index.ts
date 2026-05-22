@@ -72,6 +72,25 @@ export class AutonomousBrain {
       }
     }
 
+    // Entropy check: if top beliefs are converged (stddev < 0.05), signal re-exploration
+    try {
+      const beliefs = reasoningEngine.getBeliefs(missionId);
+      const topConfs = Object.values(beliefs as Record<string, any>).slice(0, 5).map(b => (b as any).confidence ?? 0.5);
+      if (topConfs.length >= 3) {
+        const avg = topConfs.reduce((s: number, v: number) => s + v, 0) / topConfs.length;
+        const stddev = Math.sqrt(topConfs.reduce((s: number, v: number) => s + (v - avg) ** 2, 0) / topConfs.length);
+        if (stddev < 0.05) {
+          huntCortex.broadcast({
+            signalType: SignalType.VERIFICATION_DEGRADED,
+            sourceSystem: 'autonomous-brain',
+            huntId: missionId,
+            payload: { reason: 'belief_entropy_low', stddev: Math.round(stddev * 1000) / 1000 },
+            confidence: 0.8,
+          });
+        }
+      }
+    } catch { /* non-critical */ }
+
     return decision;
   }
 

@@ -1,5 +1,13 @@
 import { MissionMemory, Endpoint, Technology, Vulnerability, Credential } from './types';
 
+const MAX_ENDPOINTS = 2000;
+const MAX_TECHNOLOGIES = 500;
+const MAX_VULNERABILITIES = 500;
+const MAX_SUBDOMAINS = 1000;
+const MAX_NOTES = 200;
+
+const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+
 export class MissionMemoryStore {
   private memories: Map<string, MissionMemory> = new Map();
 
@@ -45,6 +53,7 @@ export class MissionMemoryStore {
 
     const newSubdomains = subdomains.filter(s => !memory.subdomains.includes(s));
     memory.subdomains.push(...newSubdomains);
+    while (memory.subdomains.length > MAX_SUBDOMAINS) memory.subdomains.shift();
     memory.lastUpdated = new Date();
   }
 
@@ -56,6 +65,7 @@ export class MissionMemoryStore {
     const newEndpoints = endpoints.filter(e => !existingUrls.has(e.url));
 
     memory.endpoints.push(...newEndpoints);
+    while (memory.endpoints.length > MAX_ENDPOINTS) memory.endpoints.shift();
     memory.lastUpdated = new Date();
   }
 
@@ -63,10 +73,17 @@ export class MissionMemoryStore {
     const memory = this.memories.get(huntId);
     if (!memory) return;
 
-    const existingNames = new Set(memory.technologies.map(t => t.name));
-    const newTech = technologies.filter(t => !existingNames.has(t.name));
-
-    memory.technologies.push(...newTech);
+    for (const tech of technologies) {
+      const existing = memory.technologies.find(t => t.name === tech.name);
+      if (!existing) {
+        memory.technologies.push(tech);
+      } else if (tech.version && existing.version && tech.version !== existing.version) {
+        console.warn(`[MissionMemory] Tech version contradiction for ${tech.name}: ${existing.version} vs ${tech.version} — merging to newer`);
+        existing.version = tech.version;
+        existing.confidence = Math.max(existing.confidence, tech.confidence);
+      }
+    }
+    while (memory.technologies.length > MAX_TECHNOLOGIES) memory.technologies.shift();
     memory.lastUpdated = new Date();
   }
 
@@ -74,7 +91,21 @@ export class MissionMemoryStore {
     const memory = this.memories.get(huntId);
     if (!memory) return;
 
-    memory.vulnerabilities.push(...vulnerabilities);
+    for (const vuln of vulnerabilities) {
+      const key = `${vuln.endpoint}:${vuln.type}`;
+      const existing = memory.vulnerabilities.find(v => `${v.endpoint}:${v.type}` === key);
+      if (!existing) {
+        memory.vulnerabilities.push(vuln);
+      } else {
+        const inRank = SEVERITY_RANK[vuln.severity] ?? 0;
+        const exRank = SEVERITY_RANK[existing.severity] ?? 0;
+        if (inRank !== exRank) {
+          console.warn(`[MissionMemory] Severity contradiction for ${key}: ${existing.severity} vs ${vuln.severity} — keeping higher`);
+          if (inRank > exRank) existing.severity = vuln.severity;
+        }
+      }
+    }
+    while (memory.vulnerabilities.length > MAX_VULNERABILITIES) memory.vulnerabilities.shift();
     memory.lastUpdated = new Date();
   }
 
@@ -91,6 +122,7 @@ export class MissionMemoryStore {
     if (!memory) return;
 
     memory.notes.push(note);
+    while (memory.notes.length > MAX_NOTES) memory.notes.shift();
     memory.lastUpdated = new Date();
   }
 

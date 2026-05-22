@@ -9,6 +9,7 @@ import { nmapToFindings, extractInjectableTargets } from './tool-parsers';
 import { toolRunner } from '../stealth/tool-runner';
 import { timingObfuscation } from '../stealth/timing-obfuscation';
 import { passKEvaluator } from './pass-k-evaluator';
+import { huntCortex, SignalType } from '../intelligence/hunt-cortex';
 
 interface HuntConfig {
   stealthMode: StealthLevel;
@@ -405,6 +406,9 @@ export class AgentLoop {
         }
       }
 
+      // Mark before executing to prevent concurrent agents running the same scan.
+      // Rolled back on exception so the scan can be retried on next cycle.
+      this.completedScans.add(runKey);
       try {
         console.log(`[AgentLoop] ${agent.type} running ${tool} on ${target}`);
 
@@ -460,7 +464,6 @@ export class AgentLoop {
         }
 
         didWork = true;
-        this.completedScans.add(runKey);
 
         if (result.success && result.result) {
           if (result.result.skipped) {
@@ -469,11 +472,25 @@ export class AgentLoop {
             await this.ingestResults(agent, target, tool, result.result);
           }
         }
+      } catch (err) {
+        // Roll back so next cycle can retry this scan
+        this.completedScans.delete(runKey);
+        throw err;
       } finally {
         this.unregisterActiveTool(toolId);
       }
     }
     return didWork;
+  }
+
+  private emitParseError(agent: Agent, tool: string, target: string): void {
+    huntCortex.broadcast({
+      signalType: SignalType.TOOL_PARSE_ERROR,
+      sourceSystem: 'layer2-agent-loop',
+      huntId: agent.huntId,
+      payload: { tool, target, parseError: 'no structured data found in output' },
+      confidence: 1.0,
+    }).catch(() => {});
   }
 
   private async ingestResults(
@@ -483,9 +500,6 @@ export class AgentLoop {
     result: any
   ): Promise<void> {
     const huntId = agent.huntId;
-
-    const runKey = `${huntId}:${tool}:${target}`;
-    this.completedScans.add(runKey);
 
     switch (tool) {
       case 'nmap':
@@ -664,6 +678,8 @@ export class AgentLoop {
 
           eventBus.publishScanComplete(agent.id, huntId, target, vulns);
           console.log(`[AgentLoop] ${tool} ingested: ${vulns.length} vulnerabilities`);
+        } else if (!result.vulnerabilities) {
+          this.emitParseError(agent, tool, target);
         }
         if (result.technologies && Array.isArray(result.technologies)) {
           missionMemory.addTechnologies(huntId, result.technologies.map((t: any) => ({
@@ -692,6 +708,8 @@ export class AgentLoop {
             eventBus.publishVulnerabilityFound(agent.id, huntId, v);
           });
           console.log(`[AgentLoop] sqlmap ingested: ${vulns.length} SQL injection points`);
+        } else if (!result.vulnerabilities) {
+          this.emitParseError(agent, tool, target);
         }
         break;
     }

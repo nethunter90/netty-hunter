@@ -229,6 +229,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
 };
 
+const MAX_OBSERVATIONS = 200;
+const MAX_HYPOTHESES = 50;
+const MAX_PROBES = 500;
+
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
 export class HunterEngine extends EventEmitter {
   private state!: HuntState;
@@ -386,6 +390,10 @@ export class HunterEngine extends EventEmitter {
                 createdAt: Date.now(),
               }));
               this.state.hypotheses.push(...pivotHypotheses);
+              if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+                this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+                this.state.hypotheses.splice(MAX_HYPOTHESES);
+              }
               this.state.phase = 'probe';
               this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
               logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
@@ -456,6 +464,7 @@ export class HunterEngine extends EventEmitter {
     // Sort by anomaly score (anomaly-first scanning)
     obs.sort((a, b) => b.anomalyScore - a.anomalyScore);
     this.state.observations.push(...obs);
+    while (this.state.observations.length > MAX_OBSERVATIONS) this.state.observations.shift();
 
     this.emit("hunt:observations", { count: obs.length, observations: obs });
   }
@@ -544,6 +553,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // Sort by priority * confidence
       newHypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
       this.state.hypotheses.push(...newHypotheses);
+      if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+        this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+        this.state.hypotheses.splice(MAX_HYPOTHESES);
+      }
 
       this.emit("hunt:hypotheses", { count: newHypotheses.length, hypotheses: newHypotheses });
       logger.info("Generated hypotheses", { count: newHypotheses.length });
@@ -589,6 +602,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       };
 
       this.state.probes.push(result);
+      if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
       this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result });
@@ -710,10 +724,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
         const { getAutonomousBrain } = await import('../lib/intelligence');
         getAutonomousBrain().recordActionResult(this.state.sessionId, toolName, false, error.killed ? 'timeout' : (error.message || 'unknown error'));
       } catch { /* non-critical */ }
-      if (error.killed) return { timeout: true, duration: 30000, command: cmdString };
-      const output = (error.stdout || "") + (error.stderr || "");
+      const timedOut = error.killed === true;
+      const partialOutput = (error.stdout || '') + (error.stderr || '');
       this.toolLastUsed.set(toolName, Date.now());
-      return { ...tool.parser(output), duration: Date.now() - start, command: cmdString };
+      if (partialOutput.trim()) {
+        return { ...tool.parser(partialOutput), timedOut, duration: Date.now() - start, command: cmdString };
+      }
+      return { timeout: true, timedOut, duration: Date.now() - start, command: cmdString };
     }
   }
 
@@ -871,6 +888,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
   }
 
   private async persistResults(): Promise<void> {
+    const totalHypotheses = this.state.hypotheses.length;
+    const confirmedHypotheses = this.state.hypotheses.filter(h => h.status === 'confirmed').length;
+    const conversionRate = totalHypotheses > 0 ? confirmedHypotheses / totalHypotheses : 0;
+    logger.info('[HunterEngine] Hunt conversion rate', {
+      sessionId: this.state.sessionId,
+      totalHypotheses,
+      confirmedHypotheses,
+      conversionRate: Math.round(conversionRate * 1000) / 1000,
+    });
+
     try {
       await db.update(huntSessions)
         .set({
