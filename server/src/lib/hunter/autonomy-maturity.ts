@@ -19,6 +19,10 @@ type DeploymentMode   = 'lab_only' | 'supervised' | 'semi_autonomous' | 'autonom
 export interface DomainGate {
   domain: AutonomyDomain;
   score: number;
+  /** Configured ceiling for this domain (structural maximum for typical program portfolios) */
+  naturalCeiling: number;
+  /** score / naturalCeiling — used for gating; removes structural difficulty bias */
+  normalizedScore: number;
   operationalLevel: OperationalLevel;
   deploymentMode: DeploymentMode;
   trend: 'improving' | 'stable' | 'declining';
@@ -101,6 +105,28 @@ const DOMAINS: AutonomyDomain[] = [
 ];
 
 const CRITICAL_DOMAINS: AutonomyDomain[] = ['scope_adherence', 'false_positive_rate'];
+
+/**
+ * Natural ceiling per domain — the structural maximum score achievable without
+ * fundamental changes to the target portfolio or toolchain.  Domains that are
+ * genuinely hard (e.g. exploit_chain_depth on programs with shallow logic flows)
+ * should not permanently cap global autonomy just because they can't reach 1.0.
+ *
+ * Gating uses normalizedScore = rawScore / ceiling so a domain at 0.45 against a
+ * 0.50 ceiling reads as 90% (high_autonomy) rather than 45% (learning).
+ * CAMS composite scoring still uses raw scores to keep the metric grounded.
+ *
+ * Ceilings are conservative by default and can be tuned per deployment once the
+ * cross-campaign dataset establishes program-type baselines.
+ */
+const DOMAIN_NATURAL_CEILING: Record<AutonomyDomain, number> = {
+  hypothesis_generation: 1.0,  // no structural cap — quality improves with data
+  tool_selection:        1.0,  // no structural cap — pure RL signal
+  scope_adherence:       1.0,  // critical safety domain — no ceiling forgiveness
+  false_positive_rate:   1.0,  // critical safety domain — no ceiling forgiveness
+  exploit_chain_depth:   0.6,  // most programs cap at ~3-step chains; 5-step is rare
+  reporting_quality:     0.9,  // diminishing returns beyond strong-pass reports
+};
 
 // ── Level helpers ─────────────────────────────────────────────────────────────
 
@@ -306,14 +332,21 @@ class AutonomyMaturityTrackerAdapter {
 
     // Build gates per domain
     const gates: DomainGate[] = [];
+    // Gating tracks the weakest NORMALIZED score (ceiling-relative performance).
+    // CAMS composite still uses raw scores — this only affects deployment-mode gating.
     let weakestDomain: AutonomyDomain = 'hypothesis_generation';
-    let weakestScore = 1.0;
+    let weakestNormalized = 1.0;
+    let weakestRaw = 1.0;
 
     for (const d of DOMAINS) {
       const ds: DomainScore = report.domainScores[d];
       const score = ds?.score ?? 0;
-      const level = scoreToLevel(score);
-      const { percent, threshold } = percentToNext(score, level);
+      const ceiling = DOMAIN_NATURAL_CEILING[d];
+      // Clamp to [0,1]: a domain can't exceed its ceiling in normalized space
+      const normalizedScore = Math.min(1, score / ceiling);
+      // Gating level is driven by normalized performance, not raw score
+      const level = scoreToLevel(normalizedScore);
+      const { percent, threshold } = percentToNext(normalizedScore, level);
 
       // Count consecutive hunts at this level (from levelHistory)
       const stability = this.countConsecutiveAtLevel(level);
@@ -321,6 +354,8 @@ class AutonomyMaturityTrackerAdapter {
       gates.push({
         domain:                d,
         score,
+        naturalCeiling:        ceiling,
+        normalizedScore:       Math.round(normalizedScore * 1000) / 1000,
         operationalLevel:      level,
         deploymentMode:        levelToDeployment(level).mode,
         trend:                 ds?.trend ?? 'stable',
@@ -330,10 +365,14 @@ class AutonomyMaturityTrackerAdapter {
         stabilityHuntsAtLevel: stability,
       });
 
-      if (score < weakestScore) { weakestScore = score; weakestDomain = d; }
+      if (normalizedScore < weakestNormalized) {
+        weakestNormalized = normalizedScore;
+        weakestRaw        = score;
+        weakestDomain     = d;
+      }
     }
 
-    // Regressions
+    // Regressions — still reported against raw score so alerts aren't muted by the ceiling
     const regressions: DomainGateReport['regressions'] = [];
     for (const gate of gates) {
       if (gate.regressionDetected) {
@@ -346,13 +385,20 @@ class AutonomyMaturityTrackerAdapter {
       }
     }
 
-    // Global cap = weakest domain level
-    const globalLevelCap = scoreToLevel(weakestScore);
+    // Global cap = weakest normalized domain level
+    const globalLevelCap = scoreToLevel(weakestNormalized);
     const { mode, label, review } = levelToDeployment(globalLevelCap);
 
     // Track stability history
     this.weakestLevelHistory.push(globalLevelCap);
     if (this.weakestLevelHistory.length > 20) this.weakestLevelHistory.shift();
+
+    const ceiling = DOMAIN_NATURAL_CEILING[weakestDomain];
+    const capExplanation = ceiling < 1.0
+      ? `Global autonomy capped by ${weakestDomain.replace(/_/g, ' ')} ` +
+        `(raw ${Math.round(weakestRaw * 100)}% / ceiling ${Math.round(ceiling * 100)}% ` +
+        `= ${Math.round(weakestNormalized * 100)}% normalized)`
+      : `Global autonomy capped by ${weakestDomain.replace(/_/g, ' ')} (${Math.round(weakestRaw * 100)}%)`;
 
     return {
       gates,
@@ -360,11 +406,11 @@ class AutonomyMaturityTrackerAdapter {
       gatingActive:          true,
       globalLevelCap,
       weakestDomain,
-      weakestScore,
+      weakestScore:          weakestRaw,
       deploymentMode:        mode,
       deploymentLabel:       label,
       reviewRequirement:     review,
-      globalCapExplanation:  `Global autonomy capped by ${weakestDomain.replace(/_/g, ' ')} (${Math.round(weakestScore * 100)}%)`,
+      globalCapExplanation:  capExplanation,
       stabilityRequired:     STABILITY_HUNTS_REQUIRED,
     };
   }
@@ -410,9 +456,11 @@ class AutonomyMaturityTrackerAdapter {
     const gates: DomainGate[] = DOMAINS.map(d => ({
       domain:                d,
       score:                 0,
-      operationalLevel:      'nascent',
-      deploymentMode:        'lab_only',
-      trend:                 'stable',
+      naturalCeiling:        DOMAIN_NATURAL_CEILING[d],
+      normalizedScore:       0,
+      operationalLevel:      'nascent' as OperationalLevel,
+      deploymentMode:        'lab_only' as DeploymentMode,
+      trend:                 'stable' as const,
       regressionDetected:    false,
       percentToNextLevel:    0,
       nextLevelThreshold:    0.3,
