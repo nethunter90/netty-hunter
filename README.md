@@ -119,7 +119,8 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 #### Verification & Validation
 
-- **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation; Layer 4 AI response is scanned by PromptInjectionDetector before the parsed verdict is trusted
+- **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation; Layer 1 dedup runs exact SHA-256 hash first, then a SimHash near-duplicate pass — findings with Hamming distance ≤ 3 bits (same vuln class, similar endpoint/payload) are collapsed to one; Layer 4 AI response is scanned by PromptInjectionDetector before the parsed verdict is trusted
+- **SimHash Near-Duplicate Engine** (`lib/intelligence/simhash.ts`): 64-bit FNV-1a-based weighted shingle fingerprinting; catches near-duplicates the exact hash misses (e.g. same XSS payload on `/search?q=` vs `/search?query=`); Hamming-distance comparison across a bounded 5,000-entry ring buffer keeps memory flat across long hunts
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data, annotating hypotheses with conflict context and reducing confidence
 - **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
@@ -370,7 +371,7 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **8-pillar governance** — every agent decision is audited against named ethical and operational pillars with full replay data
 - **6-layer orchestration** — every hunt passes through a structured pipeline from governance gate to intelligence harvest; no layer can be bypassed
 - **Mandatory browser validation** — high-severity findings MUST pass Playwright replay before reporting
-- **Anti-hallucination pipeline** — 4-layer deduplication prevents false positives; verification lifecycle degrades stale findings automatically
+- **Anti-hallucination pipeline** — 4-layer deduplication prevents false positives; Layer 1 combines exact SHA-256 and SimHash near-duplicate detection so same-vuln/similar-endpoint findings are collapsed before verification; verification lifecycle degrades stale findings automatically
 - **Adversarial graph reasoning** — findings, techniques, tools, and endpoints are nodes in a live attack graph updated in real time
 - **Goal-first backward planning** — strategy selection starts from the desired vulnerability class and works backward through prerequisite chains
 - **Operational stealth by default** — all tool executions go through the stealth layer; timing, flags, and rate limits are never caller-controlled
