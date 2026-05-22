@@ -2,6 +2,40 @@ import { v4 as uuidv4 } from 'uuid';
 import { AgentContract, NetworkRequest, GovernancePillar } from '../types';
 import { CoreGovernance } from '../core-governance';
 
+/** TTL for scope-verification cache entries (ms). Keeps the 8-pillar check off
+ *  the hot path for repeated requests to already-verified endpoints. */
+const SCOPE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface ScopeCacheEntry {
+  inScope: boolean;
+  reason: string;
+  expiresAt: number;
+}
+
+class ScopeVerifyCache {
+  private cache = new Map<string, ScopeCacheEntry>();
+
+  get(hostname: string, huntId?: string): ScopeCacheEntry | null {
+    const key = `${hostname}:${huntId ?? ''}`;
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) { this.cache.delete(key); return null; }
+    return entry;
+  }
+
+  set(hostname: string, huntId: string | undefined, inScope: boolean, reason: string, ttlMs = SCOPE_CACHE_TTL_MS): void {
+    const key = `${hostname}:${huntId ?? ''}`;
+    this.cache.set(key, { inScope, reason, expiresAt: Date.now() + ttlMs });
+    // Evict stale entries lazily to bound memory growth
+    if (this.cache.size > 2000) {
+      const now = Date.now();
+      for (const [k, v] of this.cache) {
+        if (v.expiresAt < now) this.cache.delete(k);
+      }
+    }
+  }
+}
+
 const BLOCKED_DOMAINS = [
   'localhost', '127.0.0.1', '0.0.0.0',
   '169.254.169.254', 'metadata.google.internal',
@@ -23,6 +57,7 @@ export class GovernanceProxy {
   private requestLog: NetworkRequest[] = [];
   private rateLimitCounters: Map<string, { count: number; windowStart: number }> = new Map();
   private stealthEnabled: boolean = true;
+  private scopeCache = new ScopeVerifyCache();
 
   constructor(governance: CoreGovernance) {
     this.governance = governance;
@@ -147,7 +182,14 @@ export class GovernanceProxy {
       }
     }
 
-    const scopeCheck = await this.governance.verifyScope(hostname, huntId);
+    // Fast path: always-allowed domains bypass scope verification entirely
+    const isAlwaysAllowed = ALWAYS_ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
+    const cached = isAlwaysAllowed ? null : this.scopeCache.get(hostname, huntId);
+    const scopeCheck = cached ?? await this.governance.verifyScope(hostname, huntId);
+    if (!cached && !isAlwaysAllowed) {
+      // Cache the result so subsequent requests to this host skip the 8-pillar check
+      this.scopeCache.set(hostname, huntId, scopeCheck.inScope, scopeCheck.reason ?? '');
+    }
     if (!scopeCheck.inScope) {
       request.status = 'blocked';
       request.blockReason = 'Out of scope';

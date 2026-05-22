@@ -771,6 +771,27 @@ const SOLVER_REGISTRY: Partial<Record<VulnClass, new () => BaseSolver>> = {
 };
 
 // ─── Strategy Coordinator (Single Brain) ──────────────────────────────────────
+
+/** Truncate the observations object to avoid exceeding the model context window.
+ *  Keeps the top-level keys but summarises deep arrays to a count + sample. */
+function summariseObservations(raw: Record<string, unknown>, maxChars = 1200): string {
+  const full = JSON.stringify(raw, null, 2);
+  if (full.length <= maxChars) return full;
+
+  const condensed: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (Array.isArray(v)) {
+      condensed[k] = v.length <= 3 ? v : [...v.slice(0, 2), `…(${v.length - 2} more)`];
+    } else if (v && typeof v === 'object') {
+      const s = JSON.stringify(v);
+      condensed[k] = s.length > 200 ? s.slice(0, 200) + '…' : v;
+    } else {
+      condensed[k] = v;
+    }
+  }
+  return JSON.stringify(condensed, null, 2).slice(0, maxChars);
+}
+
 class StrategyCoordinator {
   private modelRouter = ModelRouter.getInstance();
 
@@ -778,7 +799,7 @@ class StrategyCoordinator {
     const prompt = `You are a bug bounty strategy coordinator analyzing an endpoint.
 
 Endpoint: ${endpoint}
-Observations: ${JSON.stringify(observations, null, 2)}
+Observations: ${summariseObservations(observations)}
 
 ${toolKnowledge.getSummaryBlock()}
 

@@ -26,6 +26,7 @@ import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { huntCortex } from "../lib/intelligence/hunt-cortex";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { backwardPlanner } from "../lib/intelligence/backward-planner";
+import { observationCompressor } from "../lib/intelligence/observation-compressor";
 
 const execFileAsync = promisify(execFile);
 
@@ -329,6 +330,12 @@ export class HunterEngine extends EventEmitter {
     return sessionUuid;
   }
 
+  /** Yield to the Node.js event loop so other async tasks (socket.io, sibling hunts)
+   *  can process pending callbacks between heavy model-inference phases. */
+  private yieldToEventLoop(): Promise<void> {
+    return new Promise(resolve => setImmediate(resolve));
+  }
+
   private async runLoop(): Promise<void> {
     const startTime = Date.now();
 
@@ -340,20 +347,26 @@ export class HunterEngine extends EventEmitter {
       this.state.iteration++;
       this.state.budget.elapsed = (Date.now() - startTime) / 1000;
 
+      // Yield before each phase so concurrent hunts / socket events aren't starved
+      await this.yieldToEventLoop();
+
       this.emit("hunt:phase", { phase: this.state.phase, iteration: this.state.iteration });
 
       try {
         switch (this.state.phase) {
           case "observe":
             await this.observe();
+            await this.yieldToEventLoop();
             this.state.phase = "hypothesize";
             break;
           case "hypothesize":
             await this.hypothesize();
+            await this.yieldToEventLoop();
             this.state.phase = "probe";
             break;
           case "probe":
             await this.probe();
+            await this.yieldToEventLoop();
             this.state.phase = "update";
             break;
           case "update":
@@ -404,6 +417,7 @@ export class HunterEngine extends EventEmitter {
     }
 
     this.state.phase = "complete";
+    observationCompressor.clearSession(this.state.sessionId);
     this.rlWiring.onHuntComplete({
       sessionId: this.state.sessionId,
       programId: this.state.programId,
@@ -482,7 +496,13 @@ export class HunterEngine extends EventEmitter {
     });
 
     // Build a rich query text from actual observation signals for semantic retrieval
-    const recentObs = this.state.observations.slice(-10);
+    // Compress old observations into a historical state vector so the prompt
+    // doesn't grow unboundedly across many iterations (context window management).
+    const { historicalSummary, recentObservations } = observationCompressor.compress(
+      this.state.sessionId,
+      this.state.observations,
+    );
+    const recentObs = recentObservations;
     const obsTags = [...new Set(recentObs.flatMap(o => o.tags))].join(', ');
     const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.hypothesis.vulnClass ?? ''))].join(', ');
     const semanticQuery = [
@@ -505,7 +525,7 @@ Step 3 — Estimate what confirming evidence would look like for each candidate 
 Step 4 — Output your hypotheses as JSON.
 
 Target: ${this.state.targetUrl}
-Observations (anomaly-sorted):
+${historicalSummary ? `${historicalSummary}\n\n` : ''}Recent observations (anomaly-sorted):
 ${JSON.stringify(recentObs, null, 2)}
 
 Current confirmed findings: ${this.state.confirmedFindings.length}
