@@ -15,7 +15,8 @@
 - **Hunter Engine**: Observe → Hypothesize → Probe → Update reasoning loop with anomaly-first scanning and real-time strategy adaptation
 - **SolverPool**: Dynamic solver spawning per endpoint-per-vulnerability-class
 - **Campaign Orchestrator**: 6-layer orchestration model — Governance Gate → Target Intelligence → Strategy Planning → Execution Engine → Verification Gate → Intelligence Harvest; each layer fail-closed with full audit trail
-- **Single-Brain Architecture**: `StrategyCoordinator` as sole decision-maker using confidence-driven dispatch for exploits, hypothesis tests, solver spawning, or pivoting
+- **Single-Brain Architecture**: `StrategyCoordinator` as sole decision-maker using confidence-driven dispatch for exploits, hypothesis tests, solver spawning, or pivoting; observation payloads are condensed via `summariseObservations()` before being injected into the strategy prompt so the coordinator never receives an oversized context
+- **Async Phase Transitions**: `HunterEngine.runLoop()` yields to the Node.js event loop via `setImmediate` between every phase transition — concurrent hunts, socket.io callbacks, and DB writes all receive CPU cycles during model inference, eliminating head-of-line blocking in multi-hunt scenarios
 
 ---
 
@@ -46,7 +47,7 @@ A full 6-layer multi-agent hunt pipeline with event-driven coordination, distrib
 An independent 8-pillar governance system that audits, constrains, and monitors all agent behavior.
 
 - **CoreGovernance**: Central decision recorder enforcing 8 named pillars — Kinetic Clause, Recursive Loop, Ethical Boundary, Hardware Sovereignty, Multi-Agent Quorum, Safety Controls, Prompt Injection Detection, Blue Team Oversight
-- **GovernanceProxy**: Network-level enforcement — SSRF/internal-IP blocking, per-agent domain contracts, per-minute rate limits, stealth delay injection; all requests validated before tool execution
+- **GovernanceProxy**: Network-level enforcement — SSRF/internal-IP blocking, per-agent domain contracts, per-minute rate limits, stealth delay injection; all requests validated before tool execution; fronted by `ScopeVerifyCache` — a 5-minute TTL hash cache keyed by `hostname:huntId` that serves repeated requests to already-verified endpoints from an O(1) Map lookup, bypassing the full 8-pillar `verifyScope()` call; `ALWAYS_ALLOWED_DOMAINS` (nvd.nist.gov, shodan.io, etc.) skip even the cache and go straight to approval; cache evicts stale entries lazily and caps at 2,000 entries to bound memory growth
 - **PromptInjectionDetector**: 35 trigger keywords, 12 regex patterns, 4 semantic categories (jailbreak, role override, data exfil, system bypass); scores and flags all agent inputs
 - **DesktopAgentGovernance**: Path traversal detection, dangerous command blocking, tool allowlist validation for any host-level agent actions
 - **DriftDetector**: Snapshot-based drift analysis — compares recent verdict/risk/pillar distributions against rolling baseline; auto-snapshots every 5 minutes
@@ -121,6 +122,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 - **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation; Layer 1 dedup runs exact SHA-256 hash first, then a SimHash near-duplicate pass — findings with Hamming distance ≤ 3 bits (same vuln class, similar endpoint/payload) are collapsed to one; Layer 4 AI response is scanned by PromptInjectionDetector before the parsed verdict is trusted
 - **SimHash Near-Duplicate Engine** (`lib/intelligence/simhash.ts`): 64-bit FNV-1a-based weighted shingle fingerprinting; catches near-duplicates the exact hash misses (e.g. same XSS payload on `/search?q=` vs `/search?query=`); Hamming-distance comparison across a bounded 5,000-entry ring buffer keeps memory flat across long hunts
+- **ObservationCompressor** (`lib/intelligence/observation-compressor.ts`): historical state vector for context window management; once a session accumulates more than 20 observations the compressor retains the 8 most-recent observations verbatim and condenses older ones into a compact state vector — dominant anomaly signals (tag-frequency weighted by anomaly score), source coverage breakdown, average and peak anomaly scores; the vector is merged across iterations so no information is lost, only recoded as a dense string; injected into `hypothesize()` above the raw observation block, keeping prompt length bounded across arbitrarily long hunts
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data, annotating hypotheses with conflict context and reducing confidence
 - **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
@@ -383,3 +385,6 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions
 - **Prompt injection hardening** — all LLM outputs in the hot path (HunterEngine hypothesis generation, VerifierAgent Layer 4 AI confirmation) are scanned by PromptInjectionDetector before parsing; untrusted model responses are flagged and logged before their content is trusted
 - **Semantic reasoning examples** — the AI loop receives the 7 most contextually relevant prompt examples per hypothesis cycle via embedding-based retrieval, not keyword matching
+- **Bounded context window** — ObservationCompressor and StrategyCoordinator `summariseObservations()` together ensure no model call ever receives an unbounded prompt regardless of hunt length; old observations are recoded as dense state vectors, deep arrays are truncated with count annotations, total observation payload is capped at 1,200 characters before injection into the strategy prompt
+- **Non-blocking orchestration** — every phase transition in the 6-layer hunt loop yields to the Node.js event loop so model inference time on one hunt does not add latency to sibling hunts or socket event processing running on the same process
+- **Governance fast-path** — repeated requests to the same target hostname within a hunt pay the full 8-pillar governance cost exactly once; subsequent calls within the 5-minute TTL window take a single O(1) cache lookup, keeping governance overhead off the probe hot path
