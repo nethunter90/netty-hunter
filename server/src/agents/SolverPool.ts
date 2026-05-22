@@ -15,6 +15,8 @@ import { ModelRouter } from "../intelligence/ModelRouter";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { db } from "../db";
 import { solverResults } from "../db/schema";
+import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
+import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
 
 const execAsync = promisify(exec);
 
@@ -49,6 +51,24 @@ export interface SolverResult {
   response: string;
   duration: number;
   toolsUsed: string[];
+}
+
+// ─── Per-domain behavioral mimicry sessions ──────────────────────────────────
+// Each domain gets a stable session (consistent UA + referrer chain) for
+// the lifetime of the process, so successive probes look like the same user.
+const mimicry = new BehavioralMimicry();
+const domainSessions = new Map<string, MimicrySession>();
+
+function getMimicryHeaders(url: string, overrides?: Record<string, string>): Record<string, string> {
+  let hostname: string;
+  try { hostname = new URL(url).hostname; } catch { hostname = url; }
+  if (!domainSessions.has(hostname)) {
+    domainSessions.set(hostname, mimicry.buildSession(hostname));
+  }
+  const session = domainSessions.get(hostname)!;
+  // Use the second-to-last referrer in the chain (domain homepage → target feels natural)
+  const referrer = session.referrerChain[session.referrerChain.length - 2];
+  return { ...mimicry.buildHeaders(session, referrer), ...(overrides || {}) };
 }
 
 // ─── Per-domain rate limiter ──────────────────────────────────────────────────
@@ -91,10 +111,7 @@ abstract class BaseSolver {
         method,
         url,
         params,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-          ...headers,
-        },
+        headers: getMimicryHeaders(url, headers),
         data: body,
         timeout: 10000,
         validateStatus: () => true,

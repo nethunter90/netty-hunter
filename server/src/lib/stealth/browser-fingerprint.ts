@@ -255,6 +255,129 @@ export function getFingerprintInitScript(): string {
     }
   } catch (_) {}
 
+  // ── 11. Canvas fingerprinting noise ──────────────────────────────────────
+  // Override toDataURL to add ±1 imperceptible pixel noise on small canvases
+  // (fingerprint canvases are typically ≤400×150). Saves/restores original
+  // pixel data so the visible canvas is unchanged.
+  try {
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+      if (this.width > 0 && this.height > 0 && this.width <= 400 && this.height <= 200) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+          const saved = ctx.getImageData(0, 0, this.width, this.height);
+          const noisy = ctx.createImageData(saved);
+          noisy.data.set(saved.data);
+          for (let i = 0; i < noisy.data.length; i += 4) {
+            if (Math.random() < 0.05) noisy.data[i] = Math.min(255, noisy.data[i] + 1);
+          }
+          ctx.putImageData(noisy, 0, 0);
+          const result = origToDataURL.call(this, type, quality);
+          ctx.putImageData(saved, 0, 0);
+          return result;
+        }
+      }
+      return origToDataURL.call(this, type, quality);
+    };
+  } catch (_) {}
+
+  // ── 12. AudioContext fingerprinting ──────────────────────────────────────
+  // Patch OfflineAudioContext.startRendering() to inject sub-noise into the
+  // rendered audio buffer, breaking timing-based headless detection.
+  try {
+    const OrigOfflineAC = window.OfflineAudioContext;
+    if (OrigOfflineAC) {
+      const PatchedOfflineAC = function(...args) {
+        const ctx = new OrigOfflineAC(...args);
+        const origStart = ctx.startRendering.bind(ctx);
+        ctx.startRendering = async function() {
+          const buffer = await origStart();
+          for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+            const data = buffer.getChannelData(ch);
+            for (let i = 0; i < data.length; i++) {
+              data[i] += (Math.random() - 0.5) * 1e-7;
+            }
+          }
+          return buffer;
+        };
+        return ctx;
+      };
+      PatchedOfflineAC.prototype = OrigOfflineAC.prototype;
+      Object.setPrototypeOf(PatchedOfflineAC, OrigOfflineAC);
+      window.OfflineAudioContext = PatchedOfflineAC;
+    }
+  } catch (_) {}
+
+  // ── 13. WebRTC local IP leak prevention ──────────────────────────────────
+  // Intercept RTCPeerConnection to suppress host candidates that would
+  // reveal the real local IP address through STUN/TURN ICE gathering.
+  try {
+    const OrigRTC = window.RTCPeerConnection;
+    if (OrigRTC) {
+      const localIpPattern = /(\s)(192\.168|10\.\d+|172\.(1[6-9]|2\d|3[01])|169\.254)\.\d+\.\d+(\s|$)/;
+      const PatchedRTC = function(config, constraints) {
+        const pc = new OrigRTC(config, constraints);
+        const origSetLocalDesc = pc.setLocalDescription.bind(pc);
+        pc.setLocalDescription = function(desc) {
+          if (desc && desc.sdp) {
+            desc = { ...desc, sdp: desc.sdp.replace(localIpPattern, ' 0.0.0.0 ') };
+          }
+          return origSetLocalDesc(desc);
+        };
+        return pc;
+      };
+      PatchedRTC.prototype = OrigRTC.prototype;
+      Object.setPrototypeOf(PatchedRTC, OrigRTC);
+      window.RTCPeerConnection = PatchedRTC;
+    }
+  } catch (_) {}
+
+  // ── 14. Battery API ───────────────────────────────────────────────────────
+  // Headless returns undefined or unrealistic values; spoof a normal laptop.
+  try {
+    if (navigator.getBattery) {
+      Object.defineProperty(navigator, 'getBattery', {
+        value: () => Promise.resolve({
+          charging: true,
+          chargingTime: 0,
+          dischargingTime: Infinity,
+          level: 1.0,
+          onchargingchange: null,
+          onchargingtimechange: null,
+          ondischargingtimechange: null,
+          onlevelchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+        configurable: true,
+        writable: true,
+      });
+    }
+  } catch (_) {}
+
+  // ── 15. Network Information API ───────────────────────────────────────────
+  // navigator.connection is undefined in headless; add a realistic value.
+  try {
+    if (!navigator.connection) {
+      Object.defineProperty(navigator, 'connection', {
+        get: () => ({
+          downlink: 10,
+          downlinkMax: Infinity,
+          effectiveType: '4g',
+          onchange: null,
+          rtt: 50,
+          saveData: false,
+          type: 'wifi',
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }),
+        configurable: true,
+      });
+    }
+  } catch (_) {}
+
 })();
 `;
 }

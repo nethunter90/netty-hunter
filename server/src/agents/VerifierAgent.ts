@@ -118,11 +118,17 @@ class Layer3BrowserReplay {
       this.context = await this.browser.newContext({
         viewport: { width: 1280, height: 800 },
         userAgent: getRandomUserAgent(),
-        // Locale + timezone match a realistic US user
         locale: 'en-US',
         timezoneId: 'America/New_York',
-        // Suppress permissions prompts the same way a real browser would
+        // Geolocation matches New York timezone to keep signals consistent
+        geolocation: { latitude: 40.7128, longitude: -74.0060 },
+        colorScheme: 'light',
+        reducedMotion: 'no-preference',
         permissions: [],
+        extraHTTPHeaders: {
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Sec-Ch-Ua-Mobile': '?0',
+        },
       });
       // Inject fingerprint hardening before any page script runs
       await this.context.addInitScript(getFingerprintInitScript());
@@ -169,6 +175,27 @@ class Layer3BrowserReplay {
 
       const url = result.request || `${result.endpoint}?q=${encodeURIComponent(result.payload)}`;
       await page.goto(url, { timeout: 15000, waitUntil: "domcontentloaded" });
+
+      // Bail out early if we landed on a CAPTCHA page — returning a false
+      // negative is better than hanging or producing a misleading result.
+      const bodyText = ((await page.textContent('body').catch(() => '')) ?? '').toLowerCase();
+      const captchaInText = bodyText.includes('captcha') ||
+        bodyText.includes('verify you are human') ||
+        bodyText.includes('are you a robot');
+      const captchaSelectors = [
+        '[data-sitekey]', 'iframe[src*="recaptcha"]',
+        'iframe[src*="hcaptcha"]', '.cf-challenge-running', '#challenge-running',
+      ];
+      const captchaElFound = (await Promise.all(
+        captchaSelectors.map(sel => page.$(sel).then(el => el !== null).catch(() => false))
+      )).some(Boolean);
+      const hasCaptcha = captchaInText || captchaElFound;
+
+      if (hasCaptcha) {
+        logger.warn('[VerifierAgent] CAPTCHA detected in Layer3 replay — skipping', { url });
+        return { confirmed: false, consoleAlerts: ['CAPTCHA_DETECTED'], networkRequests: [] };
+      }
+
       await page.waitForTimeout(2000);
 
       // Take screenshot
