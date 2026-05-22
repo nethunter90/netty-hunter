@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import type { SolverResult } from "./SolverPool";
+import { getBrowserLaunchArgs, getFingerprintInitScript, getRandomUserAgent } from "../lib/stealth/browser-fingerprint";
 
 export interface VerificationResult {
   findingId: string;
@@ -74,7 +75,7 @@ class Layer2Reprobe {
       const resp = await axios.get(result.request, {
         timeout: 10000,
         validateStatus: () => true,
-        headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" },
+        headers: { "User-Agent": getRandomUserAgent() },
       });
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
@@ -112,12 +113,20 @@ class Layer3BrowserReplay {
     try {
       this.browser = await chromium.launch({
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        args: getBrowserLaunchArgs(),
       });
       this.context = await this.browser.newContext({
-        viewport: { width: 1280, height: 720 },
-        userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0",
+        viewport: { width: 1280, height: 800 },
+        userAgent: getRandomUserAgent(),
+        // Locale + timezone match a realistic US user
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+        // Suppress permissions prompts the same way a real browser would
+        permissions: [],
       });
+      // Inject fingerprint hardening before any page script runs
+      await this.context.addInitScript(getFingerprintInitScript());
+      logger.info('[VerifierAgent] Browser context initialized with fingerprint hardening');
     } catch (err) {
       logger.warn("Playwright browser launch failed – Layer 3 will be skipped", { err });
     }
