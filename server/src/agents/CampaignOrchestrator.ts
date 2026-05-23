@@ -36,6 +36,7 @@ import { HuntStrategyBuilder } from "../routes/huntStrategy";
 import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
 import { bountyIntelligenceService } from "../lib/bounty-intelligence";
 import { eventBus } from "../lib/orchestration/layer3-event-bus";
+import { dynamicRateLimiter } from "../lib/stealth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -476,6 +477,11 @@ export class CampaignOrchestrator extends EventEmitter {
           ((params.budget?.maxTime || 3600) + 60) * 1000);
         engine.once("hunt:complete", () => { clearTimeout(timeout); resolve(); });
         engine.once("hunt:error", (d) => { clearTimeout(timeout); reject(new Error(String(d.error))); });
+        engine.once("hunt:hard_banned", (d) => {
+          clearTimeout(timeout);
+          logger.warn("Hunt terminated early: hard IP ban detected", d);
+          resolve(); // graceful — proceed to verification with whatever findings exist
+        });
       });
     } catch (err) {
       // Non-fatal: partial findings are still processed
@@ -483,7 +489,8 @@ export class CampaignOrchestrator extends EventEmitter {
     }
 
     // 4b. Supplement with SolverPool for high-ROI vuln classes if findings are sparse
-    if (rawFindings.length < 2) {
+    const targetHostname = (() => { try { return new URL(params.targetUrl).hostname; } catch { return ''; } })();
+    if (rawFindings.length < 2 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
       this.audit(4, "solver_supplement_start", { reason: "sparse findings" });
       try {
         const pool = new SolverPool(4);

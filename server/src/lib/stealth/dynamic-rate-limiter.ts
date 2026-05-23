@@ -23,9 +23,15 @@ interface RateBucket {
     active: boolean;
     until: number;
     consecutive429s: number;
+    consecutive403s: number;
     lastBackoffMs: number;
   };
   quarantine: {
+    active: boolean;
+    until: number;
+    count: number;
+  };
+  hardBan: {
     active: boolean;
     until: number;
     count: number;
@@ -92,8 +98,9 @@ class DynamicRateLimiter {
         resetTime: null,
         windowDurationMs: ENV.windowMs(),
         lastActivity: Date.now(),
-        backoff: { active: false, until: 0, consecutive429s: 0, lastBackoffMs: 0 },
+        backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
+        hardBan: { active: false, until: 0, count: 0 },
       };
       this.buckets.set(key, bucket);
     }
@@ -112,8 +119,9 @@ class DynamicRateLimiter {
         resetTime: null,
         windowDurationMs: ENV.windowMs(),
         lastActivity: Date.now(),
-        backoff: { active: false, until: 0, consecutive429s: 0, lastBackoffMs: 0 },
+        backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
+        hardBan: { active: false, until: 0, count: 0 },
       };
       this.targetBuckets.set(target, bucket);
     }
@@ -524,6 +532,23 @@ class DynamicRateLimiter {
           until: new Date(bucket.quarantine.until).toISOString()
         });
       }
+    } else if (statusCode === 403) {
+      bucket.backoff.consecutive403s++;
+      targetBucket.backoff.consecutive403s++;
+
+      if (targetBucket.backoff.consecutive403s >= 5) {
+        const banMs = 3_600_000; // 1 hour — hard bans don't reset in minutes
+        targetBucket.hardBan.active = true;
+        targetBucket.hardBan.until = now + banMs;
+        targetBucket.hardBan.count++;
+
+        stealthLogger.log('alert', {
+          type: 'hard_ip_ban_detected',
+          target,
+          consecutive403s: targetBucket.backoff.consecutive403s,
+          until: new Date(targetBucket.hardBan.until).toISOString(),
+        });
+      }
     } else if (statusCode >= 200 && statusCode < 400) {
       if (bucket.backoff.consecutive429s > 0) {
         bucket.backoff.consecutive429s = 0;
@@ -531,6 +556,8 @@ class DynamicRateLimiter {
         bucket.backoff.until = 0;
         bucket.backoff.lastBackoffMs = 0;
       }
+      if (bucket.backoff.consecutive403s > 0) bucket.backoff.consecutive403s = 0;
+      if (targetBucket.backoff.consecutive403s > 0) targetBucket.backoff.consecutive403s = 0;
     }
   }
 
@@ -565,6 +592,11 @@ class DynamicRateLimiter {
     }
 
     return null;
+  }
+
+  isHardBanned(target: string): boolean {
+    const b = this.targetBuckets.get(target);
+    return !!b && b.hardBan.active && b.hardBan.until > Date.now();
   }
 
   // ─── Utility ───

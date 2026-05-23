@@ -118,19 +118,35 @@ class ReinforcementStoreAdapter {
     return profiles.find(p => p.tool === tool) ?? null;
   }
 
-  async getToolRecommendation(context: Record<string, unknown>): Promise<string[]> {
+  async getToolRecommendation(context: Record<string, unknown>, epsilon = 0.15): Promise<string[]> {
     const profiles = await this.getAllToolProfiles();
     const vulnClass = context.vulnClass as string | undefined;
 
+    let results: string[];
     if (vulnClass) {
-      return profiles
+      results = profiles
         .filter(p => p.byVulnClass[vulnClass]?.successRate > 0.3)
         .sort((a, b) => (b.byVulnClass[vulnClass]?.successRate ?? 0) - (a.byVulnClass[vulnClass]?.successRate ?? 0))
         .slice(0, 5)
         .map(p => p.tool);
+    } else {
+      results = profiles.slice(0, 5).map(p => p.tool);
     }
 
-    return profiles.slice(0, 5).map(p => p.tool);
+    // Epsilon-greedy: occasionally swap the last slot for an underexplored tool
+    // so novel techniques get tried before RL history labels them as "unlikely".
+    if (Math.random() < epsilon) {
+      const underexplored = profiles.filter(p => {
+        const attempts = vulnClass ? (p.byVulnClass[vulnClass]?.attempts ?? 0) : 0;
+        return attempts < 10 && !results.includes(p.tool);
+      });
+      if (underexplored.length > 0) {
+        const pick = underexplored[Math.floor(Math.random() * underexplored.length)];
+        results = [...results.slice(0, 4), pick.tool];
+      }
+    }
+
+    return results;
   }
 
   async getAllFrameworkVulnProfiles(): Promise<FrameworkVulnProfile[]> {

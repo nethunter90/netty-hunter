@@ -77,9 +77,11 @@ export class ROIModel {
       .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, vulnClass)))
       .limit(1);
 
-    const rlRate = stored && (stored.totalCount ?? 0) > 0
+    // Use an optimistic prior (0.25) when data is sparse (< 5 attempts) so unproven
+    // technique classes aren't immediately gated out by the confidence threshold.
+    const rlRate = stored && (stored.totalCount ?? 0) >= 5
       ? (stored.successCount || 0) / (stored.totalCount ?? 1)
-      : 0.15; // default 15% success rate
+      : 0.25;
 
     // Blend: 70% RL store rate, 30% program-specific historical rate (when available)
     const successRate = programSuccessRate && programSuccessRate > 0

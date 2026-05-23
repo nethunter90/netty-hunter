@@ -21,7 +21,7 @@ import { promptKB } from "../intelligence/PromptKnowledgeBase";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
-import { stealthCoordinator } from "../lib/stealth";
+import { stealthCoordinator, dynamicRateLimiter } from "../lib/stealth";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { huntCortex } from "../lib/intelligence/hunt-cortex";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
@@ -246,6 +246,9 @@ export class HunterEngine extends EventEmitter {
   private dbSessionId = 0;
   private campaignId = 0;
   private targetId = 0;
+  private hardBanned = false;
+  private consecutiveFailures = 0;
+  private banCheckDone = false;
 
   async startHunt(params: {
     targetUrl: string;
@@ -342,7 +345,8 @@ export class HunterEngine extends EventEmitter {
     while (
       this.state.iteration < this.state.maxIterations &&
       this.state.budget.requestsMade < this.state.budget.maxRequests &&
-      (Date.now() - startTime) / 1000 < this.state.budget.maxTime
+      (Date.now() - startTime) / 1000 < this.state.budget.maxTime &&
+      !this.hardBanned
     ) {
       this.state.iteration++;
       this.state.budget.elapsed = (Date.now() - startTime) / 1000;
@@ -626,6 +630,30 @@ Return ONLY valid JSON array of hypothesis objects.`;
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
       this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result });
+
+      // Track consecutive failures; after 5+, do a canary HTTP check to confirm hard ban
+      if (result.success || probeResult.hardBanned) {
+        this.consecutiveFailures = 0;
+      } else {
+        this.consecutiveFailures++;
+      }
+
+      if (this.consecutiveFailures >= 5 && !this.banCheckDone) {
+        this.banCheckDone = true;
+        try {
+          const resp = await axios.head(hypothesis.targetUrl, { timeout: 3000, validateStatus: () => true });
+          if (resp.status === 403) {
+            const hostname = new URL(hypothesis.targetUrl).hostname;
+            dynamicRateLimiter.recordResponse(hostname, '/', 403, resp.headers as Record<string, string>);
+            this.hardBanned = true;
+            this.emit('hunt:hard_banned', { target: hostname, reason: 'IP hard-banned (403 confirmed after consecutive failures)' });
+            logger.warn('[HunterEngine] Hard IP ban detected — terminating hunt early', { target: hostname });
+            break;
+          }
+        } catch { /* non-critical */ }
+      }
+
+      if (this.hardBanned) break;
     }
   }
 
@@ -700,6 +728,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const lastUsed = this.toolLastUsed.get(toolName) || 0;
     const waitTime = (tool.rateLimit * 1000) - (Date.now() - lastUsed);
     if (waitTime > 0) await new Promise(r => setTimeout(r, Math.min(waitTime, 5000)));
+
+    // Skip if target is known hard-banned — avoid wasting tool budget on blocked requests
+    try {
+      const hostname = new URL(url).hostname;
+      if (dynamicRateLimiter.isHardBanned(hostname)) {
+        return { hardBanned: true, duration: 0, command: '' };
+      }
+    } catch { /* non-critical — URL may not be parseable */ }
 
     // Decay-aware timing: honour stealth coordinator recommendation before probing
     try {

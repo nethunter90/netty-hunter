@@ -17,6 +17,7 @@ import { db } from "../db";
 import { solverResults } from "../db/schema";
 import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
 import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
+import { dynamicRateLimiter } from "../lib/stealth";
 
 const execAsync = promisify(exec);
 
@@ -106,6 +107,14 @@ abstract class BaseSolver {
     headers?: Record<string, string>,
     body?: string
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    let hostname = '';
+    try { hostname = new URL(url).hostname; } catch { /* malformed URL */ }
+
+    // Short-circuit if target is hard-banned — saves the full 10s timeout per probe
+    if (hostname && dynamicRateLimiter.isHardBanned(hostname)) {
+      return { status: 403, headers: {}, body: 'IP hard-banned — skipping probe' };
+    }
+
     try {
       const resp = await getDomainQueue(url).add(() => axios({
         method,
@@ -117,11 +126,18 @@ abstract class BaseSolver {
         validateStatus: () => true,
         maxRedirects: 3,
       }));
-      return {
+      const result = {
         status: resp!.status,
         headers: resp!.headers as Record<string, string>,
         body: typeof resp!.data === "string" ? resp!.data.slice(0, 5000) : JSON.stringify(resp!.data).slice(0, 5000),
       };
+      // Feed status code into ban detector so hard IP bans (5× consecutive 403s) are flagged
+      if (hostname) {
+        try {
+          dynamicRateLimiter.recordResponse(hostname, new URL(url).pathname, result.status, result.headers);
+        } catch { /* non-critical */ }
+      }
+      return result;
     } catch (err: unknown) {
       const error = err as { message: string };
       return { status: 0, headers: {}, body: error.message };
