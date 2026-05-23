@@ -640,17 +640,28 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
       if (this.consecutiveFailures >= 5 && !this.banCheckDone) {
         this.banCheckDone = true;
+        let canaryHostname = '';
         try {
+          canaryHostname = new URL(hypothesis.targetUrl).hostname;
           const resp = await axios.head(hypothesis.targetUrl, { timeout: 3000, validateStatus: () => true });
           if (resp.status === 403) {
-            const hostname = new URL(hypothesis.targetUrl).hostname;
-            dynamicRateLimiter.recordResponse(hostname, '/', 403, resp.headers as Record<string, string>);
+            dynamicRateLimiter.recordResponse(canaryHostname, '/', 403, resp.headers as Record<string, string>);
             this.hardBanned = true;
-            this.emit('hunt:hard_banned', { target: hostname, reason: 'IP hard-banned (403 confirmed after consecutive failures)' });
-            logger.warn('[HunterEngine] Hard IP ban detected — terminating hunt early', { target: hostname });
+            this.emit('hunt:hard_banned', { target: canaryHostname, reason: 'IP hard-banned (403 confirmed after consecutive failures)' });
+            logger.warn('[HunterEngine] Hard IP ban detected — terminating hunt early', { target: canaryHostname });
             break;
           }
-        } catch { /* non-critical */ }
+        } catch (err: unknown) {
+          // Network-level drops (ETIMEDOUT, ECONNRESET) indicate a broad IP block —
+          // the target dropped our connection entirely rather than returning 403.
+          const code = (err as { code?: string })?.code ?? '';
+          if (code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ENOTFOUND') {
+            this.hardBanned = true;
+            this.emit('hunt:hard_banned', { target: canaryHostname || hypothesis.targetUrl, reason: `IP hard-banned (network drop: ${code})` });
+            logger.warn('[HunterEngine] Network-level block detected — terminating hunt early', { code, target: canaryHostname });
+            break;
+          }
+        }
       }
 
       if (this.hardBanned) break;
