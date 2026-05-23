@@ -194,7 +194,7 @@ io.on("connection", (socket) => {
       "l4:hunt_started", "l4:phase", "l4:observations", "l4:hypotheses",
       "l4:probing", "l4:probe_result", "l4:finding_raw", "l4:strategy_update",
       "l4:solver_finding", "l4:error",
-      "l5:verifying", "l5:verified", "l5:rejected",
+      "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate",
       "l6:report_generated", "l6:autonomy_updated",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));

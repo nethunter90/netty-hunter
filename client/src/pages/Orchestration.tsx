@@ -217,6 +217,18 @@ export default function Orchestration() {
       pushEvent({ type: "rejected", ts: now(), findingId: d.findingId, verdict: d.verdict });
     });
 
+    socket.on("l5:public_duplicate", (d: any) => {
+      pushEvent({
+        type: "public_duplicate",
+        ts: now(),
+        vulnClass: d.vulnClass ?? "unknown",
+        platform: d.platform ?? "unknown",
+        reportUrl: d.reportUrl,
+        title: d.title,
+        warn: !!d.warn,
+      });
+    });
+
     // ── L6 Harvest ────────────────────────────────────────────────────────
 
     socket.on("l6:report_generated", (d: { findingId: number }) => {
@@ -234,7 +246,7 @@ export default function Orchestration() {
         "orchestration:complete", "orchestration:aborted", "orchestration:error",
         "l4:phase", "l4:hypotheses", "l4:probing", "l4:probe_result",
         "l4:finding_raw", "l4:solver_finding", "l4:error",
-        "l5:verified", "l5:rejected",
+        "l5:verified", "l5:rejected", "l5:public_duplicate",
         "l6:report_generated", "l6:autonomy_updated",
       ].forEach(evt => socket.off(evt));
     };

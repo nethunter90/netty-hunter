@@ -37,6 +37,7 @@ import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
 import { bountyIntelligenceService } from "../lib/bounty-intelligence";
 import { eventBus } from "../lib/orchestration/layer3-event-bus";
 import { dynamicRateLimiter } from "../lib/stealth";
+import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ export class CampaignOrchestrator extends EventEmitter {
 
       // ── Layer 5: Verification Gate ───────────────────────────────────────
       const verifResult = await this.runLayer(5, () =>
-        this.layer5_verificationGate(execResult.data)
+        this.layer5_verificationGate(params, execResult.data)
       );
 
       // ── Layer 6: Intelligence Harvest ────────────────────────────────────
@@ -529,10 +530,15 @@ export class CampaignOrchestrator extends EventEmitter {
 
   // ── Layer 5: Verification Gate ─────────────────────────────────────────────
   private async layer5_verificationGate(
+    params: OrchestrateParams,
     execData: Record<string, unknown>
   ): Promise<{ passed: boolean; data: Record<string, unknown> }> {
     const rawFindings = (execData.rawFindings as unknown[]) || [];
     this.audit(5, "verification_gate_start", { rawCount: rawFindings.length });
+
+    // Fetch program platform/handle for public duplicate checks
+    const [prog] = await db.select({ platform: programs.platform, programHandle: programs.programHandle })
+      .from(programs).where(eq(programs.id, params.programId)).limit(1);
 
     const verified: unknown[] = [];
     const rejected: unknown[] = [];
@@ -585,6 +591,41 @@ export class CampaignOrchestrator extends EventEmitter {
         const verification = await this.verifierAgent.verify(mockResult);
 
         if (verification.finalVerdict === "confirmed") {
+          // Public disclosure check — does another hunter already own this vuln?
+          const disclosureResult = await publicDisclosureDetector.check(
+            { vulnClass: dbFinding.vulnType, targetUrl: params.targetUrl },
+            prog
+          );
+
+          await db.update(findings).set({
+            disclosureCheckStatus: disclosureResult.status,
+            publicDisclosureUrl: disclosureResult.matchedReport?.url ?? null,
+            publicDisclosureNote: disclosureResult.reason ?? null,
+          }).where(eq(findings.id, dbFinding.id));
+
+          if (disclosureResult.status === "confirmed_duplicate") {
+            this.emit("l5:public_duplicate", {
+              findingId: dbFinding.id,
+              vulnClass: dbFinding.vulnType,
+              platform: prog?.platform,
+              reportUrl: disclosureResult.matchedReport?.url,
+              title: disclosureResult.matchedReport?.title,
+            });
+            rejected.push({ finding: dbFinding, verification, reason: "public_duplicate" });
+            continue;
+          }
+
+          if (disclosureResult.status === "likely_duplicate") {
+            this.emit("l5:public_duplicate", {
+              findingId: dbFinding.id,
+              vulnClass: dbFinding.vulnType,
+              platform: prog?.platform,
+              reportUrl: disclosureResult.matchedReport?.url,
+              title: disclosureResult.matchedReport?.title,
+              warn: true,
+            });
+          }
+
           verified.push({ finding: dbFinding, verification });
           this.state.verifiedCount++;
 

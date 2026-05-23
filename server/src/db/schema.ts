@@ -111,6 +111,9 @@ export const findings = pgTable("findings", {
   reportDraft: text("report_draft"),
   submittedAt: timestamp("submitted_at"),
   status: varchar("status", { length: 32 }).notNull().default("new"),
+  disclosureCheckStatus: varchar("disclosure_check_status", { length: 32 }).notNull().default("pending"),
+  publicDisclosureUrl: text("public_disclosure_url"),
+  publicDisclosureNote: text("public_disclosure_note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

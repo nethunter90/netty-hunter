@@ -19,8 +19,9 @@ export type ActivityEvent =
   | { type: "rejected";       ts: string; findingId: number; verdict: string }
   | { type: "pivot";          ts: string; reason: string; newHypotheses: number }
   | { type: "ban";            ts: string; target: string; reason: string }
-  | { type: "complete";       ts: string; findings: number; iterations: number }
-  | { type: "error";          ts: string; message: string };
+  | { type: "complete";        ts: string; findings: number; iterations: number }
+  | { type: "error";           ts: string; message: string }
+  | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -267,6 +268,29 @@ function CompleteRow({ ev }: { ev: ActivityEvent & { type: "complete" } }) {
   );
 }
 
+function PublicDuplicateRow({ ev }: { ev: ActivityEvent & { type: "public_duplicate" } }) {
+  const isWarn = ev.warn;
+  return (
+    <div className={`border rounded p-2 my-1 ${isWarn ? "border-hack-yellow/40 bg-hack-yellow/5" : "border-hack-orange/50 bg-hack-orange/8"}`}>
+      <div className="flex items-center gap-2 text-[10px] font-mono">
+        <AlertTriangle className={`w-3.5 h-3.5 flex-shrink-0 ${isWarn ? "text-hack-yellow" : "text-hack-orange"}`} />
+        <span className={isWarn ? "text-hack-yellow" : "text-hack-orange"}>
+          {isWarn ? "Likely duplicate" : "Public duplicate — skipped"}
+        </span>
+        <span className="text-[9px] px-1 py-0.5 rounded border border-hack-dim/30 text-hack-dim font-mono">{ev.platform}</span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="text-[10px] text-hack-dim mt-0.5 ml-5 flex items-center gap-1.5">
+        <span className="text-hack-text uppercase font-mono">{ev.vulnClass}</span>
+        {ev.title && <span className="truncate">— {ev.title}</span>}
+      </div>
+      {ev.reportUrl && (
+        <div className="text-[9px] text-hack-cyan mt-0.5 ml-5 truncate font-mono">{ev.reportUrl}</div>
+      )}
+    </div>
+  );
+}
+
 function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
   return (
     <div className="flex items-center gap-2 py-0.5 text-[10px] font-mono text-hack-red">
@@ -385,6 +409,8 @@ export function LiveActivityFeed({
               return <BanRow key={key} ev={ev} />;
             case "complete":
               return <CompleteRow key={key} ev={ev} />;
+            case "public_duplicate":
+              return <PublicDuplicateRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

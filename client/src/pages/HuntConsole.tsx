@@ -163,11 +163,24 @@ export default function HuntConsole() {
       setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
     });
 
+    socket.on("l5:public_duplicate", (data: any) => {
+      push({
+        type: "public_duplicate",
+        ts: ts(),
+        vulnClass: String(data.vulnClass ?? "unknown"),
+        platform: String(data.platform ?? "unknown"),
+        reportUrl: data.reportUrl,
+        title: data.title,
+        warn: !!data.warn,
+      });
+    });
+
     return () => {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
         "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
         "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
+        "l5:public_duplicate",
       ].forEach(e => socket.off(e));
     };
   }, []);
