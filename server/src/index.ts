@@ -21,6 +21,7 @@ import reasoningRoutes from "./routes/reasoning";
 import graphRoutes from "./routes/graph";
 import intelligenceRoutes from "./routes/intelligence";
 import juiceshopRoutes from "./routes/juiceshop";
+import xbowRoutes from "./routes/xbow";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -129,6 +130,7 @@ app.use("/api/reasoning", requireAuth, reasoningRoutes);
 app.use("/api/graph", requireAuth, graphRoutes);
 app.use("/api/intelligence", requireAuth, intelligenceRoutes);
 app.use("/api/juiceshop", requireAuth, juiceshopRoutes);
+app.use("/api/xbow", requireAuth, xbowRoutes);
 
 // Health check
 app.get("/health", (_req, res) => res.json({
