@@ -38,6 +38,13 @@ import { bountyIntelligenceService } from "../lib/bounty-intelligence";
 import { eventBus } from "../lib/orchestration/layer3-event-bus";
 import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
+import { nvdClient } from "../lib/intelligence/nvd-client";
+
+const VULN_TYPE_TO_CWE: Record<string, number> = {
+  xss: 79, sqli: 89, ssrf: 918, lfi: 22, rce: 78, idor: 639,
+  auth_bypass: 287, csrf: 352, xxe: 611, cors: 942,
+  open_redirect: 601, info_disclosure: 200, misconfig: 16,
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -629,12 +636,27 @@ export class CampaignOrchestrator extends EventEmitter {
           verified.push({ finding: dbFinding, verification });
           this.state.verifiedCount++;
 
+          // CWE/CVE enrichment — tag confirmed findings with standard identifiers
+          const cweId = VULN_TYPE_TO_CWE[dbFinding.vulnType] ?? null;
+          let cveId: string | null = null;
+          if (cweId !== null) {
+            try {
+              const cveMatches = await nvdClient.lookupByCWE(`CWE-${cweId}`);
+              const best = cveMatches
+                .filter(c => c.cvssScore >= 6.0)
+                .sort((a, b) => b.cvssScore - a.cvssScore)[0];
+              if (best) cveId = best.id;
+            } catch { /* non-critical */ }
+          }
+
           // Update finding record
           await db.update(findings).set({
             verificationStatus: verification.finalVerdict,
             verificationLog: [verification] as unknown as Record<string, unknown>[],
             confidence: verification.finalConfidence,
             dedupHash: verification.dedupHash,
+            ...(cweId !== null ? { cweId } : {}),
+            ...(cveId !== null ? { cveId } : {}),
             updatedAt: new Date(),
           }).where(eq(findings.id, dbFinding.id));
 

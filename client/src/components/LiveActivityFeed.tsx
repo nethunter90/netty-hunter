@@ -21,7 +21,8 @@ export type ActivityEvent =
   | { type: "ban";            ts: string; target: string; reason: string }
   | { type: "complete";        ts: string; findings: number; iterations: number }
   | { type: "error";           ts: string; message: string }
-  | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean };
+  | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean }
+  | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -268,6 +269,39 @@ function CompleteRow({ ev }: { ev: ActivityEvent & { type: "complete" } }) {
   );
 }
 
+function CveSeededRow({ ev }: { ev: ActivityEvent & { type: "cve_seeded" } }) {
+  const isCritical = ev.maxCvss >= 9.0;
+  const isHigh = ev.maxCvss >= 7.0;
+  const scoreColor = isCritical ? "text-hack-red" : isHigh ? "text-hack-orange" : "text-hack-yellow";
+  const chipClass = isCritical
+    ? "border-hack-red/40 text-hack-red bg-hack-red/10"
+    : isHigh
+    ? "border-hack-orange/40 text-hack-orange bg-hack-orange/10"
+    : "border-hack-yellow/40 text-hack-yellow bg-hack-yellow/10";
+  return (
+    <div className="border border-hack-cyan/30 bg-hack-cyan/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Shield className="w-3.5 h-3.5 text-hack-cyan flex-shrink-0" />
+        <span className="text-hack-cyan font-bold">CVE seeded</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-cyan/30 text-hack-cyan bg-hack-cyan/10 font-mono">
+          {ev.tech}
+        </span>
+        <span className={`text-[9px] font-bold ml-auto font-mono ${scoreColor}`}>
+          CVSS {ev.maxCvss.toFixed(1)}
+        </span>
+        <span className="text-hack-dim">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.cveIds.slice(0, 5).map(cve => (
+          <span key={cve} className={`text-[9px] px-1 py-0.5 rounded border font-mono ${chipClass}`}>
+            {cve}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PublicDuplicateRow({ ev }: { ev: ActivityEvent & { type: "public_duplicate" } }) {
   const isWarn = ev.warn;
   return (
@@ -409,6 +443,8 @@ export function LiveActivityFeed({
               return <BanRow key={key} ev={ev} />;
             case "complete":
               return <CompleteRow key={key} ev={ev} />;
+            case "cve_seeded":
+              return <CveSeededRow key={key} ev={ev} />;
             case "public_duplicate":
               return <PublicDuplicateRow key={key} ev={ev} />;
             case "error":

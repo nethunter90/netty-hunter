@@ -27,8 +27,34 @@ import { huntCortex } from "../lib/intelligence/hunt-cortex";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { backwardPlanner } from "../lib/intelligence/backward-planner";
 import { observationCompressor } from "../lib/intelligence/observation-compressor";
+import { nvdClient } from "../lib/intelligence/nvd-client";
 
 const execFileAsync = promisify(execFile);
+
+// ─── CVE seeding helpers ──────────────────────────────────────────────────────
+
+const CVE_SEED_ALLOWLIST = new Set([
+  "apache", "nginx", "iis", "lighttpd", "litespeed", "tomcat",
+  "wordpress", "drupal", "joomla", "magento",
+  "php", "node", "ruby", "python", "java",
+  "openssl", "mod_ssl", "openssh",
+  "mysql", "postgres", "mongodb", "redis",
+  "jenkins", "gitlab", "grafana", "kibana",
+  "spring", "struts", "rails",
+  "weblogic", "websphere", "jboss",
+]);
+
+const CVE_SEED_BLOCKLIST = new Set([
+  "jquery", "bootstrap", "angular", "react", "vue", "lodash", "underscore",
+  "google analytics", "gtag", "cloudflare", "fastly", "cloudfront", "akamai",
+  "font awesome", "moment",
+]);
+
+const CWE_TO_VULN_CLASS: Record<number, string> = {
+  79: "xss", 89: "sqli", 22: "lfi", 78: "rce", 918: "ssrf",
+  639: "idor", 287: "auth_bypass", 352: "csrf", 611: "xxe",
+  942: "cors", 601: "open_redirect", 200: "info_disclosure", 16: "misconfig",
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface Observation {
@@ -485,6 +511,74 @@ export class HunterEngine extends EventEmitter {
     while (this.state.observations.length > MAX_OBSERVATIONS) this.state.observations.shift();
 
     this.emit("hunt:observations", { count: obs.length, observations: obs });
+
+    // CVE-seeded hypothesis injection — first observe pass only
+    if (this.state.iteration === 1) {
+      await this.seedCVEHypotheses(techObs).catch(err =>
+        logger.warn("[HunterEngine] CVE seeding failed (non-critical)", { err: String(err) })
+      );
+    }
+  }
+
+  private extractVersionedTechs(techObs: Record<string, unknown>): Array<{ name: string; version?: string }> {
+    const raw = techObs.technologies;
+    if (!Array.isArray(raw)) return [];
+
+    const results: Array<{ name: string; version?: string }> = [];
+    for (const entry of raw) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      for (const [pluginName, pluginData] of Object.entries(entry as Record<string, unknown>)) {
+        if (pluginName === 'target_uri' || pluginName === 'http_status') continue;
+        const nameNorm = pluginName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (CVE_SEED_BLOCKLIST.has(nameNorm) || !CVE_SEED_ALLOWLIST.has(nameNorm)) continue;
+        const versionMatch = JSON.stringify(pluginData).match(/(\d+\.\d+[\d.]*)/);
+        results.push({ name: pluginName, version: versionMatch?.[1] });
+      }
+    }
+    return results.slice(0, 3);
+  }
+
+  private async seedCVEHypotheses(techObs: Record<string, unknown>): Promise<void> {
+    const techs = this.extractVersionedTechs(techObs);
+    if (!techs.length) return;
+
+    for (const { name, version } of techs) {
+      const cves = await nvdClient.lookupByKeyword(name, version);
+      const highCves = cves.filter(c => c.cvssScore >= 7.0);
+      if (!highCves.length) continue;
+
+      for (const cve of highCves.slice(0, 2)) {
+        const cweNum = parseInt((cve.cweIds[0] ?? '').replace('CWE-', ''), 10);
+        const vulnClass = CWE_TO_VULN_CLASS[cweNum] ?? 'misconfig';
+
+        const hypothesis: Hypothesis = {
+          id: uuidv4(),
+          vulnClass,
+          targetUrl: this.state.targetUrl,
+          reasoning: `CVE-seeded: ${cve.id} (CVSS ${cve.cvssScore}) in ${name}${version ? ` ${version}` : ''} — ${cve.description.slice(0, 200)}`,
+          confidence: 0.7,
+          priority: cve.cvssScore >= 9.0 ? 10 : 8,
+          evidence: [],
+          status: 'pending',
+          createdAt: Date.now(),
+        };
+
+        this.state.hypotheses.push(hypothesis);
+        logger.info('[HunterEngine] CVE hypothesis seeded', { cveId: cve.id, vulnClass, cvss: cve.cvssScore });
+      }
+
+      this.emit('hunt:cve_seeded', {
+        sessionId: this.state.sessionId,
+        tech: `${name}${version ? ` ${version}` : ''}`,
+        cveIds: highCves.slice(0, 5).map(c => c.id),
+        maxCvss: Math.max(...highCves.map(c => c.cvssScore)),
+      });
+    }
+
+    if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+      this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+      this.state.hypotheses.splice(MAX_HYPOTHESES);
+    }
   }
 
   // ── Phase 2: Hypothesize ────────────────────────────────────────────────────

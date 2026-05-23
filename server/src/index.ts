@@ -229,6 +229,7 @@ io.on("connection", (socket) => {
       activeSessions.delete(data.sessionId);
     });
     engine.on("hunt:error", (data) => socket.emit("hunt:error", data));
+    engine.on("hunt:cve_seeded", (data) => socket.emit("hunt:cve_seeded", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);

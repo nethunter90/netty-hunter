@@ -163,6 +163,16 @@ export default function HuntConsole() {
       setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
     });
 
+    socket.on("hunt:cve_seeded", (data: any) => {
+      push({
+        type: "cve_seeded",
+        ts: ts(),
+        tech: String(data.tech || ""),
+        cveIds: Array.isArray(data.cveIds) ? (data.cveIds as unknown[]).map(String) : [],
+        maxCvss: Number(data.maxCvss || 0),
+      });
+    });
+
     socket.on("l5:public_duplicate", (data: any) => {
       push({
         type: "public_duplicate",
@@ -180,7 +190,7 @@ export default function HuntConsole() {
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
         "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
         "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
-        "l5:public_duplicate",
+        "hunt:cve_seeded", "l5:public_duplicate",
       ].forEach(e => socket.off(e));
     };
   }, []);

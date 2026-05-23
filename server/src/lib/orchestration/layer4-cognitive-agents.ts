@@ -130,19 +130,34 @@ export class AnalystAgent {
 }
 
 export class ResearcherAgent {
-  async lookupCVE(cveId: string): Promise<{
+  async lookupCVE(query: string): Promise<{
     description: string;
     severity: string;
     exploits: string[];
     references: string[];
   }> {
-    const result = await aiBridge.invokeAgent(
-      'researcher',
-      `Research CVE: ${cveId}`,
-      { cveId }
-    );
-
-    return result.result as any;
+    try {
+      const { nvdClient } = await import('../intelligence/nvd-client');
+      const records = await nvdClient.lookupByKeyword(query);
+      if (!records.length) {
+        return { description: 'No CVEs found', severity: 'unknown', exploits: [], references: [] };
+      }
+      const top = records.sort((a, b) => b.cvssScore - a.cvssScore)[0];
+      const severity =
+        top.cvssScore >= 9.0 ? 'critical' :
+        top.cvssScore >= 7.0 ? 'high' :
+        top.cvssScore >= 4.0 ? 'medium' : 'low';
+      return {
+        description: `${top.id}: ${top.description}`,
+        severity,
+        exploits: top.exploitAvailable
+          ? top.references.filter(r => /exploit|poc/i.test(r))
+          : [],
+        references: top.references,
+      };
+    } catch {
+      return { description: 'CVE lookup failed', severity: 'unknown', exploits: [], references: [] };
+    }
   }
 
   async gatherOSINT(target: string): Promise<{
