@@ -1,0 +1,13 @@
+{
+  "id": "poc-1770491688068-h19f8vvup",
+  "vulnerabilityType": "xss",
+  "payload": "<script>alert(1)</script>",
+  "target": "https://example.com",
+  "success": true,
+  "output": "XSS payload reflected in response. Payload \"<script>alert(1)</script>\" was found unencoded in the page body.",
+  "evidence": [
+    "Response contained unfiltered payload",
+    "Status code: 200"
+  ],
+  "testedAt": "2026-02-07T19:14:48.068Z"
+}

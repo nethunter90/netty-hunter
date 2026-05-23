@@ -19,9 +19,8 @@ import path from "path";
 import { db } from "../db";
 import {
   programs, campaigns, targets, findings,
-  huntSessions, autonomyMetrics,
 } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import logger from "../utils/logger";
 
 import { ScopeGuard } from "../middleware/scopeGuard";
@@ -36,6 +35,10 @@ import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
 import { DraftReportGenerator } from "../intelligence/ReportGenerator";
 import { NucleiTemplateGenerator } from "../intelligence/NucleiGenerator";
 import { HuntStrategyBuilder } from "../routes/huntStrategy";
+import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
+import { bountyIntelligenceService } from "../lib/bounty-intelligence";
+import { eventBus } from "../lib/orchestration/layer3-event-bus";
+import { dynamicRateLimiter } from "../lib/stealth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +62,8 @@ export interface OrchestrateParams {
   budget?: { maxRequests: number; maxTime: number };
   /** Override: force specific vuln classes */
   focusVulnClasses?: string[];
+  /** Resume an interrupted campaign instead of creating a new one */
+  resumeCampaignId?: number;
 }
 
 export interface LayerStatus {
@@ -238,19 +243,43 @@ export class CampaignOrchestrator extends EventEmitter {
       return { passed: false, data: { reason: "Budget maxRequests out of bounds (10–50000)" } };
     }
 
-    // 1d. Create audited campaign record
-    const [campaign] = await db.insert(campaigns).values({
-      programId: params.programId,
-      name: `[ORC] ${params.targetUrl} – ${new Date().toISOString()}`,
-      goal: params.goal || `Autonomous vulnerability hunt on ${params.targetUrl}`,
-      status: "running",
-      huntMode: params.mode || "forward",
-      strategy: {},
-      budget,
-      startedAt: new Date(),
-    }).returning();
+    // 1d. Create or resume campaign record
+    let campaign: typeof campaigns.$inferSelect;
+    if (params.resumeCampaignId) {
+      const [existing] = await db.select().from(campaigns)
+        .where(eq(campaigns.id, params.resumeCampaignId)).limit(1);
+      if (!existing) {
+        this.audit(1, "governance_rejected", { reason: `Campaign ${params.resumeCampaignId} not found` });
+        return { passed: false, data: { reason: "Resume campaign not found" } };
+      }
+      // Reopen the campaign for continued execution
+      const [updated] = await db.update(campaigns)
+        .set({ status: "running", startedAt: existing.startedAt ?? new Date() })
+        .where(eq(campaigns.id, params.resumeCampaignId))
+        .returning();
+      campaign = updated;
+      this.audit(1, "campaign_resumed", { campaignId: campaign.id });
+    } else {
+      const [created] = await db.insert(campaigns).values({
+        programId: params.programId,
+        name: `[ORC] ${params.targetUrl} – ${new Date().toISOString()}`,
+        goal: params.goal || `Autonomous vulnerability hunt on ${params.targetUrl}`,
+        status: "running",
+        huntMode: params.mode || "forward",
+        strategy: {},
+        budget,
+        startedAt: new Date(),
+      }).returning();
+      campaign = created;
+    }
 
     this.state.campaignId = campaign.id;
+
+    // Reconcile findingsCount from DB — catches both fresh starts (0) and
+    // resumed campaigns where prior findings already exist in the table.
+    const [countRow] = await db.select({ n: sql<number>`count(*)` })
+      .from(findings).where(eq(findings.campaignId, campaign.id));
+    this.state.findingsCount = Number(countRow?.n ?? 0);
 
     // 1e. Register target
     const [target] = await db.insert(targets).values({
@@ -415,6 +444,20 @@ export class CampaignOrchestrator extends EventEmitter {
       rawFindings.push(d);
       this.state.findingsCount++;
       this.emit("l4:finding_raw", d);
+      // Publish to shared event bus so graph-wiring can create a vulnerability node
+      if (this.state.campaignId) {
+        const f = (d as any).finding;
+        eventBus.publish('vulnerability_found', 'orchestrator', String(this.state.campaignId), {
+          vulnerability: {
+            type: f?.vulnClass || f?.vulnType || 'unknown',
+            severity: f?.severity || 'medium',
+            confidence: f?.confidence || 0.5,
+            endpoint: f?.endpoint || '',
+            evidence: f?.evidence ? String(f.evidence).slice(0, 500) : '',
+            discoveredBy: 'hunter-engine',
+          },
+        });
+      }
     });
     engine.on("hunt:update", d => this.emit("l4:strategy_update", d));
     engine.on("hunt:error", d => this.emit("l4:error", d));
@@ -436,6 +479,11 @@ export class CampaignOrchestrator extends EventEmitter {
           ((params.budget?.maxTime || 3600) + 60) * 1000);
         engine.once("hunt:complete", () => { clearTimeout(timeout); resolve(); });
         engine.once("hunt:error", (d) => { clearTimeout(timeout); reject(new Error(String(d.error))); });
+        engine.once("hunt:hard_banned", (d) => {
+          clearTimeout(timeout);
+          logger.warn("Hunt terminated early: hard IP ban detected", d);
+          resolve(); // graceful — proceed to verification with whatever findings exist
+        });
       });
     } catch (err) {
       // Non-fatal: partial findings are still processed
@@ -443,7 +491,8 @@ export class CampaignOrchestrator extends EventEmitter {
     }
 
     // 4b. Supplement with SolverPool for high-ROI vuln classes if findings are sparse
-    if (rawFindings.length < 2) {
+    const targetHostname = (() => { try { return new URL(params.targetUrl).hostname; } catch { return ''; } })();
+    if (rawFindings.length < 2 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
       this.audit(4, "solver_supplement_start", { reason: "sparse findings" });
       try {
         const pool = new SolverPool(4);
@@ -460,6 +509,13 @@ export class CampaignOrchestrator extends EventEmitter {
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
       }
+    }
+
+    // Reconcile in-memory counter with DB to catch any persistence gaps
+    if (this.state.campaignId) {
+      const [countRow] = await db.select({ n: sql<number>`count(*)` })
+        .from(findings).where(eq(findings.campaignId, this.state.campaignId));
+      this.state.findingsCount = Number(countRow?.n ?? this.state.findingsCount);
     }
 
     this.audit(4, "execution_complete", {
@@ -483,14 +539,32 @@ export class CampaignOrchestrator extends EventEmitter {
     const verified: unknown[] = [];
     const rejected: unknown[] = [];
 
-    // Fetch confirmed findings from DB for this campaign
-    let dbFindings: (typeof findings.$inferSelect)[] = [];
+    // Fetch findings for this campaign from DB (authoritative source)
+    let allDbFindings: (typeof findings.$inferSelect)[] = [];
     if (this.state.campaignId) {
-      dbFindings = await db.select().from(findings)
+      allDbFindings = await db.select().from(findings)
         .where(eq(findings.campaignId, this.state.campaignId))
         .orderBy(desc(findings.createdAt));
     }
 
+    // Reconciliation: findings already confirmed in a prior run are promoted
+    // directly into the verified list without re-running the 4-layer pipeline.
+    // This makes resume after a crash idempotent and prevents double-billing
+    // the expensive Playwright + AI confirmation passes.
+    const alreadyConfirmed = allDbFindings.filter(f => f.verificationStatus === 'confirmed');
+    const needsVerification = allDbFindings.filter(f => f.verificationStatus !== 'confirmed');
+
+    for (const f of alreadyConfirmed) {
+      verified.push({ finding: f, verification: { finalVerdict: 'confirmed', finalConfidence: f.confidence } });
+      this.state.verifiedCount++;
+    }
+
+    this.audit(5, "reconciliation_complete", {
+      alreadyConfirmed: alreadyConfirmed.length,
+      needsVerification: needsVerification.length,
+    });
+
+    const dbFindings = needsVerification;
     // Run 4-layer anti-hallucination pipeline on each finding
     for (const dbFinding of dbFindings) {
       this.emit("l5:verifying", { findingId: dbFinding.id });
@@ -549,9 +623,22 @@ export class CampaignOrchestrator extends EventEmitter {
           }).where(eq(findings.id, dbFinding.id));
 
           this.emit("l5:verified", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          // Reconcile graph node verification status
+          eventBus.publish('finding_verified', 'orchestrator', String(this.state.campaignId || ''), {
+            vulnType: dbFinding.vulnType,
+            endpoint: String(dbFinding.targetId || ''),
+            findingId: dbFinding.id,
+            finalConfidence: verification.finalConfidence,
+          });
         } else {
           rejected.push({ finding: dbFinding, verification });
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          eventBus.publish('finding_rejected', 'orchestrator', String(this.state.campaignId || ''), {
+            vulnType: dbFinding.vulnType,
+            endpoint: String(dbFinding.targetId || ''),
+            findingId: dbFinding.id,
+            verdict: verification.finalVerdict,
+          });
         }
       } catch (err) {
         logger.warn("Verification failed for finding", { findingId: dbFinding.id, err });
@@ -616,29 +703,35 @@ export class CampaignOrchestrator extends EventEmitter {
           dedupHash: finding.dedupHash || "",
         };
 
-        // Report
-        const report = await reportGen.generate(mockSolverResult, mockVerification, {
-          severity: finding.severity,
-          programName: "Bug Bounty Program",
-          targetUrl: params.targetUrl,
-          huntDate: finding.createdAt.toISOString().split("T")[0],
-        });
-        reports.push(report.reportMarkdown);
+        // Idempotency: skip regeneration if the report was already written
+        // (handles crash-then-resume between L5 update and L6 report writes).
+        if (finding.reportDraft) {
+          reports.push(finding.reportDraft);
+        } else {
+          const report = await reportGen.generate(mockSolverResult, mockVerification, {
+            severity: finding.severity,
+            programName: "Bug Bounty Program",
+            targetUrl: params.targetUrl,
+            huntDate: finding.createdAt.toISOString().split("T")[0],
+          });
+          reports.push(report.reportMarkdown);
+          await db.update(findings)
+            .set({ reportDraft: report.reportMarkdown })
+            .where(eq(findings.id, finding.id));
+        }
 
-        await db.update(findings)
-          .set({ reportDraft: report.reportMarkdown })
-          .where(eq(findings.id, finding.id));
-
-        // Nuclei template
-        const tmpl = nucleiGen.generateTemplate(mockSolverResult, mockVerification, {
-          severity: finding.severity,
-          programName: "Bug Bounty Program",
-        });
-        nucleiTemplates.push(tmpl);
-
-        await db.update(findings)
-          .set({ nucleiTemplate: tmpl })
-          .where(eq(findings.id, finding.id));
+        if (finding.nucleiTemplate) {
+          nucleiTemplates.push(finding.nucleiTemplate);
+        } else {
+          const tmpl = nucleiGen.generateTemplate(mockSolverResult, mockVerification, {
+            severity: finding.severity,
+            programName: "Bug Bounty Program",
+          });
+          nucleiTemplates.push(tmpl);
+          await db.update(findings)
+            .set({ nucleiTemplate: tmpl })
+            .where(eq(findings.id, finding.id));
+        }
 
         this.emit("l6:report_generated", { findingId: finding.id });
       } catch (err) {
@@ -646,10 +739,24 @@ export class CampaignOrchestrator extends EventEmitter {
       }
     }
 
-    // 6b. Update reinforcement store
+    // 6b. Update reinforcement store + bounty intelligence memory
     for (const { finding } of verifiedFindings) {
       try {
         await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true);
+      } catch { /* non-critical */ }
+      // Feed verified finding into bounty intelligence so duplicate detection and
+      // payout estimation improve over time
+      try {
+        await bountyIntelligenceService.addKnownFinding({
+          id: String(finding.id),
+          title: `${finding.vulnType} on ${String(finding.targetId || params.targetUrl)}`,
+          endpoint: String(finding.targetId || params.targetUrl),
+          vulnerabilityType: finding.vulnType,
+          severity: finding.severity ?? 'medium',
+          program: String(params.programId),
+          reportDate: finding.createdAt.toISOString(),
+          status: 'accepted',
+        });
       } catch { /* non-critical */ }
     }
 
@@ -670,25 +777,45 @@ export class CampaignOrchestrator extends EventEmitter {
 
       const maturityReport = await this.autonomyTracker.recordHuntOutcome(huntMetrics);
       autonomyScore = maturityReport.compositeScore;
+      // recordHuntOutcome already persists to autonomy_metrics — no duplicate insert
       this.emit("l6:autonomy_updated", { compositeScore: autonomyScore });
-
-      // Persist to DB
-      await db.insert(autonomyMetrics).values({
-        huntNumber: maturityReport.huntNumber,
-        compositeScore: maturityReport.compositeScore,
-        domainScores: maturityReport.domainScores as unknown as Record<string, unknown>,
-        brierSnapshot: maturityReport.brierScore,
-        reinforcementNoise: maturityReport.reinforcementNoise,
-        regressionDetected: maturityReport.regressionFlags.length > 0,
-        metadata: {
-          maturityLevel: maturityReport.maturityLevel,
-          regressionFlags: maturityReport.regressionFlags,
-          recommendations: maturityReport.recommendations,
-          readyForFullAutonomy: maturityReport.readyForFullAutonomy,
-        },
-      });
     } catch (err) {
       logger.warn("Autonomy tracker update failed (non-critical)", { err });
+    }
+
+    // 6c.5 Post-Hunt Extraction Pipeline
+    // Phase 1: calibrate confidence per verified finding
+    // Phase 2: extract operational chains from multi-finding sessions
+    // Phase 3: emit cross-hunt pattern stats
+    try {
+      for (const { finding } of verifiedFindings) {
+        await this.rlStore.recordConfidenceCalibration(
+          finding.vulnType,
+          finding.confidence ?? 0.5,
+          true
+        );
+      }
+
+      if (verifiedFindings.length >= 2) {
+        const sequence = verifiedFindings.map(({ finding }) => finding.vulnType).filter(Boolean);
+        const estimatedBounty = verifiedFindings.reduce((sum, { finding }) => {
+          const payoutMap: Record<string, number> = { critical: 5000, high: 2000, medium: 500, low: 100 };
+          return sum + (payoutMap[finding.severity ?? "low"] ?? 100);
+        }, 0);
+        exploitChainIntelligence.recordChain({
+          sessionId: String(this.state.campaignId ?? params.targetUrl),
+          sequence,
+          techStack: [],
+          bounty: estimatedBounty,
+          succeeded: true,
+        });
+      }
+
+      const chainStats = exploitChainIntelligence.getStats();
+      const topROI = exploitChainIntelligence.getChainROI().slice(0, 3);
+      this.emit("l6:chains_extracted", { chainStats, topROI });
+    } catch (err) {
+      logger.warn("Post-hunt extraction pipeline failed (non-critical)", { err });
     }
 
     // 6d. Mark campaign complete

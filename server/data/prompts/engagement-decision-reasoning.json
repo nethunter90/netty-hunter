@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "T10-001",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Vulnerability found on subdomain not clearly listed in scope.",
+    "prompt": "Determine appropriate action before testing further.",
+    "reasoning_focus": "Scope boundary validation.",
+    "expected_answer": "The tester must halt all active testing on the ambiguous subdomain and consult the program's scope definition document on the bug bounty platform. Most programs define scope using explicit asset lists or wildcard patterns such as *.target.com, but may include exclusion lists for specific subdomains. If the subdomain is not explicitly included or excluded, the tester should submit a scope clarification request through the platform's communication channel before proceeding. Testing an out-of-scope asset risks violating the program's terms of service, which can result in report rejection, reputation damage, or program ban. The professional approach is to document the subdomain discovery, note the ambiguity, and wait for written confirmation from the program owner.",
+    "evaluation_criteria": "Response must demonstrate understanding of scope validation procedures and the requirement to seek written clarification before testing ambiguous assets."
+  },
+  {
+    "id": "T10-002",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "Testing reveals sensitive data in production logs.",
+    "prompt": "Decide whether to continue testing or report immediately.",
+    "reasoning_focus": "Sensitive data handling discipline.",
+    "expected_answer": "The tester should immediately pause testing activities that interact with the affected logging system and escalate the finding to the client's designated point of contact as defined in the rules of engagement. Sensitive data in production logs represents an active exposure that may trigger regulatory notification obligations under frameworks like GDPR or HIPAA depending on the data type. Continuing testing could inadvertently expand the exposure or create additional log entries containing sensitive data. The tester should document the exact log location, data types observed, and timestamp of discovery without capturing or retaining the actual sensitive data. After client acknowledgment, testing can resume on unaffected components while the client addresses the logging issue.",
+    "evaluation_criteria": "Response must prioritize immediate escalation of active sensitive data exposure and demonstrate awareness of regulatory implications and data handling discipline."
+  },
+  {
+    "id": "T10-003",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Two minor issues discovered; no high-impact flaws yet.",
+    "prompt": "Determine whether to continue enumeration or begin reporting.",
+    "reasoning_focus": "Discovery vs reporting balance.",
+    "expected_answer": "The tester should submit the two confirmed minor findings promptly rather than holding them while searching for higher-impact vulnerabilities. Bug bounty programs typically operate on a first-come-first-served basis, and delaying submission risks another researcher reporting the same issues first, resulting in duplicates. Submitting confirmed findings early also establishes a reporting track record with the program and frees mental bandwidth for continued enumeration. The tester should write clear, reproducible reports for both minor findings and then continue deeper enumeration with fresh focus. Holding findings provides no strategic advantage and creates unnecessary duplicate risk.",
+    "evaluation_criteria": "Response must demonstrate understanding of duplicate risk in bug bounty programs and the strategic advantage of early submission for confirmed findings."
+  },
+  {
+    "id": "T10-004",
+    "complexity": "L1",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "Admin access achieved earlier than expected.",
+    "prompt": "Assess whether to deepen testing or simulate controlled impact.",
+    "reasoning_focus": "Controlled validation discipline.",
+    "expected_answer": "Achieving admin access ahead of schedule does not justify expanding the exploitation scope beyond the rules of engagement. The tester should document the access path thoroughly, capture evidence of the privilege level achieved, and then simulate controlled impact scenarios that demonstrate business risk without causing actual damage. Deepening testing beyond the agreed objectives could violate the engagement contract and cause unintended production impact. The professional approach is to validate the access, demonstrate the potential impact through safe proof-of-concept actions such as listing sensitive resources without modifying them, and communicate the early achievement to the engagement lead. The remaining time should be used to test alternative attack paths or validate defensive detection capabilities.",
+    "evaluation_criteria": "Response must show understanding of rules of engagement boundaries and the principle of controlled impact demonstration over unconstrained exploitation."
+  },
+  {
+    "id": "T10-005",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Recon discovers an asset that appears related to the target but is registered to a different legal entity.",
+    "prompt": "Determine how to handle a third-party asset discovered during recon before testing any functionality.",
+    "reasoning_focus": "Third-party asset scope determination.",
+    "expected_answer": "An asset registered to a different legal entity is presumptively out of scope regardless of its apparent relationship to the target organization. Bug bounty program scope is defined by legal authorization, and testing assets owned by a third party without explicit authorization constitutes unauthorized access. The tester should document the asset discovery including domain registration details, DNS relationships, and any evidence linking it to the target, then report this as a reconnaissance finding to the program team. The program owner may confirm it is in scope, add it to scope, or confirm it is out of bounds. Under no circumstances should the tester proceed with active testing against a third-party owned asset without written authorization.",
+    "evaluation_criteria": "Response must recognize that legal entity ownership determines scope boundaries and that testing third-party assets without authorization is prohibited regardless of apparent relationship."
+  },
+  {
+    "id": "T10-006",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "Testing a staging environment causes measurable response time increase on what appears to be a shared production infrastructure component.",
+    "prompt": "Assess the professional response when testing activity may be impacting production through shared infrastructure.",
+    "reasoning_focus": "Shared infrastructure production impact discipline.",
+    "expected_answer": "The tester must immediately reduce or halt testing activity that is impacting production performance and notify the client's technical point of contact. Shared infrastructure between staging and production environments means that testing intensity on staging can directly degrade production service quality, potentially causing financial loss or SLA violations for the client. The tester should document the observed performance impact, the specific tests being conducted when the degradation was noticed, and the infrastructure relationship discovered. Testing should only resume after the client confirms acceptable testing parameters or provides guidance on rate limiting. This situation should also be documented in the final report as an engagement constraint that affected testing coverage.",
+    "evaluation_criteria": "Response must demonstrate immediate cessation of impactful testing and proper escalation when production systems are affected by staging environment testing."
+  },
+  {
+    "id": "T10-007",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A vulnerability is identified that was publicly disclosed by another researcher 3 weeks ago and is listed in the program's known issues.",
+    "prompt": "Determine whether to submit a duplicate finding and how to frame it if novel evidence is present.",
+    "reasoning_focus": "Duplicate finding handling in bug bounty context.",
+    "expected_answer": "If the vulnerability is already listed in the program's known issues, submitting it as a new finding will result in a duplicate closure and wastes both the researcher's and the triager's time. However, if the researcher has discovered novel aspects such as a new attack vector, broader impact than originally reported, or evidence that the existing fix is incomplete, this should be submitted as a new report clearly referencing the known issue and explicitly stating what is novel. The submission should open with an acknowledgment of the existing disclosure and then present the differential evidence. Programs like HackerOne and Bugcrowd have explicit duplicate policies that close reports matching known issues, but incomplete fixes or new vectors are treated as separate findings. The researcher should invest time only if genuinely novel evidence exists.",
+    "evaluation_criteria": "Response must distinguish between pure duplicates and novel extensions of known issues, and demonstrate awareness of platform duplicate policies."
+  },
+  {
+    "id": "T10-008",
+    "complexity": "L1",
+    "engagement_context": "Red Team",
+    "scenario": "Low-privilege access is gained; the access also reveals an employee's personal files stored on the corporate system unrelated to the engagement objectives.",
+    "prompt": "Determine the handling approach for incidentally discovered personal data outside the engagement scope.",
+    "reasoning_focus": "Incidental personal data discovery handling.",
+    "expected_answer": "The red team operator must not access, copy, or further examine the personal files as they are outside the engagement objectives and constitute personal data protected under privacy regulations. The discovery should be noted in the engagement log with minimal detail — recording that personal files were found on the corporate system without documenting their contents. This finding should be reported to the engagement lead as a policy violation by the employee (storing personal data on corporate systems) rather than as a security finding to be exploited. Accessing personal files beyond what is necessary to identify their nature would exceed the authorization granted and could create legal liability. The final report should note the presence of personal data on corporate systems as a governance finding without including any identifying details.",
+    "evaluation_criteria": "Response must demonstrate respect for personal data boundaries, minimal interaction with discovered personal files, and appropriate governance-level reporting."
+  },
+  {
+    "id": "T10-009",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "A minor vulnerability is found in a component labeled 'critical infrastructure' in the system documentation.",
+    "prompt": "Assess how component criticality classification affects the severity assigned to a minor finding.",
+    "reasoning_focus": "Asset criticality as severity modifier in pentest context.",
+    "expected_answer": "The severity of a vulnerability must account for both the technical severity of the flaw and the criticality of the affected asset. A minor vulnerability such as information disclosure in a component classified as critical infrastructure should be elevated in the risk assessment because exploitation could have outsized impact on business operations. Using CVSS environmental scoring, the asset's criticality serves as a modifier that increases the overall risk rating. The pentest report should clearly separate the technical severity (low/minor) from the contextual risk (elevated due to asset criticality) and explain why the combination warrants prioritized remediation. Failing to account for asset criticality would understate the actual business risk and could lead to delayed remediation of a finding that, despite being technically minor, affects a system whose compromise would have significant operational consequences.",
+    "evaluation_criteria": "Response must demonstrate understanding of how asset criticality modifies vulnerability severity and the importance of separating technical severity from contextual business risk."
+  },
+  {
+    "id": "T10-010",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Program policy states 'no automated scanning' but the discovered vulnerability was found via a single automated nuclei template run.",
+    "prompt": "Determine how to handle a finding discovered via a method potentially prohibited by the program policy.",
+    "reasoning_focus": "Discovery method compliance with program policy.",
+    "expected_answer": "The researcher must evaluate whether the discovery method violated the program's policy before submitting. A 'no automated scanning' policy typically prohibits bulk scanning tools like Nessus, Nikto, or mass fuzzing that generate high traffic and noise. A single targeted nuclei template may fall in a gray area depending on the program's interpretation. The safest approach is to manually verify and reproduce the finding without automation, then submit the report based on the manual reproduction steps. The submission should not reference the automated discovery method. If the finding cannot be reproduced manually, the researcher should contact the program to clarify the automation policy boundary before submission. Submitting a finding discovered through prohibited methods risks report rejection and potential policy violation flags on the researcher's profile.",
+    "evaluation_criteria": "Response must address the policy compliance concern, recommend manual reproduction as the submission basis, and demonstrate awareness of consequences for policy violations."
+  },
+  {
+    "id": "T10-011",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "Two different vulnerabilities are found in the same component — one low severity and one medium severity.",
+    "prompt": "Determine whether to report them individually or bundle them and how the bundling decision affects communication.",
+    "reasoning_focus": "Finding bundling strategy for related vulnerabilities.",
+    "expected_answer": "In a pentest context, related vulnerabilities in the same component should typically be reported individually with cross-references to enable clear remediation tracking. Each finding should have its own severity rating, remediation recommendation, and evidence section. Bundling them into a single finding risks obscuring the distinct remediation actions required and makes it harder for the client to track fix progress. However, the report narrative should clearly explain the relationship between the two findings and whether they compound each other's risk. If the low-severity finding enables or amplifies the medium-severity finding, this compound risk should be explicitly stated. Individual reporting with relationship documentation provides the clearest path for both the security team and the development team to address each issue independently while understanding the combined risk.",
+    "evaluation_criteria": "Response must recommend individual reporting with cross-references and explain how compound risk between related findings should be communicated."
+  },
+  {
+    "id": "T10-012",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Near the end of the engagement timeline, a new attack surface is discovered that would require 3 more days to fully enumerate.",
+    "prompt": "Assess the decision between shallow enumeration of the new surface vs deeper investigation of already-confirmed findings.",
+    "reasoning_focus": "Time-constrained scope expansion decision.",
+    "expected_answer": "Under time constraints, the researcher should prioritize deepening the evidence for already-confirmed findings rather than beginning shallow enumeration of a new attack surface. Confirmed findings with thorough evidence and clear reproduction steps have a much higher acceptance rate and payout probability than partially enumerated surfaces. The researcher should submit complete reports for confirmed findings before the deadline, then document the newly discovered attack surface as a note for future testing. If the bug bounty program is ongoing rather than time-boxed, the new surface can be explored in a subsequent session. Shallow enumeration risks producing incomplete findings that are rejected or downgraded, wasting the limited remaining time that could strengthen existing reports.",
+    "evaluation_criteria": "Response must prioritize evidence depth for confirmed findings over breadth of new surface exploration under time pressure."
+  },
+  {
+    "id": "T10-013",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "A potential insider exposure is identified — evidence suggests a current employee may have unauthorized access to customer records.",
+    "prompt": "Determine the professional reporting approach when testing reveals potential insider threat evidence.",
+    "reasoning_focus": "Insider threat evidence handling in pentest reporting.",
+    "expected_answer": "The tester must immediately escalate insider threat evidence to the designated engagement lead through the secure communication channel defined in the rules of engagement. This escalation should bypass the normal finding workflow because insider threats require HR, legal, and potentially law enforcement involvement that exceeds the pentest team's authority. The tester should document the evidence objectively without conducting further investigation into the employee's activities, as doing so could compromise a future formal investigation. The pentest report should reference the escalation with minimal detail to protect the integrity of any subsequent investigation. The tester must not confront the employee, discuss the finding with other client staff, or retain copies of evidence beyond what is necessary for the escalation. Chain of custody for any evidence must be maintained.",
+    "evaluation_criteria": "Response must demonstrate immediate escalation through proper channels, evidence preservation without further investigation, and awareness of legal and HR implications."
+  },
+  {
+    "id": "T10-014",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Scope includes all subdomains of *.target.com; a test reveals that target.com's parent company domain is reachable via a subsidiary subdomain.",
+    "prompt": "Assess the scope boundary when testing a subsidiary asset reveals access to a parent company out-of-scope domain.",
+    "reasoning_focus": "Scope boundary at subsidiary-to-parent traversal.",
+    "expected_answer": "The wildcard scope *.target.com authorizes testing of subdomains under target.com but does not extend to parent company domains or other legal entities accessible through those subdomains. When a subsidiary subdomain provides access to a parent company's infrastructure, the tester must stop at the scope boundary and not interact with the parent company's systems. The tester should document the traversal path showing how a *.target.com subdomain leads to parent company access, as this itself is a significant finding demonstrating insufficient network segmentation. This should be reported as a scope boundary finding describing the access path without actively testing the parent company's systems. Crossing into the parent company's domain without explicit authorization would constitute unauthorized access regardless of how the access was obtained.",
+    "evaluation_criteria": "Response must recognize that scope does not extend through network connectivity to other legal entities and recommend documenting the traversal path as a segmentation finding."
+  },
+  {
+    "id": "T10-015",
+    "complexity": "L1",
+    "engagement_context": "Red Team",
+    "scenario": "The engagement includes social engineering; a target employee provides credentials voluntarily over the phone without verification.",
+    "prompt": "Determine how to document and report a successful social engineering outcome ethically.",
+    "reasoning_focus": "Social engineering success documentation ethics.",
+    "expected_answer": "The successful social engineering outcome should be documented with enough detail to demonstrate the security gap without unnecessarily exposing or embarrassing the individual employee. The report should describe the pretext used, the verification failures that enabled the credential disclosure, and the organizational control gaps that allowed it, but should anonymize or minimize personal identification of the employee. The credentials obtained should be recorded securely and reported to the engagement lead immediately; they should not be used beyond the scope authorized in the rules of engagement. The report narrative should frame the finding as an organizational training and process failure rather than an individual failure. This approach maintains the engagement's integrity while respecting the dignity of the targeted employee and focuses remediation on systemic improvements rather than punitive action.",
+    "evaluation_criteria": "Response must demonstrate ethical documentation that anonymizes the individual, frames the finding as an organizational gap, and ensures credentials are handled securely."
+  },
+  {
+    "id": "T10-016",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "A vulnerability is found that is out of scope but is critical severity and directly endangers customer data.",
+    "prompt": "Determine whether out-of-scope critical vulnerabilities require notification regardless of engagement boundaries.",
+    "reasoning_focus": "Out-of-scope critical finding notification obligation.",
+    "expected_answer": "Professional ethics and most industry standards require notification of critical findings that endanger customer data regardless of scope boundaries. The tester should immediately notify the client's engagement lead about the out-of-scope critical finding through the designated communication channel, clearly labeling it as out-of-scope but requiring urgent attention. The notification should describe the finding's nature and potential impact without including full exploitation details. The tester should not perform further testing on the out-of-scope asset but must ensure the client is aware of the immediate risk. Most professional pentest frameworks including PTES and OWASP testing guides include provisions for critical out-of-scope finding notification. Failing to report a critical customer data exposure because it falls outside the engagement scope would be a professional ethics violation that prioritizes contractual technicalities over duty of care.",
+    "evaluation_criteria": "Response must recognize the ethical obligation to report critical findings regardless of scope and demonstrate proper notification procedures that respect scope boundaries while ensuring client awareness."
+  },
+  {
+    "id": "T10-017",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "The target application is undergoing a live migration during the engagement period, causing inconsistent behavior across endpoints.",
+    "prompt": "Assess how to handle findings from an application in active migration where vulnerability reproducibility is uncertain.",
+    "reasoning_focus": "Active migration impact on finding reproducibility and reporting.",
+    "expected_answer": "When an application is undergoing active migration, the researcher must document findings with exceptional detail including timestamps, specific endpoint versions observed, and any inconsistencies in behavior. Reports should explicitly note that the application appears to be in active migration and that reproducibility may be affected by the migration state. The researcher should attempt multiple reproductions at different times to establish whether the vulnerability is persistent or transient. If a finding is only reproducible intermittently, the report should include all successful reproduction attempts with timestamps and note the intermittent nature. This transparency helps the triage team evaluate the finding accurately. Submitting findings without acknowledging the migration context risks having reports closed as 'not reproducible' when the triager tests against a different migration state.",
+    "evaluation_criteria": "Response must emphasize detailed documentation with timestamps, transparency about migration impact on reproducibility, and multiple reproduction attempts."
+  },
+  {
+    "id": "T10-018",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "Evidence of prior compromise by a third party is discovered during the engagement — an existing webshell is found on the server.",
+    "prompt": "Determine the professional response when evidence of an active or prior external compromise is discovered during testing.",
+    "reasoning_focus": "Pre-existing third-party compromise discovery handling.",
+    "expected_answer": "Discovery of a pre-existing webshell constitutes evidence of an active or prior security breach that requires immediate escalation outside the normal pentest workflow. The tester must immediately notify the client's engagement lead and security team through the most secure communication channel available, as the compromised server may be actively monitored by the threat actor. The tester should document the webshell's location, file hash, creation timestamp, and any observable indicators of compromise without interacting with it further, as interaction could alert the attacker or contaminate forensic evidence. The pentest team should coordinate with the client to determine whether to continue testing on other systems or pause entirely while incident response is initiated. The webshell finding should be segregated from the pentest report and handled as an incident notification with appropriate chain of custody documentation.",
+    "evaluation_criteria": "Response must demonstrate immediate secure escalation, evidence preservation without contamination, and coordination with incident response procedures."
+  },
+  {
+    "id": "T10-019",
+    "complexity": "L1",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Scope ambiguity exists between the written scope and the verbal clarification provided by the program owner during a kickoff call.",
+    "prompt": "Determine how to resolve scope ambiguity between written policy and verbal guidance and how to document the resolution.",
+    "reasoning_focus": "Written vs verbal scope conflict resolution.",
+    "expected_answer": "Written scope documentation always takes precedence over verbal guidance unless the verbal clarification is subsequently confirmed in writing. The researcher should request written confirmation of the verbal scope clarification through the program's official communication channel, such as the platform messaging system on HackerOne or Bugcrowd. Until written confirmation is received, the researcher should operate within the boundaries of the written scope only. The request for clarification should reference the specific ambiguity, the verbal guidance received, and ask for an explicit written update. This protects the researcher from disputes where the program owner may not recall or may retract verbal guidance. All scope communications should be documented and retained as evidence in case of future disagreement about what was authorized.",
+    "evaluation_criteria": "Response must establish written documentation as authoritative over verbal guidance and recommend obtaining written confirmation before expanding testing boundaries."
+  },
+  {
+    "id": "T10-020",
+    "complexity": "L1",
+    "engagement_context": "Pentest",
+    "scenario": "A vulnerability is found that requires admin credentials to exploit; the pentest was granted admin credentials for testing purposes.",
+    "prompt": "Assess whether a vulnerability exploitable only with provided admin credentials represents a valid finding in the engagement context.",
+    "reasoning_focus": "Provided credential scope in vulnerability validity determination.",
+    "expected_answer": "A vulnerability exploitable only with admin credentials provided for testing is still a valid finding but must be contextualized appropriately. The report should clearly state that exploitation requires administrative access and assess whether this access level would be available to an attacker through other means such as credential theft, privilege escalation, or insider threat scenarios. The finding's severity should reflect the realistic attacker scenario rather than the testing scenario where credentials were provided. If admin credentials are easily obtainable through other discovered vulnerabilities, the finding's practical risk is higher. If admin access is tightly controlled and monitored, the finding may represent a lower practical risk. The report should separate the vulnerability's existence from the access prerequisite and clearly document both factors for the client's risk assessment.",
+    "evaluation_criteria": "Response must recognize the finding as valid while contextualizing the access prerequisite and assessing realistic attacker scenarios for obtaining the required credentials."
+  },
+  {
+    "id": "T10-021",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Critical auth flaw suspected but incomplete proof; deadline approaching.",
+    "prompt": "Prioritize proof depth vs early submission.",
+    "reasoning_focus": "Time-pressure decision modeling.",
+    "expected_answer": "Under deadline pressure with a suspected critical authentication flaw, the researcher should submit a detailed report with the available evidence immediately rather than risking missing the deadline for more complete proof. The submission should clearly document what has been confirmed, what is suspected but unproven, and what additional testing would be needed to fully validate the flaw. Most bug bounty platforms allow report updates after initial submission, so the researcher can supplement with additional evidence after the deadline. A well-written partial report for a critical auth flaw is more valuable than a missed deadline, as programs prioritize critical authentication issues for triage. However, the report must contain enough evidence to be actionable — pure speculation without any supporting evidence will be closed as informational.",
+    "evaluation_criteria": "Response must balance the urgency of early submission against evidence quality requirements and demonstrate knowledge of platform report update capabilities."
+  },
+  {
+    "id": "T10-022",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Limited hours remain; cloud misconfig and business logic flaw both partially confirmed.",
+    "prompt": "Choose focus area for maximum impact.",
+    "reasoning_focus": "Impact prioritization.",
+    "expected_answer": "The tester should evaluate which finding has the higher potential business impact and allocate remaining hours accordingly. Cloud misconfigurations typically have well-understood exploitation paths and can often be fully documented with configuration evidence screenshots and policy analysis without extensive additional testing. Business logic flaws often require multiple test scenarios to demonstrate the full impact and may need more time to develop a convincing proof-of-concept. The tester should invest the remaining hours in whichever finding is closer to full validation and can be most completely documented. If both are equally close, prioritize the cloud misconfiguration as it likely affects a broader attack surface and has clearer remediation paths that the client can act on immediately. The partially confirmed finding that receives less attention should still be documented with available evidence and flagged for follow-up testing.",
+    "evaluation_criteria": "Response must demonstrate structured impact prioritization based on business risk, evidence completeness, and actionability of remediation recommendations."
+  },
+  {
+    "id": "T10-023",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "High-noise recon producing diminishing returns.",
+    "prompt": "Determine pivot strategy.",
+    "reasoning_focus": "Resource allocation logic.",
+    "expected_answer": "When reconnaissance produces diminishing returns, the researcher should pivot from broad enumeration to targeted testing of already-discovered assets. This means shifting from tools like subfinder, amass, or mass port scanning to manual analysis of the most promising endpoints identified during initial recon. The researcher should review collected data for patterns such as unusual response headers, technology stack indicators, or API endpoints that suggest deeper attack surface. Alternatively, the researcher can pivot methodology entirely — switching from infrastructure recon to application-level testing, authentication flow analysis, or business logic review. Continuing high-noise recon wastes time and may trigger rate limiting or WAF blocks that impair future testing. The professional approach is to recognize the inflection point where additional recon effort yields negligible new information and redirect effort to exploitation of known targets.",
+    "evaluation_criteria": "Response must identify the diminishing returns inflection point and recommend a concrete pivot strategy from broad enumeration to targeted exploitation or methodology change."
+  },
+  {
+    "id": "T10-024",
+    "complexity": "L2",
+    "engagement_context": "Red Team",
+    "scenario": "Low-privilege foothold obtained; escalation possible but detection risk rising.",
+    "prompt": "Decide whether escalation justified.",
+    "reasoning_focus": "Risk vs reward balancing.",
+    "expected_answer": "The decision to escalate must weigh the engagement objectives against the risk of detection that would end the simulation prematurely. If the engagement objective requires demonstrating full compromise, escalation is necessary despite detection risk, but the operator should use the quietest escalation technique available and time it to minimize detection probability such as during off-hours or high-traffic periods. If the engagement objective is satisfied by demonstrating the initial foothold and the escalation path, the operator can document the escalation opportunity without executing it, preserving operational access for other objectives. The operator should consult the engagement lead before making this decision. The key professional judgment is whether the incremental value of demonstrating live escalation outweighs losing access entirely. If detection results in the blue team remediating the foothold, all subsequent simulation objectives become unachievable.",
+    "evaluation_criteria": "Response must demonstrate risk-reward analysis considering engagement objectives, available escalation techniques, and the consequences of detection on overall simulation goals."
+  },
+  {
+    "id": "T10-025",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Three related findings can be submitted as a single high-severity chain or three separate medium-severity reports; program pays per unique finding.",
+    "prompt": "Model the strategic decision between chain submission and individual submission considering payout, program reputation, and finding clarity.",
+    "reasoning_focus": "Report bundling strategy for payout and communication optimization.",
+    "expected_answer": "The optimal strategy depends on whether the individual findings have independent impact or only achieve high severity when combined. If each finding is independently exploitable and has standalone impact, submitting three separate medium-severity reports maximizes payout since programs pay per unique finding. If the findings only achieve significant impact as a chain, submitting them individually may result in lower severity ratings and potentially informational closures for findings that seem trivial in isolation. The researcher should also consider program reputation impact — submitting three low-quality individual reports that only make sense as a chain can appear like report padding and damage the researcher's standing. The best approach is to submit one comprehensive report demonstrating the full chain with high severity, while noting that each component is also independently notable. This demonstrates expertise and provides the clearest remediation guidance.",
+    "evaluation_criteria": "Response must analyze the independence of individual findings, payout implications, program reputation effects, and provide a clear recommendation based on finding interdependence."
+  },
+  {
+    "id": "T10-026",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Manual testing has confirmed a SQLi vulnerability; automated sqlmap runs would generate comprehensive evidence faster but risk service instability.",
+    "prompt": "Assess the trade-off between manual evidence depth and automated evidence completeness given service stability risk.",
+    "reasoning_focus": "Manual vs automated evidence collection stability tradeoff.",
+    "expected_answer": "The tester should prefer manual evidence collection for the SQLi finding given the service stability risk from automated tools like sqlmap. Manual testing with controlled queries can demonstrate the vulnerability's existence, extract limited proof data, and validate the injection type without the aggressive query patterns that sqlmap uses for full database enumeration. The manual evidence should include the specific injection point, payload used, server response demonstrating injection success, and an assessment of potential impact. If the client explicitly authorizes automated testing and accepts the stability risk, sqlmap can be run with conservative settings such as --level 1, --risk 1, and --threads 1 to minimize impact. The pentest report should note that full automated enumeration was not performed due to production stability concerns and recommend the client conduct comprehensive testing in a staging environment.",
+    "evaluation_criteria": "Response must prioritize service stability, recommend manual evidence collection with specific techniques, and note that automated tools can be used only with explicit client authorization and conservative settings."
+  },
+  {
+    "id": "T10-027",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "The program has a narrow scope (3 specific endpoints); all three have been tested with no findings; adjacent endpoints appear interesting but are out of scope.",
+    "prompt": "Determine the appropriate approach when in-scope exhaustion creates pressure to test adjacent out-of-scope targets.",
+    "reasoning_focus": "Scope exhaustion and adjacent surface temptation discipline.",
+    "expected_answer": "The researcher must maintain scope discipline regardless of testing frustration. Out-of-scope endpoints remain unauthorized targets even when in-scope testing yields no results. The appropriate response is to apply deeper testing methodologies to the three in-scope endpoints — testing different HTTP methods, authentication states, input encoding variations, race conditions, and business logic flows that may not have been covered in initial testing. The researcher can also test the in-scope endpoints from different perspectives such as different user roles or session states. If the researcher believes adjacent endpoints should be in scope, they can submit a scope expansion request to the program team through the platform. Testing out-of-scope endpoints risks program ban and could expose the researcher to legal liability under the Computer Fraud and Abuse Act or equivalent legislation.",
+    "evaluation_criteria": "Response must maintain strict scope discipline, suggest deeper testing methodologies for exhausted in-scope targets, and recommend formal scope expansion requests as the only path to adjacent testing."
+  },
+  {
+    "id": "T10-028",
+    "complexity": "L2",
+    "engagement_context": "Red Team",
+    "scenario": "The red team has been undetected for 72 hours; deepening the simulation now risks triggering detection that would end the engagement prematurely.",
+    "prompt": "Model the strategic decision between continued depth and maintaining the undetected foothold for longer-duration simulation.",
+    "reasoning_focus": "Detection avoidance vs depth trade-off in red team simulation.",
+    "expected_answer": "This decision should be driven by the engagement's primary objectives and the value of demonstrating dwell time versus depth of compromise. If the engagement objective includes testing the blue team's detection capabilities, maintaining the undetected foothold for its full planned duration is more valuable as it demonstrates detection gaps. If the objective is to demonstrate maximum impact, deeper exploitation that risks detection may be warranted. The operator should consult the engagement lead and consider a phased approach: maintain the current foothold while establishing a secondary access path, then proceed with deeper exploitation from the backup position. This way, if the primary access is detected, the secondary remains viable. The 72-hour dwell time itself is a significant finding that demonstrates detection gaps and should be documented regardless of the next action taken.",
+    "evaluation_criteria": "Response must consider engagement objectives, propose contingency planning through backup access paths, and recognize dwell time as a valuable finding in itself."
+  },
+  {
+    "id": "T10-029",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "A proof-of-concept for a vulnerability has been developed but requires two additional runs to confirm stability; each run risks minor data modification.",
+    "prompt": "Assess whether two additional PoC runs are justified given the stability uncertainty and data modification risk.",
+    "reasoning_focus": "PoC stability vs data modification risk tradeoff.",
+    "expected_answer": "The tester should evaluate whether the existing single successful PoC run provides sufficient evidence for the report before risking data modification. In most cases, one successful exploitation with detailed documentation including request/response captures, timestamps, and observed behavior changes constitutes adequate proof. Additional runs for stability confirmation should only proceed if the client has explicitly authorized data modification as part of testing or if the modification is trivially reversible. If the tester proceeds, they should notify the client's technical contact before each additional run and document any data modifications for post-engagement cleanup. The report should note whether the PoC was confirmed in a single run or multiple runs and any data integrity impacts observed. If the risk of data modification is unacceptable, the report should present the single run evidence and note that stability testing was limited to protect data integrity.",
+    "evaluation_criteria": "Response must evaluate evidence sufficiency from a single run, require client authorization for data-modifying additional runs, and demonstrate data integrity awareness."
+  },
+  {
+    "id": "T10-030",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "The highest-severity finding requires a complex, multi-step exploit chain with five prerequisites; a simpler medium-severity finding is fully confirmed.",
+    "prompt": "Model the reporting prioritization between a complex high-severity chain and a simple confirmed medium-severity finding under time constraints.",
+    "reasoning_focus": "Chain complexity vs confidence tradeoff in report prioritization.",
+    "expected_answer": "Under time constraints, the researcher should submit the fully confirmed medium-severity finding first because it is complete and ready for immediate triage. The complex high-severity chain should then be documented as thoroughly as time permits, with each prerequisite step clearly explained and evidenced. If the chain cannot be fully documented before the deadline, the researcher should submit it with available evidence, clearly marking which steps are confirmed and which are theoretical. Bug bounty triagers value clear, reproducible reports over complex chains with gaps in evidence. A well-documented medium-severity finding will be accepted and paid while a poorly documented high-severity chain may be bounced back for more information or closed as not reproducible. The researcher can always update the chain report with additional evidence after submission.",
+    "evaluation_criteria": "Response must prioritize the fully confirmed finding for immediate submission, recommend structured documentation of the complex chain with explicit confidence levels for each step, and leverage post-submission updates."
+  },
+  {
+    "id": "T10-031",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Two identical vulnerabilities exist in two different components — one is customer-facing, one is internal-only.",
+    "prompt": "Assess the severity differentiation between identical vulnerabilities in customer-facing vs internal-only components.",
+    "reasoning_focus": "Component exposure as severity modifier for identical vulnerabilities.",
+    "expected_answer": "Identical vulnerabilities in customer-facing and internal-only components should be assigned different risk ratings despite being technically identical. The customer-facing instance has a broader threat model including external attackers, automated scanners, and opportunistic exploitation, making it higher risk. The internal-only instance has a narrower threat model limited to insider threats and lateral movement scenarios, but may still be critical if the internal component processes sensitive data or has trust relationships with other systems. Using CVSS environmental scoring, the customer-facing instance would have higher exploitability metrics while the internal instance may have mitigating factors. Both should be reported separately with distinct risk ratings, remediation priorities, and threat model analysis. The report should note the pattern of the same vulnerability appearing in multiple components, which suggests a systemic development practice issue rather than an isolated oversight.",
+    "evaluation_criteria": "Response must differentiate severity based on exposure and threat model, recommend separate reporting with distinct risk ratings, and identify the systemic nature of duplicate vulnerabilities."
+  },
+  {
+    "id": "T10-032",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Testing reveals a vulnerability that is likely already known to the target's security team based on a recent security advisory they published.",
+    "prompt": "Determine how to handle a finding that appears to be known-but-unpatched based on publicly available security advisories.",
+    "reasoning_focus": "Known-but-unpatched finding submission strategy.",
+    "expected_answer": "A known-but-unpatched vulnerability confirmed in the target's environment is a valid submission in most bug bounty programs, but requires careful framing. The report should reference the public advisory, demonstrate that the vulnerability remains exploitable in the target's current deployment, and highlight any additional risk factors specific to the target's implementation. This differentiates the submission from a simple advisory regurgitation by providing actionable evidence of continued exposure. Many programs have policies distinguishing between known CVEs and confirmed exploitability — confirming that a patched CVE remains unpatched in the target's environment is valuable intelligence. The report should assess the time elapsed since the advisory, the availability of patches, and the potential impact of continued exposure. If the program explicitly excludes known CVEs, the researcher should verify this exclusion before submitting.",
+    "evaluation_criteria": "Response must distinguish between advisory awareness and confirmed exploitability, demonstrate value-add through target-specific evidence, and check program policies on known CVE submissions."
+  },
+  {
+    "id": "T10-033",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Client has requested a test of their new authentication system specifically; testing reveals vulnerabilities in the surrounding legacy infrastructure not included in scope.",
+    "prompt": "Determine how to report adjacent findings outside the narrow requested scope when they create risk to the in-scope system.",
+    "reasoning_focus": "Adjacent out-of-scope finding reporting in narrow-scope engagement.",
+    "expected_answer": "Adjacent findings that create risk to the in-scope system should be documented and reported with clear scoping context. The report should include a dedicated section for out-of-scope observations that affect the security posture of the in-scope system, clearly labeled to distinguish them from in-scope findings. For each adjacent finding, the report should explain how the legacy infrastructure vulnerability affects the authentication system being tested — for example, if a legacy component can bypass the new authentication entirely. The client should understand that securing the new authentication system in isolation is insufficient if surrounding infrastructure provides alternative attack paths. The tester should recommend that these adjacent findings be addressed or included in a follow-up engagement scope. However, active testing of the legacy infrastructure should not be performed without explicit scope expansion authorization from the client.",
+    "evaluation_criteria": "Response must recommend documenting adjacent findings with clear scope labeling, explain how they affect in-scope system security, and recommend scope expansion for thorough assessment."
+  },
+  {
+    "id": "T10-034",
+    "complexity": "L2",
+    "engagement_context": "Red Team",
+    "scenario": "A social engineering pretext has been established with a target employee; continuing the engagement requires leveraging the established trust to obtain access.",
+    "prompt": "Assess the ethical boundaries of social engineering when continued exploitation of a personal trust relationship is required.",
+    "reasoning_focus": "Social engineering ethical limit in established trust exploitation.",
+    "expected_answer": "Social engineering in authorized red team engagements must operate within ethical boundaries defined in the rules of engagement, even when a pretext relationship has been successfully established. The operator should assess whether continued trust exploitation crosses into manipulation that could cause psychological harm, create personal liability for the employee, or involve deception about safety or legal matters. The rules of engagement should define acceptable social engineering techniques and escalation limits. If the current pretext requires deepening personal trust beyond professional boundaries, the operator should document the access opportunity without executing it and report it as a viable attack path. The final report should recommend security awareness training improvements based on the social engineering success without identifying the targeted employee in a way that could lead to punitive consequences. Ethical red team operations demonstrate vulnerabilities in organizational processes, not individual weaknesses.",
+    "evaluation_criteria": "Response must identify ethical boundaries for trust exploitation, recommend documentation over execution when boundaries are approached, and frame findings as organizational process failures."
+  },
+  {
+    "id": "T10-035",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "After submitting a finding, the program owner asks for a detailed step-by-step exploit guide beyond what is in the report.",
+    "prompt": "Determine the appropriate level of detail to provide post-submission when additional exploit guidance is requested.",
+    "reasoning_focus": "Post-submission exploit detail discipline.",
+    "expected_answer": "The researcher should provide sufficient detail for the security team to reproduce and validate the finding, but should exercise judgment about the level of weaponization detail shared. A step-by-step reproduction guide with specific URLs, parameters, and expected responses is appropriate and expected. However, providing a fully weaponized exploit script, automated exploitation tooling, or guidance on extending the exploit beyond the demonstrated impact goes beyond responsible disclosure obligations. The researcher should clarify whether the request is for reproduction guidance or full exploit development, as the latter constitutes consulting work beyond the bug bounty scope. If the program expects detailed exploitation guidance, this should be negotiated as additional compensation. All post-submission communication should occur through the platform's official channel to maintain audit trail and protect both parties.",
+    "evaluation_criteria": "Response must distinguish between reproduction guidance and weaponization, recommend platform-official communication channels, and address whether additional exploit development constitutes compensable work."
+  },
+  {
+    "id": "T10-036",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Testing reveals that a patch applied during the engagement window has broken a previously confirmed vulnerability but introduced a new one.",
+    "prompt": "Assess how to report findings when patching activity during the engagement introduces new vulnerabilities.",
+    "reasoning_focus": "Mid-engagement patch activity finding update strategy.",
+    "expected_answer": "The pentest report should document both the original vulnerability and the regression introduced by the mid-engagement patch with clear timelines. The original finding should note that it was confirmed on a specific date and subsequently patched during the engagement window, with a note on whether the patch was verified as effective. The new regression vulnerability should be reported as a separate finding with its own severity rating, noting that it was introduced by the patch applied on the specified date. The report should include a timeline section showing the sequence of events: initial finding, patch application, patch validation, and regression discovery. This documentation helps the client understand the dynamic nature of their security posture and highlights the importance of regression testing after patches. The tester should also inform the client's technical contact immediately about the regression rather than waiting for the final report, as the new vulnerability is actively exposed.",
+    "evaluation_criteria": "Response must document both findings with clear timelines, recommend immediate notification of the regression, and emphasize the importance of patch regression testing."
+  },
+  {
+    "id": "T10-037",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A finding requires testing against a specific user account type (premium subscriber) that the test account does not have access to.",
+    "prompt": "Determine the appropriate approach to validate a finding that requires account privileges not available in the test environment.",
+    "reasoning_focus": "Test account privilege gap in finding validation.",
+    "expected_answer": "The researcher should not attempt to access or create premium subscriber accounts through unauthorized means to validate the finding. The appropriate approach is to document the suspected vulnerability with available evidence, clearly note that full validation requires premium subscriber access, and submit the report requesting that the program team validate the remaining steps with appropriate account access. Many bug bounty programs provide test accounts with elevated privileges upon request for exactly this scenario. The researcher should contact the program through the platform's communication channel to request a premium test account before submission if possible. If the program cannot provide elevated access, the report should present the theoretical chain with evidence for the steps that were validated and a clear description of what the premium access step would demonstrate. Attempting to circumvent account restrictions to test this finding would itself be a policy violation.",
+    "evaluation_criteria": "Response must recommend requesting appropriate test accounts through official channels, documenting available evidence with clear gaps identified, and avoiding unauthorized privilege acquisition."
+  },
+  {
+    "id": "T10-038",
+    "complexity": "L2",
+    "engagement_context": "Pentest",
+    "scenario": "Penetration testing reveals that a third-party vendor's integrated component is the source of a vulnerability.",
+    "prompt": "Determine the reporting and disclosure approach when the vulnerability root cause is in a third-party vendor component.",
+    "reasoning_focus": "Third-party component vulnerability reporting and disclosure scope.",
+    "expected_answer": "The pentest report should document the vulnerability as it affects the client's environment, clearly identifying the third-party vendor component as the root cause. The report should recommend that the client coordinate with the vendor for a fix while implementing compensating controls such as WAF rules, network segmentation, or input validation layers to mitigate the exposure in the interim. The pentest team's disclosure obligation is to the client, not to the third-party vendor — it is the client's responsibility to notify their vendor. However, the tester should advise the client that the vendor should be notified through the vendor's security contact or vulnerability disclosure program. If the vulnerability affects a widely used component, the tester should discuss with the client whether coordinated disclosure to the broader community is appropriate. The tester should not independently contact the vendor without the client's authorization, as this could violate the engagement's confidentiality terms.",
+    "evaluation_criteria": "Response must identify the client as the primary disclosure recipient, recommend vendor notification through the client, and suggest compensating controls for interim mitigation."
+  },
+  {
+    "id": "T10-039",
+    "complexity": "L2",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Two researchers from the same security firm submit the same vulnerability within 4 hours of each other to the same program.",
+    "prompt": "Assess the appropriate professional response when a colleague's finding duplicates your own and vice versa.",
+    "reasoning_focus": "Intra-team duplicate submission handling.",
+    "expected_answer": "The firm should have internal coordination processes to prevent duplicate submissions from team members to the same program. Once the duplication is identified, the professional response is to coordinate internally: the first submission should stand, and the second researcher should notify the program that their submission is an internal duplicate and can be closed. Both researchers should communicate transparently with the program to maintain the firm's professional reputation. Going forward, the firm should implement a shared tracking system where researchers log their active targets and findings to prevent future collisions. Most bug bounty platforms attribute the finding to the first submission timestamp, so the second submission would be marked as duplicate regardless. The firm should also establish a policy for internal credit and recognition when duplicate work occurs to prevent interpersonal friction.",
+    "evaluation_criteria": "Response must recommend internal coordination, transparent communication with the program, and systemic prevention through shared target tracking to prevent future duplicates."
+  },
+  {
+    "id": "T10-040",
+    "complexity": "L2",
+    "engagement_context": "Red Team",
+    "scenario": "The red team simulation scope includes physical security testing; access to a server room is gained by tailgating an employee.",
+    "prompt": "Assess the ethical limits of physical social engineering in a red team engagement and determine documentation requirements.",
+    "reasoning_focus": "Physical social engineering ethics and documentation in red team.",
+    "expected_answer": "Physical social engineering in authorized red team engagements requires strict adherence to the rules of engagement, which should explicitly define authorized physical testing boundaries including facility areas, times, and prohibited actions. The tailgating success should be documented with timestamps, location details, and the access control failures exploited, while anonymizing the employee who was tailgated. The operator must carry authorization documentation at all times during physical testing in case they are confronted by security or law enforcement. The server room access finding should be reported immediately to the engagement lead given the physical safety implications. Documentation should include photographic or video evidence only if authorized in the rules of engagement, and all such evidence must be handled according to the engagement's data handling requirements. Physical testing should never create safety hazards, damage property, or cause personal distress to employees beyond momentary surprise at the debrief.",
+    "evaluation_criteria": "Response must address rules of engagement compliance for physical testing, documentation with anonymization, authorization documentation requirements, and safety boundaries."
+  },
+  {
+    "id": "T10-041",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Security team disputes severity classification.",
+    "prompt": "Design evidence-based response strategy.",
+    "reasoning_focus": "Severity defense articulation.",
+    "expected_answer": "The researcher should construct a structured severity defense using industry-standard frameworks rather than subjective arguments. The response should reference CVSS v3.1 or v4.0 scoring with specific metric values, map the finding to CWE classifications, and cite relevant real-world exploitation examples of similar vulnerabilities. The defense should include a clear impact narrative showing the business consequences of exploitation — data exposure volume, affected user count, financial impact potential, and regulatory implications. If the program uses a custom severity matrix, the researcher should map their finding to the program's specific criteria with evidence for each rating factor. The response should be professional and data-driven, avoiding emotional arguments or threats of public disclosure. If the platform offers mediation such as HackerOne's mediation process, the researcher should request mediation after presenting their evidence-based case. Ultimately, if the severity dispute cannot be resolved, the researcher must accept the program's final determination to maintain professional relationships.",
+    "evaluation_criteria": "Response must use industry-standard frameworks for severity justification, include business impact quantification, and demonstrate professional dispute resolution without adversarial tactics."
+  },
+  {
+    "id": "T10-042",
+    "complexity": "L3",
+    "engagement_context": "Pentest",
+    "scenario": "Client requests proof beyond safe validation scope.",
+    "prompt": "Determine ethical boundary response.",
+    "reasoning_focus": "Professional constraint enforcement.",
+    "expected_answer": "The tester must professionally decline requests that would exceed safe validation boundaries, even when the client insists. The response should explain why the requested proof would create unacceptable risk — such as data destruction, service outage, or irreversible system modification — and offer alternative demonstration methods. Safe alternatives include demonstrating the vulnerability in a controlled test environment, providing theoretical impact analysis backed by the confirmed exploitation path, or executing a limited proof-of-concept that demonstrates the vulnerability class without full exploitation. The tester should reference the rules of engagement and the engagement contract's liability provisions that typically exclude the tester from responsibility for damage caused by authorized testing. If the client insists on dangerous proof despite the risks, the tester should require written authorization specifying the exact actions requested, the accepted risks, and the client's assumption of liability for any resulting damage.",
+    "evaluation_criteria": "Response must firmly decline unsafe testing requests, offer concrete safe alternatives, and require written authorization with liability acceptance if the client insists."
+  },
+  {
+    "id": "T10-043",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Another researcher claims similar vulnerability.",
+    "prompt": "Decide differentiation or consolidation approach.",
+    "reasoning_focus": "Report uniqueness strategy.",
+    "expected_answer": "The researcher should analyze the other researcher's claimed vulnerability to determine whether it is truly the same finding or a related but distinct issue. If the root cause, affected component, and exploitation path are identical, the finding is a duplicate and the first reporter has priority per standard platform policies on HackerOne and Bugcrowd. If the researcher's finding involves a different attack vector, affects different functionality, or demonstrates additional impact beyond what the other researcher reported, it should be submitted as a separate finding with explicit differentiation explaining what is novel. The differentiation should be stated clearly in the report's opening paragraph to help the triager quickly assess uniqueness. The researcher should avoid accessing the other researcher's report details if possible to maintain independence of their findings. If the findings are consolidated, the researcher should offer their additional evidence to strengthen the combined report rather than competing for individual credit.",
+    "evaluation_criteria": "Response must provide a systematic approach to assessing finding uniqueness, recommend explicit differentiation in the report, and demonstrate professional handling of potential duplicate scenarios."
+  },
+  {
+    "id": "T10-044",
+    "complexity": "L3",
+    "engagement_context": "Red Team",
+    "scenario": "SOC detects activity; engagement not yet complete.",
+    "prompt": "Determine communication and continuation strategy.",
+    "reasoning_focus": "Operational transparency balance.",
+    "expected_answer": "When the SOC detects red team activity, the response depends on the engagement's rules regarding detection. If the engagement includes a 'white cell' or 'trusted agent' who coordinates between the red team and the organization, the trusted agent should be notified immediately to determine whether to reveal the red team's presence or allow the SOC to respond naturally. If no trusted agent exists, the engagement lead should contact the client's designated point of contact to prevent the SOC from initiating a real incident response that wastes organizational resources. The red team should document the detection event including what triggered it, the SOC's response time, and the actions taken. If the engagement rules specify that detection ends the simulation, the team should cease operations and begin documentation. If the rules allow continued operations after detection, the team should assess whether continued activity provides additional value or merely generates noise for the SOC. The detection itself is a valuable data point for the final report regardless of continuation.",
+    "evaluation_criteria": "Response must address the trusted agent coordination model, document the detection event as a finding, and make continuation decisions based on engagement rules rather than assumptions."
+  },
+  {
+    "id": "T10-045",
+    "complexity": "L3",
+    "engagement_context": "Pentest",
+    "scenario": "Legal department contacts the testing team mid-engagement to request a pause pending contract review.",
+    "prompt": "Determine the professional response when the target's legal team requests a testing pause during an active engagement.",
+    "reasoning_focus": "Legal intervention handling during active engagement.",
+    "expected_answer": "The testing team must immediately comply with a legal pause request regardless of testing progress or contractual disagreements. Continuing testing after a legal hold request creates significant legal exposure for the testing firm and could transform authorized testing into unauthorized access. The team should cease all active testing, secure all collected evidence and notes, and document the exact time and nature of the pause request. The team's project manager or legal counsel should then communicate with the client's legal team to understand the scope and duration of the requested pause. During the pause, the team should not access any target systems, analyze captured data beyond what is necessary for evidence preservation, or share findings outside the testing team. The pause and its impact on engagement deliverables should be formally documented, including any timeline or budget adjustments needed. Testing should only resume after receiving explicit written authorization from the client's legal team.",
+    "evaluation_criteria": "Response must demonstrate immediate compliance with legal holds, proper evidence preservation, and requirement for written authorization before resuming testing."
+  },
+  {
+    "id": "T10-046",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A scope definition uses ambiguous wording that could include or exclude a specific asset depending on interpretation; the asset contains a critical vulnerability.",
+    "prompt": "Model the professional approach to scope ambiguity resolution when the decision determines whether a critical finding can be reported.",
+    "reasoning_focus": "Scope ambiguity resolution strategy for high-stakes findings.",
+    "expected_answer": "The researcher must resolve the scope ambiguity before submitting or testing further, regardless of the potential finding's value. The researcher should submit a scope clarification request through the platform's official communication channel, quoting the specific ambiguous language and presenting both possible interpretations without revealing that a vulnerability has been found. Revealing the vulnerability's existence before scope confirmation could create pressure on the program to exclude the asset to avoid acknowledging the finding. If the program confirms the asset is in scope, the researcher can submit the finding with full evidence. If the asset is excluded, the researcher should document the scope gap as feedback to the program. If the program does not respond within a reasonable timeframe, the researcher should default to the more restrictive interpretation and not test the asset. The researcher's reputation and legal protection depend on operating within clearly authorized boundaries, even when significant findings are at stake.",
+    "evaluation_criteria": "Response must recommend clarification without revealing the vulnerability, default to restrictive interpretation when ambiguity persists, and demonstrate that legal protection outweighs potential bounty value."
+  },
+  {
+    "id": "T10-047",
+    "complexity": "L3",
+    "engagement_context": "Pentest",
+    "scenario": "A PR crisis emerges at the target organization during the active engagement; the client asks the testing team to pause to avoid generating additional noise.",
+    "prompt": "Assess the professional response to a client-requested pause during an active engagement triggered by an external PR event.",
+    "reasoning_focus": "Client-requested pause during external crisis handling.",
+    "expected_answer": "The testing team should comply with the client's pause request promptly and professionally, as the client has the right to suspend authorized testing at any time. The team should cease all active testing, document the pause with timestamp and reason, and secure collected evidence. The team should communicate understanding of the client's situation without expressing opinions about the PR crisis. During the pause, the team should prepare documentation for completed testing and organize findings for efficient resumption. The engagement contract should be reviewed for provisions regarding client-initiated pauses including impact on timeline, budget, and scope. The team should propose a resumption plan that accounts for the time lost, including options to extend the engagement window or reduce scope to fit the remaining timeline. Any findings discovered before the pause should be held for the final report unless they represent immediate security risks requiring urgent notification.",
+    "evaluation_criteria": "Response must demonstrate professional compliance with client pause requests, proactive planning for engagement resumption, and appropriate handling of pre-pause findings."
+  },
+  {
+    "id": "T10-048",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "The program's coordinated disclosure policy requires a 90-day window before public disclosure; the vendor has been non-responsive for 75 days.",
+    "prompt": "Model the disclosure decision framework when a vendor is non-responsive at 75 days of a 90-day coordinated disclosure window.",
+    "reasoning_focus": "Coordinated disclosure timeline and non-responsive vendor escalation.",
+    "expected_answer": "At 75 days into a 90-day disclosure window with a non-responsive vendor, the researcher should make a final escalation attempt through all available channels including the platform's mediation process, direct security team contacts, and executive-level communication if accessible. The researcher should formally notify the vendor that the 90-day window expires in 15 days and that public disclosure will proceed per the coordinated disclosure policy unless meaningful engagement occurs. This notification should be documented in writing through the platform's messaging system. The researcher should prepare the public disclosure document, removing any details that could enable immediate mass exploitation while maintaining enough technical detail to inform the security community. If the vendor responds within the remaining 15 days and requests an extension with evidence of active remediation, the researcher should consider a reasonable extension. Following the 90-day disclosure policy as written is the researcher's right, but professional judgment should consider whether public disclosure would cause disproportionate harm to users versus the benefit of transparency.",
+    "evaluation_criteria": "Response must demonstrate escalation through multiple channels, formal written notification of timeline, preparation for disclosure, and ethical consideration of user impact versus transparency."
+  },
+  {
+    "id": "T10-049",
+    "complexity": "L3",
+    "engagement_context": "Pentest",
+    "scenario": "Two senior testers disagree on whether a finding is exploitable — one believes it requires prerequisites that are unlikely in production; the other believes the prerequisites are commonly met.",
+    "prompt": "Design a resolution methodology for internal team disagreement on finding exploitability classification.",
+    "reasoning_focus": "Internal team finding exploitability disagreement resolution.",
+    "expected_answer": "The team should resolve the disagreement through evidence-based analysis rather than seniority or opinion. First, both testers should document their positions with specific evidence: the prerequisites required, the likelihood of those prerequisites in production, and real-world examples supporting their assessment. Second, the team should attempt to validate the prerequisites empirically by checking the target's production configuration, industry benchmarks, and threat intelligence for similar environments. Third, if empirical resolution is not possible, the finding should be reported with both perspectives presented: a primary rating based on the more conservative assessment and an alternate rating with the conditions under which the higher exploitability applies. This dual-perspective approach gives the client the information needed to make their own risk decision. The team lead should document the resolution methodology used to ensure consistency across similar future disagreements.",
+    "evaluation_criteria": "Response must provide a structured evidence-based resolution methodology, recommend dual-perspective reporting when disagreement persists, and establish precedent for future consistency."
+  },
+  {
+    "id": "T10-050",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "The security team asks for 6 more months to patch a critical finding; the researcher is under no contractual obligation to wait.",
+    "prompt": "Model the disclosure timing decision when a vendor requests extended remediation time for a critical vulnerability.",
+    "reasoning_focus": "Researcher vs vendor timeline negotiation in disclosure.",
+    "expected_answer": "The researcher should evaluate the request based on several factors: the severity of the vulnerability, whether users are actively at risk, the vendor's demonstrated remediation progress, and industry disclosure norms. A 6-month extension is unusually long and exceeds standard coordinated disclosure windows of 90 days. The researcher should request evidence of active remediation work including a remediation plan, timeline milestones, and progress updates. If the vendor can demonstrate genuine technical complexity requiring extended remediation such as architectural redesign, the researcher may grant a shorter extension of 30-60 days with check-in milestones. If the vendor shows no progress or uses the time as a delay tactic, the researcher should proceed with disclosure per the original timeline. The researcher should also consider whether interim mitigations can be deployed to protect users while the full fix is developed. Throughout the negotiation, all communications should be documented through the platform to maintain a clear record of good-faith efforts.",
+    "evaluation_criteria": "Response must evaluate the extension request against remediation progress evidence, propose milestone-based shorter extensions, and prioritize user protection throughout the negotiation."
+  },
+  {
+    "id": "T10-051",
+    "complexity": "L3",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "During a red team simulation the operator discovers what appears to be active malware on a compromised host that does not match the team's own tooling.",
+    "prompt": "Determine whether the discovered malware is part of the simulation or an actual threat, and decide on the appropriate course of action.",
+    "reasoning_focus": "Real threat vs simulation artifact triage during active red team operation.",
+    "expected_answer": "The operator must immediately halt offensive activity on the affected host and escalate to the engagement lead and client security team through the emergency contact protocol established in the rules of engagement. Active malware from an unknown source represents a real incident that overrides simulation objectives. The team should preserve forensic state by not rebooting the system, document all observable indicators including file hashes, registry keys, network connections, and process trees, and transmit these to the client's incident response team. The red team engagement should be suspended on affected segments until the incident is resolved. Continuing simulation activity risks contaminating forensic evidence, interfering with incident response, or inadvertently assisting a real threat actor. The engagement debrief should include a post-incident review of how the simulation uncovered the real threat.",
+    "evaluation_criteria": "Response must demonstrate incident response priority overrides simulation objectives, require immediate escalation, and show forensic preservation discipline."
+  },
+  {
+    "id": "T10-052",
+    "complexity": "L3",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "Testing reveals a critical SQL injection in a database system that was not explicitly listed in scope but is clearly integral to the scoped application.",
+    "prompt": "Decide whether to test the database further or halt and request scope clarification from the client.",
+    "reasoning_focus": "Implicit vs explicit scope interpretation in enterprise engagements.",
+    "expected_answer": "The tester should halt active exploitation of the database system and immediately contact the client's designated engagement point of contact to document the finding and request explicit scope authorization. Enterprise pentests are governed by a statement of work that defines authorization boundaries, and exploiting systems not explicitly authorized creates legal and contractual risk even when the system appears operationally related to the scoped target. The tester should document the injection point, the path of discovery, and the evidence of database connectivity without executing any data extraction queries. The client may then formally add the database to scope in writing, allowing the tester to proceed. If the client cannot authorize quickly, the finding should be logged as a preliminary discovery requiring follow-up. This approach protects both the tester and the client's legal standing.",
+    "evaluation_criteria": "Response must require written scope expansion before testing implicitly related systems and demonstrate understanding of authorization boundaries in contractual engagements."
+  },
+  {
+    "id": "T10-053",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A researcher discovers a vulnerability that can only be fully demonstrated using a social engineering component against a real employee.",
+    "prompt": "Determine whether to report the finding without full exploitation proof or attempt social engineering to validate impact.",
+    "reasoning_focus": "Social engineering prohibition in bug bounty programs.",
+    "expected_answer": "The researcher must not attempt social engineering against employees even to validate a finding. Bug bounty programs universally prohibit social engineering, phishing, and human manipulation as testing methods regardless of the technical vulnerability involved. The researcher should report the vulnerability with available technical evidence, clearly describing the theoretical social engineering component as part of the attack chain without executing it. The report should explain what information or access the social engineering step would provide, cite similar real-world attack chains for credibility, and note that full exploitation requires human interaction that is outside scope. Program triagers are accustomed to evaluating partial-chain vulnerabilities and can assess severity based on technical components alone. Attempting unauthorized social engineering risks program ban, legal liability, and reputational damage.",
+    "evaluation_criteria": "Response must categorically prohibit social engineering attempts and demonstrate how to report human-interaction-dependent vulnerabilities within program rules."
+  },
+  {
+    "id": "T10-054",
+    "complexity": "L3",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "A penetration test uncovers evidence suggesting a prior breach occurred months before the engagement that the client appears unaware of.",
+    "prompt": "Determine the tester's obligations regarding potential undisclosed historical breach evidence.",
+    "reasoning_focus": "Ethical and regulatory disclosure obligations for discovered historical breach indicators.",
+    "expected_answer": "The tester has an immediate professional and potentially legal obligation to escalate evidence of a prior breach to the client's senior leadership and legal counsel, separate from the ongoing pentest findings. Many jurisdictions impose breach notification requirements on organizations that become aware of incidents affecting personal data, and delay in notification after discovery can compound regulatory liability. The tester should document all indicators observed including timestamps, affected systems, data types involved, and evidence of exfiltration without conducting an investigation that could compromise future forensic integrity. The escalation should occur through the engagement's established emergency communication channel. The tester should make clear that they are not qualified to render a definitive breach determination but that the indicators warrant immediate forensic investigation. The pentest scope may need to be suspended or redirected to preserve evidence.",
+    "evaluation_criteria": "Response must recognize historical breach evidence as requiring immediate escalation beyond normal pentest reporting and demonstrate awareness of regulatory notification implications."
+  },
+  {
+    "id": "T10-055",
+    "complexity": "L3",
+    "engagement_context": "CISO Briefing",
+    "scenario": "The CISO asks the security team to translate a critical authentication bypass finding into business impact language for a non-technical board sub-committee.",
+    "prompt": "Construct a business-impact framing of a critical authentication bypass that resonates with financial and operational risk owners.",
+    "reasoning_focus": "Technical-to-business translation for executive security communication.",
+    "expected_answer": "An authentication bypass should be framed as an unauthorized access risk with quantified business consequences rather than a technical mechanism description. The briefing should lead with impact: the finding means any external attacker could access customer accounts, administrative functions, or sensitive business data without valid credentials. The business consequences should be expressed in terms the sub-committee understands: regulatory fines under applicable frameworks such as GDPR or CCPA, customer breach notification costs, potential class action exposure, reputational damage affecting customer acquisition, and operational disruption costs if the vulnerability is exploited. The briefing should include an estimated likelihood rating based on exploitability and the threat landscape, a comparison to publicly disclosed incidents at peer organizations, and a remediation timeline with resource requirements. The framing should avoid technical jargon while being precise enough to drive budget and priority decisions.",
+    "evaluation_criteria": "Response must translate technical severity into financial and operational risk language appropriate for non-technical executive stakeholders and include actionable remediation framing."
+  },
+  {
+    "id": "T10-056",
+    "complexity": "L3",
+    "engagement_context": "Pentest",
+    "scenario": "A tester accidentally modifies production configuration during testing, causing a service degradation that affects real users.",
+    "prompt": "Determine the immediate steps required after an accidental production impact during authorized testing.",
+    "reasoning_focus": "Incident response obligations when testing causes unintended production impact.",
+    "expected_answer": "The tester must immediately stop all testing activity and activate the emergency incident notification protocol specified in the rules of engagement. Most enterprise pentest contracts require immediate notification of the client's operations team when testing causes unintended production impact. The tester should document the exact action taken, the timestamp, the affected system, and the nature of the configuration change, then provide this to the operations team to support rapid rollback. If the change can be safely reversed by the tester, they should do so only with explicit client authorization to avoid compounding the issue. The tester must not attempt to cover the impact or continue testing as if nothing occurred. A formal incident report should be included in the final deliverable documenting the accidental impact, the notification timeline, and the remediation steps taken. Post-engagement, the team should review testing procedures to prevent recurrence.",
+    "evaluation_criteria": "Response must require immediate client notification, demonstrate incident documentation discipline, and address the obligation to cease testing until impact is resolved."
+  },
+  {
+    "id": "T10-057",
+    "complexity": "L3",
+    "engagement_context": "Bug Bounty",
+    "scenario": "Research reveals a zero-day vulnerability in a widely used open-source library that also affects the bug bounty program's target application.",
+    "prompt": "Model the multi-party disclosure decision when a zero-day affects both an open-source project and a bug bounty target.",
+    "reasoning_focus": "Coordinated multi-party disclosure for supply chain vulnerabilities.",
+    "expected_answer": "The researcher faces a multi-party disclosure obligation. The vulnerability exists in the open-source library itself, making the bug bounty program a secondary affected party rather than the root cause. The researcher should first contact the open-source project's security disclosure channel using their published security policy, typically security@project or a CVE Numbering Authority. Simultaneously, the researcher may report to the bug bounty program noting that the vulnerability originates in an upstream dependency. The CERT Coordination Center can assist with multi-party coordinated disclosure if the library is widely used. The researcher should not publicly disclose the vulnerability until the library maintainers have had reasonable time to release a patch, typically 90 days per coordinated disclosure norms. Bug bounty reward eligibility may be limited if the program excludes third-party library vulnerabilities, but the researcher's professional obligation to responsible disclosure applies regardless of reward outcome.",
+    "evaluation_criteria": "Response must address multi-party coordinated disclosure obligations, recognize the upstream library as the primary disclosure target, and demonstrate understanding of supply chain vulnerability reporting."
+  },
+  {
+    "id": "T10-058",
+    "complexity": "L3",
+    "engagement_context": "Red Team",
+    "scenario": "The red team is detected mid-operation by the client's security operations center, but the detection appears incomplete — the SOC has not found all compromised systems.",
+    "prompt": "Decide whether to continue operating stealthily or disclose full compromise scope to the SOC.",
+    "reasoning_focus": "Partial detection decision-making in adversarial simulation.",
+    "expected_answer": "The decision depends entirely on the engagement objectives and rules of engagement established with the client before the operation began. If the engagement objective is to test detection and response capabilities, a partial detection represents an important data point that should be allowed to play out according to the protocol agreed upon, which may include a set observation period before the red team reveals additional compromise scope. However, if the rules of engagement specify that detection triggers a full stop, the team must immediately notify the engagement lead and follow the defined disclosure protocol. Under no circumstances should the team take actions designed to eliminate the partial detection or destroy evidence of their access. If the engagement continues past detection, all further activity must remain within authorized scope. Post-engagement, the partial detection scenario provides valuable insight into the SOC's coverage gaps and should be highlighted in the debrief.",
+    "evaluation_criteria": "Response must defer to pre-established rules of engagement for detection scenarios and prohibit actions designed to evade or undermine legitimate SOC detection activity."
+  },
+  {
+    "id": "T10-059",
+    "complexity": "L3",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "The security findings report is complete but the client's project manager requests delay of delivery to avoid impacting a product launch scheduled in two weeks.",
+    "prompt": "Evaluate the request to delay the pentest report to avoid disrupting a business milestone.",
+    "reasoning_focus": "Report delivery obligations vs business timeline pressure.",
+    "expected_answer": "The tester should decline to delay delivery of a completed report. Pentest contracts specify report delivery timelines, and holding a completed report creates liability for the testing firm if a vulnerability is exploited during the delay period. The appropriate response is to deliver the report on schedule while working with the client to triage the findings. If critical or high severity findings exist that could affect the launch, the tester should offer an interim briefing to the product and security teams immediately so they can make an informed risk acceptance decision. The client retains the business decision authority to proceed with the launch while accepting residual risk, but that decision must be made with full awareness of the security findings. Delaying the report removes the client's ability to make an informed decision and shifts liability inappropriately to the testing firm. A remediation roadmap can be structured around the launch timeline.",
+    "evaluation_criteria": "Response must refuse report delay while offering practical alternatives such as interim briefings and risk-stratified remediation roadmaps that accommodate business timelines."
+  },
+  {
+    "id": "T10-060",
+    "complexity": "L3",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "A company suffers a breach affecting EU residents' data and must determine whether the 72-hour GDPR notification window applies and to which supervisory authority.",
+    "prompt": "Model the GDPR breach notification decision including timeline calculation and supervisory authority selection.",
+    "reasoning_focus": "GDPR Article 33 notification obligations including timeline and authority selection.",
+    "expected_answer": "Article 33 of GDPR requires notification to the competent supervisory authority within 72 hours of becoming aware of a personal data breach unless the breach is unlikely to result in risk to individuals' rights and freedoms. The 72-hour clock starts when the organization has sufficient certainty that a breach has occurred, not when the first alert is received. The organization must notify the lead supervisory authority, which is determined by the location of the organization's main establishment in the EU, typically where the EU headquarters or main data processing decisions are made. If the organization has establishments in multiple EU member states, the lead supervisory authority is that of the main establishment. The notification must include the nature of the breach, categories and approximate number of data subjects affected, likely consequences, and measures taken or proposed. If full information is not available within 72 hours, the notification may be submitted in phases with subsequent updates. Failure to notify carries penalties up to 10 million euros or 2% of global annual turnover.",
+    "evaluation_criteria": "Response must correctly identify the 72-hour trigger point, lead supervisory authority determination methodology, and phased notification option under Article 33."
+  },
+  {
+    "id": "T10-061",
+    "complexity": "L4",
+    "engagement_context": "Board Presentation",
+    "scenario": "The board requests a risk-adjusted ROI analysis for a proposed $2M security program investment following a near-miss incident.",
+    "prompt": "Construct a risk-adjusted ROI framework for presenting a security investment to a board of directors with fiduciary obligations.",
+    "reasoning_focus": "Security investment justification using financial risk modeling for board-level governance.",
+    "expected_answer": "A board-level security investment presentation must translate security risk into financial terms that satisfy fiduciary decision-making standards. The framework should begin with annualized loss expectancy calculated as the product of threat likelihood and potential loss magnitude, drawing on industry breach cost data from sources such as IBM Cost of a Data Breach Report and Verizon DBIR. The $2M investment should be evaluated against the risk reduction it achieves expressed in dollar terms. For example, if the program reduces expected annual loss from $8M to $3M, the risk reduction value is $5M against a $2M cost, yielding a 150% first-year ROI before accounting for regulatory penalty avoidance and cyber insurance premium reduction. The presentation should include scenario analysis: best case, expected case, and worst case breach scenarios with probability weightings. Regulatory penalty exposure should be quantified separately as a deterministic risk rather than probabilistic. The board should also receive the residual risk profile after investment, enabling informed risk acceptance decisions. The near-miss incident should be used as a calibration point for likelihood estimates.",
+    "evaluation_criteria": "Response must demonstrate quantitative risk modeling methodology, connect security investment to board-level fiduciary obligations, and include scenario analysis with probability weighting."
+  },
+  {
+    "id": "T10-062",
+    "complexity": "L4",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "During a pentest, the team discovers Active Directory golden ticket artifacts indicating a previous compromise, along with signs of persistent access not attributable to the red team.",
+    "prompt": "Determine the appropriate response when an enterprise pentest discovers evidence of an ongoing third-party intrusion.",
+    "reasoning_focus": "Triage and escalation protocol when pentest discovers active threat actor presence.",
+    "expected_answer": "Evidence of persistent unauthorized access that is not attributable to the authorized pentest team constitutes an active security incident that must be escalated immediately through the client's incident response chain, separate from and prioritizing over the ongoing pentest engagement. The pentest team should immediately preserve all observed indicators of compromise including golden ticket artifacts, timestamps, affected domain controller logs, and persistence mechanism details without modifying the affected systems. The team should activate the emergency escalation contact defined in the rules of engagement and provide a technical briefing to the client's incident response team or their retained IR firm. The pentest should be suspended on affected domain segments to preserve forensic integrity. The team must not attempt to investigate the threat actor's foothold beyond what is needed for documentation, as unauthorized investigation could tip off the attacker, destroy evidence, or create legal complications. The pentest scope and deliverables will need to be renegotiated post-incident given the contaminated testing environment.",
+    "evaluation_criteria": "Response must prioritize incident escalation over pentest objectives, demonstrate forensic preservation discipline, and address the need for scope renegotiation after discovering an active intrusion."
+  },
+  {
+    "id": "T10-063",
+    "complexity": "L4",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A researcher discovers a server-side request forgery vulnerability that chains to AWS metadata service access, exposing EC2 instance credentials that could allow full AWS account takeover.",
+    "prompt": "Model the disclosure prioritization and impact communication for a chained SSRF-to-cloud-takeover finding.",
+    "reasoning_focus": "Critical chained vulnerability disclosure with cloud infrastructure takeover potential.",
+    "expected_answer": "This finding represents a critical severity vulnerability with potential for complete cloud infrastructure compromise and must be treated with the highest disclosure urgency. The researcher should report immediately through the bug bounty platform using the platform's critical finding fast-track process if available. The report must include the full attack chain with evidence at each step: the initial SSRF trigger, the metadata service response, the credential extraction demonstration, and the AWS account access confirmation. Evidence of actual credential validity should be demonstrated using a read-only API call such as sts:GetCallerIdentity rather than any write or privilege-escalating operation. The researcher should explicitly note the potential for multi-service lateral movement, data exfiltration, and infrastructure destruction that the credentials enable. The finding warrants immediate out-of-band contact with the program security team given the active credential exposure risk. The researcher should not retain the extracted credentials beyond what is necessary for immediate report submission and should recommend the client immediately rotate all EC2 instance profiles on affected systems pending remediation.",
+    "evaluation_criteria": "Response must address the urgency of active credential exposure, demonstrate minimal-footprint validation methodology, and recommend immediate credential rotation alongside the disclosure."
+  },
+  {
+    "id": "T10-064",
+    "complexity": "L4",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "The red team achieves domain admin on day 3 of a 10-day engagement but the client's CISO asks the team to continue operating against other objectives rather than stopping.",
+    "prompt": "Evaluate the ethical and operational considerations of continuing a red team engagement after achieving the primary success criteria.",
+    "reasoning_focus": "Continued operation scope and authorization after primary objective achievement.",
+    "expected_answer": "Continuing the engagement after domain admin achievement is operationally sound provided the extended activities remain within the original rules of engagement or are formally amended in writing to cover new objectives. The CISO's verbal direction to continue is insufficient authorization on its own; a written scope amendment or documented approval through the engagement contract holder is required for any activities beyond the original objectives. The team should propose a structured continuation plan identifying specific secondary objectives such as testing lateral movement to isolated network segments, evaluating data exfiltration detection capabilities, or simulating insider threat scenarios, each with defined success criteria and time boundaries. The team must resist scope creep that could cause operational disruption. Any new objectives should be evaluated against potential impact to production systems and authorized personnel. The remaining time is most valuable for testing defensive detection and response capabilities rather than expanding compromise, as detection testing provides the highest return on the post-objective engagement period.",
+    "evaluation_criteria": "Response must require written authorization for extended activities beyond original objectives and demonstrate that continued operation should focus on detection testing rather than expanded compromise."
+  },
+  {
+    "id": "T10-065",
+    "complexity": "L4",
+    "engagement_context": "CISO Briefing",
+    "scenario": "A newly appointed CISO must brief the executive team on the organization's security program maturity and prioritize a three-year investment roadmap.",
+    "prompt": "Construct a structured approach to security maturity assessment and investment prioritization for executive communication.",
+    "reasoning_focus": "Security program maturity assessment methodology and executive roadmap communication.",
+    "expected_answer": "The CISO should base the maturity assessment on a recognized framework such as the NIST Cybersecurity Framework, CIS Controls, or ISO 27001, mapping current capabilities to maturity levels across key domains including identity, endpoint, network, data, and detection and response. The assessment should identify gaps between current state and target state appropriate for the organization's risk profile and industry. Investment prioritization should follow a risk-reduction-per-dollar methodology, favoring controls that reduce the highest-probability, highest-impact threats first. The three-year roadmap should be structured in phases: year one addresses critical gaps and hygiene fundamentals such as MFA, patch management, and endpoint detection; year two builds detection and response capability including SIEM, threat hunting, and incident response processes; year three focuses on advanced capabilities such as threat intelligence, red teaming, and security automation. Each phase should include measurable outcomes tied to business metrics such as mean time to detect, mean time to respond, and reduction in critical vulnerability exposure. The executive presentation should connect each investment to specific threat scenarios and potential financial impact reduction.",
+    "evaluation_criteria": "Response must reference a recognized maturity framework, apply risk-reduction-per-dollar prioritization, and structure a phased roadmap with measurable business-aligned outcomes."
+  },
+  {
+    "id": "T10-066",
+    "complexity": "L4",
+    "engagement_context": "Pentest",
+    "scenario": "A web application pentest reveals a remote code execution vulnerability in a customer-facing API 48 hours before the client's scheduled public product launch.",
+    "prompt": "Model the risk communication and remediation decision framework for a critical finding discovered immediately before a major launch.",
+    "reasoning_focus": "Critical finding communication and launch risk decision under extreme time pressure.",
+    "expected_answer": "The tester must immediately deliver an out-of-band critical finding notification to the client's CISO, CTO, and engagement sponsor rather than waiting for the final report. A pre-launch critical RCE in a customer-facing API represents an unacceptable risk to launch given its potential for immediate exploitation. The notification should include the vulnerability location, exploitation method, evidence of exploitability, and a clear statement of business risk: unauthorized code execution enabling data theft, service disruption, or customer account compromise at launch. The client's decision framework should present three options: delay the launch to allow remediation, remediate the specific vulnerable endpoint before launch, or launch with the vulnerable API disabled and a compensating control in place. The tester should provide an honest assessment of remediation complexity and timeline. If the client chooses to launch despite the finding, the decision and the tester's recommendation should be documented in writing with client sign-off. The tester's obligation is to communicate clearly and create a documented record; the launch decision authority rests with the client.",
+    "evaluation_criteria": "Response must require immediate out-of-band escalation, present structured launch decision options, and ensure the client's informed decision is documented regardless of their choice."
+  },
+  {
+    "id": "T10-067",
+    "complexity": "L4",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "A multinational organization suffers a breach affecting customers in the EU, California, and New York, each jurisdiction with different notification requirements and timelines.",
+    "prompt": "Model a coordinated multi-jurisdiction breach notification strategy.",
+    "reasoning_focus": "Simultaneous multi-jurisdictional breach notification compliance under conflicting requirements.",
+    "expected_answer": "Multi-jurisdiction breach notification requires a coordinated strategy that satisfies the most stringent requirement among applicable regulations while ensuring no jurisdiction's deadline is missed. The organization must immediately convene legal counsel with expertise in each applicable jurisdiction. Under GDPR Article 33, notification to the lead supervisory authority is required within 72 hours of breach awareness. California's CCPA requires notification to affected California residents in the most expedient time possible, with no explicit regulatory timeline but 45 days typically accepted. New York SHIELD Act requires notification in the most expedient time possible. Notification to affected individuals should generally occur after law enforcement consultation to avoid impeding any investigation. The content of notifications differs by jurisdiction: GDPR requires specific technical categories of data affected, while US state laws focus on personally identifiable information categories. The organization should develop jurisdiction-specific notification templates but coordinate timing to avoid conflicting public disclosures. A breach notification matrix should be created mapping affected population to applicable regulations, notification content requirements, and regulatory agency contacts.",
+    "evaluation_criteria": "Response must demonstrate knowledge of applicable regulatory timelines across GDPR, CCPA, and SHIELD Act and provide a coordinated multi-jurisdiction notification framework."
+  },
+  {
+    "id": "T10-068",
+    "complexity": "L4",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A researcher has submitted 15 reports in a month; 8 were accepted, 4 were marked informational, and 3 are being disputed by the program as out of scope.",
+    "prompt": "Evaluate the strategy for disputing scope determinations and managing program relationships for long-term success.",
+    "reasoning_focus": "Bug bounty program relationship management and scope dispute resolution.",
+    "expected_answer": "Disputing scope determinations requires a methodical, evidence-based approach that preserves the program relationship while advocating for fair assessment. For each disputed finding, the researcher should review the program scope language carefully and identify the specific clause supporting in-scope classification, provide a clear exploitation chain demonstrating actual impact, and cite precedent from similar accepted findings in this or comparable programs. The dispute should be framed as a collaborative clarification request rather than a confrontation. High dispute rates may indicate a misalignment between the researcher's scope interpretation and the program's intent, which warrants a proactive scope clarification conversation with the program team. A 4-informational rate across 15 findings suggests the researcher may be reporting theoretical issues without sufficient impact demonstration. Improving report quality by leading with demonstrated impact before technical detail typically reduces informational classifications. Maintaining a professional tone in all disputes is critical because program triagers and security researchers interact across multiple programs and platforms, and reputation affects future report reception.",
+    "evaluation_criteria": "Response must demonstrate evidence-based dispute methodology, self-critical analysis of reporting patterns, and relationship preservation as a strategic priority."
+  },
+  {
+    "id": "T10-069",
+    "complexity": "L4",
+    "engagement_context": "Red Team",
+    "scenario": "Red team lateral movement reaches the organization's treasury management system, which was not listed in scope but is accessible from compromised systems.",
+    "prompt": "Determine the appropriate course of action when red team lateral movement naturally reaches a critical out-of-scope financial system.",
+    "reasoning_focus": "Out-of-scope system access decisions during lateral movement in authorized red team operations.",
+    "expected_answer": "Access to an out-of-scope system, regardless of how it was reached, requires immediate halt and escalation to the engagement lead. The rules of engagement define authorized target systems, and financial infrastructure such as treasury management systems carries exceptional regulatory and operational sensitivity. The team should document the network path and access method that led to the treasury system without performing any actions on the system itself beyond confirming access was possible. This discovery is itself a valuable finding demonstrating network segmentation failure between the scoped environment and critical financial infrastructure. The finding should be escalated to the client's engagement sponsor immediately with a recommendation to add network segmentation validation to the engagement scope through a formal written amendment. The red team should not proceed with any activity on the treasury system without explicit written authorization. The segmentation failure finding should be featured prominently in the engagement report as a critical architectural risk independent of any exploitation.",
+    "evaluation_criteria": "Response must require immediate halt upon reaching an out-of-scope system and recognize the segmentation failure as a standalone reportable finding regardless of whether exploitation is authorized."
+  },
+  {
+    "id": "T10-070",
+    "complexity": "L4",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "Pentest evidence includes access log anomalies and data movement patterns consistent with an insider threat from a specific employee account.",
+    "prompt": "Determine the tester's obligations and boundaries when pentest evidence suggests ongoing insider threat activity.",
+    "reasoning_focus": "Insider threat indicator handling discipline and escalation obligations.",
+    "expected_answer": "The tester must escalate insider threat indicators to the client's senior security leadership and legal counsel through the engagement's designated escalation channel without conducting any investigation into the individual employee beyond what is needed to document the technical indicators observed. Insider threat investigations involve employment law, HR procedures, and potentially criminal law, all of which are outside the scope and competence of a pentest engagement. The tester should document the specific technical indicators including log entries, timestamps, accessed systems, data movement volumes, and access times, and present these as anomalies requiring investigation rather than conclusions about intent or guilt. The tester must not access the employee's personal communications, personal devices, or any data beyond what is accessible through the authorized testing scope. The client's HR, legal, and security teams should determine the appropriate investigation path. The pentest documentation should explicitly state that the findings represent technical anomalies consistent with insider threat patterns and that attribution and intent determination require a formal investigation outside the pentest scope.",
+    "evaluation_criteria": "Response must restrict the tester's role to technical documentation, require immediate escalation to legal and HR through proper channels, and prohibit unauthorized investigation of individuals."
+  },
+  {
+    "id": "T10-071",
+    "complexity": "L4",
+    "engagement_context": "CISO Briefing",
+    "scenario": "The CISO must brief the executive team on security risks introduced by a proposed acquisition of a company with a known legacy technical debt problem.",
+    "prompt": "Model a pre-acquisition security risk assessment briefing framework for executive decision-makers.",
+    "reasoning_focus": "M&A security due diligence communication for executive acquisition decision support.",
+    "expected_answer": "Pre-acquisition security risk assessment briefing should frame security debt as a quantified financial liability and integration risk rather than a technical concern. The briefing should cover four dimensions: technical debt inventory including unpatched systems, unsupported software, and architectural vulnerabilities discovered during due diligence; regulatory compliance gaps that could trigger fines or remediation costs post-acquisition including data protection compliance, PCI DSS status, and industry-specific requirements; breach liability exposure addressing any known or suspected historical incidents, pending regulatory investigations, and the acquirer's liability exposure upon closing; and integration risk covering the security controls required before connecting the target's network to the acquirer's environment. The briefing should include a range estimate of remediation costs stratified by urgency: immediate pre-integration security minimums, 12-month hygiene improvement costs, and long-term modernization investment. The CISO should recommend specific acquisition agreement provisions such as representations and warranties covering security posture, escrow arrangements for remediation funding, and contractual security milestones post-close.",
+    "evaluation_criteria": "Response must quantify security debt as financial liability, cover all four risk dimensions, and recommend specific acquisition agreement protective provisions."
+  },
+  {
+    "id": "T10-072",
+    "complexity": "L4",
+    "engagement_context": "Board Presentation",
+    "scenario": "The board must decide how to communicate a breach to shareholders and regulators following a ransomware attack that encrypted operational systems and exfiltrated customer data.",
+    "prompt": "Model the post-breach board communication decision framework covering shareholder, regulatory, and customer notification obligations.",
+    "reasoning_focus": "Post-breach multi-stakeholder communication strategy for board governance.",
+    "expected_answer": "Post-breach communication requires simultaneous management of multiple regulatory and stakeholder obligations with coordinated timing to avoid conflicting disclosures. Regulatory notification triggers the most time-sensitive obligations: SEC material event disclosure for publicly traded companies must occur within four business days of determining the breach is material under the 2023 SEC cybersecurity rules; GDPR supervisory authority notification within 72 hours of awareness; and applicable US state breach notification laws. Customer notification should follow law enforcement consultation to avoid impeding investigation and be coordinated with regulatory agency timing requirements. Shareholder communication beyond mandatory SEC disclosure should be coordinated with legal counsel and investor relations to ensure consistent messaging. The board should approve a unified communication narrative that accurately describes what occurred, what data was affected, what actions are being taken, and what protective measures are offered to affected customers. The communication should not speculate about attribution or extent beyond confirmed facts. Board members should receive legal briefing on their individual disclosure obligations and trading restrictions during the material non-public information period.",
+    "evaluation_criteria": "Response must address all stakeholder notification categories with accurate regulatory timelines, coordinate multi-channel disclosure timing, and include board member individual obligation guidance."
+  },
+  {
+    "id": "T10-073",
+    "complexity": "L4",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A bug bounty program offers to pay triple the standard bounty in exchange for the researcher signing an NDA that would prohibit any public disclosure indefinitely.",
+    "prompt": "Evaluate the strategic and ethical considerations of accepting a bounty with indefinite non-disclosure terms.",
+    "reasoning_focus": "NDA negotiation and transparency obligations in vulnerability research.",
+    "expected_answer": "Accepting an indefinite NDA in exchange for elevated payment requires careful evaluation of the impact on the broader security community and the researcher's professional obligations. Indefinite silence agreements are unusual and potentially problematic: they prevent the researcher from discussing the vulnerability class in conference talks, blog posts, or academic papers even after the vulnerability is patched, limiting knowledge transfer that benefits the community. The researcher should negotiate for a time-bounded confidentiality period that expires upon patch release and public disclosure by the vendor, with the researcher retaining the right to publish technical details after that period. Indefinite NDAs may also conflict with the researcher's disclosure obligations if they later discover the vulnerability is being actively exploited and users remain at risk. The financial incentive must be weighed against career development value of public research, the ethical commitment to community knowledge sharing, and the risk that indefinite silence enables continued user risk if remediation stalls. The researcher should consult a lawyer specializing in technology contracts before signing any NDA that restricts future research publication.",
+    "evaluation_criteria": "Response must evaluate the tension between financial incentive and community disclosure obligations and recommend specific NDA negotiation terms rather than categorical acceptance or rejection."
+  },
+  {
+    "id": "T10-074",
+    "complexity": "L4",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "An organization discovers a breach that may meet materiality thresholds for SEC disclosure but legal counsel is uncertain about materiality determination.",
+    "prompt": "Model the materiality assessment process for SEC cybersecurity incident disclosure under the 2023 rules.",
+    "reasoning_focus": "SEC cybersecurity incident materiality determination methodology.",
+    "expected_answer": "Under the SEC's 2023 cybersecurity disclosure rules, a public company must determine whether a cybersecurity incident is material within a reasonable timeframe after discovery, then file an 8-K Item 1.05 disclosure within four business days of that determination. Materiality is evaluated using the existing securities law standard: whether a reasonable investor would consider the information important in making an investment decision. Factors supporting materiality include operational disruption affecting revenue-generating systems, customer data exposure affecting trust and churn, regulatory penalty exposure exceeding defined financial thresholds, reputational damage affecting competitive position, and third-party liability from affected customers or partners. The organization should conduct the materiality assessment with legal counsel and external securities law specialists using a documented analytical framework. The assessment should quantify the incident's financial impact range including direct costs, regulatory penalties, and lost revenue, and compare these to the organization's revenue, earnings, and market capitalization. The four-day disclosure clock begins upon materiality determination, making timely assessment critical. If materiality is genuinely uncertain, the organization may consult informally with SEC staff. Erring toward disclosure is generally advisable to avoid securities fraud liability from non-disclosure.",
+    "evaluation_criteria": "Response must accurately describe the SEC 2023 materiality determination process, enumerate relevant materiality factors, and address the consequences of delayed or omitted disclosure."
+  },
+  {
+    "id": "T10-075",
+    "complexity": "L4",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "The red team operator is asked by a client employee to share detailed technical knowledge about an attack technique used during the engagement to help them improve internal defenses.",
+    "prompt": "Evaluate the propriety of sharing detailed red team attack techniques with individual client employees during an active engagement.",
+    "reasoning_focus": "Knowledge sharing boundaries and authorization discipline during active red team operations.",
+    "expected_answer": "Sharing detailed red team attack techniques with individual client employees during an active engagement is generally inappropriate regardless of the employee's stated defensive intent. The engagement is authorized through a specific organizational chain of command, and informal knowledge sharing bypasses that chain in ways that could compromise engagement integrity, create conflicts of interest if the employee is later involved in the defensive side of the simulation, or result in technique leakage to unauthorized parties. Technical knowledge transfer is a legitimate post-engagement objective that should occur through the formal debrief and training components defined in the engagement scope. If the client wants security awareness training or purple team exercises integrated into the engagement, this should be formalized through the engagement sponsor as a scope amendment. The operator should politely decline the informal request and direct the employee to the engagement sponsor for any scope changes. The operator should also note the interaction in their engagement log as a potential indicator that the employee is aware of the red team operation in ways that could affect simulation realism.",
+    "evaluation_criteria": "Response must prohibit informal technique sharing outside the engagement's authorized chain of command and direct any knowledge transfer requests through formal scope amendment processes."
+  },
+  {
+    "id": "T10-076",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "An organization's board commissions a comprehensive security strategy review following a competitor's major public breach, requiring a five-year roadmap aligned to business growth objectives.",
+    "prompt": "Construct a five-year security strategy framework that integrates with enterprise business planning and demonstrates risk-adjusted value.",
+    "reasoning_focus": "Long-horizon security strategy development aligned to business growth and risk governance.",
+    "expected_answer": "A five-year security strategy requires integration with the organization's business planning cycle and strategic growth initiatives rather than operating as a standalone security program plan. The strategy should open with a threat landscape assessment calibrated to the organization's industry, geography, and growth trajectory over the planning period, identifying how the attack surface will evolve as the business scales. The strategy framework should be structured across three time horizons: foundation and hygiene in years one and two establishing identity governance, endpoint protection, data classification, and security operations capabilities; detection and resilience in years three and four building advanced threat detection, incident response, and business continuity capabilities; and adaptive security in year five implementing continuous threat exposure management, security automation, and supply chain risk governance. Each phase must include resource requirements expressed as headcount, technology spend, and managed service investment with clear ownership and funding mechanisms. The strategy should define a risk governance model establishing how the board, executive team, and security function interact on risk decisions including risk appetite statements, risk escalation thresholds, and board reporting cadence. Success metrics should connect to business outcomes: reduction in security-driven business disruption, improvement in customer trust indicators, reduction in cyber insurance premiums, and regulatory compliance maturity.",
+    "evaluation_criteria": "Response must integrate security strategy with business planning timelines, structure a phased three-horizon framework, and connect all investments to quantified business outcomes and risk governance mechanisms."
+  },
+  {
+    "id": "T10-077",
+    "complexity": "L5",
+    "engagement_context": "Board Presentation",
+    "scenario": "The board must evaluate whether to disclose a vulnerability the organization discovered in a critical infrastructure product used by thousands of customers before a patch is available.",
+    "prompt": "Model the ethical, legal, and strategic considerations for a board-level pre-patch vulnerability disclosure decision affecting critical infrastructure.",
+    "reasoning_focus": "Critical infrastructure pre-patch disclosure decision at board governance level.",
+    "expected_answer": "Pre-patch disclosure of a critical infrastructure vulnerability requires the board to balance four competing obligations: legal obligations under sector-specific reporting requirements such as CISA reporting for critical infrastructure operators; ethical obligations to customers and the public whose safety may depend on the affected systems; strategic obligations to maintain customer trust and avoid competitive harm; and operational obligations to support an orderly remediation process. The board should evaluate whether the vulnerability is being actively exploited in the wild, because active exploitation changes the calculus from coordinated disclosure to emergency notification. If exploitation is occurring, affected customers must be notified immediately with available mitigations even without a complete patch. If no active exploitation is confirmed, the board should work with CISA and sector-specific ISACs to develop coordinated disclosure timing that gives customers maximum time to implement interim mitigations before public disclosure. The disclosure message should lead with specific mitigations and detection guidance rather than vulnerability details that could assist attackers. Legal counsel must assess mandatory reporting timelines under CISA's 72-hour reporting rule and sector-specific regulations. The board's decision and its rationale should be documented in board minutes as evidence of informed governance.",
+    "evaluation_criteria": "Response must distinguish active exploitation from pre-exploitation scenarios, address CISA reporting obligations, and demonstrate that customer safety overrides strategic reputation protection in the decision hierarchy."
+  },
+  {
+    "id": "T10-078",
+    "complexity": "L5",
+    "engagement_context": "CISO Briefing",
+    "scenario": "The CISO must advise the CEO on whether to pay a ransomware demand after attackers claim to have exfiltrated sensitive customer data and are threatening public release.",
+    "prompt": "Model the ransomware payment decision framework including legal, ethical, and operational considerations at the executive level.",
+    "reasoning_focus": "Ransomware payment decision-making incorporating legal compliance, ethics, and operational recovery.",
+    "expected_answer": "The ransomware payment decision requires evaluation across legal, operational, and ethical dimensions simultaneously. Legal: US organizations must verify the ransomware operator is not a sanctioned entity before any payment, as payments to OFAC-sanctioned groups are illegal regardless of intent. CISA and FBI both discourage payment because it funds criminal operations and does not guarantee data non-release. Insurance policy terms for ransomware must be reviewed immediately. Operational: payment buys a decryption key of uncertain reliability and does not address the attacker's continued presence in the network or their possession of exfiltrated data. Recovery from backups is typically more reliable than decryption if backup integrity is confirmed. The decision must factor in how long restoration will take from backups versus decryption, the operational impact of extended downtime, and whether the attacker can re-encrypt after payment. Ethical and strategic: paying confirms the organization as a payer, making it a higher-priority target for future attacks and for the same threat actor. The exfiltration threat creates a separate problem: paying does not guarantee data non-release, and the organization faces breach notification obligations regardless of payment status. The CISO should recommend parallel tracking: engage a ransomware incident response specialist to assess backup viability, conduct OFAC screening of any identified ransomware group, initiate breach notification assessment for regulatory obligations, and involve law enforcement before any payment decision.",
+    "evaluation_criteria": "Response must address OFAC legal requirements, distinguish encryption recovery from exfiltration risk, provide parallel-track operational recommendations, and not advocate for payment as a standalone solution."
+  },
+  {
+    "id": "T10-079",
+    "complexity": "L5",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "A nation-state red team simulation reveals that the organization's security team has been systematically understating risk findings to management over the past two years.",
+    "prompt": "Model the organizational and ethical response when a red team engagement reveals a pattern of internal risk concealment.",
+    "reasoning_focus": "Internal risk reporting integrity failure discovered through adversarial simulation.",
+    "expected_answer": "Discovery of systematic risk concealment by the internal security team represents a governance failure that extends beyond the red team findings themselves and must be escalated directly to the board audit committee and outside legal counsel, bypassing the internal security chain of command that may be involved in the concealment. The red team lead should document all specific instances where red team findings contradict previously reported security posture assessments with precise evidence. The engagement debrief must be delivered directly to the board rather than routed through the CISO or security leadership. The board should initiate an independent investigation through outside counsel to determine the scope of concealment, whether it was intentional or resulted from reporting process failures, whether the concealment affected regulatory filings or investor disclosures creating securities law exposure, and what personnel actions are appropriate. The red team findings should be preserved in their unaltered form as potential evidence in any subsequent investigation or enforcement action. Regulatory disclosure obligations must be assessed in light of whether previously filed security representations were materially inaccurate. The organization should implement independent risk reporting mechanisms that bypass the security function for future board-level risk communication.",
+    "evaluation_criteria": "Response must escalate governance failures outside the implicated reporting chain, preserve evidence integrity, assess securities law implications of potentially inaccurate disclosures, and recommend independent reporting mechanisms."
+  },
+  {
+    "id": "T10-080",
+    "complexity": "L5",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "A pentest of an organization's AI-powered medical diagnostic system discovers that model inputs can be manipulated to alter diagnostic outputs in ways that could cause patient harm.",
+    "prompt": "Model the disclosure and escalation decision when a pentest finds an AI safety vulnerability with direct patient harm potential.",
+    "reasoning_focus": "AI safety vulnerability disclosure in a regulated healthcare context.",
+    "expected_answer": "An AI diagnostic manipulation vulnerability with patient harm potential triggers obligations under multiple frameworks simultaneously and must be treated as a patient safety incident first and a security finding second. The tester must immediately notify the client's clinical risk management team and biomedical engineering leadership through the engagement emergency contact protocol, explicitly framing the finding as a patient safety concern rather than a technical security issue. If the diagnostic system is currently deployed in clinical settings, patient safety leadership must evaluate whether the system should be taken offline pending remediation. FDA reporting obligations apply: AI-enabled medical devices are regulated under FDA's Software as a Medical Device framework, and malfunctions or defects with patient harm potential may require Medical Device Reporting under 21 CFR Part 803. The client's compliance and legal teams must be immediately engaged. The security report should be supplemented with a clinical impact assessment prepared in collaboration with the clinical team, not drafted by the security testers alone. The vulnerability details must be restricted to a minimal need-to-know group to prevent exploitation during remediation. Remediation must include clinical validation that the fix restores correct diagnostic behavior across a representative patient population.",
+    "evaluation_criteria": "Response must prioritize patient safety over reporting timelines, trigger FDA Medical Device Reporting consideration, require clinical team involvement in impact assessment, and recommend potential system suspension pending remediation."
+  },
+  {
+    "id": "T10-081",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "A global financial services organization must design a security governance model that satisfies requirements from regulators in five jurisdictions simultaneously while maintaining operational efficiency.",
+    "prompt": "Design a multi-jurisdictional security governance framework for a global regulated financial institution.",
+    "reasoning_focus": "Multi-jurisdictional regulatory compliance integration in global security governance design.",
+    "expected_answer": "Multi-jurisdictional security governance for a global financial institution requires a federated governance model with a central framework and jurisdiction-specific overlays rather than separate parallel programs. The central framework should be built on the most rigorous common baseline applicable across all jurisdictions, typically incorporating NIST CSF, ISO 27001, and the Basel Committee's cyber resilience principles, which most major financial regulators accept as baseline frameworks. Jurisdiction-specific overlays address unique requirements: EU regulators under DORA require ICT risk management frameworks, incident reporting within 4 hours for major incidents, and third-party risk programs with contractual requirements; US regulators under NYDFS Part 500 require CISO designation, annual penetration testing, and specific encryption standards; UK FCA requires operational resilience mapping with impact tolerances; Singapore MAS TRM requires technology risk governance committees and specific cloud security controls. The governance model should include a global security policy council with jurisdiction-specific representation, a unified risk register with regulatory mapping showing which requirements each control addresses, a centralized incident response function with jurisdiction-specific notification protocols, and a common control testing program with jurisdiction-specific reporting outputs. Third-party risk management must satisfy the most stringent jurisdictional requirement across the entire vendor population rather than applying different standards by jurisdiction.",
+    "evaluation_criteria": "Response must demonstrate knowledge of specific requirements across major financial regulatory frameworks, recommend a federated rather than parallel governance model, and address third-party risk across jurisdictions."
+  },
+  {
+    "id": "T10-082",
+    "complexity": "L5",
+    "engagement_context": "CISO Briefing",
+    "scenario": "A CISO must brief the board on whether to disclose a zero-day supply chain vulnerability the organization discovered in a widely used enterprise software product before coordinating with the vendor.",
+    "prompt": "Model the zero-day supply chain vulnerability disclosure decision when the discovering organization is not the researcher but a victim organization.",
+    "reasoning_focus": "Victim organization disclosure obligations for supply chain zero-day affecting the broader ecosystem.",
+    "expected_answer": "A victim organization discovering a zero-day supply chain vulnerability has disclosure obligations to the broader ecosystem that extend beyond their own remediation. The CISO should immediately engage the software vendor through their security disclosure channel, even if the organization's primary focus is their own recovery, because other organizations using the same software are at risk. CISA's coordinated vulnerability disclosure guidelines apply to software used across critical infrastructure, and the organization may have notification obligations under CISA's reporting framework depending on their sector. The disclosure to the vendor should include full technical details enabling the vendor to develop a patch, the organization's evidence of exploitation, and a request for a coordinated disclosure timeline. The organization should request that the vendor treat the disclosure as a zero-day emergency with an accelerated patch timeline rather than the standard 90-day window given active exploitation. Simultaneously, the organization should brief their sector ISAC to enable threat intelligence sharing with peer organizations about indicators of compromise without disclosing the vulnerability mechanism. The board should authorize legal counsel to draft a communication plan that satisfies disclosure obligations while managing liability from the organization's own compromise. The organization's decision to delay disclosure to protect itself while others remain vulnerable is ethically untenable and potentially legally problematic.",
+    "evaluation_criteria": "Response must recognize the victim organization's disclosure obligations to the broader ecosystem, require immediate vendor notification, recommend ISAC briefing for indicator sharing, and reject self-interested disclosure delay."
+  },
+  {
+    "id": "T10-083",
+    "complexity": "L5",
+    "engagement_context": "Red Team",
+    "scenario": "A red team engagement for a defense contractor uncovers a capability gap that, if known to an adversary, could compromise a classified program the team was not aware existed.",
+    "prompt": "Model the security and legal obligations when a red team discovers findings that may intersect with classified national security programs.",
+    "reasoning_focus": "Classified program intersection handling in authorized security testing.",
+    "expected_answer": "Intersection with classified program considerations requires immediate suspension of the engagement and escalation through the client's security officer and legal counsel rather than through the standard engagement chain. Defense contractor red team engagements are typically governed by facility security clearance requirements and the National Industrial Security Program Operating Manual, and findings with potential classified program implications must be handled through NISPOM-compliant channels. The red team team lead must immediately notify the client's Facility Security Officer upon suspecting classified program intersection, as FSO oversight is required for any security findings potentially affecting classified operations. Documentation of the findings must comply with classified information handling requirements, which may mean digital reports cannot be stored on unclassified systems and briefings must occur in accredited spaces. The red team firm must assess whether team members have appropriate clearances to receive any contextual information about the classified program needed to assess the finding's full impact. All team members who may have been exposed to classified indicators must receive a defensive security briefing. The engagement debrief may need to occur in a classified setting. Standard pentest reporting formats and channels are inappropriate for this class of finding.",
+    "evaluation_criteria": "Response must invoke NISPOM and FSO notification requirements, require classified handling procedures for affected findings, and prohibit use of standard unclassified reporting channels for potentially classified-intersecting findings."
+  },
+  {
+    "id": "T10-084",
+    "complexity": "L5",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "An organization discovers that a security misconfiguration has been exposing sensitive data to unauthorized internal users for 18 months, with no evidence of external exfiltration but significant internal access by unauthorized employees.",
+    "prompt": "Model the regulatory disclosure and remediation decision when unauthorized internal data access has occurred over an extended period without external breach.",
+    "reasoning_focus": "Internal unauthorized access breach notification obligations and remediation scope.",
+    "expected_answer": "Unauthorized internal access to sensitive data constitutes a personal data breach under most data protection frameworks regardless of whether external exfiltration occurred, because access by unauthorized personnel violates the data subject's expectation of confidentiality. Under GDPR Article 4(12), a personal data breach includes unauthorized access by any party, including internal employees without a need to know. The 72-hour supervisory authority notification obligation under Article 33 is triggered by the date the organization becomes aware of the breach, not the date the breach began. The 18-month duration significantly affects the regulatory assessment because it suggests systemic control failures rather than an isolated incident. The organization should immediately remediate the misconfiguration, conduct a forensic access log review to identify all unauthorized internal access events and the data categories accessed, and assess whether affected data subjects' rights are at risk from the internal access. Data subjects may need to be notified under Article 34 if the breach is likely to result in high risk to their rights and freedoms, which depends on the data categories involved and the roles of the accessing employees. Regulatory notification should proactively disclose the 18-month duration, the access scope, and the remediation actions taken. Organizations should expect enhanced regulatory scrutiny and prepare for a formal investigation.",
+    "evaluation_criteria": "Response must correctly classify internal unauthorized access as a reportable breach, trigger the discovery-date notification clock, address the 18-month duration as an aggravating factor, and assess data subject notification obligations."
+  },
+  {
+    "id": "T10-085",
+    "complexity": "L5",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A researcher discovers a critical API authentication bypass affecting a major payment processor, but the researcher is located in a country that has an active legal dispute with the payment processor's home country, creating complex legal exposure.",
+    "prompt": "Model the disclosure decision when geopolitical legal exposure complicates a responsible disclosure obligation.",
+    "reasoning_focus": "Cross-jurisdictional legal risk management in responsible vulnerability disclosure.",
+    "expected_answer": "Geopolitical legal exposure does not eliminate the ethical obligation of responsible disclosure but significantly affects the mechanics and risk management of how disclosure is executed. The researcher should immediately engage a lawyer with expertise in international technology law and the specific legal dispute context before making any disclosure to the payment processor or their government. The payment processor's bug bounty program may itself create a legal framework for disclosure that offers protection under the program's terms of service, which may include safe harbor provisions. If the direct disclosure path carries unacceptable legal risk, the researcher may pursue disclosure through neutral intermediaries: CERT/CC provides intermediary disclosure services specifically for situations where direct disclosure is complicated, and can receive and transmit vulnerability details on behalf of researchers. The researcher should document all communications through the intermediary with timestamps to establish good-faith disclosure intent. The researcher should not withhold the finding indefinitely simply because disclosure is legally complicated, because active exploitation of a payment processor vulnerability harms millions of individuals regardless of geopolitical context. Legal counsel should also assess whether the researcher's discovery or possession of the vulnerability details creates any independent legal exposure under applicable computer fraud laws in the researcher's jurisdiction.",
+    "evaluation_criteria": "Response must recommend legal counsel engagement before disclosure, identify CERT/CC as a neutral intermediary option, and reject indefinite withholding while acknowledging legal risk management as a legitimate concern."
+  },
+  {
+    "id": "T10-086",
+    "complexity": "L5",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "A pentest engagement for a healthcare organization reveals that the HIPAA Security Risk Assessment submitted to regulators contains materially inaccurate representations about security controls that the pentest has now disproved.",
+    "prompt": "Model the obligations and decision framework when pentest evidence contradicts regulatory filings.",
+    "reasoning_focus": "Regulatory filing accuracy obligations when security testing contradicts prior regulatory representations.",
+    "expected_answer": "Discovery that pentest evidence contradicts representations in a HIPAA Security Risk Assessment creates immediate legal and regulatory obligations for the healthcare organization that extend beyond the security engagement itself. The testing firm must immediately escalate this finding separately from the standard pentest report, delivering it directly to the organization's general counsel and compliance officer rather than through the security team that may have authored the inaccurate assessment. HIPAA requires covered entities to maintain an accurate and current risk assessment; submitting a materially inaccurate assessment constitutes a compliance violation independent of any breach. If the inaccurate assessment was used to obtain regulatory approval, insurance coverage, or third-party contracts, the exposure may extend to fraud liability. The organization must assess whether the inaccuracies were the result of negligence or intentional misrepresentation, as this affects remediation obligations and potential voluntary self-disclosure strategy. Outside healthcare compliance counsel should evaluate whether proactive voluntary disclosure to HHS OCR is advisable versus waiting for a future audit, because voluntary disclosure typically results in more favorable enforcement outcomes. The inaccurate risk assessment must be corrected and resubmitted. The organization's compliance program should be evaluated to understand how the inaccuracy was filed without internal review catching it.",
+    "evaluation_criteria": "Response must escalate outside the security chain of command to legal and compliance, assess fraud liability exposure, address voluntary disclosure strategy, and recommend corrective regulatory filing."
+  },
+  {
+    "id": "T10-087",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "An organization must evaluate whether to implement a vulnerability disclosure program (VDP) or a bug bounty program, and design the chosen program to meet regulatory expectations and researcher community standards.",
+    "prompt": "Model the VDP vs bug bounty program decision framework and design principles for organizational implementation.",
+    "reasoning_focus": "Vulnerability disclosure program design and program type selection methodology.",
+    "expected_answer": "The choice between a VDP and a bug bounty program depends on the organization's security maturity, legal risk tolerance, and remediation capacity. A VDP is appropriate as a starting point for organizations with limited internal security capacity, those in regulated industries where payment programs create legal complexity, or those wanting to establish safe harbor for good-faith researchers without creating a high-volume submission environment. A bug bounty program is appropriate when the organization has sufficient triage capacity to process high submission volumes, has high-value assets that attract sophisticated researchers, and wants to incentivize deeper research beyond low-hanging fruit. Regulatory context matters: CISA's BOD 20-01 mandates federal agencies maintain VDPs, and many regulated industries are moving toward VDP requirements. A well-designed VDP should include a clear scope definition with explicit inclusion and exclusion lists, a safe harbor provision that commits the organization not to pursue legal action against good-faith researchers, defined response timelines for acknowledgment and remediation communication, a disclosure policy clarifying when researchers may publish findings, and a communication channel that guarantees researcher responses. A bug bounty program adds payout tables calibrated to market rates and severity levels, a platform provider relationship for triage support, and a legal framework for payments. Both program types should include a conflict of interest policy for employees and contractors who wish to participate.",
+    "evaluation_criteria": "Response must differentiate VDP from bug bounty based on maturity and capacity criteria, address regulatory drivers including CISA BOD 20-01, and specify required elements of each program type."
+  },
+  {
+    "id": "T10-088",
+    "complexity": "L5",
+    "engagement_context": "CISO Briefing",
+    "scenario": "The CISO must evaluate a request from law enforcement to install monitoring software on corporate infrastructure to surveil a suspected criminal employee without the employee's knowledge.",
+    "prompt": "Model the legal, ethical, and operational decision framework for a law enforcement surveillance request on corporate infrastructure.",
+    "reasoning_focus": "Law enforcement cooperation decision-making for covert employee surveillance on corporate systems.",
+    "expected_answer": "Law enforcement requests to install monitoring software on corporate infrastructure must be evaluated through a rigorous legal and procedural framework before any cooperation occurs. The organization must require production of a valid legal process: a court order, search warrant, or National Security Letter, depending on the nature of the request and jurisdiction. Verbal requests or informal cooperation requests without legal process should be declined. Once legal process is received, outside legal counsel must review it to confirm scope, validity, and the organization's obligations and limitations. The CISO should assess the technical implementation to ensure monitoring is narrowly scoped to the named subject and authorized data types, does not create security vulnerabilities in corporate infrastructure, and can be terminated cleanly upon request. The monitoring installation must not compromise broader corporate security controls or create access pathways that law enforcement could misuse or that other threat actors could exploit. Employee monitoring obligations under applicable employment law must be reviewed, as some jurisdictions require disclosure to employees of monitoring capabilities even when specific monitoring is covert. The CISO should maintain a confidential record of the legal process received, the cooperation provided, and the termination of the monitoring, accessible only to authorized legal and executive personnel. If the request implicates national security matters, specialized counsel with appropriate clearances may be required.",
+    "evaluation_criteria": "Response must require valid legal process before any cooperation, involve outside counsel in review, assess technical security implications of monitoring installation, and address data protection obligations."
+  },
+  {
+    "id": "T10-089",
+    "complexity": "L5",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "A global red team simulation spanning six countries must be coordinated to comply with computer crime laws in each jurisdiction while maintaining operational realism.",
+    "prompt": "Design a legal authorization and operational compliance framework for a multi-jurisdiction red team simulation.",
+    "reasoning_focus": "Multi-jurisdictional legal authorization and compliance design for global red team operations.",
+    "expected_answer": "A multi-jurisdiction red team simulation requires a jurisdiction-by-jurisdiction legal authorization framework rather than a single global authorization document, because computer crime laws vary significantly across countries and extraterritorial authorization is often legally insufficient. For each country where systems will be tested or from which testing will be conducted, legal counsel in that jurisdiction must confirm authorization adequacy, testing boundaries, and any reporting obligations triggered by the testing activity itself. Key jurisdictions have specific considerations: EU member states have national implementations of the Network and Information Security Directive with specific authorization requirements; the UK Computer Misuse Act requires explicit written authorization; Singapore's Computer Misuse Act has strict authorization requirements; and US federal testing authority flows through the Computer Fraud and Abuse Act authorization framework. The operational framework should route all testing activities through infrastructure in jurisdictions where the testing is clearly authorized. Evidence of authorization must be accessible to the red team lead in real time in case of law enforcement contact during operations. The rules of engagement must define which team members are authorized to operate in each jurisdiction and restrict activity to authorized systems in each jurisdiction. An emergency legal contact roster with jurisdiction-specific lawyers must be maintained throughout the operation. The engagement should include a pre-operation legal readiness review with counsel from each jurisdiction.",
+    "evaluation_criteria": "Response must require jurisdiction-specific legal authorization rather than a single global document, identify key jurisdiction-specific legal requirements, and mandate a real-time accessible authorization record and emergency legal contact roster."
+  },
+  {
+    "id": "T10-090",
+    "complexity": "L5",
+    "engagement_context": "Board Presentation",
+    "scenario": "The board must evaluate a proposal to acquire threat intelligence through a private marketplace where some intelligence may have been derived from systems compromised by the intelligence provider.",
+    "prompt": "Model the legal and ethical evaluation framework for purchasing threat intelligence from sources that may involve third-party system compromise.",
+    "reasoning_focus": "Threat intelligence procurement ethics and legal exposure assessment for board governance.",
+    "expected_answer": "Purchasing threat intelligence derived from compromised third-party systems creates receipt of stolen data liability, potential violations of the Computer Fraud and Abuse Act, and ethical exposure that the board must evaluate before approving such procurement. The legal analysis centers on whether the organization would be knowingly receiving data obtained through unauthorized access, which creates CFAA liability regardless of whether the organization conducted the compromise itself. The board should require the intelligence provider to represent and warrant in writing that all intelligence is obtained through lawful means, including through authorized access, open-source collection, or law enforcement cooperation, and that these representations are auditable. The contract should include indemnification provisions protecting the organization from third-party claims arising from the intelligence source. The intelligence provider's sourcing methodology should be reviewed by outside legal counsel specializing in cyber law. From an ethical standpoint, purchasing intelligence derived from compromised systems economically incentivizes criminal hacking and creates an ecosystem that ultimately harms organizations the intelligence is meant to protect. The board should establish a threat intelligence procurement policy that requires source legitimacy verification and prohibits intelligence sourced from criminal markets regardless of perceived operational value.",
+    "evaluation_criteria": "Response must identify CFAA receipt-of-stolen-data liability, require contractual representations and warranties on intelligence sourcing, and recommend a procurement policy that excludes criminally sourced intelligence."
+  },
+  {
+    "id": "T10-091",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "An organization discovers that its primary security operations center provider has been compromised in a supply chain attack and may have had access to the organization's security monitoring data for six months.",
+    "prompt": "Model the strategic response and recovery framework when the organization's primary security monitoring provider is compromised.",
+    "reasoning_focus": "Security provider compromise response strategy including detection gap assessment and provider transition.",
+    "expected_answer": "Compromise of the primary security operations center provider creates a detection blind spot of potentially six months duration that requires immediate parallel response across operational recovery, breach assessment, and strategic provider evaluation. The first priority is restoring independent security visibility: the organization should immediately activate any secondary monitoring capabilities, engage an incident response firm to provide independent monitoring during the transition, and preserve all available log data from the compromise period for forensic analysis. The SOC provider compromise creates an attacker with deep knowledge of the organization's security architecture, detection rules, alert thresholds, and incident response procedures, meaning existing detection logic may be compromised and should be treated as known to the adversary. The organization must conduct a threat hunt assuming the attacker has used the SOC access to identify and exploit gaps in the organization's environment. The breach assessment must determine what monitoring data the attacker accessed, what security architecture knowledge was exposed, and whether the attacker moved beyond the SOC provider into the organization's own systems. The provider relationship should be suspended pending investigation, and the organization should assess whether the provider has been transparent about the compromise scope. Strategic security review should evaluate single-point-of-failure risk in security monitoring and move toward a resilient multi-provider or hybrid insource-outsource model.",
+    "evaluation_criteria": "Response must immediately restore independent monitoring capability, treat existing detection logic as compromised, initiate a threat hunt assuming adversary knowledge of security architecture, and recommend multi-provider resilience."
+  },
+  {
+    "id": "T10-092",
+    "complexity": "L5",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "A financial institution must decide whether a sophisticated nation-state intrusion that accessed read-only trade data constitutes a material cybersecurity incident requiring SEC disclosure.",
+    "prompt": "Model the SEC materiality analysis for a nation-state intrusion with no confirmed data modification or direct financial impact.",
+    "reasoning_focus": "SEC materiality determination for sophisticated intrusion without direct financial loss.",
+    "expected_answer": "SEC materiality analysis for a nation-state intrusion requires assessment beyond direct financial impact to include market-relevant risk factors and investor information needs. The SEC's 2023 cybersecurity rules use the existing securities law materiality standard: information that a reasonable investor would consider important in making an investment decision. Nation-state access to read-only trade data is potentially material on several grounds: if the data included proprietary trading strategies, algorithm parameters, or position information that could be used for market manipulation or front-running, the reputational and competitive harm is material; if the institution's competitive advantage depends on the confidentiality of its trading methodologies, the compromise of those methodologies is a material business risk; regulatory penalties from financial regulators for failure to protect sensitive financial data represent potential financial liability; and the nation-state's capabilities to re-enter or escalate within the compromised environment represent an ongoing risk that investors are entitled to know about. The read-only limitation reduces immediate harm but does not eliminate materiality because investors assess risk exposure and future harm potential. Outside securities counsel and the institution's independent auditors should be engaged in the materiality determination. If materiality cannot be conclusively determined, the standard practice is to disclose given the asymmetric liability between over-disclosure and under-disclosure.",
+    "evaluation_criteria": "Response must apply the reasonable investor standard beyond direct financial loss, enumerate the nation-state-specific materiality factors including competitive harm and re-entry risk, and recommend disclosure when materiality is uncertain."
+  },
+  {
+    "id": "T10-093",
+    "complexity": "L5",
+    "engagement_context": "Red Team",
+    "scenario": "A red team engagement at a hospital system demonstrates that a compromised network position could allow manipulation of medical device communications, affecting patient safety systems.",
+    "prompt": "Model the evidence presentation and escalation framework when a red team engagement identifies patient safety risk through network compromise.",
+    "reasoning_focus": "Patient safety risk escalation from network security findings in healthcare red team engagements.",
+    "expected_answer": "Identification of a potential pathway to patient safety systems requires immediate escalation that supersedes the normal red team reporting cadence and must involve clinical leadership in addition to the security engagement sponsor. The red team lead should immediately notify the engagement sponsor and request emergency escalation to the hospital's Chief Medical Officer, Clinical Engineering leadership, and Biomedical Engineering team, as these stakeholders have authority and expertise to assess clinical risk in ways the security team cannot. Evidence presentation must be calibrated to avoid disclosing an active exploitation pathway while providing sufficient technical detail for clinical and biomedical engineers to assess patient safety risk. The red team should not demonstrate manipulation of actual medical device communications in a production environment under any circumstances; evidence should be limited to showing network access and potential reachability to device control systems without executing any commands that could affect device operation. FDA and The Joint Commission may have mandatory reporting obligations depending on whether the findings indicate a device cybersecurity vulnerability, and the hospital's regulatory affairs team must be engaged. The engagement scope may need to be suspended pending clinical risk assessment. The final report must include specific clinical risk context with input from qualified medical professionals, not solely security assessment language.",
+    "evaluation_criteria": "Response must immediately involve clinical leadership, prohibit live manipulation of medical devices, require regulatory affairs team engagement for FDA reporting assessment, and mandate clinical expert input in the final report."
+  },
+  {
+    "id": "T10-094",
+    "complexity": "L5",
+    "engagement_context": "Enterprise Pentest",
+    "scenario": "During a pentest, the team compromises an internal developer workstation and discovers uncommitted source code for a feature that appears to be an undisclosed regulatory bypass mechanism.",
+    "prompt": "Model the disclosure obligations when pentest access to developer systems reveals potentially fraudulent undisclosed regulatory bypass code.",
+    "reasoning_focus": "Legal and regulatory escalation obligations when pentest discovers evidence of potential regulatory fraud.",
+    "expected_answer": "Discovery of source code that appears to implement a regulatory bypass mechanism creates legal and ethical obligations that require immediate escalation outside the security reporting chain. The testing firm must treat this as a potential legal matter rather than a security finding and immediately engage the testing firm's own legal counsel before any further action. The firm's counsel should advise on obligations to the client, potential whistleblower legal considerations, and professional liability implications. The finding should be escalated directly to the client's board audit committee and outside legal counsel through the engagement sponsor chain, bypassing the CISO and security leadership to preserve the integrity of the escalation. The testing firm must preserve a contemporaneous record of the discovery including the exact evidence observed, the date and time of discovery, and the chain of notification, as this record may be needed in any subsequent legal or regulatory proceeding. The testing firm should obtain written legal advice before deciding whether to retain, destroy, or transmit evidence. The testing firm may face whistleblower reporting obligations under applicable laws such as Sarbanes-Oxley Section 806 if the organization is publicly traded and the bypass mechanism relates to financial reporting systems. Active exploitation of the access or review beyond what was necessary to document the discovery would be inappropriate.",
+    "evaluation_criteria": "Response must engage the testing firm's own legal counsel before acting, escalate to the board audit committee and outside counsel bypassing the security chain, document the discovery record, and assess whistleblower obligation applicability."
+  },
+  {
+    "id": "T10-095",
+    "complexity": "L5",
+    "engagement_context": "CISO Briefing",
+    "scenario": "The CISO must brief executive leadership on whether to disclose a security incident to a key enterprise customer before regulatory disclosure deadlines, given that early disclosure could trigger the customer's own incident response obligations and affect contract terms.",
+    "prompt": "Model the customer notification decision when voluntary early disclosure could trigger downstream contractual and regulatory consequences for the customer.",
+    "reasoning_focus": "Customer incident notification strategy balancing transparency obligations and downstream contractual impact.",
+    "expected_answer": "The decision to notify a key enterprise customer before regulatory deadlines requires balancing contractual notification obligations, relationship management, and the customer's own regulatory interests. The first step is reviewing the enterprise contract for incident notification provisions, which typically specify notification timelines, content requirements, and triggers. If the contract specifies notification faster than regulatory deadlines, that contractual obligation takes precedence. If the contract notification obligation is ambiguous, legal counsel should assess whether the incident triggers a material breach clause or indemnification provision that affects notification strategy. The customer's own regulatory exposure from the incident should be evaluated with the customer's interests in mind: early notification gives the customer maximum time to implement compensating controls and fulfill their own regulatory obligations, which generally benefits the relationship despite short-term disruption. The notification content should be precise about what customer data or systems were affected, what the organization is doing to remediate, and what information the customer needs for their own risk assessment. The notification should not speculate about impact beyond confirmed facts. The CISO should recommend proactive customer notification before regulatory deadlines as the default when the customer has their own downstream compliance obligations affected by the incident, as relationship preservation and customer good faith typically outweigh the short-term difficulty of early disclosure.",
+    "evaluation_criteria": "Response must review contractual notification obligations as the first step, assess the customer's own downstream compliance needs, and recommend proactive early notification when the customer has independent regulatory obligations affected by the incident."
+  },
+  {
+    "id": "T10-096",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "An organization must evaluate whether to implement active cyber defense measures that would involve deploying countermeasures on attacker-controlled infrastructure.",
+    "prompt": "Model the legal and strategic evaluation framework for active cyber defense measures that extend beyond the organization's own systems.",
+    "reasoning_focus": "Active cyber defense legal boundary analysis and strategic risk assessment.",
+    "expected_answer": "Active cyber defense measures that involve deploying countermeasures on infrastructure not owned by the organization are illegal under the Computer Fraud and Abuse Act in the United States and equivalent computer crime laws in virtually all jurisdictions, regardless of whether the target infrastructure is used by attackers. The CFAA prohibits unauthorized access to computer systems, and attacker use of a compromised third-party system does not provide authorization to access that system. The proposed legislation known as the Active Cyber Defense Certainty Act has not been enacted and does not provide legal authority. Organizations considering active defense measures should clearly distinguish between legal defensive measures within their own environment, which include aggressive deception technologies such as honeypots and canary tokens, network-based attacker deception, and IP reputation blocking, and illegal offensive measures involving accessing systems outside their authorization boundary. The risk calculus of illegal active defense also includes escalation risk: retaliation by sophisticated threat actors, collateral damage to innocent third parties whose systems are used as attacker infrastructure, and potential criminal prosecution of the organization's personnel. The organization's security strategy should achieve the same threat interruption objectives through legal means including threat intelligence sharing with law enforcement, industry sector partnerships, and engagement of government cyber defense resources such as CISA and FBI's Cyber Division.",
+    "evaluation_criteria": "Response must clearly state the illegality of cross-boundary active defense, distinguish legal deception-based defenses from illegal offensive measures, and provide legal alternatives achieving equivalent threat interruption."
+  },
+  {
+    "id": "T10-097",
+    "complexity": "L5",
+    "engagement_context": "Bug Bounty",
+    "scenario": "A researcher discovers evidence in a bug bounty target's application that the company is collecting and selling user data in ways that appear to violate their published privacy policy and may violate CCPA.",
+    "prompt": "Model the researcher's obligations when bug bounty research reveals potential privacy law violations beyond the security vulnerability itself.",
+    "reasoning_focus": "Privacy violation discovery during authorized bug bounty research and researcher disclosure obligations.",
+    "expected_answer": "Discovery of potential privacy law violations during authorized bug bounty research creates obligations that extend beyond the normal bug bounty reporting channel and require careful handling to avoid regulatory and legal complications for the researcher. The researcher should report the observed evidence through the bug bounty platform's standard channel, clearly distinguishing the privacy practice observation from any security vulnerability, and noting that the evidence was encountered during authorized testing. The researcher should not conduct additional investigation beyond what was observed incidentally during security testing, as expanded investigation into privacy practices could exceed the authorized scope of the bug bounty engagement and create liability. CCPA violations can be reported to the California Attorney General's office by any individual, and the researcher may consider filing a report if the evidence is sufficient and clearly observed during authorized testing. The researcher should document the exact data flows and disclosures observed with sufficient specificity to enable regulatory investigation without including data about actual users. Privacy advocacy organizations and researchers may provide guidance on appropriate reporting channels. The researcher's legal exposure is minimized by reporting through official channels, limiting the investigation to scope, and not retaining or transmitting actual user data. The researcher should consult a privacy law attorney before engaging in any regulatory reporting to assess whistleblower protections and reporting obligations in their jurisdiction.",
+    "evaluation_criteria": "Response must limit additional investigation to authorized scope, recommend reporting through both bug bounty and appropriate regulatory channels, require attorney consultation before formal regulatory reporting, and prohibit retention of actual user data."
+  },
+  {
+    "id": "T10-098",
+    "complexity": "L5",
+    "engagement_context": "Red Team Simulation",
+    "scenario": "A red team simulation for a critical infrastructure operator achieves access to operational technology network segments controlling physical processes, without having been specifically authorized to test OT systems.",
+    "prompt": "Model the immediate response decision when red team lateral movement reaches unauthorized OT network segments with physical process control access.",
+    "reasoning_focus": "Unauthorized OT access response during IT-authorized red team simulation with physical safety implications.",
+    "expected_answer": "Access to operational technology systems controlling physical processes requires an immediate hard stop regardless of how the access was achieved. OT systems controlling physical processes are governed by industrial safety standards, and unauthorized interaction with these systems creates physical safety risk that no engagement benefit can justify. The red team lead must immediately disconnect from or terminate any active sessions on OT network segments and notify the engagement lead, the client engagement sponsor, and the client's OT operations team simultaneously through the emergency contact protocol. The client's OT safety team must assess whether any commands or interactions occurred with physical control systems and whether any safety interlocks or process states were affected. The red team should preserve all logs of the access path to enable the client's OT and IT teams to understand the segmentation failure. If the OT systems are governed by NERC CIP, IEC 62443, or sector-specific safety standards, the client's compliance and regulatory teams must be notified as the unauthorized access may trigger mandatory incident reporting. The access path and lateral movement methodology should be documented for the client without any further exploitation activity on OT segments. Post-incident, the engagement scope must be formally renegotiated if OT testing is desired, with OT-specific safety protocols including a qualified OT safety engineer overseeing any authorized OT testing.",
+    "evaluation_criteria": "Response must require immediate hard stop and session termination upon OT access, trigger simultaneous physical safety and security escalation, assess sector-specific regulatory reporting obligations, and prohibit any further activity without OT-specific authorization."
+  },
+  {
+    "id": "T10-099",
+    "complexity": "L5",
+    "engagement_context": "Regulatory Disclosure",
+    "scenario": "An organization that self-reported a data breach to regulators receives a follow-up regulatory investigation request demanding source code, security architecture documents, and internal communications about the incident response.",
+    "prompt": "Model the organizational response framework for a regulatory investigation demanding sensitive technical and communications materials.",
+    "reasoning_focus": "Regulatory investigation response strategy balancing compliance obligations and legal privilege protection.",
+    "expected_answer": "A regulatory investigation demand for technical materials and internal communications requires a carefully coordinated response that fulfills legal compliance obligations while protecting legitimately privileged materials and the organization's legal position. The first step is retaining outside legal counsel with regulatory investigation experience before responding to any demands, as initial response framing significantly affects investigation trajectory. Outside counsel should conduct a legal hold immediately to preserve all potentially responsive materials and prevent any document destruction. Counsel should analyze each category of demanded materials: source code may be producible in whole or with targeted redactions for unrelated proprietary functionality; security architecture documents are typically producible but may contain ongoing vulnerability details requiring discussion with the regulator about protective treatment; internal communications may be subject to attorney-client privilege or attorney work product protection if generated in anticipation of litigation or involving legal counsel. The organization should respond to the regulator with a cooperation statement confirming intent to comply, a timeline for production, and identification of privilege claims requiring resolution. Regulators typically accommodate reasonable timelines and privilege processes when organizations demonstrate good-faith cooperation. Materials should be produced through secure, encrypted channels as the regulatory agency specifies. The organization should maintain a detailed production log documenting everything produced, the date of production, and any privilege claims. Attempting to limit production beyond legitimate privilege claims will damage the organization's standing with regulators and is generally counterproductive.",
+    "evaluation_criteria": "Response must immediately engage outside counsel and implement legal hold, distinguish producible from potentially privileged materials, demonstrate good-faith cooperation posture, and recommend secure production methods."
+  },
+  {
+    "id": "T10-100",
+    "complexity": "L5",
+    "engagement_context": "Security Strategy Review",
+    "scenario": "An organization must develop a comprehensive incident response capability that satisfies requirements from cyber insurance underwriters, regulatory examiners, and board-level governance expectations simultaneously.",
+    "prompt": "Design an integrated incident response capability framework that satisfies multi-stakeholder requirements including insurance, regulatory, and board governance.",
+    "reasoning_focus": "Multi-stakeholder incident response capability design covering insurance, regulatory, and governance requirements.",
+    "expected_answer": "An integrated incident response capability must be architected to satisfy three distinct stakeholder requirement sets simultaneously while maintaining operational coherence and avoiding conflicting protocols. Insurance underwriter requirements typically mandate: a written incident response plan reviewed annually, defined roles and responsibilities including a named incident response coordinator, contractual relationships with pre-approved forensic and legal firms, and documented tabletop exercise completion. Meeting these requirements reduces premiums and ensures claim eligibility. Regulatory requirements vary by sector but typically include: notification timelines with documented trigger definitions and escalation protocols, specific log retention for forensic investigation support, and evidence of regular testing through tabletop exercises or simulations. Board governance requirements include: a board-approved incident response policy with defined risk thresholds triggering board notification, quarterly reporting on IR program maturity and exercise results, and clear escalation paths from the CISO to the CEO and board for material incidents. The integrated framework should use a tiered incident classification system that maps each tier to specific notification requirements across all three stakeholder groups, enabling the IR coordinator to execute a single classification decision that automatically triggers the appropriate multi-stakeholder notification protocol. The tabletop exercise program should include scenarios testing insurance notification procedures, regulatory reporting timelines, and board escalation protocols simultaneously. Documentation of all exercises, plan updates, and incident response activities should be maintained in a governance repository accessible to internal audit and external examiners. Annual third-party review of the IR capability by a qualified independent firm provides credibility with all three stakeholder groups.",
+    "evaluation_criteria": "Response must address all three stakeholder requirement sets with specific program elements, design a unified classification system mapping to multi-stakeholder notifications, and recommend independent third-party validation for cross-stakeholder credibility."
+  }
+]

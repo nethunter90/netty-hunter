@@ -9,8 +9,12 @@ import Findings from "./pages/Findings";
 import Intelligence from "./pages/Intelligence";
 import Reports from "./pages/Reports";
 import Orchestration from "./pages/Orchestration";
+import Hunter from "./pages/Hunter";
 import Login from "./pages/Login";
 import { authAPI } from "./lib/api";
+import { SocketProvider } from './context/SocketContext';
+import Bounty from './pages/Bounty';
+import Missions from './pages/Missions';
 
 interface User {
   id: number;
@@ -55,6 +59,7 @@ export default function App() {
   }
 
   return (
+    <SocketProvider>
     <BrowserRouter>
       <div className="flex h-screen bg-hack-bg overflow-hidden">
         {/* Activity Bar */}
@@ -89,6 +94,9 @@ export default function App() {
               <Route path="/intelligence" element={<Intelligence />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/orchestration" element={<Orchestration />} />
+              <Route path="/hunter" element={<Hunter />} />
+              <Route path="/bounty" element={<Bounty />} />
+              <Route path="/missions" element={<Missions />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
@@ -107,5 +115,6 @@ export default function App() {
         error: { iconTheme: { primary: "#ff3355", secondary: "#0a0a0f" } },
       }} />
     </BrowserRouter>
+    </SocketProvider>
   );
 }

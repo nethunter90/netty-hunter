@@ -1,0 +1,1368 @@
+[
+  {
+    "id": "T9-001",
+    "complexity": "L1",
+    "tools_involved": [
+      "amass",
+      "httpx"
+    ],
+    "scenario": "Amass discovers 500 subdomains; httpx shows only 20 responding with unique titles.",
+    "prompt": "Design prioritization strategy for deeper testing.",
+    "reasoning_focus": "Signal clustering & asset prioritization.",
+    "expected_answer": "Run amass enum -d target.com -o subdomains.txt to enumerate all 500 subdomains, then pipe the results into httpx -title -status-code -follow-redirects to identify the 20 responding hosts with unique titles. Sort httpx output by title uniqueness using httpx -title | sort -u to cluster similar applications. Prioritize subdomains with non-default titles (not 'Welcome' or blank) as they indicate custom applications with higher vulnerability likelihood. Focus deeper testing on hosts returning unique titles, non-standard status codes, or technology fingerprints differing from the main domain. The 480 non-responding subdomains should be checked for subdomain takeover opportunities using subjack or can-i-take-over-xyz.",
+    "evaluation_criteria": "Demonstrates correct tool chaining order from amass to httpx, identifies data dependencies between subdomain enumeration and HTTP probing, and explains how title-based clustering reduces false positives and prioritizes unique applications for deeper testing."
+  },
+  {
+    "id": "T9-002",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "httpx"
+    ],
+    "scenario": "Nmap shows port 8080 open; httpx returns 404 on root path.",
+    "prompt": "Determine next logical enumeration direction.",
+    "reasoning_focus": "Service presence vs endpoint visibility.",
+    "expected_answer": "Start with nmap -sV -p 8080 target to confirm the service version on port 8080, then use httpx -path /robots.txt -path /sitemap.xml -path /.well-known/ to probe common discovery paths beyond the root. Run ffuf -u http://target:8080/FUZZ -w /usr/share/wordlists/dirb/common.txt to brute-force directories since the root 404 suggests the application serves content on non-root paths. Check nmap's service banner for technology hints (Tomcat, Node.js, etc.) to select targeted wordlists. The 404 on root combined with an open port indicates a headless API, microservice, or misconfigured virtual host rather than absence of service. Test with different Host headers using curl -H 'Host: different.target.com' to check for virtual host routing.",
+    "evaluation_criteria": "Shows understanding of service presence vs endpoint visibility, correctly identifies directory brute-forcing and virtual host testing as next steps, and explains why a 404 on root does not indicate absence of service."
+  },
+  {
+    "id": "T9-003",
+    "complexity": "L1",
+    "tools_involved": [
+      "ffuf",
+      "httpx"
+    ],
+    "scenario": "ffuf finds /admin; httpx shows identical response body as homepage.",
+    "prompt": "Evaluate false positive likelihood.",
+    "reasoning_focus": "Response fingerprinting correlation.",
+    "expected_answer": "Compare the response body hash of /admin against the homepage using httpx -hash md5 on both endpoints. If the MD5 hashes match, this is a soft-404 where the server returns 200 for all paths instead of proper 404 responses. Validate by requesting a known-nonexistent path like /randomstring123456 and comparing its response body to the homepage. Use ffuf with -fs (filter size) set to the homepage content-length to automatically exclude soft-404 responses from future scans. The matching response body strongly suggests a false positive from ffuf, as the server's catch-all routing masks true directory existence. Rerun ffuf with -mc 200 -fs <homepage_size> to filter out these false positives.",
+    "evaluation_criteria": "Correctly identifies soft-404 behavior as the likely cause, demonstrates response fingerprinting with hash comparison, and explains how to configure ffuf filters to eliminate false positives from catch-all routing."
+  },
+  {
+    "id": "T9-004",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "smbclient"
+    ],
+    "scenario": "Port 445 open; smbclient shows no accessible shares.",
+    "prompt": "Assess real exposure vs superficial service presence.",
+    "reasoning_focus": "Service exposure weighting.",
+    "expected_answer": "After nmap -sV -p 445 target confirms SMB service, run smbclient -L //target -N to list shares with null authentication. Follow up with enum4linux -a target to attempt deeper enumeration including user listing, share enumeration, and OS detection. The absence of accessible shares does not mean zero exposure \u2014 check for SMB signing status with nmap --script smb-security-mode, as disabled signing enables relay attacks. Test authenticated access if credentials are available using smbclient -L //target -U username%password. The exposure is real but requires either valid credentials or relay conditions to exploit, making it a medium-confidence finding that needs contextual assessment.",
+    "evaluation_criteria": "Distinguishes between service presence and service exposure, identifies SMB signing and relay attack vectors beyond share access, and demonstrates layered enumeration using multiple SMB tools."
+  },
+  {
+    "id": "T9-005",
+    "complexity": "L1",
+    "tools_involved": [
+      "nuclei",
+      "manual validation"
+    ],
+    "scenario": "Nuclei flags a potential open redirect; manual validation shows the redirect only works for same-site URLs.",
+    "prompt": "Determine whether the nuclei finding represents a true positive given the same-site constraint.",
+    "reasoning_focus": "Automated vs manual validation for same-site redirect constraints.",
+    "expected_answer": "First reproduce the nuclei finding by manually crafting the redirect URL identified in the template match, using curl -v 'https://target/redirect?url=https://evil.com' to observe the actual redirect behavior. If the redirect only works for same-site URLs (e.g., /redirect?url=/internal-page), test boundary cases like //evil.com, /\\evil.com, and https://target.evil.com to check for parser inconsistencies. A same-site-only redirect is significantly less severe than an open redirect, typically downgrading from medium to informational severity. Document the exact constraint by testing various bypass techniques including URL encoding, double encoding, and protocol-relative URLs. The nuclei template likely matched a broad pattern without validating the same-site constraint, making this a partial true positive that requires scope qualification in the report.",
+    "evaluation_criteria": "Correctly differentiates same-site redirect from open redirect severity, demonstrates boundary testing with parser inconsistency payloads, and explains why nuclei template matching may not account for same-site constraints."
+  },
+  {
+    "id": "T9-006",
+    "complexity": "L1",
+    "tools_involved": [
+      "crt.sh",
+      "httpx"
+    ],
+    "scenario": "Certificate transparency search reveals 12 subdomains using the same TLS certificate; 3 of the 12 are not responding.",
+    "prompt": "Assess whether certificate reuse across subdomains provides useful attack surface information and evaluate the non-responding subdomains.",
+    "reasoning_focus": "TLS cert reuse and non-responding asset significance.",
+    "expected_answer": "Use crt.sh to pull all certificates with curl 'https://crt.sh/?q=%25.target.com&output=json' | jq '.[].name_value' | sort -u to get the 12 subdomains sharing a TLS certificate. Run httpx against all 12 to confirm the 9 responding and 3 non-responding hosts, checking status codes and technologies. The 3 non-responding subdomains are high-priority targets for subdomain takeover \u2014 check their DNS records with dig to see if they point to decommissioned infrastructure (NXDOMAIN, dangling CNAMEs). Certificate reuse across subdomains indicates shared infrastructure or wildcard certificate deployment, meaning a compromise on one host may provide access to the private key used by all 12. Test whether the responding hosts share the same origin server using httpx -ip to identify infrastructure clustering. The non-responding subdomains with active DNS records represent the highest-value targets for takeover testing.",
+    "evaluation_criteria": "Identifies certificate reuse implications for shared infrastructure compromise, correctly prioritizes non-responding subdomains for takeover testing, and explains the relationship between certificate transparency and infrastructure clustering."
+  },
+  {
+    "id": "T9-007",
+    "complexity": "L1",
+    "tools_involved": [
+      "ffuf",
+      "robots.txt"
+    ],
+    "scenario": "Robots.txt disallows /internal; ffuf finds /internal responds with 401.",
+    "prompt": "Determine the next testing step given a 401 on a disallowed path discovered via both robots.txt and directory brute.",
+    "reasoning_focus": "Disallowed path correlation with authentication-protected endpoint.",
+    "expected_answer": "Confirm the 401 response on /internal by sending requests with curl -v https://target/internal to examine the WWW-Authenticate header and identify the authentication scheme (Basic, Bearer, Digest). If Basic auth is used, attempt default credentials with curl -u admin:admin https://target/internal and common credential pairs. Run ffuf -u https://target/internal/FUZZ -w /usr/share/wordlists/dirb/common.txt -H 'Authorization: Basic YWRtaW46YWRtaW4=' to enumerate sub-paths under /internal with default credentials. The convergence of robots.txt disallow and 401 response strongly suggests a legitimate protected resource rather than a honeypot. Check if the authentication can be bypassed via HTTP verb tampering (try PUT, PATCH, DELETE methods) or path traversal (../internal). The robots.txt entry confirms the path's existence and sensitivity, elevating the priority of authentication bypass testing.",
+    "evaluation_criteria": "Correctly chains robots.txt discovery with 401 response analysis, identifies authentication bypass techniques appropriate for the scenario, and demonstrates the significance of converging signals from multiple discovery methods."
+  },
+  {
+    "id": "T9-008",
+    "complexity": "L1",
+    "tools_involved": [
+      "httpx",
+      "CDN detection"
+    ],
+    "scenario": "httpx identifies a CDN header (CF-Ray) on the target; direct IP scan shows the same web service is accessible without CDN headers.",
+    "prompt": "Assess the security implications of CDN bypass via direct IP access and determine what testing is appropriate on each path.",
+    "reasoning_focus": "CDN detection and direct IP bypass behavior.",
+    "expected_answer": "Identify the CDN bypass by comparing responses from the domain (CDN-proxied) and direct IP access using curl -v https://target.com and curl -v -k https://1.2.3.4 -H 'Host: target.com'. Document the security header differences: CDN-proxied responses typically include WAF protections, rate limiting, and security headers that are absent on direct IP access. Test vulnerability classes that the CDN blocks (XSS payloads, SQL injection, path traversal) directly against the origin IP where WAF protection is absent. The direct IP access without CDN headers means all CDN-layer security controls (DDoS protection, bot detection, WAF rules) are bypassed. Run nuclei against both the CDN-proxied domain and the direct IP to compare finding counts \u2014 the origin will likely yield significantly more findings. This CDN bypass should be reported as a separate finding since it undermines the entire security investment in CDN-layer protections.",
+    "evaluation_criteria": "Explains the security model difference between CDN-proxied and direct IP access, identifies WAF bypass as the primary implication, and demonstrates how to comparatively test both paths for vulnerability class coverage."
+  },
+  {
+    "id": "T9-009",
+    "complexity": "L1",
+    "tools_involved": [
+      "httpx",
+      "jwt_tool"
+    ],
+    "scenario": "An API documentation endpoint is publicly accessible; jwt_tool identifies JWT tokens in the authorization header with 'none' algorithm support.",
+    "prompt": "Model the significance of API documentation exposure combined with JWT 'none' algorithm support.",
+    "reasoning_focus": "API documentation exposure and JWT vulnerability correlation.",
+    "expected_answer": "Access the API documentation endpoint to map all available API routes, authentication requirements, and parameter schemas. Use jwt_tool -M at -t https://target/api/endpoint -rh 'Authorization: Bearer <token>' to test for algorithm confusion attacks including the 'none' algorithm bypass. Craft a JWT with algorithm set to 'none' and remove the signature using jwt_tool -T -S n -p '<payload>' to test if the server accepts unsigned tokens. The combination of public API documentation plus 'none' algorithm support means an attacker can craft valid-looking tokens for any user or role documented in the API schema. Test privilege escalation by modifying the role or user ID claims in the unsigned token and accessing admin-level endpoints documented in the API. This is a critical-severity compound finding because the documentation provides the attack surface map and the JWT vulnerability provides the access bypass.",
+    "evaluation_criteria": "Correctly chains API documentation exposure with JWT vulnerability to demonstrate compound critical severity, identifies specific JWT manipulation techniques, and explains why the combination is more severe than either finding alone."
+  },
+  {
+    "id": "T9-010",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "searchsploit"
+    ],
+    "scenario": "Nmap version banner identifies Apache 2.4.49; searchsploit shows a path traversal CVE (CVE-2021-41773) for that version.",
+    "prompt": "Assess the reliability of version banner-based CVE matching and determine the validation approach.",
+    "reasoning_focus": "Version banner CVE match confidence and validation methodology.",
+    "expected_answer": "Verify the Apache version with curl -I https://target to confirm the Server header shows Apache/2.4.49 matching the nmap banner. Search searchsploit with searchsploit apache 2.4.49 to confirm CVE-2021-41773 path traversal details and obtain the exploit module. Validate manually with curl 'https://target/cgi-bin/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd' to test path traversal \u2014 a successful response containing /etc/passwd content confirms the vulnerability. Version banners can be spoofed or patched without version change, so manual validation is essential before reporting. If mod_cgi is enabled, test for RCE escalation using the path traversal to access /bin/sh. The searchsploit match provides high confidence but only manual validation converts it from a potential to a confirmed finding.",
+    "evaluation_criteria": "Demonstrates awareness of version banner unreliability, correctly identifies CVE-2021-41773 path traversal validation methodology, and explains the importance of manual validation before reporting banner-matched CVEs."
+  },
+  {
+    "id": "T9-011",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "banner grabbing"
+    ],
+    "scenario": "Port 8443 is open but no service is responding to HTTP requests; banner grabbing returns an SSH banner.",
+    "prompt": "Assess what an SSH service on a non-standard HTTPS port implies and determine the testing approach.",
+    "reasoning_focus": "Non-standard port service mismatch significance.",
+    "expected_answer": "Run nmap -sV -p 8443 target to get the full service banner and confirm SSH rather than HTTPS on this port. Connect directly with ssh -p 8443 target to verify SSH access and observe the SSH banner for version information. An SSH service on port 8443 (typically HTTPS) suggests either intentional obfuscation to hide SSH from port scanners targeting standard ports, or misconfiguration during service deployment. Check if port 22 also runs SSH \u2014 if both are open, one may be a management interface with different access controls. Test whether this non-standard SSH port has different authentication policies (key-only vs password) compared to standard port 22. This finding is valuable for attack surface documentation as non-standard port services often have weaker monitoring and access controls.",
+    "evaluation_criteria": "Correctly interprets SSH on non-standard HTTPS port as intentional obfuscation or misconfiguration, identifies different access control implications, and explains the reduced monitoring typical on non-standard port services."
+  },
+  {
+    "id": "T9-012",
+    "complexity": "L1",
+    "tools_involved": [
+      "amass",
+      "reverse DNS"
+    ],
+    "scenario": "Reverse DNS lookup of a discovered IP reveals a hostname not in the amass output, suggesting unlisted infrastructure.",
+    "prompt": "Determine the significance of reverse DNS-discovered infrastructure not in the forward DNS enumeration scope.",
+    "reasoning_focus": "Reverse DNS correlation for unlisted infrastructure discovery.",
+    "expected_answer": "Run dig -x <IP> to perform the reverse DNS lookup and compare the discovered hostname against the amass forward enumeration output. Use amass enum -d <discovered_hostname_domain> to enumerate the newly discovered domain's subdomains as a separate recon chain. Verify ownership by checking whois for the reverse DNS hostname to determine if it belongs to the same organization or a shared hosting provider. The discrepancy between forward and reverse DNS indicates either undocumented infrastructure, legacy systems, or shared hosting where multiple organizations share an IP. Add the reverse DNS-discovered hostname to the target inventory if it falls within the authorized scope. This technique often reveals internal hostnames, development environments, or partner infrastructure that forward DNS enumeration misses.",
+    "evaluation_criteria": "Demonstrates understanding of forward vs reverse DNS discrepancy significance, identifies unlisted infrastructure discovery value, and explains scope validation requirements for reverse DNS-discovered hosts."
+  },
+  {
+    "id": "T9-013",
+    "complexity": "L1",
+    "tools_involved": [
+      "httpx",
+      "graphql detection"
+    ],
+    "scenario": "httpx identifies a /graphql endpoint returning 200 with introspection enabled.",
+    "prompt": "Design the initial GraphQL enumeration strategy starting from a confirmed introspection-enabled endpoint.",
+    "reasoning_focus": "GraphQL introspection as starting point for schema enumeration.",
+    "expected_answer": "Send the introspection query using curl -X POST https://target/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{__schema{types{name fields{name type{name}}}}}'}' to dump the full schema. Parse the introspection response to identify all queries, mutations, and subscriptions, paying special attention to mutations that modify data or access control. Use graphql-voyager or graphql-map to visualize the schema relationships and identify sensitive types like User, Admin, Payment, or Token. Test each query and mutation for authorization bypass by sending requests without authentication tokens. Focus on mutations that accept ID parameters as they often contain IDOR vulnerabilities in GraphQL implementations. The enabled introspection is itself a finding, but the real value is using the schema map to systematically test every resolver for access control flaws.",
+    "evaluation_criteria": "Correctly identifies introspection as the starting point for comprehensive GraphQL testing, demonstrates systematic schema enumeration methodology, and explains authorization testing strategy for mutations and queries."
+  },
+  {
+    "id": "T9-014",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "service fingerprinting"
+    ],
+    "scenario": "Nmap identifies a service on port 2375 with no banner; service fingerprinting suggests it may be the Docker daemon API.",
+    "prompt": "Assess the significance of a potentially exposed Docker daemon API and determine the minimal validation approach.",
+    "reasoning_focus": "Docker daemon API exposure significance and validation.",
+    "expected_answer": "Validate the Docker daemon exposure by sending curl http://target:2375/version to check if the Docker API responds without authentication. If accessible, run curl http://target:2375/containers/json to list running containers and their configurations. An exposed Docker daemon API without TLS/authentication is a critical finding \u2014 it allows creating privileged containers, mounting the host filesystem, and achieving full host compromise. Test container creation capabilities minimally without disrupting production: curl http://target:2375/info is sufficient to confirm unauthenticated access. Document the exposed API endpoints (/version, /info, /containers/json) as evidence without executing destructive operations. This is typically a critical-severity finding as Docker daemon access equals root access on the host.",
+    "evaluation_criteria": "Identifies Docker daemon API exposure as critical severity equivalent to root access, demonstrates minimal safe validation approach, and explains the full impact scope of unauthenticated Docker daemon access."
+  },
+  {
+    "id": "T9-015",
+    "complexity": "L1",
+    "tools_involved": [
+      "ffuf",
+      "wfuzz"
+    ],
+    "scenario": "ffuf finds no results on a target; wfuzz using a different wordlist and User-Agent finds /api/v1/ returning 200.",
+    "prompt": "Assess what the discrepancy between ffuf and wfuzz results implies about the target's filtering mechanisms.",
+    "reasoning_focus": "Tool-dependent result discrepancy and filtering inference.",
+    "expected_answer": "Compare the exact commands used by both tools: ffuf -u https://target/FUZZ -w wordlist.txt vs wfuzz -u https://target/FUZZ -w different_wordlist.txt -H 'User-Agent: Mozilla/5.0'. The discrepancy indicates the target is filtering based on User-Agent header, wordlist coverage, or request patterns that differ between tools. Rerun ffuf with the same User-Agent header that wfuzz used: ffuf -u https://target/FUZZ -w wordlist.txt -H 'User-Agent: Mozilla/5.0' to isolate whether the header or wordlist caused the difference. If User-Agent filtering is confirmed, this reveals WAF or application-level bot detection that blocks non-browser User-Agents. Test with additional User-Agent variations to map the exact filtering rules. This finding is valuable because it reveals the target's defensive filtering logic, which informs how to tune all subsequent automated testing.",
+    "evaluation_criteria": "Correctly identifies User-Agent filtering as the likely discrepancy cause, demonstrates systematic isolation of the filtering variable, and explains how tool-dependent results reveal defensive filtering logic."
+  },
+  {
+    "id": "T9-016",
+    "complexity": "L1",
+    "tools_involved": [
+      "httpx",
+      "shodan"
+    ],
+    "scenario": "Shodan shows a target host had port 9200 (Elasticsearch) open 30 days ago; current httpx scan shows port 9200 closed.",
+    "prompt": "Assess the significance of a historically open but currently closed Elasticsearch port and determine appropriate follow-up.",
+    "reasoning_focus": "Historical exposure data vs current scan state.",
+    "expected_answer": "Verify the current state with nmap -sV -p 9200 target to confirm port 9200 is indeed closed now. Check Shodan historical data at https://www.shodan.io/host/<target_ip>/raw for the exact timestamp and Elasticsearch version that was previously exposed. The historically open Elasticsearch port suggests the service may have been moved to an internal network, put behind a VPN, or temporarily exposed during maintenance. Search for alternate ports where Elasticsearch might have been moved: nmap -p 9200-9300 target. Check if the Elasticsearch data was indexed by Shodan during exposure \u2014 search shodan for elasticsearch indices that may have cached sensitive data. The historical exposure is reportable as an informational finding documenting that unprotected Elasticsearch was accessible, potentially allowing data to have been accessed during the exposure window.",
+    "evaluation_criteria": "Correctly assesses historical exposure significance for data-at-rest risk, identifies alternate port migration as follow-up, and explains how Shodan historical data informs current security posture assessment."
+  },
+  {
+    "id": "T9-017",
+    "complexity": "L1",
+    "tools_involved": [
+      "amass",
+      "httpx",
+      "whois"
+    ],
+    "scenario": "Amass discovers a subdomain resolving to an IP in a different ASN than the main target; whois shows the IP belongs to a cloud provider.",
+    "prompt": "Assess whether a subdomain resolving to a cloud provider IP indicates a potential subdomain takeover or legitimate cloud hosting.",
+    "reasoning_focus": "Cloud provider IP resolution and subdomain takeover assessment.",
+    "expected_answer": "Run amass enum -d target.com to discover the subdomain, then resolve it with dig subdomain.target.com to confirm the cloud provider IP. Check whois on the IP to identify the specific cloud provider (AWS, Azure, GCP) and determine if the IP is from an elastic/ephemeral pool. Test for subdomain takeover by checking if the cloud resource (S3 bucket, Azure Blob, CloudFront distribution) still exists \u2014 if the CNAME points to an unclaimed cloud resource, takeover is possible. Use httpx to check the response: a 404 from a cloud provider error page (NoSuchBucket, NXDOMAIN on CloudFront) strongly indicates takeover opportunity. Verify scope by confirming the subdomain belongs to the target organization via whois and certificate transparency. The cloud provider IP resolution alone is not a vulnerability, but combined with a dangling CNAME to a claimable resource, it becomes a high-severity subdomain takeover.",
+    "evaluation_criteria": "Correctly evaluates subdomain takeover conditions for cloud-hosted subdomains, identifies dangling CNAME as the key indicator, and explains the difference between legitimate cloud hosting and takeover opportunity."
+  },
+  {
+    "id": "T9-018",
+    "complexity": "L1",
+    "tools_involved": [
+      "nuclei",
+      "CVE database"
+    ],
+    "scenario": "Nuclei identifies a template match for CVE-2022-1234; the CVE database shows this CVE has been disputed and may be a false positive.",
+    "prompt": "Determine how to handle a nuclei finding that corresponds to a disputed CVE before including it in the report.",
+    "reasoning_focus": "Disputed CVE handling in nuclei-based finding triage.",
+    "expected_answer": "Research the disputed CVE in NVD (nvd.nist.gov) and the disputing party's rationale to understand whether the dispute is about exploitability, affected versions, or severity. Attempt manual reproduction of the nuclei finding using the exact conditions described in the CVE and the nuclei template to form an independent opinion. If the finding reproduces regardless of the dispute, document it as a confirmed vulnerability with a note about the CVE dispute status. Check the nuclei template's match conditions to ensure they align with the actual vulnerability rather than a superficial pattern match. The disputed CVE status means the finding requires stronger evidence than usual \u2014 include full reproduction steps, impact demonstration, and a risk assessment independent of the CVE rating. Report the finding with the CVE reference but note the disputed status and provide your independent exploitability assessment.",
+    "evaluation_criteria": "Demonstrates proper handling of disputed CVEs in automated findings, identifies independent validation as the required approach, and explains why disputed status requires stronger evidence than standard CVE findings."
+  },
+  {
+    "id": "T9-019",
+    "complexity": "L1",
+    "tools_involved": [
+      "httpx",
+      "curl"
+    ],
+    "scenario": "httpx shows a 200 response on an endpoint; curl against the same endpoint with different header ordering returns a 403.",
+    "prompt": "Assess what header-order-sensitive response discrepancy implies about the WAF or application logic.",
+    "reasoning_focus": "Header ordering sensitivity as WAF or routing signal.",
+    "expected_answer": "Reproduce the discrepancy using curl with explicit header ordering: curl -v -H 'Accept: */*' -H 'Host: target' https://target/endpoint vs curl -v -H 'Host: target' -H 'Accept: */*' https://target/endpoint. Header-order sensitivity strongly indicates a WAF or reverse proxy that inspects request structure beyond content \u2014 this is characteristic of ModSecurity, CloudFlare, or similar deep packet inspection. Map the exact header orders that trigger 403 vs 200 by systematically testing different arrangements to fingerprint the WAF rules. This insight is valuable because it reveals a WAF bypass vector: any vulnerability testing should use the header order that returns 200 to avoid WAF interference. Test whether the header-order sensitivity applies only to specific endpoints or globally. Document this as a WAF fingerprinting finding that enables more effective testing of other endpoints.",
+    "evaluation_criteria": "Correctly identifies header-order sensitivity as WAF fingerprinting signal, demonstrates systematic header ordering testing methodology, and explains how this information enables more effective subsequent testing."
+  },
+  {
+    "id": "T9-020",
+    "complexity": "L1",
+    "tools_involved": [
+      "nmap",
+      "nikto"
+    ],
+    "scenario": "Nmap confirms an open HTTP port; nikto returns 0 findings but takes 40 minutes to complete, suggesting aggressive throttling.",
+    "prompt": "Interpret nikto's zero findings in the context of likely response throttling and determine whether results are reliable.",
+    "reasoning_focus": "Tool result reliability under active throttling.",
+    "expected_answer": "Verify throttling by analyzing nikto's timing output \u2014 if individual requests are taking 4+ seconds (vs normal <1s), the target is actively rate-limiting or throttling the scanner. Rerun nikto with reduced scan intensity: nikto -h target -Tuning 1 -maxtime 10m to test a smaller subset of checks without triggering throttling. Compare with manual curl requests to the same endpoint to establish baseline response times without throttling. The zero findings are unreliable because throttled responses may cause nikto to misparse or timeout on checks that would otherwise detect issues. Consider switching to a more throttle-aware tool or implementing custom delay: nikto -h target -Pause 5 to add 5-second delays between requests. The throttling itself is a defensive finding worth documenting, but the nikto results should be marked as incomplete/unreliable in any report.",
+    "evaluation_criteria": "Correctly identifies throttling as the cause of unreliable zero findings, demonstrates throttle-aware scanning reconfiguration, and explains why throttled scan results should be marked as incomplete rather than clean."
+  },
+  {
+    "id": "T9-021",
+    "complexity": "L2",
+    "tools_involved": [
+      "nuclei",
+      "manual testing"
+    ],
+    "scenario": "Nuclei reports high-severity CVE; manual validation inconclusive.",
+    "prompt": "Design validation workflow before escalation.",
+    "reasoning_focus": "Automated finding triage.",
+    "expected_answer": "First reproduce the nuclei finding manually by crafting the exact request identified in the nuclei template match using curl or Burp Repeater to observe the raw response. Examine the CVE details to understand the exact exploitation conditions \u2014 check whether the finding requires authentication, specific configuration, or version-specific behavior. Compare the nuclei template's match condition (status code, body pattern, header pattern) against the actual response to determine if the match is based on a strong indicator or a weak heuristic. If manual validation is inconclusive, set up a lab environment with the same software version to test the CVE in isolation. Document the validation attempt with screenshots showing the exact requests and responses, even if inconclusive, to support the escalation decision. Only escalate with clear labeling of confidence level: confirmed, probable, or unvalidated-needs-further-testing.",
+    "evaluation_criteria": "Demonstrates structured validation workflow before escalation, correctly identifies confidence labeling requirements, and explains the difference between template match confidence and manual validation confidence."
+  },
+  {
+    "id": "T9-022",
+    "complexity": "L2",
+    "tools_involved": [
+      "ffuf",
+      "burp proxy"
+    ],
+    "scenario": "ffuf finds multiple parameters; manual tampering yields no change.",
+    "prompt": "Decide whether to escalate or pivot.",
+    "reasoning_focus": "Surface exhaustion modeling.",
+    "expected_answer": "Export ffuf's discovered parameters and test each one individually in Burp Repeater with various payload types: SQL injection markers, XSS probes, SSRF URLs, and path traversal strings. Analyze whether the parameters are reflected in the response body, used in server-side processing, or simply ignored by comparing response content-length and body with and without the parameters. If no behavioral change is observed across all parameter types, pivot to testing parameter interaction \u2014 send multiple discovered parameters together as some vulnerabilities only trigger with specific parameter combinations. Check for blind vulnerabilities using out-of-band techniques: use Burp Collaborator or interactsh payloads in parameter values to detect server-side interactions not visible in responses. The lack of visible response change does not mean the parameters are unexploitable \u2014 blind injection, stored XSS, and async processing may not show immediate effects. If all testing yields no results, document the parameter discovery as informational and pivot to other attack surface areas.",
+    "evaluation_criteria": "Shows systematic parameter testing methodology including blind and out-of-band techniques, correctly identifies surface exhaustion criteria for pivot decisions, and explains why visible response unchanged does not mean parameters are unexploitable."
+  },
+  {
+    "id": "T9-023",
+    "complexity": "L2",
+    "tools_involved": [
+      "amass",
+      "crt.sh"
+    ],
+    "scenario": "Certificate transparency reveals domain not in scope.",
+    "prompt": "Assess scope boundary judgment.",
+    "reasoning_focus": "Asset ownership inference.",
+    "expected_answer": "Verify the domain ownership by checking whois data, certificate transparency logs, and DNS records to determine if the discovered domain is owned by the same organization. Check the bug bounty program's scope definition to determine if wildcard domains, acquired domains, or subsidiary domains are included. If the domain is confirmed to be owned by the target organization but not explicitly in scope, document the finding and request scope clarification from the program before active testing. Use passive techniques only (certificate transparency, DNS records, WHOIS) on out-of-scope domains \u2014 never send active probes. The certificate transparency discovery may reveal shadow IT, acquisitions, or shared infrastructure that the security team is unaware of. Report the domain discovery as an informational finding with ownership evidence, allowing the program to decide whether to expand scope.",
+    "evaluation_criteria": "Correctly applies scope boundary judgment using passive-only techniques for out-of-scope domains, identifies appropriate scope clarification protocol, and explains how certificate transparency findings inform in-scope testing."
+  },
+  {
+    "id": "T9-024",
+    "complexity": "L2",
+    "tools_involved": [
+      "nmap",
+      "httpx",
+      "nuclei"
+    ],
+    "scenario": "Open port detected; web service running; low-severity misconfigs only.",
+    "prompt": "Determine whether deeper exploit testing justified.",
+    "reasoning_focus": "Impact-based prioritization.",
+    "expected_answer": "Start with nmap -sV -sC target to confirm the open port and identify the web service technology stack. Run httpx -tech-detect against the service to fingerprint frameworks, CMS, and server software. Feed the identified technologies into nuclei with technology-specific templates: nuclei -t cves/ -t misconfigurations/ -tags <tech> to test for known vulnerabilities. Low-severity misconfigurations alone rarely justify deeper exploit testing unless they reveal information that enables higher-severity attacks. Assess whether the misconfigurations (directory listing, verbose errors, missing headers) leak information that chains into more impactful attacks. If the technology stack has known critical CVEs that nuclei didn't test for, manual testing is justified; otherwise, document the misconfigurations and move to other targets.",
+    "evaluation_criteria": "Demonstrates impact-based prioritization for deeper testing decisions, correctly assesses whether low-severity misconfigurations chain into higher-severity attacks, and explains the technology-specific CVE testing approach."
+  },
+  {
+    "id": "T9-025",
+    "complexity": "L2",
+    "tools_involved": [
+      "ffuf",
+      "burp",
+      "rate-limit detection"
+    ],
+    "scenario": "An authentication API endpoint is identified but rate-limiting triggers after 10 requests per minute, preventing automated enumeration.",
+    "prompt": "Design a responsible validation strategy for authentication testing under active rate-limit enforcement.",
+    "reasoning_focus": "Rate-limit-aware authentication testing strategy.",
+    "expected_answer": "Configure Burp Intruder with a throttled attack rate of 1 request per 7 seconds to stay under the 10 requests/minute rate limit. Use a focused credential list (top 100 passwords, not full rockyou) to maximize coverage within the rate-limit constraint. Test rate-limit bypass techniques: rotate source IPs if available, test whether rate-limit resets on different API paths or with different authentication headers. Check if the rate limit is applied per-IP, per-account, per-session, or globally \u2014 this determines whether distributed testing is feasible. Document the rate-limit behavior itself as a finding if it is insufficient (10 requests/minute still allows 14,400 attempts per day). Consider time-based testing across multiple sessions rather than a single brute-force run to avoid triggering lockout mechanisms.",
+    "evaluation_criteria": "Designs rate-limit-aware testing strategy with specific throttling calculations, correctly identifies rate-limit bypass testing as a parallel finding, and explains responsible authentication testing under active enforcement."
+  },
+  {
+    "id": "T9-026",
+    "complexity": "L2",
+    "tools_involved": [
+      "cloud metadata",
+      "aws cli"
+    ],
+    "scenario": "SSRF confirms metadata endpoint reachability but iam:GetCallerIdentity call reveals the attached role has only CloudWatch read permissions.",
+    "prompt": "Model the practical impact when cloud metadata is reachable via SSRF but the attached IAM role has minimal permissions.",
+    "reasoning_focus": "Cloud metadata SSRF with limited IAM scope impact assessment.",
+    "expected_answer": "Confirm SSRF-to-metadata access by requesting curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ through the SSRF to identify the IAM role name. Retrieve the temporary credentials via the SSRF and run aws sts get-caller-identity to confirm the role identity and permissions. Enumerate permissions with aws iam list-attached-role-policies --role-name <role> and aws iam list-role-policies --role-name <role> using the obtained credentials. Even with only CloudWatch read permissions, the attacker can extract operational metrics, log groups, alarm configurations, and potentially sensitive data from log streams. Test for additional permissions not documented in the policy by attempting common actions: aws s3 ls, aws ec2 describe-instances, aws lambda list-functions. The SSRF is still a valid critical finding because cloud metadata access reveals the account ID, region, VPC configuration, and role name, enabling further targeted attacks even without broad permissions.",
+    "evaluation_criteria": "Correctly assesses limited IAM scope SSRF impact including non-obvious information disclosure through CloudWatch, identifies the metadata endpoint as inherently critical regardless of role permissions, and explains residual risk."
+  },
+  {
+    "id": "T9-027",
+    "complexity": "L2",
+    "tools_involved": [
+      "oauth testing",
+      "burp"
+    ],
+    "scenario": "An OAuth misbinding is suspected based on redirect URI parameter behavior, but reproducing it requires an active victim user session.",
+    "prompt": "Assess how to validate OAuth misbinding without involving real user sessions during testing.",
+    "reasoning_focus": "OAuth misbinding validation without victim session.",
+    "expected_answer": "Set up two test accounts under your control to simulate the OAuth misbinding without involving real victim sessions. Initiate the OAuth flow from Account A, capture the authorization code or token at the redirect URI, then attempt to bind it to Account B's session. Use Burp Suite to intercept the OAuth callback and modify the state parameter or authorization code to test cross-account binding. Test whether the state parameter is validated against the session that initiated the flow \u2014 missing state validation is the root cause of most OAuth misbinding attacks. Document the exact OAuth flow steps where the binding occurs and identify which parameter (state, code, session cookie) is not properly validated. If reproducible between your own accounts, this confirms the vulnerability without impacting real users.",
+    "evaluation_criteria": "Demonstrates safe OAuth misbinding validation using controlled test accounts, correctly identifies state parameter validation as the root cause, and explains the specific OAuth flow step where binding integrity fails."
+  },
+  {
+    "id": "T9-028",
+    "complexity": "L2",
+    "tools_involved": [
+      "ffuf",
+      "webhook testing"
+    ],
+    "scenario": "An outbound webhook endpoint is discovered; the webhook secret is unknown, preventing signature validation bypass.",
+    "prompt": "Determine what can be inferred about the webhook security posture without knowing the signing secret.",
+    "reasoning_focus": "Webhook security assessment without secret knowledge.",
+    "expected_answer": "Send test payloads to the webhook endpoint using curl -X POST https://target/webhook -H 'Content-Type: application/json' -d '{\"test\":\"payload\"}' to observe how the endpoint handles unsigned requests. Test whether the endpoint validates the webhook signature by sending requests without any signature header and observing if they are processed. If the endpoint accepts unsigned payloads, test replay attacks by resending a captured webhook payload to see if it's processed again (indicating no nonce/timestamp validation). Check for event injection by crafting custom webhook events (payment.completed, subscription.created) to test if the application trusts webhook content without signature verification. The absence of signature validation means any attacker who discovers the webhook URL can inject arbitrary events. Document the webhook URL, accepted event types, and lack of signature validation as the finding scope.",
+    "evaluation_criteria": "Correctly assesses webhook security posture without secret knowledge, identifies unsigned payload acceptance as the primary risk, and explains replay attack and event injection implications."
+  },
+  {
+    "id": "T9-029",
+    "complexity": "L2",
+    "tools_involved": [
+      "httpx",
+      "header analysis"
+    ],
+    "scenario": "A response header reveals an internal IP address (10.0.x.x) in the X-Forwarded-For field, leaking internal network topology.",
+    "prompt": "Model the information value of internal IP disclosure in a response header for attack surface mapping.",
+    "reasoning_focus": "Internal IP leakage via response header for network mapping.",
+    "expected_answer": "Extract the internal IP from the response header using curl -v https://target/endpoint and examining X-Forwarded-For, X-Real-IP, or Via headers for RFC 1918 addresses. Map the internal IP range pattern (10.0.x.x) to infer network segmentation \u2014 sequential IPs suggest flat networks, scattered IPs suggest segmented architecture. Cross-reference the internal IP with other endpoints to build a map of internal infrastructure by testing multiple paths and recording the internal IPs returned. This information disclosure enables targeted SSRF attacks by providing valid internal IP targets instead of blind scanning. Combine with any SSRF vulnerability to reach the disclosed internal IPs directly. The finding itself is low-to-medium severity, but its value multiplies significantly when combined with SSRF or server-side request capabilities.",
+    "evaluation_criteria": "Correctly identifies internal IP disclosure as a force multiplier for SSRF attacks, demonstrates network topology inference from response headers, and explains the compound value when combined with other server-side request capabilities."
+  },
+  {
+    "id": "T9-030",
+    "complexity": "L2",
+    "tools_involved": [
+      "manual IDOR testing",
+      "burp"
+    ],
+    "scenario": "An IDOR is suspected \u2014 changing a user ID parameter sometimes returns another user's data (3 of 10 attempts) and sometimes returns a 403.",
+    "prompt": "Design a validation approach for an inconsistently reproducible IDOR and assess the implications of the mixed result pattern.",
+    "reasoning_focus": "Intermittent IDOR validation and result pattern analysis.",
+    "expected_answer": "Create a systematic test matrix: send 50 sequential IDOR requests incrementing the user ID parameter and record each response (200 with data, 403, 404, or other). Analyze the pattern \u2014 if 3/10 success rate is consistent, it may indicate inconsistent authorization enforcement across microservice instances or database shards. Test whether the successful IDOR requests correlate with specific user ID ranges, time windows, or request patterns that might explain the inconsistency. Use Burp Repeater to send the same IDOR request 20 times rapidly to the same user ID \u2014 if results vary, this suggests load-balanced backends with inconsistent authorization. Document the exact success/failure pattern with timestamps, user IDs tested, and response bodies to demonstrate the inconsistency. The intermittent nature suggests a race condition in authorization checks or inconsistent deployment across backend instances, which is actually more dangerous than a consistent IDOR because it indicates systemic authorization architecture flaws.",
+    "evaluation_criteria": "Designs systematic IDOR validation for inconsistent results, correctly identifies load-balanced authorization inconsistency as a systemic architecture flaw, and explains why intermittent IDOR may be more dangerous than consistent IDOR."
+  },
+  {
+    "id": "T9-031",
+    "complexity": "L2",
+    "tools_involved": [
+      "nmap",
+      "race condition testing"
+    ],
+    "scenario": "A race condition in a coupon application requires timing multiple concurrent requests within a 10ms window; manual testing has been unable to reproduce it consistently.",
+    "prompt": "Assess the validation and reporting approach for a race condition that cannot be consistently reproduced manually.",
+    "reasoning_focus": "Race condition validation methodology for inconsistently reproducible findings.",
+    "expected_answer": "Use turbo-intruder or a custom script to send 10+ concurrent requests within a 10ms window using HTTP/2 single-packet attack technique to maximize timing precision. Record the exact timing of each request and response using Burp Logger++ to identify any requests that were processed within the race window. If the race condition is in coupon application, create a test scenario: apply coupon code simultaneously from two sessions for the same account and check if the discount is applied twice. Document each attempt with precise timestamps showing the request/response timing to demonstrate the race window even if exploitation is inconsistent. A race condition that exists but is hard to reproduce is still a valid finding \u2014 report it with the theoretical impact, reproduction methodology, and statistical success rate. Recommend server-side mitigations: mutex locks, database-level constraints, or idempotency keys that would prevent the race regardless of timing precision.",
+    "evaluation_criteria": "Demonstrates appropriate race condition testing methodology using concurrent request techniques, correctly identifies statistical reporting approach for inconsistent reproduction, and explains server-side mitigation recommendations."
+  },
+  {
+    "id": "T9-032",
+    "complexity": "L2",
+    "tools_involved": [
+      "httpx",
+      "content-length analysis"
+    ],
+    "scenario": "Staging and production environments differ in response body content-length for the same endpoint by 1,200 bytes consistently.",
+    "prompt": "Model what a consistent content-length discrepancy between staging and production implies and design a validation approach.",
+    "reasoning_focus": "Environment response discrepancy as configuration difference signal.",
+    "expected_answer": "Use httpx or curl to fetch both staging and production responses and compare them byte-by-byte: diff <(curl -s https://staging.target/endpoint) <(curl -s https://prod.target/endpoint). A consistent 1,200-byte difference suggests additional content in one environment \u2014 likely debug information, error details, or feature flags present in staging but not production (or vice versa). Extract and analyze the extra content to determine if it contains sensitive information like internal paths, database queries, API keys, or debug traces. Check if the difference is in HTML comments, JavaScript variables, or response headers rather than visible content. If production has MORE content than staging, it may indicate production has accumulated debug code that was removed from staging. This finding indicates inconsistent deployment practices and potential information leakage in whichever environment has the extra content.",
+    "evaluation_criteria": "Correctly identifies content-length discrepancy as configuration difference signal, demonstrates byte-level comparison methodology, and explains the security implications of environment-specific content differences."
+  },
+  {
+    "id": "T9-033",
+    "complexity": "L2",
+    "tools_involved": [
+      "nuclei",
+      "ffuf",
+      "manual"
+    ],
+    "scenario": "Three tools produce overlapping but non-identical findings on the same endpoint; nuclei finds an information disclosure, ffuf finds a hidden parameter, and manual testing finds nothing abnormal.",
+    "prompt": "Design a resolution methodology when multiple tools produce conflicting signals on the same endpoint.",
+    "reasoning_focus": "Multi-tool conflicting signal resolution methodology.",
+    "expected_answer": "Prioritize validation by starting with the nuclei information disclosure finding since automated template matches have the highest false-positive rate \u2014 verify the exact pattern match against the actual response. Re-examine ffuf's hidden parameter by sending targeted payloads (injection strings, type confusion values) to the discovered parameter to determine if it has any server-side effect. Reconcile the manual testing finding of 'nothing abnormal' by checking if the manual testing covered the same parameter and disclosure patterns that the automated tools flagged. The most likely explanation is that nuclei matched a pattern that is informational but not exploitable, ffuf found a real parameter that requires specific input to trigger behavior, and manual testing missed both because it used different test vectors. Create a unified test case that combines the nuclei-identified disclosure pattern with the ffuf-discovered parameter to test for compound behavior. Document all three tool results side-by-side with the reconciliation analysis in the report.",
+    "evaluation_criteria": "Designs structured multi-tool finding reconciliation methodology, correctly identifies each tool's detection mechanism and likely accuracy, and explains how to resolve conflicting signals through unified test cases."
+  },
+  {
+    "id": "T9-034",
+    "complexity": "L2",
+    "tools_involved": [
+      "amass",
+      "passive recon"
+    ],
+    "scenario": "Passive recon reveals an old API version (/api/v1/) that is not documented; active enumeration of v1 endpoints is outside scope.",
+    "prompt": "Assess how to incorporate passive recon-discovered out-of-scope information into the testing strategy responsibly.",
+    "reasoning_focus": "Passive recon scope boundary handling.",
+    "expected_answer": "Document the /api/v1/ discovery through passive recon sources (Google dorking cache, Wayback Machine, certificate transparency) without sending any active requests to the v1 endpoints. Note the v1 API structure in the reconnaissance findings to inform testing strategy on in-scope v2/v3 endpoints \u2014 v1 patterns often reveal naming conventions, authentication schemes, and architectural decisions that persist in newer versions. Check if the bug bounty program's scope explicitly excludes api/v1 or if it falls under a general API testing scope. If clearly out of scope, report the v1 API discovery as an informational finding suggesting the program consider including legacy APIs in scope. Use the v1 endpoint naming patterns to predict and test equivalent v2/v3 endpoints that ARE in scope. The passive discovery of undocumented API versions is valuable intelligence even without active testing.",
+    "evaluation_criteria": "Correctly applies scope boundary handling for passive recon discoveries, identifies how legacy API patterns inform in-scope testing, and explains responsible handling of out-of-scope intelligence."
+  },
+  {
+    "id": "T9-035",
+    "complexity": "L2",
+    "tools_involved": [
+      "burp",
+      "multi-step auth testing"
+    ],
+    "scenario": "A multi-step authentication flow shows a CSRF token that does not rotate between requests, but the token is also validated against the user session.",
+    "prompt": "Assess the exploitability of a non-rotating CSRF token when it is bound to the user session.",
+    "reasoning_focus": "CSRF token binding assessment when rotation is absent but session binding is present.",
+    "expected_answer": "Capture the CSRF token across multiple requests using Burp Logger and verify that the same token value is returned in every response for the same session. Test cross-session token validity by taking a CSRF token from Session A and submitting it with Session B's cookies to determine if session binding is enforced. If the token is validated against the session, the non-rotation is a defense-in-depth weakness but not directly exploitable \u2014 the attacker would need the victim's session-bound token, which requires an existing XSS or session access. Test edge cases: does the token survive password change, session extension, or privilege escalation? Check if the token is transmitted securely (not in URL parameters, not cached, not logged). The non-rotating but session-bound CSRF token is a low-severity finding \u2014 document it as a defense-in-depth recommendation rather than an exploitable vulnerability.",
+    "evaluation_criteria": "Correctly assesses non-rotating CSRF token exploitability when session binding is present, identifies the defense-in-depth gap without overstating severity, and explains the conditions under which the weakness becomes exploitable."
+  },
+  {
+    "id": "T9-036",
+    "complexity": "L2",
+    "tools_involved": [
+      "nmap",
+      "ssl testing"
+    ],
+    "scenario": "SSL Labs scan shows a B rating with a deprecated cipher suite; the same cipher is not negotiated by any modern browser tested.",
+    "prompt": "Assess the exploitability of a deprecated cipher suite that is present but not selected by modern clients.",
+    "reasoning_focus": "Deprecated cipher suite exploitability with modern client compatibility.",
+    "expected_answer": "Identify the specific deprecated cipher suite from the SSL Labs report and check its known vulnerabilities (SWEET32, BEAST, POODLE). Test whether the deprecated cipher can be forced by a client using openssl s_client -cipher <deprecated_cipher> -connect target:443 to confirm it's available. If no modern browser selects this cipher (Chrome, Firefox, Safari, Edge all prefer stronger options), the practical exploitation requires a man-in-the-middle downgrade attack. Assess whether a protocol downgrade attack (like POODLE) could force the deprecated cipher selection even from a modern browser. The finding is valid for compliance reporting (PCI-DSS, SOC2) even if practical exploitation is unlikely with modern clients. Report as a low-severity finding with remediation recommendation to disable the deprecated cipher suite, noting that exploitation requires MITM position plus protocol downgrade.",
+    "evaluation_criteria": "Correctly assesses deprecated cipher exploitability in the context of modern client compatibility, identifies compliance reporting requirements regardless of practical exploitation difficulty, and explains downgrade attack prerequisites."
+  },
+  {
+    "id": "T9-037",
+    "complexity": "L2",
+    "tools_involved": [
+      "httpx",
+      "redirect chain analysis"
+    ],
+    "scenario": "An HTTP-to-HTTPS redirect chain passes through three intermediate domains before reaching the final destination, with one intermediate not under the target's control.",
+    "prompt": "Model the security risk of a redirect chain passing through a third-party intermediate domain.",
+    "reasoning_focus": "Redirect chain intermediate control as trust boundary.",
+    "expected_answer": "Map the complete redirect chain using curl -L -v https://target to identify all intermediate domains and their TLS certificate ownership. Identify which intermediate domain is not under the target's control using whois and certificate transparency. The third-party intermediate creates a trust boundary violation \u2014 the intermediate domain operator could intercept, modify, or log all traffic passing through the redirect chain. Test whether sensitive data (tokens, session cookies, authentication parameters) is passed through the redirect chain via URL parameters that the intermediate domain could capture. Check if the redirect uses 301/302 with parameters or 303 without \u2014 parameter-carrying redirects through untrusted intermediates are significantly more severe. Report this as a medium-severity finding because the redirect chain delegates trust to an uncontrolled third party, enabling potential credential interception.",
+    "evaluation_criteria": "Identifies third-party intermediate as a trust boundary violation, correctly assesses credential interception risk through the redirect chain, and explains the difference between parameter-carrying and parameterless redirects."
+  },
+  {
+    "id": "T9-038",
+    "complexity": "L2",
+    "tools_involved": [
+      "burp",
+      "response timing"
+    ],
+    "scenario": "Response timing analysis shows a 500ms delay only when valid usernames are submitted to the password reset endpoint, enabling username enumeration via timing side channel.",
+    "prompt": "Design a validation approach to confirm timing-based username enumeration while minimizing false positive risk.",
+    "reasoning_focus": "Timing side-channel validation methodology for username enumeration.",
+    "expected_answer": "Send 100+ password reset requests alternating between known-valid usernames and known-invalid usernames, recording exact response times for each using Burp Intruder with the 'Response received' column. Calculate the statistical significance of the timing difference using mean and standard deviation \u2014 a consistent 500ms delta with low variance confirms the timing oracle. The timing difference likely indicates the application performs additional database lookups or email sending operations only for valid usernames. To minimize false positives, test from multiple network locations to rule out network jitter as the cause of timing differences. Control for server load by interleaving valid and invalid requests rather than batching them. Document the finding with a statistical analysis showing the timing distribution for valid vs invalid usernames, demonstrating that the difference is systematic rather than random.",
+    "evaluation_criteria": "Designs statistically rigorous timing analysis methodology, correctly identifies the need for network jitter controls, and explains how to distinguish systematic timing differences from random variation."
+  },
+  {
+    "id": "T9-039",
+    "complexity": "L2",
+    "tools_involved": [
+      "manual",
+      "link analysis"
+    ],
+    "scenario": "Five individual findings are each rated low severity, but their combination reveals a complete internal API schema, internal IP ranges, and API key format.",
+    "prompt": "Model the reporting strategy when five individually low-severity findings produce a compound medium-severity information disclosure chain.",
+    "reasoning_focus": "Low-severity finding aggregation into compound disclosure chain.",
+    "expected_answer": "Create a compound finding report that aggregates the five individual findings into a single chain narrative showing how the combined information exposure exceeds the sum of individual findings. Map the data relationship: internal API schema (Finding 1) + internal IP ranges (Finding 2) + API key format (Finding 3) + additional context (Findings 4, 5) enables targeted internal API attacks. Justify the severity upgrade from five lows to one medium by demonstrating the compound exploitation scenario: an attacker with all five pieces of information can craft authenticated requests to internal APIs on known IP ranges. Present the chain as an attack narrative in the report rather than five separate informational findings. Include a remediation section that addresses the root cause of each disclosure rather than just the compound risk. This reporting approach demonstrates security thinking beyond individual vulnerability triage.",
+    "evaluation_criteria": "Correctly models compound severity escalation from multiple low-severity findings, demonstrates chain-based reporting strategy, and explains why aggregate information disclosure exceeds individual finding severity."
+  },
+  {
+    "id": "T9-040",
+    "complexity": "L2",
+    "tools_involved": [
+      "amass",
+      "shodan",
+      "censys"
+    ],
+    "scenario": "Three OSINT sources show different subdomains for the same target; Shodan has three not in amass; censys has two not in either.",
+    "prompt": "Design the reconciliation and prioritization strategy when three OSINT sources produce non-overlapping subdomain inventories.",
+    "reasoning_focus": "Multi-source OSINT reconciliation and inventory completeness.",
+    "expected_answer": "Merge all three OSINT source outputs into a single deduplicated inventory: cat amass.txt shodan.txt censys.txt | sort -u > combined_subdomains.txt. Prioritize the subdomains unique to each source (Shodan-only, Censys-only) for initial testing since they represent blind spots in the other tools' coverage. Run httpx against the complete combined inventory to identify responding hosts and their technology stacks across all sources. Investigate why each tool missed certain subdomains \u2014 Shodan finds hosts via port scanning, amass uses DNS enumeration, and Censys uses certificate transparency, so each has different visibility. Cross-reference the non-overlapping subdomains with certificate transparency logs to determine if they're legitimate or historical. The reconciliation process itself reveals the target's infrastructure complexity and helps estimate the total attack surface completeness \u2014 if three major tools produce non-overlapping results, the true subdomain count is likely higher than any single source reports.",
+    "evaluation_criteria": "Demonstrates multi-source OSINT reconciliation methodology, correctly identifies source-specific blind spots, and explains how non-overlapping results indicate incomplete individual tool coverage."
+  },
+  {
+    "id": "T9-041",
+    "complexity": "L3",
+    "tools_involved": [
+      "amass",
+      "httpx",
+      "ffuf",
+      "nuclei"
+    ],
+    "scenario": "Subdomain discovered \u2192 admin panel found \u2192 nuclei flags outdated framework.",
+    "prompt": "Model realistic exploitation chain likelihood.",
+    "reasoning_focus": "Recon-to-framework risk chaining.",
+    "expected_answer": "Execute the chain sequentially: amass enum -d target.com | httpx -status-code -title to find the admin panel subdomain, then ffuf -u https://admin.target.com/FUZZ -w admin-wordlist.txt to enumerate admin panel paths, and finally nuclei -u https://admin.target.com -t technologies/ to fingerprint the framework. The outdated framework flagged by nuclei needs version-specific CVE lookup via searchsploit or NVD to determine if known exploits exist. Assess the realistic exploitation chain: subdomain discovery \u2192 admin panel access (is it authenticated?) \u2192 framework exploit (does the CVE apply to the specific configuration?). Each step in the chain has a success probability \u2014 multiply them to estimate the overall chain likelihood. The admin panel on a subdomain often has weaker security controls than the main application, making the framework vulnerability more likely to be exploitable. Document the full chain with conditional probabilities for each step in the report.",
+    "evaluation_criteria": "Correctly chains recon through framework exploitation with conditional probability at each step, demonstrates realistic exploitation likelihood assessment, and explains how admin panel location affects framework vulnerability exploitability."
+  },
+  {
+    "id": "T9-042",
+    "complexity": "L3",
+    "tools_involved": [
+      "httpx",
+      "manual auth testing"
+    ],
+    "scenario": "API endpoint discovered; JWT used for auth; audience claim not validated.",
+    "prompt": "Model cross-service escalation chain.",
+    "reasoning_focus": "Identity trust propagation.",
+    "expected_answer": "Decode the JWT using jwt.io or jwt_tool to examine all claims including aud (audience), iss (issuer), sub (subject), and any custom claims. Test cross-service escalation by taking a JWT issued for Service A and presenting it to Service B's API endpoints \u2014 if the audience claim is not validated, Service B will accept tokens intended for Service A. Enumerate all API services that accept JWTs by testing the same token against different API base URLs discovered during reconnaissance. The missing audience validation means any microservice in the ecosystem trusts tokens from any other service, enabling horizontal privilege escalation across the service mesh. Test whether modifying the sub (subject) claim allows impersonation of other users across services. Map the complete trust graph: which services issue tokens, which accept them, and what privilege boundaries exist between them.",
+    "evaluation_criteria": "Demonstrates JWT audience claim validation testing, correctly identifies cross-service trust propagation risk, and explains how missing audience validation enables horizontal privilege escalation across the service mesh."
+  },
+  {
+    "id": "T9-043",
+    "complexity": "L3",
+    "tools_involved": [
+      "nmap",
+      "cloud metadata analysis"
+    ],
+    "scenario": "Port scan suggests cloud host; metadata endpoint exposed via SSRF.",
+    "prompt": "Model potential IAM privilege impact.",
+    "reasoning_focus": "Cloud pivot inference.",
+    "expected_answer": "Confirm the cloud provider by analyzing the nmap output for cloud-specific port patterns and banner strings. Test SSRF against the cloud metadata endpoint: curl http://169.254.169.254/latest/meta-data/ (AWS), http://169.254.169.254/metadata/instance?api-version=2021-02-01 (Azure), or http://metadata.google.internal/computeMetadata/v1/ (GCP). If metadata is accessible, retrieve IAM credentials from the instance profile and test their scope with the cloud provider's CLI. Enumerate the IAM role's permissions by attempting common high-value actions: listing S3 buckets, describing EC2 instances, reading Secrets Manager values. Even read-only IAM roles reveal account structure, resource inventory, and configuration details that enable further targeted attacks. The SSRF-to-metadata chain is a standard cloud pivot \u2014 document the exact metadata endpoints accessed, credentials obtained, and permissions enumerated.",
+    "evaluation_criteria": "Correctly chains cloud host identification through SSRF to IAM credential enumeration, demonstrates cloud provider-specific metadata endpoint knowledge, and explains lateral movement potential from obtained credentials."
+  },
+  {
+    "id": "T9-044",
+    "complexity": "L3",
+    "tools_involved": [
+      "ffuf",
+      "business logic analysis"
+    ],
+    "scenario": "Hidden admin endpoint found; refund logic flaw identified.",
+    "prompt": "Model financial abuse chain.",
+    "reasoning_focus": "Application-to-business impact escalation.",
+    "expected_answer": "Use ffuf to discover the admin endpoint, then analyze the refund logic by submitting legitimate transactions and observing the refund workflow through Burp Suite proxy. Test the business logic flaw by manipulating refund amounts, refund recipients, or refund timing to identify where validation gaps exist. The financial abuse chain typically involves: initiate purchase \u2192 request refund \u2192 manipulate refund amount or recipient \u2192 receive excess refund. Calculate the per-transaction financial impact and estimate the maximum daily/monthly abuse potential based on rate limits and transaction caps. Test whether the refund can exceed the original transaction amount, whether refunds can be initiated multiple times for the same transaction, and whether refund destination can be changed. Document the exact financial impact with specific dollar amounts and exploitation steps for the bug bounty report.",
+    "evaluation_criteria": "Correctly identifies business logic financial abuse chain from hidden endpoint to refund manipulation, calculates specific financial impact, and explains the testing methodology for financial validation gaps."
+  },
+  {
+    "id": "T9-045",
+    "complexity": "L3",
+    "tools_involved": [
+      "burp",
+      "oauth testing",
+      "idor analysis"
+    ],
+    "scenario": "OAuth misbinding allows token capture \u2192 IDOR on the captured user ID \u2192 cross-tenant data access.",
+    "prompt": "Model the three-step chain from OAuth token capture to cross-tenant data access and assess the compound severity.",
+    "reasoning_focus": "OAuth misbinding to IDOR to cross-tenant chain.",
+    "expected_answer": "Reproduce the OAuth misbinding by initiating an OAuth flow, capturing the authorization code at the redirect URI using Burp, and binding it to a different user's session to confirm cross-account token assignment. Use the captured victim's access token to enumerate IDOR-vulnerable endpoints by iterating user ID parameters across API endpoints discovered during reconnaissance. Test cross-tenant data access by using the victim token to access resources belonging to different organizational tenants. The compound severity escalates from medium (OAuth misbinding alone) to critical because the chain enables mass cross-tenant data access without any user interaction beyond the initial OAuth flow. Document each step with exact requests and responses showing the escalation from token capture to cross-tenant access. The three-step chain should be reported as a single critical finding with CVSS scoring reflecting the full chain impact.",
+    "evaluation_criteria": "Correctly models the three-step OAuth-to-IDOR-to-cross-tenant chain, demonstrates compound severity assessment, and explains why the chain elevates individual medium findings to critical compound severity."
+  },
+  {
+    "id": "T9-046",
+    "complexity": "L3",
+    "tools_involved": [
+      "jwt_tool",
+      "burp",
+      "role confusion"
+    ],
+    "scenario": "JWT role claim is accepted without signature validation on admin endpoints; role=admin in an unsigned token grants admin access.",
+    "prompt": "Model the role confusion chain from unsigned JWT manipulation to admin privilege and assess the full admin access scope.",
+    "reasoning_focus": "Unsigned JWT role manipulation to privilege escalation chain.",
+    "expected_answer": "Use jwt_tool to craft an unsigned JWT with the 'none' algorithm and role=admin claim: jwt_tool -T -S n -pc role -pv admin. Send the unsigned token to admin endpoints identified during reconnaissance and verify if admin functionality is accessible. Enumerate all admin capabilities by accessing admin API documentation or testing common admin paths (/admin/users, /admin/settings, /admin/export). The unsigned JWT acceptance means anyone can become admin without any authentication \u2014 this is a critical vulnerability with maximum privilege escalation impact. Test the full admin scope: user management, data export, configuration changes, and any financial operations available to admins. Document the exact JWT payload that grants admin access and the complete list of admin functions accessible without legitimate authentication.",
+    "evaluation_criteria": "Demonstrates unsigned JWT exploitation for admin privilege escalation, correctly identifies the full admin scope assessment approach, and explains why algorithm bypass with role manipulation is maximum-severity."
+  },
+  {
+    "id": "T9-047",
+    "complexity": "L3",
+    "tools_involved": [
+      "webhook testing",
+      "burp",
+      "financial analysis"
+    ],
+    "scenario": "Webhook endpoint accepts replayed payloads without nonce validation \u2192 replayed payment confirmation \u2192 duplicate payout triggered.",
+    "prompt": "Model the financial abuse chain from webhook replay to duplicate payout and assess per-replay financial gain.",
+    "reasoning_focus": "Webhook replay to financial duplication chain.",
+    "expected_answer": "Capture a legitimate webhook payload from a payment provider (Stripe, PayPal) transaction and replay it using curl -X POST https://target/webhook -d '<captured_payload>' -H 'Content-Type: application/json'. Verify if the replayed payload triggers a duplicate payout by checking the application's transaction log or balance changes. Test whether the webhook endpoint validates: signature (HMAC), timestamp (replay window), nonce (unique identifier), or idempotency key. Calculate the financial impact per replay: if each replay triggers a $X payout, estimate the maximum extraction rate based on any rate limiting. Test batch replay by sending multiple copies of the same payload simultaneously to check for race conditions in duplicate detection. Document the per-replay financial gain, the absence of specific controls (no signature, no nonce, no timestamp validation), and the total potential financial exposure.",
+    "evaluation_criteria": "Correctly models webhook replay to financial duplication chain, calculates per-replay financial impact, and explains the specific control failures (signature, nonce, timestamp) that enable the attack."
+  },
+  {
+    "id": "T9-048",
+    "complexity": "L3",
+    "tools_involved": [
+      "httpx",
+      "CDN bypass",
+      "origin testing"
+    ],
+    "scenario": "CDN security headers block direct injection attempts; direct IP access bypasses CDN and finds the origin has no WAF or security headers.",
+    "prompt": "Model the chain from CDN bypass to origin vulnerability testing and assess which vulnerability classes become available post-bypass.",
+    "reasoning_focus": "CDN bypass enabling origin vulnerability surface.",
+    "expected_answer": "Identify the origin IP through DNS history (SecurityTrails), certificate transparency, or Shodan searches that reveal the server's IP before CDN deployment. Access the origin directly using curl -k https://<origin_ip> -H 'Host: target.com' and compare response headers to confirm CDN bypass. With CDN bypassed, test vulnerability classes that the CDN/WAF blocks: XSS payloads, SQL injection, path traversal, command injection, and SSRF \u2014 all of which may now succeed without WAF filtering. Run nuclei against the origin IP with the full template set to identify vulnerabilities that the CDN masks. Compare the nuclei findings between CDN-proxied domain and direct origin to quantify the CDN's protective value. Report the CDN bypass as a separate critical finding and each origin vulnerability as dependent findings that are only exploitable via the bypass.",
+    "evaluation_criteria": "Demonstrates CDN bypass identification and origin testing methodology, correctly identifies vulnerability classes enabled by WAF absence, and explains the comparative testing approach between CDN-proxied and direct origin."
+  },
+  {
+    "id": "T9-049",
+    "complexity": "L3",
+    "tools_involved": [
+      "amass",
+      "takeover check",
+      "session analysis"
+    ],
+    "scenario": "A subdomain takeover opportunity is confirmed on a subdomain that shares cookies with the main domain due to a missing domain scoping attribute.",
+    "prompt": "Model the session theft chain from subdomain takeover to main domain cookie access.",
+    "reasoning_focus": "Subdomain takeover to cookie scope breach chain.",
+    "expected_answer": "Confirm the subdomain takeover by verifying the dangling DNS record (CNAME pointing to unclaimed resource) using dig subdomain.target.com and checking the provider's claim availability. Analyze cookie scope by examining Set-Cookie headers on the main domain for Domain attribute settings \u2014 cookies set with Domain=.target.com will be sent to all subdomains including the taken-over one. Register the unclaimed cloud resource and serve a proof-of-concept page that reads document.cookie to demonstrate cookie theft from the main domain. The session theft chain is: takeover subdomain \u2192 serve malicious page \u2192 victim visits subdomain \u2192 cookies for .target.com domain sent to attacker-controlled subdomain \u2192 session hijack. Assess the scope of accessible cookies: session tokens, CSRF tokens, authentication cookies, and any other cookies scoped to the parent domain. Report as a critical finding because subdomain takeover with shared cookie scope enables mass session hijacking of all main domain users.",
+    "evaluation_criteria": "Correctly chains subdomain takeover with cookie scope analysis for session theft, demonstrates the specific cookie attributes that enable cross-subdomain theft, and explains the mass session hijacking impact."
+  },
+  {
+    "id": "T9-050",
+    "complexity": "L3",
+    "tools_involved": [
+      "ffuf",
+      "idor automation",
+      "rate-limit evasion"
+    ],
+    "scenario": "IDOR confirmed on one endpoint; rate limiting blocks automated enumeration; rate-limit applies per IP but not per account.",
+    "prompt": "Model the approach for scaling IDOR enumeration under per-IP rate limiting using multi-account distribution.",
+    "reasoning_focus": "IDOR scaling under per-IP rate-limit constraints.",
+    "expected_answer": "Confirm the per-IP rate limit by testing from two different source IPs and verifying both can enumerate independently without triggering the other's rate limit. Design a multi-account distribution strategy: create N test accounts, distribute IDOR requests across accounts so each account stays under the per-account visibility threshold while maximizing total enumeration throughput. If the rate limit is 100 requests per IP per minute, calculate the number of IPs needed to enumerate the target ID space within the testing window. Use IP rotation through legitimate proxy services to distribute requests while maintaining request consistency. Calculate the total enumeration scope: if user IDs are sequential integers from 1 to 100,000, estimate the time and IP count needed for complete enumeration. Document the rate-limiting gap (per-IP but not per-account) as a separate finding alongside the IDOR, as it indicates a defense-in-depth failure.",
+    "evaluation_criteria": "Designs multi-account IDOR scaling strategy under per-IP rate limiting, correctly identifies the rate-limiting gap as a separate finding, and explains the enumeration throughput calculation."
+  },
+  {
+    "id": "T9-051",
+    "complexity": "L3",
+    "tools_involved": [
+      "shodan",
+      "s3 bucket discovery",
+      "aws cli"
+    ],
+    "scenario": "Shodan reveals an S3 bucket name in a misconfigured server header; aws s3 ls confirms the bucket is publicly listable and contains customer export files.",
+    "prompt": "Model the chain from Shodan discovery to S3 bucket exposure confirmation and assess the data exposure scope.",
+    "reasoning_focus": "OSINT to cloud storage exposure confirmation chain.",
+    "expected_answer": "Confirm the S3 bucket name from the Shodan server header using aws s3 ls s3://<bucket_name> --no-sign-request to list contents without authentication. Enumerate the bucket contents to identify sensitive file types: customer exports (CSV, XLSX), database backups (SQL, BAK), configuration files (JSON, YAML, ENV). Check bucket permissions comprehensively: aws s3api get-bucket-acl --bucket <bucket_name> --no-sign-request and aws s3api get-bucket-policy --bucket <bucket_name> to understand the full permission model. Download a sample file (smallest available) to confirm read access and assess data sensitivity without bulk downloading. Estimate the total data exposure scope based on file listing: number of files, date ranges, naming patterns indicating customer data. Report the chain from Shodan discovery to confirmed bucket listing to data exposure with specific evidence of customer data presence.",
+    "evaluation_criteria": "Correctly chains Shodan OSINT to S3 bucket exposure confirmation, demonstrates safe data exposure assessment without bulk downloading, and explains the data sensitivity classification approach."
+  },
+  {
+    "id": "T9-052",
+    "complexity": "L3",
+    "tools_involved": [
+      "github dorking",
+      "secret scanning",
+      "api testing"
+    ],
+    "scenario": "GitHub search reveals a commit containing an API key; the key is 18 months old but API testing confirms it is still active with admin scope.",
+    "prompt": "Model the chain from public code search to active admin API key confirmation and assess the scope of access.",
+    "reasoning_focus": "Source code secret to live admin API key chain.",
+    "expected_answer": "Search GitHub for organization-related keywords using GitHub dorking: 'org:target password', 'org:target api_key', 'org:target AWS_SECRET'. Use truffleHog or git-secrets to scan discovered repositories for high-entropy strings that indicate secrets. If a valid API key is found, test it minimally to confirm it's active: for AWS keys, run aws sts get-caller-identity; for API keys, send a simple authenticated request. Assess the scope of the leaked credential: what services does it access, what permissions does it have, and is it a production or development key. Check the commit history to determine how long the secret has been exposed and whether it has been rotated. Report the finding with the credential type, exposure duration, permission scope, and the exact GitHub URL where the secret was found.",
+    "evaluation_criteria": "Demonstrates GitHub dorking and secret scanning methodology, correctly identifies minimal credential validation approach, and explains exposure duration assessment through commit history analysis."
+  },
+  {
+    "id": "T9-053",
+    "complexity": "L3",
+    "tools_involved": [
+      "nmap",
+      "kubernetes enumeration",
+      "cloud iam"
+    ],
+    "scenario": "Kubernetes API server is exposed without authentication; service account tokens readable from pods have GCP IAM bindings.",
+    "prompt": "Model the chain from unauthenticated Kubernetes API access to GCP IAM privilege via service account token extraction.",
+    "reasoning_focus": "Unauthenticated k8s API to cloud IAM privilege chain.",
+    "expected_answer": "Run nmap -sV -p- target to identify all open ports and services, then compare the results against the application's documented architecture to identify undocumented services. Use httpx to probe all HTTP/HTTPS services discovered by nmap and fingerprint their technology stacks. Cross-reference discovered services with known vulnerability databases using nuclei templates specific to each identified technology. The undocumented services often run with default configurations, weaker access controls, and less monitoring than the primary application. Test each undocumented service for default credentials, exposed management interfaces, and information disclosure. Document the gap between the application's documented architecture and the actual running services as a finding indicating inadequate asset inventory management.",
+    "evaluation_criteria": "Correctly identifies undocumented services as higher-risk targets, demonstrates systematic port-to-vulnerability mapping, and explains the asset inventory management gap finding."
+  },
+  {
+    "id": "T9-054",
+    "complexity": "L3",
+    "tools_involved": [
+      "ffuf",
+      "terraform state",
+      "cloud enumeration"
+    ],
+    "scenario": "Directory brute-force finds /terraform.tfstate publicly accessible; state file contains RDS endpoint, admin credentials, and S3 bucket names.",
+    "prompt": "Model the multi-service exposure chain from Terraform state file access to RDS, S3, and further cloud resources.",
+    "reasoning_focus": "Terraform state file as multi-service credential source.",
+    "expected_answer": "Analyze the DNS records using dig to map all CNAME chains, A records, and MX records for the target domain and its subdomains. Identify services behind each DNS record by cross-referencing IP addresses with known cloud provider ranges and CDN networks. Test for DNS zone transfer vulnerability using dig axfr target.com @ns1.target.com to attempt retrieving the complete zone file. The DNS infrastructure mapping reveals the target's hosting architecture, email infrastructure, and third-party service dependencies. Check for SPF, DKIM, and DMARC records that reveal email security posture and authorized sending infrastructure. Document the complete DNS topology as an intelligence product that informs all subsequent testing phases.",
+    "evaluation_criteria": "Demonstrates comprehensive DNS infrastructure mapping methodology, identifies security-relevant DNS records (SPF, DKIM, DMARC), and explains how DNS topology informs subsequent testing phases."
+  },
+  {
+    "id": "T9-055",
+    "complexity": "L3",
+    "tools_involved": [
+      "burp",
+      "log analysis",
+      "detection inference"
+    ],
+    "scenario": "A CI/CD pipeline log is accessible and contains AWS credentials used in deployment steps; credentials appear active based on IAM metadata.",
+    "prompt": "Model the chain from CI/CD log access to active cloud credential extraction and assess the deployment-level IAM scope.",
+    "reasoning_focus": "CI/CD log credential exposure to cloud access chain.",
+    "expected_answer": "Extract cookies from authenticated sessions using browser developer tools or Burp and analyze each cookie's attributes: Secure flag, HttpOnly flag, SameSite attribute, Domain scope, and Path scope. Test session fixation by setting a known session cookie value before authentication and checking if the same value persists after login. Verify session invalidation by logging out and attempting to reuse the old session cookie to access protected resources. The session management assessment should cover: cookie randomness (entropy analysis), session timeout enforcement, concurrent session handling, and cross-device session visibility. Test for session prediction by collecting multiple session tokens and analyzing them for sequential patterns or low entropy. Document all session management weaknesses as a compound finding if multiple issues exist.",
+    "evaluation_criteria": "Correctly assesses session management security across all attributes, demonstrates session fixation and replay testing, and explains the relationship between token entropy and session prediction risk."
+  },
+  {
+    "id": "T9-056",
+    "complexity": "L3",
+    "tools_involved": [
+      "httpx",
+      "ssrf testing",
+      "internal service mapping"
+    ],
+    "scenario": "SSRF is confirmed; internal service enumeration via SSRF reveals an internal Jenkins instance at 10.0.0.5:8080 with no authentication.",
+    "prompt": "Model the chain from external SSRF to unauthenticated internal Jenkins access and assess the CI/CD compromise potential.",
+    "reasoning_focus": "SSRF to internal CI/CD access chain.",
+    "expected_answer": "Intercept file upload requests using Burp Suite and test various bypass techniques: modify Content-Type header, use double extensions (.php.jpg), add null bytes (file.php%00.jpg), and use alternative PHP extensions (.phtml, .php5). Test whether uploaded files are accessible via predictable URLs and whether they are executed by the server rather than served as static content. Check upload directory for server-side execution by uploading a simple PHP info file and accessing it to determine if code execution occurs. If code execution is confirmed, assess the server's outbound connectivity and file system permissions to determine lateral movement potential. Test upload size limits, upload rate limits, and file content validation (magic bytes vs extension-only checks). The file upload to code execution chain is typically critical severity, especially if the web server runs with elevated privileges.",
+    "evaluation_criteria": "Demonstrates file upload bypass techniques with systematic testing methodology, correctly identifies the escalation from upload to code execution, and explains server-side execution validation approach."
+  },
+  {
+    "id": "T9-057",
+    "complexity": "L3",
+    "tools_involved": [
+      "burp",
+      "xxe testing",
+      "file read"
+    ],
+    "scenario": "XXE is confirmed in an XML upload endpoint; internal file read reveals /etc/passwd and an application configuration file containing database credentials.",
+    "prompt": "Model the XXE to credential exfiltration chain and assess the downstream database access scope.",
+    "reasoning_focus": "XXE file read to credential extraction chain.",
+    "expected_answer": "Test the WebSocket connection for authentication enforcement: connect without cookies or tokens and check if the server accepts the connection and responds to messages. Intercept WebSocket messages using Burp Suite's WebSocket history to analyze the message format and identify potential injection points. Test for cross-site WebSocket hijacking (CSWSH) by initiating a WebSocket connection from a different origin and checking if the Origin header is validated. Analyze the WebSocket message protocol for authorization bypass: send messages requesting other users' data or admin-level actions. Test for message injection by inserting special characters, SQL syntax, or script tags into WebSocket message fields. Document the WebSocket security assessment covering authentication, authorization, origin validation, and message-level injection testing.",
+    "evaluation_criteria": "Correctly identifies WebSocket-specific security testing requirements, demonstrates CSWSH testing methodology, and explains authorization bypass testing at the message level."
+  },
+  {
+    "id": "T9-058",
+    "complexity": "L3",
+    "tools_involved": [
+      "amass",
+      "httpx",
+      "js analysis"
+    ],
+    "scenario": "JavaScript file on a subdomain contains hardcoded API endpoint paths and an internal service discovery hostname not in DNS.",
+    "prompt": "Model the chain from JavaScript analysis to internal endpoint and service discovery map construction.",
+    "reasoning_focus": "JavaScript analysis to internal topology map chain.",
+    "expected_answer": "Map all API versioning endpoints (/api/v1/, /api/v2/, /api/v3/) and compare the authentication and authorization requirements across versions. Test whether deprecated API versions have weaker security controls or missing authentication requirements compared to current versions. Use the deprecated version's response format and error messages to inform testing of the current version's undocumented features. Check if deprecated versions expose endpoints that have been removed from current versions but still function. Test cross-version token compatibility: does a v1 token work on v3 endpoints and vice versa? Document the version-specific security control differences as findings and recommend deprecation enforcement.",
+    "evaluation_criteria": "Demonstrates API version security comparison methodology, correctly identifies deprecated version security control gaps, and explains cross-version token compatibility risks."
+  },
+  {
+    "id": "T9-059",
+    "complexity": "L3",
+    "tools_involved": [
+      "sqlmap",
+      "database enumeration",
+      "data export"
+    ],
+    "scenario": "SQLi confirmed via sqlmap; database enumeration reveals a table containing OAuth tokens for third-party integrations.",
+    "prompt": "Model the chain from SQLi confirmation to third-party OAuth token extraction and assess the external service access scope.",
+    "reasoning_focus": "SQLi to OAuth token extraction to third-party service access chain.",
+    "expected_answer": "Analyze error messages by triggering various error conditions: malformed input, invalid parameters, authentication failures, and server errors across all discovered endpoints. Collect and categorize error messages by type: stack traces (reveal framework and code structure), database errors (reveal schema and query patterns), and path disclosures (reveal server filesystem). Test whether error verbosity differs between environments by comparing error responses from staging vs production endpoints if both are accessible. Check if error messages include sensitive data: internal IP addresses, database connection strings, file paths, or API keys in stack traces. Use the disclosed information to refine other attack vectors: database schema information enables targeted SQL injection, code paths enable targeted file inclusion attacks. Document each unique error message disclosure with the exact trigger condition and the sensitive information revealed.",
+    "evaluation_criteria": "Correctly identifies error message categorization for maximum intelligence value, demonstrates systematic error triggering methodology, and explains how disclosed information enables targeted attacks."
+  },
+  {
+    "id": "T9-060",
+    "complexity": "L3",
+    "tools_involved": [
+      "burp",
+      "misconfiguration analysis",
+      "detection suppression"
+    ],
+    "scenario": "A logging configuration endpoint allows disabling request logging for specific endpoints; suppressing logging for the SQLi endpoint removes detection coverage.",
+    "prompt": "Model the chain from logging suppression to detection-blind SQLi exploitation and assess the reporting implications.",
+    "reasoning_focus": "Detection suppression enabling blind exploitation chain.",
+    "expected_answer": "Test CORS configuration by sending requests with Origin headers from various attacker-controlled domains and analyzing the Access-Control-Allow-Origin response header. Check for wildcard CORS (*), null origin acceptance, and reflection of arbitrary Origin values as allowed origins. Test whether credentials (cookies, authorization headers) are included in cross-origin responses by checking Access-Control-Allow-Credentials: true. A misconfigured CORS policy that reflects arbitrary origins with credentials enabled allows any website to make authenticated API requests on behalf of the victim user. Test the practical impact by crafting a proof-of-concept HTML page that makes cross-origin requests to sensitive API endpoints and reads the responses. Document the CORS misconfiguration with the specific origins tested, the response headers received, and a working proof-of-concept demonstrating data exfiltration.",
+    "evaluation_criteria": "Demonstrates CORS misconfiguration testing with specific origin variations, correctly identifies the credentials + reflected origin combination as the critical misconfiguration, and provides a working proof-of-concept approach."
+  },
+  {
+    "id": "T9-061",
+    "complexity": "L4",
+    "tools_involved": [
+      "amass",
+      "httpx",
+      "nmap",
+      "nuclei",
+      "manual auth testing"
+    ],
+    "scenario": "Enterprise SaaS with multi-tenant architecture; identity flaw suspected; cloud storage discovered.",
+    "prompt": "Model tenant isolation breakdown chain.",
+    "reasoning_focus": "Infra + identity + data layering.",
+    "expected_answer": "Map all GraphQL mutations and test each for authorization by sending requests with no token, expired tokens, and tokens from different user roles. Test for query depth attacks by sending deeply nested queries to check if the server enforces query complexity limits. Use GraphQL batching to test for rate-limit bypass: send multiple queries in a single request to check if rate limiting applies per-request or per-query. Test field-level authorization by requesting sensitive fields (password hashes, API keys, PII) through different query paths and resolver chains. Check for query introspection even if the main introspection query is disabled \u2014 test partial introspection via __type queries. Document each authorization gap with the specific query, expected behavior, and actual behavior.",
+    "evaluation_criteria": "Correctly identifies GraphQL-specific authorization testing requirements, demonstrates query depth and batching abuse testing, and explains field-level authorization assessment methodology."
+  },
+  {
+    "id": "T9-062",
+    "complexity": "L4",
+    "tools_involved": [
+      "nmap",
+      "kube enumeration",
+      "cloud IAM review"
+    ],
+    "scenario": "Kubernetes cluster exposed; service account has cloud IAM binding.",
+    "prompt": "Model cross-layer escalation potential.",
+    "reasoning_focus": "Orchestration-to-cloud pivot.",
+    "expected_answer": "Test server-side template injection (SSTI) by submitting mathematical expressions ({{7*7}}) in all user-input fields and checking if the response contains the evaluated result (49). Identify the template engine by using engine-specific payloads: ${7*7} (Freemarker), #{7*7} (Ruby ERB), {{config}} (Jinja2), and analyzing which syntax produces results. If SSTI is confirmed, escalate to OS command execution using engine-specific RCE payloads: {{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}} for Jinja2. Assess the execution context: what user does the template engine run as, what filesystem access does it have, and can it reach internal services. Test for blind SSTI using out-of-band techniques (DNS callbacks, HTTP callbacks) if response-based detection fails. Document the SSTI finding with the exact injection point, template engine identified, and maximum demonstrated impact (information disclosure vs RCE).",
+    "evaluation_criteria": "Demonstrates SSTI identification and engine fingerprinting methodology, correctly escalates from detection to RCE, and explains the execution context assessment approach."
+  },
+  {
+    "id": "T9-063",
+    "complexity": "L4",
+    "tools_involved": [
+      "ffuf",
+      "auth testing",
+      "business logic analysis"
+    ],
+    "scenario": "Admin endpoint + token reuse + refund flaw.",
+    "prompt": "Model compound financial escalation chain.",
+    "reasoning_focus": "Multi-domain chain amplification.",
+    "expected_answer": "Test all API endpoints for mass assignment by sending extra parameters beyond what the UI submits and checking if the server accepts and processes them. Common mass assignment targets: role (user\u2192admin), isVerified (false\u2192true), balance (0\u219299999), and any privilege or permission fields. Capture a legitimate API request in Burp, add suspected extra fields from the API documentation or response schema, and replay the modified request. Check if the response reflects the injected fields or if the server-side state has changed by querying the resource after modification. Test on user profile update, registration, and any PUT/PATCH endpoints that modify resource attributes. Document each mass assignment vulnerability with the specific field that was successfully modified and the privilege escalation or data modification it enables.",
+    "evaluation_criteria": "Correctly identifies mass assignment testing methodology for privilege escalation, demonstrates field discovery approach using API documentation and response analysis, and explains server-side validation testing."
+  },
+  {
+    "id": "T9-064",
+    "complexity": "L4",
+    "tools_involved": [
+      "oauth testing",
+      "cloud IAM",
+      "burp"
+    ],
+    "scenario": "OAuth misbinding provides identity token capture \u2192 cloud IAM role trusts the OAuth provider \u2192 role assumption via captured token.",
+    "prompt": "Model the cross-domain chain from OAuth identity token capture to cloud IAM role assumption.",
+    "reasoning_focus": "OAuth identity to cloud role assumption cross-domain chain.",
+    "expected_answer": "Test HTTP request smuggling by sending ambiguous Content-Length and Transfer-Encoding headers to identify frontend/backend desynchronization. Use smuggler.py or custom payloads to test CL.TE, TE.CL, and TE.TE smuggling variants against the target's reverse proxy and backend server combination. If smuggling is confirmed, demonstrate impact by poisoning another user's request to redirect them to an attacker-controlled page or capture their credentials. Assess the infrastructure to determine the reverse proxy type (nginx, HAProxy, AWS ALB) and backend server type, as each combination has different smuggling characteristics. Test whether the smuggling can be used to bypass access controls by smuggling requests to restricted endpoints. Document the exact headers that cause desynchronization, the demonstrated impact, and the affected infrastructure components.",
+    "evaluation_criteria": "Demonstrates HTTP request smuggling detection methodology, correctly identifies frontend/backend desynchronization testing, and explains the practical impact including request poisoning and access control bypass."
+  },
+  {
+    "id": "T9-065",
+    "complexity": "L4",
+    "tools_involved": [
+      "webhook analysis",
+      "microservice drift",
+      "financial modeling"
+    ],
+    "scenario": "Webhook payment callback is unsigned and triggers both the payment microservice and the fulfillment microservice; they read state independently creating a 500ms consistency window.",
+    "prompt": "Model the multi-service drift chain where webhook injection during the consistency window creates financial and fulfillment abuse potential.",
+    "reasoning_focus": "Webhook injection exploiting cross-microservice state consistency window.",
+    "expected_answer": "Test XML External Entity (XXE) injection by submitting XML payloads with entity declarations pointing to local files: <!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>. Test for blind XXE using out-of-band techniques: <!DOCTYPE foo [<!ENTITY xxe SYSTEM 'http://attacker.com/xxe'>]> and monitor for incoming HTTP requests. If XXE is confirmed, escalate to SSRF by using file:// and http:// protocol handlers to read internal network resources. Test for XXE-based denial of service using the billion laughs attack (entity expansion) to assess the parser's entity limits. Check all XML-accepting endpoints including SOAP services, file upload parsers, and any endpoints accepting Content-Type: application/xml. Document the XXE finding with the exact payload, the data retrieved, and the maximum demonstrated impact.",
+    "evaluation_criteria": "Correctly identifies XXE injection testing with both in-band and out-of-band techniques, demonstrates protocol handler escalation, and explains the full exploitation chain from entity injection to data retrieval."
+  },
+  {
+    "id": "T9-066",
+    "complexity": "L4",
+    "tools_involved": [
+      "idor testing",
+      "cloud replication",
+      "data analysis"
+    ],
+    "scenario": "IDOR grants access to S3 bucket names; S3 cross-region replication is enabled; IDOR-discovered bucket has public replication destination.",
+    "prompt": "Model the chain from IDOR discovery to cross-region data replication scope and assess the data access amplification.",
+    "reasoning_focus": "IDOR to cross-region data replication access amplification.",
+    "expected_answer": "Test deserialization vulnerabilities by identifying serialized data in cookies, hidden fields, or API parameters \u2014 look for base64-encoded Java serialized objects (rO0AB), PHP serialized strings (O:), or .NET viewstate. Use ysoserial (Java), phpggc (PHP), or similar tools to generate deserialization payloads for the identified framework. Test with a benign payload first (DNS callback or sleep timer) before attempting RCE to confirm the vulnerability without disrupting the application. Identify the exact library versions in use to select the correct gadget chain for payload generation. Test whether the deserialization occurs pre-authentication or post-authentication, as pre-auth deserialization is significantly more severe. Document the serialized data location, the framework identified, the gadget chain used, and the demonstrated impact.",
+    "evaluation_criteria": "Demonstrates deserialization vulnerability identification and exploitation methodology, correctly identifies framework-specific gadget chain selection, and explains pre-auth vs post-auth deserialization severity difference."
+  },
+  {
+    "id": "T9-067",
+    "complexity": "L4",
+    "tools_involved": [
+      "ci/cd analysis",
+      "secret extraction",
+      "production access"
+    ],
+    "scenario": "CI/CD pipeline readable \u2192 deployment script contains production database master credentials \u2192 RDS accessible via credentials.",
+    "prompt": "Model the full chain from CI/CD read access to production RDS master credential use and assess the database scope.",
+    "reasoning_focus": "CI/CD to production database master credential chain.",
+    "expected_answer": "Test server-side request forgery by submitting internal URLs (http://127.0.0.1, http://169.254.169.254, http://internal-host) in all URL-accepting parameters and file fetch features. Test SSRF filter bypass techniques: IP encoding variations (0x7f000001, 2130706433, 017700000001), DNS rebinding, and URL schema tricks (dict://, gopher://, file://). If cloud metadata is accessible via SSRF, retrieve IAM credentials and assess the attached role's permissions for lateral movement. Test for blind SSRF using out-of-band detection (Burp Collaborator, interactsh) when direct response is not available. Map the internal network reachable via SSRF by probing common internal ports and services. Document the SSRF finding with the exact injection point, internal resources accessible, and demonstrated impact (metadata access, internal service access, or data exfiltration).",
+    "evaluation_criteria": "Correctly identifies SSRF testing methodology with filter bypass techniques, demonstrates cloud metadata exploitation chain, and explains blind SSRF detection using out-of-band techniques."
+  },
+  {
+    "id": "T9-068",
+    "complexity": "L4",
+    "tools_involved": [
+      "sso testing",
+      "saml analysis",
+      "saas tenant breach"
+    ],
+    "scenario": "SSO SAML assertion forgery \u2192 any enterprise tenant admin can be impersonated \u2192 tenant-level data export invoked.",
+    "prompt": "Model the cross-tenant data extraction chain from SAML forgery to enterprise tenant impersonation to data export.",
+    "reasoning_focus": "SAML forgery to tenant impersonation to data export chain.",
+    "expected_answer": "Test privilege escalation by performing all actions as a low-privilege user and comparing available functionality with a high-privilege user's session. Check for horizontal privilege escalation by modifying user identifiers in API requests to access other users' resources. Test vertical escalation by modifying role parameters, accessing admin endpoints with user tokens, and checking if server-side role enforcement matches client-side UI restrictions. Map the complete privilege model by documenting all roles, their intended permissions, and testing each permission boundary. Test for privilege escalation via API endpoints that the UI doesn't expose but the backend accepts. Document each escalation path with the specific endpoint, parameter modification, and the elevated access achieved.",
+    "evaluation_criteria": "Demonstrates systematic privilege escalation testing across horizontal and vertical boundaries, correctly identifies API-level authorization bypass, and explains the complete privilege model mapping approach."
+  },
+  {
+    "id": "T9-069",
+    "complexity": "L4",
+    "tools_involved": [
+      "api gateway analysis",
+      "backend trust",
+      "authorization bypass"
+    ],
+    "scenario": "API gateway enforces authentication; backend service trusts X-User-ID header without re-authenticating; direct backend access bypasses gateway.",
+    "prompt": "Model the chain from API gateway bypass to backend direct access exploiting header-based identity trust.",
+    "reasoning_focus": "API gateway bypass to backend identity header injection chain.",
+    "expected_answer": "Analyze the application's CSP header using csp-evaluator.withgoogle.com to identify weaknesses like unsafe-inline, unsafe-eval, or overly broad domain whitelists. Test CSP bypass techniques specific to the identified weaknesses: JSONP callback injection on whitelisted domains, base tag injection if base-uri is not restricted, or script gadgets in whitelisted CDN libraries. If CSP prevents inline script execution, test for CSP bypass via dangling markup injection, CSS injection, or other non-script exfiltration techniques. Check whether CSP is consistently applied across all endpoints or only on specific pages. Test whether CSP report-uri is configured and functional by triggering intentional violations. Document the CSP weaknesses with specific bypass demonstrations and recommendations for hardening.",
+    "evaluation_criteria": "Correctly identifies CSP bypass techniques specific to identified weaknesses, demonstrates script execution alternatives when CSP blocks inline scripts, and explains consistent enforcement validation."
+  },
+  {
+    "id": "T9-070",
+    "complexity": "L4",
+    "tools_involved": [
+      "cdn analysis",
+      "storage enumeration",
+      "data access"
+    ],
+    "scenario": "CDN origin misconfiguration exposes an S3 bucket path \u2192 bucket has public list permission \u2192 bucket contains encrypted backups with plaintext key in bucket metadata.",
+    "prompt": "Model the chain from CDN misconfiguration to S3 access to backup decryption via metadata key disclosure.",
+    "reasoning_focus": "CDN to storage to backup decryption chain.",
+    "expected_answer": "Test for subdomain takeover across all discovered subdomains by checking DNS records for dangling CNAMEs pointing to unclaimed third-party services. Use can-i-take-over-xyz fingerprints to match DNS responses against known takeover-vulnerable services (GitHub Pages, Heroku, AWS S3, Azure, Shopify). For confirmed takeover opportunities, verify the claim availability on the target platform without actually claiming the resource. Assess the impact by analyzing cookie scope, OAuth redirect URIs, and email sending capabilities that the taken-over subdomain would provide. Check if the subdomain is referenced in any security-sensitive configurations: SPF records, CORS policies, OAuth redirect whitelists, or CSP domain lists. Document the takeover opportunity with DNS evidence, platform availability confirmation, and the compound impact assessment.",
+    "evaluation_criteria": "Demonstrates subdomain takeover discovery and verification methodology, correctly identifies compound impact through cookie scope and OAuth redirect analysis, and explains platform-specific takeover techniques."
+  },
+  {
+    "id": "T9-071",
+    "complexity": "L4",
+    "tools_involved": [
+      "idor",
+      "multi-tenant db",
+      "cross-tenant"
+    ],
+    "scenario": "IDOR on a reporting endpoint provides access to query execution across all tenant database schemas without schema isolation.",
+    "prompt": "Model the cross-tenant database exposure chain from IDOR on a reporting endpoint and assess the regulatory impact scope.",
+    "reasoning_focus": "IDOR to cross-tenant database access without schema isolation.",
+    "expected_answer": "Confirm the file upload to webshell chain by uploading a test file with server-side code and verifying execution via direct URL access to the upload directory. If webshell access is confirmed, enumerate the server's network position: check internal network interfaces (ifconfig/ip addr), routing table (route -n), and DNS resolution (cat /etc/resolv.conf) for lateral movement targets. Test outbound connectivity from the compromised host to determine C2 channel availability: can it reach external HTTP, DNS, or ICMP endpoints? Map accessible internal services from the webshell's network position using simple port probes to common internal ports (databases, admin panels, APIs). Assess the webshell's execution privileges: what user does it run as, can it read sensitive files (/etc/shadow, application configs), and can it write to other web roots. Document the complete chain from file upload to webshell to internal network mapping with evidence at each stage.",
+    "evaluation_criteria": "Correctly chains file upload to webshell to lateral movement, demonstrates network position enumeration from compromised host, and explains the escalation path assessment including privilege and connectivity."
+  },
+  {
+    "id": "T9-072",
+    "complexity": "L4",
+    "tools_involved": [
+      "log analysis",
+      "fraud chain",
+      "financial modeling"
+    ],
+    "scenario": "Application logs accessible \u2192 logs contain payment processor webhooks with full payloads \u2192 payloads include unmasked card data.",
+    "prompt": "Model the chain from log access to payment data extraction and assess PCI DSS and financial impact scope.",
+    "reasoning_focus": "Log access to payment data extraction chain.",
+    "expected_answer": "Test the CI/CD pipeline for injection by submitting pull requests or code changes that modify pipeline configuration files (Jenkinsfile, .github/workflows, .gitlab-ci.yml). Check if pipeline secrets are accessible in the build environment by adding debug steps that print environment variables. Test whether the pipeline enforces branch protection \u2014 can a feature branch pipeline access production secrets or deploy to production? Map the secret injection mechanism: are secrets available as environment variables, mounted files, or vault references? Assess the pipeline's network access: can the build runner reach production databases, internal APIs, or cloud management planes? Document the pipeline access control gaps, secret exposure risks, and the potential impact of a compromised pipeline on production environments.",
+    "evaluation_criteria": "Demonstrates CI/CD pipeline security testing methodology, correctly identifies secret exposure vectors in build environments, and explains the production impact of pipeline compromise."
+  },
+  {
+    "id": "T9-073",
+    "complexity": "L4",
+    "tools_involved": [
+      "detection signals",
+      "recon",
+      "strategic decision"
+    ],
+    "scenario": "A cloud IAM privilege escalation chain is 2 steps from completion; WAF blocks the next step; detection signals are rising.",
+    "prompt": "Model the strategic decision framework for whether to attempt the final escalation steps or report the partially completed chain.",
+    "reasoning_focus": "Strategic chain completion vs early reporting under detection pressure.",
+    "expected_answer": "Analyze the application's authentication flow for token handling: where tokens are stored (localStorage, sessionStorage, cookies, memory), how they are transmitted, and when they expire. Test token replay by capturing a valid token and using it after the user logs out to verify server-side invalidation. Check for token refresh vulnerabilities: can an expired access token be used to obtain a new refresh token, creating an infinite session? Test cross-session token usage: can a token from Device A be used on Device B without detection? Assess the token's entropy and predictability by collecting multiple tokens and analyzing their structure. Document all token handling weaknesses with the specific security property that is violated and the exploitation scenario.",
+    "evaluation_criteria": "Correctly identifies token handling security assessment across storage, transmission, and lifecycle, demonstrates replay and cross-session testing, and explains token entropy analysis methodology."
+  },
+  {
+    "id": "T9-074",
+    "complexity": "L4",
+    "tools_involved": [
+      "graphql",
+      "idor",
+      "data extraction"
+    ],
+    "scenario": "GraphQL introspection reveals a hidden admin mutation; the mutation requires an admin token; IDOR provides access to another admin's token.",
+    "prompt": "Model the chain from GraphQL introspection to hidden mutation discovery to admin token extraction via IDOR.",
+    "reasoning_focus": "GraphQL admin mutation access via IDOR token chain.",
+    "expected_answer": "Test DNS rebinding by setting up a controlled domain that alternates between returning the target's internal IP and an external IP with a short TTL. Use the DNS rebinding domain in an SSRF or URL fetch parameter to bypass same-origin policy and access internal services. Check if the application validates DNS resolution at connection time or at hostname validation time \u2014 a gap between these enables rebinding. Test whether the application caches DNS responses or re-resolves on each connection attempt. If the application has SSRF protections that block internal IPs, DNS rebinding may bypass these by initially resolving to an allowed external IP. Document the DNS rebinding attack path with the exact timing requirements and internal services accessible via the technique.",
+    "evaluation_criteria": "Demonstrates DNS rebinding attack methodology for SSRF filter bypass, correctly identifies the timing requirements, and explains the validation vs connection time gap that enables the attack."
+  },
+  {
+    "id": "T9-075",
+    "complexity": "L4",
+    "tools_involved": [
+      "kubernetes",
+      "secret extraction",
+      "lateral movement"
+    ],
+    "scenario": "Kubernetes RBAC allows listing all secrets across namespaces \u2192 secrets include a CI/CD service account key \u2192 CI/CD system has production deployment rights.",
+    "prompt": "Model the chain from Kubernetes RBAC misconfiguration to cross-namespace secret access to production deployment capability.",
+    "reasoning_focus": "K8s RBAC to secret to production deployment chain.",
+    "expected_answer": "Test for HTTP parameter pollution by sending duplicate parameters with different values in the same request: ?id=1&id=2 and observing which value the application processes. Check if the frontend and backend handle duplicate parameters differently, enabling filter bypass by placing the malicious value in the parameter position that the WAF ignores but the backend processes. Test parameter pollution across different delivery methods: URL query string, POST body, and multipart form data. Map the application's parameter precedence: does it use the first occurrence, last occurrence, or concatenate duplicates? Use parameter pollution to bypass security controls: WAF rules, input validation, and access control checks that examine only one instance of the parameter. Document the exact parameter precedence behavior and any security controls that can be bypassed through parameter pollution.",
+    "evaluation_criteria": "Correctly identifies HTTP parameter pollution testing methodology, demonstrates frontend/backend parsing discrepancy exploitation, and explains WAF bypass through parameter precedence manipulation."
+  },
+  {
+    "id": "T9-076",
+    "complexity": "L4",
+    "tools_involved": [
+      "cloud trail",
+      "iam analysis",
+      "persistence modeling"
+    ],
+    "scenario": "CloudTrail shows IAM policy modification history; historical logs reveal a temporary admin policy was attached and never removed.",
+    "prompt": "Model the persistence chain where a historical administrative IAM policy attachment remains active and accessible.",
+    "reasoning_focus": "Historical IAM policy persistence via unremoved attachment.",
+    "expected_answer": "Test the payment flow for race conditions by sending concurrent checkout requests for the same cart to check if the payment is processed multiple times. Analyze the payment webhook integration for replay vulnerability: can a captured payment confirmation webhook be replayed to credit the account multiple times? Test coupon stacking by applying multiple coupons simultaneously or in rapid succession to check if the discount exceeds the intended limit. Check for currency conversion manipulation by changing the currency parameter between the cart display and payment submission. Test refund abuse by initiating refunds on digital goods that have already been delivered and cannot be reclaimed. Document each financial logic vulnerability with the exact monetary impact per exploitation and the estimated annual abuse potential.",
+    "evaluation_criteria": "Demonstrates financial logic testing across race conditions, replay attacks, and business logic abuse, correctly calculates monetary impact, and explains fraud detection threshold assessment."
+  },
+  {
+    "id": "T9-077",
+    "complexity": "L4",
+    "tools_involved": [
+      "ssrf",
+      "iam pivot",
+      "s3 access"
+    ],
+    "scenario": "SSRF reaches EC2 metadata \u2192 IAM role credentials retrieved \u2192 role has S3:* on all buckets \u2192 financial records accessible.",
+    "prompt": "Model the complete SSRF-to-IAM-to-S3 chain and assess the financial data exposure scope.",
+    "reasoning_focus": "SSRF to cloud credential to financial data access chain.",
+    "expected_answer": "Test the multi-tenant application for tenant isolation by accessing API endpoints with tokens from different tenants and checking for data leakage. Check whether tenant identifiers are derived from user-supplied input (subdomains, headers, API keys) or server-side session state \u2014 user-supplied tenant context enables tenant spoofing. Test for shared resource conflicts: can one tenant's actions affect another tenant's data through shared database connections, cache keys, or message queues? Map the tenant isolation boundaries at each layer: DNS/routing, authentication, authorization, database, file storage, and background processing. Check for cross-tenant information disclosure through error messages, timing differences, or resource enumeration. Document each isolation breach with the specific data accessible across tenants and the affected isolation layer.",
+    "evaluation_criteria": "Correctly identifies multi-tenant isolation testing at each architectural layer, demonstrates tenant spoofing and cross-tenant access testing, and explains shared resource conflict detection."
+  },
+  {
+    "id": "T9-078",
+    "complexity": "L4",
+    "tools_involved": [
+      "subdomain takeover",
+      "session hijack",
+      "phishing"
+    ],
+    "scenario": "Subdomain takeover on login.target.com \u2192 OAuth redirect uses login.target.com \u2192 attacker serves phishing login \u2192 OAuth tokens captured.",
+    "prompt": "Model the subdomain takeover to OAuth token capture chain via phishing on a trusted subdomain.",
+    "reasoning_focus": "Subdomain takeover enabling trusted-domain OAuth phishing chain.",
+    "expected_answer": "Test the email verification flow for bypass: can the verification step be skipped by directly accessing post-verification endpoints? Check if the verification token is predictable, reusable, or has a sufficient expiration time. Test for account enumeration through the verification flow: does the response differ between registered and unregistered email addresses? Analyze the password reset flow for token predictability, expiration enforcement, and multi-use prevention. Test whether email-based account actions (verification, password reset, email change) can be intercepted or redirected through header injection in the email address field. Document each email security vulnerability with the exact bypass technique and the account security impact.",
+    "evaluation_criteria": "Demonstrates email-based account security testing methodology, correctly identifies verification bypass and token predictability testing, and explains the compound impact of email flow vulnerabilities."
+  },
+  {
+    "id": "T9-079",
+    "complexity": "L4",
+    "tools_involved": [
+      "file upload",
+      "webshell",
+      "lateral movement"
+    ],
+    "scenario": "File upload allows SVG with JavaScript \u2192 XSS in admin panel \u2192 admin's cookie captured \u2192 admin panel API key exposed \u2192 API key used to access internal services.",
+    "prompt": "Model the XSS-to-admin-cookie-to-API-key-to-internal-service multi-step chain.",
+    "reasoning_focus": "XSS to credential escalation to internal service access chain.",
+    "expected_answer": "Map the complete API surface by combining swagger/OpenAPI documentation, route enumeration via ffuf, and traffic analysis from Burp proxy history. Test each authenticated endpoint for broken object-level authorization (BOLA) by modifying resource identifiers in requests. Check for broken function-level authorization by accessing admin API endpoints with regular user tokens. Test API rate limiting by sending rapid requests and documenting the threshold, response behavior, and bypass techniques. Analyze API error responses for information disclosure: stack traces, database errors, and internal paths. Document the complete API security assessment with the findings organized by OWASP API Security Top 10 categories.",
+    "evaluation_criteria": "Correctly demonstrates comprehensive API security assessment methodology, maps findings to OWASP API Security Top 10, and explains the systematic approach to BOLA and BFLA testing."
+  },
+  {
+    "id": "T9-080",
+    "complexity": "L4",
+    "tools_involved": [
+      "nosql injection",
+      "auth bypass",
+      "data extraction"
+    ],
+    "scenario": "NoSQL injection in the authentication query allows always-true condition \u2192 admin session token returned \u2192 admin API invokes full database export.",
+    "prompt": "Model the NoSQL injection to authentication bypass to admin data export chain.",
+    "reasoning_focus": "NoSQL injection to auth bypass to data export chain.",
+    "expected_answer": "Analyze the application's cryptographic implementation for known weaknesses: weak algorithms (MD5, SHA1 for passwords), short key lengths, hardcoded keys, and improper IV/nonce usage. Test for padding oracle vulnerabilities if CBC mode encryption is used by manipulating ciphertext blocks and analyzing error responses. Check if the application uses cryptographic randomness (CSPRNG) for token generation or relies on predictable pseudo-random number generators. Test for hash length extension attacks if the application uses HMAC-SHA1 or similar constructions with known prefix. Assess key management practices: are encryption keys rotated, are they stored separately from encrypted data, and can they be accessed by the application code? Document each cryptographic weakness with the specific algorithm, implementation flaw, and the practical exploitation impact.",
+    "evaluation_criteria": "Demonstrates cryptographic implementation assessment methodology, correctly identifies practical exploitation for weak algorithms, and explains key management practice evaluation approach."
+  },
+  {
+    "id": "T9-081",
+    "complexity": "L5",
+    "tools_involved": [
+      "Full Recon Stack"
+    ],
+    "scenario": "Multiple medium findings across infra, auth, and business logic.",
+    "prompt": "Design highest-impact attack graph prioritization model.",
+    "reasoning_focus": "Strategic chain optimization.",
+    "expected_answer": "Execute the full SSRF-to-cloud-compromise chain: identify SSRF vector \u2192 access cloud metadata endpoint \u2192 retrieve IAM credentials \u2192 enumerate permissions \u2192 escalate to admin. Start with SSRF confirmation via the cloud metadata endpoint at 169.254.169.254, then retrieve temporary credentials from the instance profile. Use the obtained credentials to enumerate all accessible cloud resources across services (S3, EC2, Lambda, RDS, Secrets Manager). Test for cross-account access by checking if the IAM role has AssumeRole permissions for roles in other accounts. Assess whether the credential's permissions allow persistence mechanisms: creating new IAM users, adding access keys, or modifying policies. Document the complete chain from initial SSRF to maximum demonstrated cloud access with evidence at each escalation step.",
+    "evaluation_criteria": "Correctly chains SSRF to cloud metadata to IAM escalation to full cloud compromise, demonstrates permission enumeration methodology, and explains persistence mechanism assessment."
+  },
+  {
+    "id": "T9-082",
+    "complexity": "L5",
+    "tools_involved": [
+      "Recon",
+      "Auth",
+      "Cloud",
+      "Business"
+    ],
+    "scenario": "OAuth flaw + IAM over-permission + payout logic inconsistency.",
+    "prompt": "Model enterprise-wide financial compromise scenario.",
+    "reasoning_focus": "Compound risk amplification.",
+    "expected_answer": "Map the complete OAuth2/OIDC implementation including authorization endpoints, token endpoints, userinfo endpoints, and JWKS endpoints. Test for authorization code injection by capturing a code from one client and redeeming it at another client's callback. Check redirect_uri validation by testing partial match bypass, path traversal, and subdomain tricks against the registered redirect URIs. Test token exchange vulnerabilities: can a token from one OAuth scope be exchanged for a token with broader scope? Analyze the PKCE implementation if present: is the code_challenge_method enforced, can it be downgraded or omitted? Document each OAuth/OIDC vulnerability with the specific flow step affected, the bypass technique, and the resulting unauthorized access.",
+    "evaluation_criteria": "Demonstrates comprehensive OAuth2/OIDC security assessment, correctly identifies authorization code injection and redirect URI bypass techniques, and explains PKCE implementation validation."
+  },
+  {
+    "id": "T9-083",
+    "complexity": "L5",
+    "tools_involved": [
+      "Identity",
+      "Cloud Org",
+      "Billing"
+    ],
+    "scenario": "SSO compromise suspected in organization with centralized billing.",
+    "prompt": "Model executive-level impact chain.",
+    "reasoning_focus": "Enterprise governance collapse.",
+    "expected_answer": "Map all data storage locations (databases, caches, file stores, logs, backups) and test each for unauthorized access from the application's compromise position. Test database access by reading connection strings from application configuration files and connecting directly. Check for sensitive data in application logs by searching for PII, credentials, API keys, and financial data in log files. Assess backup security by testing if database backups are accessible from the application server's filesystem or network position. Test for data exfiltration channels: can the compromised position send data to external endpoints via HTTP, DNS, or other protocols? Document the data access scope from the compromised position with the specific data types, volume, and sensitivity classification.",
+    "evaluation_criteria": "Correctly maps data access scope from a compromised position across all storage types, demonstrates sensitive data identification in logs and backups, and explains exfiltration channel assessment."
+  },
+  {
+    "id": "T9-084",
+    "complexity": "L5",
+    "tools_involved": [
+      "Detection signals",
+      "Recon stack"
+    ],
+    "scenario": "Critical chain possible but detection signals rising.",
+    "prompt": "Decide whether to continue chain modeling or report early.",
+    "reasoning_focus": "Strategic engagement control.",
+    "expected_answer": "Model the complete kill chain from initial access through persistence, lateral movement, and data exfiltration across all affected systems. Quantify the business impact: number of affected users, financial exposure, regulatory implications (GDPR, PCI-DSS, HIPAA), and reputational damage. Assess the detection capability gaps: what logging and monitoring would have detected each step of the chain, and what was missing? Calculate the time-to-detection and time-to-remediation estimates based on the observed security monitoring capabilities. Model the worst-case scenario: if an attacker with nation-state resources exploited this chain, what is the maximum data exposure and business disruption? Document the full attack narrative with a timeline, affected assets, and recommended remediation prioritized by risk reduction impact.",
+    "evaluation_criteria": "Demonstrates complete kill chain modeling with business impact quantification, correctly identifies detection gaps, and explains remediation prioritization by risk reduction impact."
+  },
+  {
+    "id": "T9-085",
+    "complexity": "L5",
+    "tools_involved": [
+      "Identity",
+      "IDOR",
+      "Multi-Tenant",
+      "Cloud"
+    ],
+    "scenario": "SSO identity flaw \u2192 IDOR on tenant ID \u2192 cross-tenant data access \u2192 cloud storage role accessible from tenant context \u2192 org-wide S3 read.",
+    "prompt": "Model the complete five-step chain from SSO identity flaw to organization-wide cloud storage access and assess the full blast radius.",
+    "reasoning_focus": "SSO to IDOR to cross-tenant to cloud storage five-step chain.",
+    "expected_answer": "Analyze the Kubernetes cluster configuration for common misconfigurations: exposed dashboard, default service account tokens, missing network policies, and pod security policies. Test whether service account tokens mounted in pods can access the Kubernetes API to enumerate or modify cluster resources. Check for container escape vectors: privileged containers, host path mounts, docker.sock access, and kernel capability misconfigurations. Map pod-to-pod network access to identify if network segmentation prevents lateral movement between services. Test whether the cluster allows pulling images from untrusted registries or running privileged pods from any namespace. Document the Kubernetes security posture with the specific misconfigurations, their exploitation potential, and recommended hardening measures.",
+    "evaluation_criteria": "Correctly identifies Kubernetes-specific security testing methodology, demonstrates service account and network policy assessment, and explains container escape vector evaluation."
+  },
+  {
+    "id": "T9-086",
+    "complexity": "L5",
+    "tools_involved": [
+      "Cloud IAM",
+      "Fintech",
+      "Privilege Escalation"
+    ],
+    "scenario": "Cloud IAM misconfiguration \u2192 developer role assumes production admin role \u2192 production payment microservice credentials accessible \u2192 payment transaction creation possible.",
+    "prompt": "Model the cloud privilege escalation to production financial system access chain and quantify the financial impact scope.",
+    "reasoning_focus": "Cloud IAM escalation to financial system access chain.",
+    "expected_answer": "Map the identity federation trust chain across all identity providers (SAML, OIDC, LDAP) and the services that trust their assertions. Test for SAML signature bypass by modifying assertion attributes without re-signing and checking if the service provider validates signatures. Check for SAML XML wrapping attacks by injecting additional assertions alongside the signed assertion. Test token exchange across identity providers: can a token from IdP A be used to obtain a token from IdP B through federation chains? Assess the session propagation: does logging out of one federated service terminate sessions across all federated services? Document the federation trust model, each identified bypass, and the scope of access achievable through identity compromise.",
+    "evaluation_criteria": "Demonstrates identity federation trust chain analysis, correctly identifies SAML-specific bypass techniques, and explains cross-IdP token exchange and session propagation testing."
+  },
+  {
+    "id": "T9-087",
+    "complexity": "L5",
+    "tools_involved": [
+      "SSO",
+      "IAM",
+      "Service Mesh"
+    ],
+    "scenario": "SSO compromise provides identity plane control \u2192 IAM roles trust SSO assertions \u2192 service mesh mTLS certificates provisioned via IAM \u2192 all service-to-service communication can be intercepted.",
+    "prompt": "Model the identity plane compromise to service mesh trust collapse chain and assess the full service communication interception scope.",
+    "reasoning_focus": "SSO to IAM to service mesh total trust collapse chain.",
+    "expected_answer": "Model the SSO compromise impact by mapping all services that trust the SSO provider's assertions without additional authentication. Test whether SSO session tokens can be forged by analyzing the token format, signing algorithm, and key management. Assess the IAM role trust relationship: do IAM roles accept SSO assertions without additional validation (MFA, IP restriction, time restriction)? Trace the service mesh mTLS certificate provisioning: if IAM roles provision certificates, SSO compromise enables certificate generation for any service. Test whether service mesh traffic can be intercepted using attacker-provisioned certificates that the mesh trust anchor accepts. Document the complete identity plane collapse chain from SSO compromise to universal service communication interception.",
+    "evaluation_criteria": "Correctly chains SSO compromise through IAM trust to service mesh certificate provisioning, demonstrates identity plane collapse impact assessment, and explains universal service communication interception scope."
+  },
+  {
+    "id": "T9-088",
+    "complexity": "L5",
+    "tools_involved": [
+      "API-first",
+      "Auth Bypass",
+      "Microservice"
+    ],
+    "scenario": "API gateway authentication bypass \u2192 internal microservice APIs accessible without auth \u2192 secrets management microservice exposes all secret values \u2192 all services compromised.",
+    "prompt": "Model the API gateway bypass to secrets plane compromise chain and assess the total service compromise scope.",
+    "reasoning_focus": "API gateway bypass to secrets management to total compromise chain.",
+    "expected_answer": "Test the API gateway authentication bypass by probing for common bypass techniques: path normalization differences, HTTP method override, header manipulation, and version-specific vulnerabilities. Once internal microservices are accessible, map all service-to-service APIs and identify the secrets management microservice. Test the secrets management service for authorization: does it require service-level authentication or trust all internal traffic? If secrets are accessible, enumerate all stored secrets and categorize them by service, sensitivity, and scope. Assess the total compromise scope: which services are affected, what data is accessible, and what persistence mechanisms can be established. Document the API gateway bypass to total compromise chain with the specific bypass technique, secrets enumerated, and the blast radius assessment.",
+    "evaluation_criteria": "Demonstrates API gateway bypass methodology, correctly chains internal access to secrets management compromise, and explains total service compromise scope assessment."
+  },
+  {
+    "id": "T9-089",
+    "complexity": "L5",
+    "tools_involved": [
+      "Cross-Account",
+      "Cloud",
+      "Lateral"
+    ],
+    "scenario": "Dev account compromise \u2192 cross-account role assumption without ExternalId \u2192 prod account admin access \u2192 all prod account resources controllable.",
+    "prompt": "Model the cross-account privilege escalation chain from development account compromise to production account full control.",
+    "reasoning_focus": "Dev account to prod account takeover via cross-account role chain.",
+    "expected_answer": "Test the cross-account role assumption by identifying all IAM roles with cross-account trust policies using aws iam list-roles and examining the trust policy documents. Check whether the cross-account role requires an ExternalId parameter \u2014 absence of ExternalId enables confused deputy attacks. Simulate the escalation chain: dev account compromise \u2192 sts:AssumeRole to prod account \u2192 enumerate prod resources \u2192 demonstrate admin-level access. Assess the blast radius in the production account: what services, data stores, and management planes are accessible with the assumed role? Check for additional cross-account chains: can the production account's roles assume roles in other accounts, enabling further lateral movement? Document the complete cross-account escalation with evidence of each step and the total scope of production resources accessible.",
+    "evaluation_criteria": "Correctly identifies cross-account role assumption vulnerability without ExternalId, demonstrates the dev-to-prod escalation chain, and explains the blast radius in the production account."
+  },
+  {
+    "id": "T9-090",
+    "complexity": "L5",
+    "tools_involved": [
+      "Ledger",
+      "Distributed",
+      "Financial Fraud"
+    ],
+    "scenario": "Distributed ledger inconsistency window \u2192 concurrent read-before-write on balance \u2192 transaction amount modified in transit \u2192 ledger records incorrect post-transaction balance.",
+    "prompt": "Model the distributed ledger race condition to transaction amount manipulation to persistent balance corruption chain.",
+    "reasoning_focus": "Distributed ledger manipulation to persistent financial record corruption.",
+    "expected_answer": "Analyze the distributed ledger's consistency model to identify the read-before-write window where concurrent transactions can see stale balances. Design a proof of concept that demonstrates the race condition by submitting concurrent transactions during the consistency window. Test whether the transaction amount can be modified between the balance check and the write operation using timing manipulation. Assess the persistence of the corrupted balance: does the system have reconciliation mechanisms that would detect and correct the discrepancy? Calculate the financial impact per exploitation: what is the maximum amount that can be manipulated per race condition window? Document the distributed ledger vulnerability with the exact timing requirements, financial impact per exploitation, and the reconciliation gap that allows persistent corruption.",
+    "evaluation_criteria": "Demonstrates distributed ledger race condition exploitation methodology, correctly identifies consistency window manipulation, and explains persistent financial record corruption impact assessment."
+  },
+  {
+    "id": "T9-091",
+    "complexity": "L5",
+    "tools_involved": [
+      "Full-Stack Fintech",
+      "Identity",
+      "Cloud",
+      "Business"
+    ],
+    "scenario": "Identity flaw \u2192 payment service admin token \u2192 payment microservice account creation \u2192 synthetic account batch \u2192 payout to external account.",
+    "prompt": "Model the complete synthetic account creation and payout extraction chain from identity flaw and estimate maximum extractable value.",
+    "reasoning_focus": "Identity to synthetic account to mass payout extraction chain.",
+    "expected_answer": "Map the identity flaw to payment service admin token chain by testing the specific identity vulnerability that enables initial access. Use the admin token to access the payment microservice's account creation API and determine the batch creation rate limits. Create a minimal batch of synthetic accounts (2-3) to confirm the creation-to-payout chain works without triggering fraud detection. Estimate the maximum extractable value by calculating: accounts per batch \u00d7 payout per account \u00d7 batches per detection window. Assess the fraud detection systems: what transaction patterns, velocity checks, or anomaly detection would flag the synthetic account activity? Document the complete chain from identity flaw to payout extraction with conservative and maximum financial impact estimates.",
+    "evaluation_criteria": "Correctly chains identity flaw to synthetic account creation to mass payout extraction, demonstrates fraud detection threshold assessment, and explains maximum extractable value calculation methodology."
+  },
+  {
+    "id": "T9-092",
+    "complexity": "L5",
+    "tools_involved": [
+      "Mass Takeover",
+      "SaaS",
+      "Multi-Tenant"
+    ],
+    "scenario": "SAML forgery \u2192 authenticate as any enterprise tenant admin \u2192 invoke user export for all tenant users \u2192 credentials for 50,000 enterprise users accessible.",
+    "prompt": "Model the SAML forgery to mass enterprise user credential exposure chain and assess the regulatory notification obligations.",
+    "reasoning_focus": "SAML forgery to mass enterprise credential exposure chain.",
+    "expected_answer": "Analyze the SAML implementation for assertion forgery by testing signature validation, assertion encryption, and audience restriction enforcement. Craft a SAML assertion with modified NameID to impersonate a tenant admin using the identified forgery technique. Test the user export functionality as the impersonated admin to confirm access to the full user directory. Assess the scope of exposed credentials: password hashes (reversible?), email addresses, security questions, API keys, and session tokens. Calculate the regulatory impact: 50,000 enterprise user records likely triggers GDPR notification, state breach notification laws, and potential PCI-DSS implications. Document the complete SAML forgery chain with evidence, the estimated credential exposure scope, and the regulatory notification timeline obligations.",
+    "evaluation_criteria": "Demonstrates SAML forgery to mass credential exposure chain, correctly identifies regulatory notification obligations, and explains the enterprise user data scope assessment methodology."
+  },
+  {
+    "id": "T9-093",
+    "complexity": "L5",
+    "tools_involved": [
+      "Data Integrity",
+      "Financial Fraud",
+      "Audit"
+    ],
+    "scenario": "Audit log write access \u2192 suppress logging for specific account \u2192 execute financial record modification \u2192 no forensic trail of the modification \u2192 financial statement impact.",
+    "prompt": "Model the complete audit suppression to financial record manipulation to reporting impact chain.",
+    "reasoning_focus": "Audit suppression enabling undetectable financial statement manipulation.",
+    "expected_answer": "Test audit log write access by attempting to create, modify, or delete audit log entries through the application's API or direct database access. Demonstrate selective log suppression by deleting or modifying log entries for specific transactions or user accounts. Execute a benign financial record modification (e.g., changing a test account's balance by $0.01) and verify that the modification is not captured in the suppressed audit trail. Assess the financial statement impact by mapping which financial records can be modified and how they flow into reporting and compliance systems. Test whether alternative logging mechanisms (infrastructure logs, database transaction logs, network logs) would capture the modification even with application-level audit suppression. Document the complete audit suppression chain with the specific financial records modifiable, the detection gap duration, and the regulatory and financial reporting implications.",
+    "evaluation_criteria": "Correctly chains audit suppression to undetectable financial manipulation, demonstrates detection gap analysis, and explains the regulatory and financial reporting impact assessment."
+  },
+  {
+    "id": "T9-094",
+    "complexity": "L5",
+    "tools_involved": [
+      "Board Reporting",
+      "Risk Quantification",
+      "Executive"
+    ],
+    "scenario": "Five cross-domain findings (identity, cloud, API, business logic, data) each at medium severity but collectively enabling a critical-severity full-stack compromise chain.",
+    "prompt": "Design the board-level risk communication framework for compound cross-domain findings that individually understate the aggregate risk.",
+    "reasoning_focus": "Compound cross-domain finding board-level risk articulation framework.",
+    "expected_answer": "Create an attack graph that maps all five cross-domain findings (identity, cloud, API, business logic, data) as nodes with their interdependencies as edges. Demonstrate how the compound chain converts five medium-severity individual findings into a critical-severity full-stack compromise by showing the step-by-step escalation path. Quantify the compound risk using a framework like FAIR (Factor Analysis of Information Risk) or DREAD to show the aggregate probability and impact exceed individual assessments. Design the board-level presentation: executive summary with business impact in financial terms, visual attack chain diagram, and prioritized remediation roadmap. Calculate the remediation ROI by comparing the cost of fixing each finding versus the expected loss from the compound exploitation. Document the framework for compound risk communication with specific templates for board-level, CISO-level, and engineering-level audiences.",
+    "evaluation_criteria": "Demonstrates compound cross-domain risk articulation for board-level communication, correctly uses quantitative risk frameworks, and explains remediation ROI calculation for compound findings."
+  },
+  {
+    "id": "T9-095",
+    "complexity": "L5",
+    "tools_involved": [
+      "Recon",
+      "OSINT",
+      "Multi-Vector"
+    ],
+    "scenario": "OSINT reveals former employee LinkedIn \u2192 GitHub activity shows access to private repos \u2192 GitHub token in old commit \u2192 token still valid \u2192 full source code access.",
+    "prompt": "Model the OSINT to active credential chain spanning former employee activity and assess the source code and secret exposure scope.",
+    "reasoning_focus": "OSINT to former employee active credential chain.",
+    "expected_answer": "Trace the OSINT chain: LinkedIn profile reveals former employee \u2192 GitHub profile shows recent activity \u2192 repository commits searched for secrets using truffleHog. Validate the discovered token by making a minimal API call (e.g., checking rate limit headers for GitHub tokens) without accessing actual data. If the token is valid, assess the repository access scope: how many private repositories, what code sensitivity, and what secrets are embedded in the accessible code. Check the token's creation date and last usage to determine the exposure window duration. Assess whether the former employee's access should have been revoked during offboarding and identify the offboarding process gap. Document the complete OSINT chain from public LinkedIn activity to valid credential to source code access with the specific process failure that enabled the exposure.",
+    "evaluation_criteria": "Correctly chains OSINT from LinkedIn to GitHub to active credential exploitation, demonstrates minimal validation approach, and explains offboarding process gap identification."
+  },
+  {
+    "id": "T9-096",
+    "complexity": "L5",
+    "tools_involved": [
+      "Supply Chain",
+      "CI/CD",
+      "Production"
+    ],
+    "scenario": "Compromised npm package \u2192 injected into build dependency \u2192 CI/CD pipeline executes malicious build step \u2192 production secrets exfiltrated via outbound HTTP.",
+    "prompt": "Model the supply chain to production secret exfiltration chain and assess the CI/CD hardening gaps that enabled it.",
+    "reasoning_focus": "Supply chain compromise to production secret exfiltration chain.",
+    "expected_answer": "Identify the compromised npm package by analyzing the package.json and package-lock.json for recently updated dependencies with suspicious version bumps. Examine the malicious package's code to understand the payload: what data it exfiltrates, how it contacts the C2 server, and what build step triggers it. Trace the CI/CD pipeline execution to identify which secrets were exposed during the malicious build step and which outbound connections were made. Assess the production secret exposure scope: API keys, database credentials, encryption keys, and service account tokens that the pipeline had access to. Evaluate CI/CD hardening gaps: were dependencies pinned with integrity hashes, was network egress restricted in the build environment, were secrets scoped to specific build steps? Document the complete supply chain compromise chain with the specific package, payload analysis, exposed secrets, and recommended CI/CD hardening measures.",
+    "evaluation_criteria": "Demonstrates supply chain compromise analysis from package to production secret exfiltration, correctly identifies CI/CD hardening gaps, and explains dependency integrity verification methodology."
+  },
+  {
+    "id": "T9-097",
+    "complexity": "L5",
+    "tools_involved": [
+      "Network",
+      "IAM",
+      "Data",
+      "Reporting"
+    ],
+    "scenario": "Network misconfiguration exposes internal management interface \u2192 IAM admin panel accessible \u2192 service account created \u2192 cloud org admin role assigned \u2192 all data accessible.",
+    "prompt": "Model the network misconfiguration to cloud org admin takeover chain and assess the total data and service scope.",
+    "reasoning_focus": "Network exposure to cloud org admin takeover chain.",
+    "expected_answer": "Map the network misconfiguration that exposes the internal management interface by identifying the specific firewall rule or network ACL gap. Test the IAM admin panel for authentication requirements and identify how service account creation and role assignment are performed. Simulate the escalation chain: access management interface \u2192 create service account \u2192 assign org admin role \u2192 demonstrate org-wide resource access. Enumerate all resources accessible with org admin permissions across all projects, accounts, and services. Assess the data exposure scope: customer databases, encryption keys, backup archives, and configuration management stores. Document the complete network-to-org-admin chain with evidence at each step and the total blast radius across the cloud organization.",
+    "evaluation_criteria": "Correctly chains network misconfiguration to cloud org admin takeover, demonstrates total resource scope enumeration, and explains the blast radius across the cloud organization."
+  },
+  {
+    "id": "T9-098",
+    "complexity": "L5",
+    "tools_involved": [
+      "Zero Trust",
+      "Identity",
+      "Lateral"
+    ],
+    "scenario": "Zero trust policy misconfiguration grants access to a development segment \u2192 development segment has VPN access to production \u2192 production LDAP accessible \u2192 all user credentials exposed.",
+    "prompt": "Model the zero trust misconfiguration to production credential exposure chain and assess the identity plane collapse scope.",
+    "reasoning_focus": "Zero trust gap to production identity plane compromise chain.",
+    "expected_answer": "Analyze the zero trust policy configuration to identify the specific misconfiguration that grants access to the development segment. Test the VPN connectivity from the development segment to production: what protocols, ports, and services are reachable? Probe the production LDAP service for authentication requirements: anonymous bind, default credentials, or compromised developer credentials. If LDAP access is confirmed, enumerate all user accounts, group memberships, and password policies. Assess the identity plane collapse: what systems authenticate against this LDAP, and what access do the exposed credentials provide? Document the complete zero trust gap chain from policy misconfiguration to production credential exposure with the specific policy rule, VPN access evidence, and LDAP enumeration results.",
+    "evaluation_criteria": "Demonstrates zero trust policy gap to production credential exposure chain, correctly identifies VPN connectivity testing methodology, and explains identity plane collapse scope assessment."
+  },
+  {
+    "id": "T9-099",
+    "complexity": "L5",
+    "tools_involved": [
+      "Cryptography",
+      "Key Management",
+      "Data"
+    ],
+    "scenario": "Weak key generation algorithm in the KMS \u2192 keys for 500 data stores are brute-forceable \u2192 decryption of all customer data possible without authentication.",
+    "prompt": "Model the cryptographic weakness to universal data decryption chain and assess the customer data exposure scope.",
+    "reasoning_focus": "Cryptographic weakness to authenticated-free data decryption chain.",
+    "expected_answer": "Analyze the KMS key generation algorithm to identify the specific weakness: insufficient entropy, predictable seed, weak PRNG, or short key length. Estimate the brute-force cost for the weak keys: computational resources, time, and financial cost to decrypt one data store's key. Assess the scope: if 500 data stores use keys from the same weak generator, are all keys equally vulnerable or does the weakness vary? Test whether the decryption can be performed without any authentication by accessing the encrypted data stores directly with the brute-forced keys. Calculate the customer data exposure: number of records, data sensitivity classification, and regulatory implications of a total decryption event. Document the cryptographic weakness with the specific algorithm flaw, brute-force feasibility analysis, and the total customer data exposure scope.",
+    "evaluation_criteria": "Correctly identifies cryptographic weakness in KMS key generation, demonstrates brute-force feasibility analysis, and explains the total customer data exposure scope from universal key compromise."
+  },
+  {
+    "id": "T9-100",
+    "complexity": "L5",
+    "tools_involved": [
+      "Full Spectrum",
+      "Strategic",
+      "Board-Level"
+    ],
+    "scenario": "A single penetration test reveals overlapping chains across identity, infrastructure, financial logic, and data \u2014 with each chain individually medium severity but compounding to a critical systemic risk.",
+    "prompt": "Design the strategic full-spectrum attack graph, chain prioritization, and board-level narrative for a compound systemic risk finding.",
+    "reasoning_focus": "Full-spectrum attack graph and board-level systemic risk narrative.",
+    "expected_answer": "Synthesize all overlapping chains into a unified attack graph showing every path from initial access to maximum impact across identity, infrastructure, financial logic, and data domains. Prioritize chains by exploitability \u00d7 impact using a quantitative framework, ranking them by risk reduction value of remediation. Design the board narrative: start with business impact in financial and regulatory terms, present the attack graph visually, and conclude with a prioritized remediation roadmap with cost estimates. Map each chain to specific compliance frameworks (SOC2, PCI-DSS, GDPR, HIPAA) to quantify regulatory exposure. Create three audience-specific deliverables: a 1-page executive summary for the board, a technical chain analysis for the CISO, and detailed remediation playbooks for engineering teams. Document the strategic assessment methodology as a repeatable framework for future compound risk evaluations.",
+    "evaluation_criteria": "Demonstrates full-spectrum attack graph synthesis with chain prioritization, correctly maps findings to compliance frameworks, and explains the multi-audience deliverable design methodology."
+  }
+]

@@ -8,14 +8,18 @@
  *   Layer 4: AI Confirmation (LLM-based analysis)
  * Mandatory Validation Gate: confirmed hypotheses MUST pass Layer 3.
  */
-import { chromium, Browser, BrowserContext, Page } from "playwright";
 import crypto from "crypto";
+import path from "path";
+import { Worker } from "worker_threads";
+import { v4 as uuidv4 } from "uuid";
+import { getRandomUserAgent } from "../lib/stealth/browser-fingerprint";
 import { db } from "../db";
 import { findings } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc, isNotNull } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import type { SolverResult } from "./SolverPool";
+import { SimHashDedup } from "../lib/intelligence/simhash";
 
 export interface VerificationResult {
   findingId: string;
@@ -31,6 +35,20 @@ export interface VerificationResult {
 // ─── Layer 1: Static Deduplication ───────────────────────────────────────────
 class Layer1Dedup {
   private hashCache = new Set<string>();
+  private simHash = new SimHashDedup();
+
+  async initialize(): Promise<void> {
+    // Preload the last 500 dedup hashes from DB so restarts don't reprocess
+    // findings that were already confirmed before the process stopped.
+    const recent = await db.select({ dedupHash: findings.dedupHash })
+      .from(findings)
+      .where(isNotNull(findings.dedupHash))
+      .orderBy(desc(findings.createdAt))
+      .limit(500);
+    for (const row of recent) {
+      if (row.dedupHash) this.hashCache.add(row.dedupHash);
+    }
+  }
 
   computeHash(result: SolverResult): string {
     const normalized = {
@@ -41,12 +59,17 @@ class Layer1Dedup {
     return crypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
   }
 
-  async check(hash: string): Promise<{ isDuplicate: boolean; existingHash?: string }> {
+  computeSimHash(result: SolverResult): bigint {
+    const text = `${result.endpoint} ${result.vulnClass} ${result.payload.toLowerCase().slice(0, 200)}`;
+    return this.simHash.computeSimHash(text);
+  }
+
+  async check(hash: string, simhash: bigint): Promise<{ isDuplicate: boolean; existingHash?: string }> {
     if (this.hashCache.has(hash)) {
       return { isDuplicate: true, existingHash: hash };
     }
 
-    // Check DB
+    // Check DB for exact duplicate
     const existing = await db.select({ id: findings.id })
       .from(findings)
       .where(eq(findings.dedupHash, hash))
@@ -55,6 +78,12 @@ class Layer1Dedup {
     if (existing.length > 0) {
       this.hashCache.add(hash);
       return { isDuplicate: true, existingHash: hash };
+    }
+
+    // Near-duplicate check via SimHash (same vuln class + similar endpoint/payload)
+    if (this.simHash.isDuplicate(simhash)) {
+      this.hashCache.add(hash);
+      return { isDuplicate: true, existingHash: "simhash-near-duplicate" };
     }
 
     this.hashCache.add(hash);
@@ -74,7 +103,7 @@ class Layer2Reprobe {
       const resp = await axios.get(result.request, {
         timeout: 10000,
         validateStatus: () => true,
-        headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" },
+        headers: { "User-Agent": getRandomUserAgent() },
       });
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
@@ -102,24 +131,63 @@ class Layer2Reprobe {
   }
 }
 
-// ─── Layer 3: Browser Replay (Mandatory Validation Gate) ─────────────────────
+// ─── Layer 3: Browser Replay (Worker-Isolated, Mandatory Validation Gate) ─────
+// Playwright runs in a dedicated worker thread so its page lifecycle never
+// blocks the main event loop during concurrent verifications.
 class Layer3BrowserReplay {
-  private browser: Browser | null = null;
-  private context: BrowserContext | null = null;
+  private worker: Worker | null = null;
+  private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+  private static readonly REPLAY_TIMEOUT_MS = 35_000;
+
+  private spawnWorker(): Worker {
+    // In dev (tsx), __filename ends with .ts; in prod it's compiled .js.
+    const workerSrc = path.join(__dirname, '..', 'workers', 'playwright-worker');
+    const tsFile = `${workerSrc}.ts`;
+    const jsFile = `${workerSrc}.js`;
+
+    // Prefer compiled JS (production); fall back to in-process tsx eval (development)
+    const { existsSync } = require('fs') as typeof import('fs');
+    if (existsSync(jsFile)) {
+      return new Worker(jsFile);
+    }
+    // Bootstrap: register tsx CJS loader then require the .ts source
+    const tsxCjs = require.resolve('tsx/cjs');
+    const code = `require(${JSON.stringify(tsxCjs)}); require(${JSON.stringify(tsFile)});`;
+    return new Worker(code, { eval: true });
+  }
 
   async initialize(): Promise<void> {
-    if (this.browser) return;
+    if (this.worker) return;
     try {
-      this.browser = await chromium.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      const w = this.spawnWorker();
+      w.on('message', (msg: any) => {
+        if (msg.type === 'result' || msg.type === 'error') {
+          const pending = this.pending.get(msg.id);
+          if (!pending) return;
+          clearTimeout(pending.timer);
+          this.pending.delete(msg.id);
+          if (msg.type === 'result') pending.resolve(msg.data);
+          else pending.reject(new Error(msg.message));
+        }
       });
-      this.context = await this.browser.newContext({
-        viewport: { width: 1280, height: 720 },
-        userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0",
+      w.on('error', err => logger.warn('[VerifierAgent] Worker error', { err }));
+      w.on('exit', () => { this.worker = null; });
+
+      // Wait for browser-ready signal
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Worker init timeout')), 30_000);
+        w.once('message', (msg: any) => {
+          clearTimeout(timeout);
+          if (msg.type === 'ready') resolve();
+          else reject(new Error(`Unexpected worker message: ${msg.type}`));
+        });
+        w.postMessage({ type: 'init' });
       });
+
+      this.worker = w;
+      logger.info('[VerifierAgent] Browser worker initialised with fingerprint hardening');
     } catch (err) {
-      logger.warn("Playwright browser launch failed – Layer 3 will be skipped", { err });
+      logger.warn('Playwright worker launch failed – Layer 3 will be skipped', { err });
     }
   }
 
@@ -129,74 +197,47 @@ class Layer3BrowserReplay {
     consoleAlerts: string[];
     networkRequests: string[];
   }> {
-    if (!this.browser || !this.context) {
+    if (!this.worker) {
       return { confirmed: false, consoleAlerts: [], networkRequests: [] };
     }
 
-    const page = await this.context.newPage();
-    const consoleAlerts: string[] = [];
-    const networkRequests: string[] = [];
-
-    try {
-      // Intercept console messages (for XSS alert detection)
-      page.on("console", msg => {
-        if (msg.type() === "warning" || msg.type() === "error" || msg.text().includes("alert")) {
-          consoleAlerts.push(msg.text());
+    const id = uuidv4();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          logger.warn('[VerifierAgent] Worker replay timed out', { id });
+          resolve({ confirmed: false, consoleAlerts: [], networkRequests: [] });
         }
+      }, Layer3BrowserReplay.REPLAY_TIMEOUT_MS);
+
+      this.pending.set(id, { resolve, reject, timer });
+      this.worker!.postMessage({
+        type: 'replay',
+        id,
+        result: {
+          taskId: result.taskId,
+          endpoint: result.endpoint,
+          vulnClass: result.vulnClass,
+          payload: result.payload,
+          found: result.found,
+          confidence: result.confidence,
+          request: result.request,
+        },
       });
-
-      // Intercept dialogs (alert boxes = XSS confirmed)
-      page.on("dialog", async dialog => {
-        consoleAlerts.push(`DIALOG:${dialog.type()}:${dialog.message()}`);
-        await dialog.accept();
-      });
-
-      // Track network requests for SSRF
-      page.on("request", req => {
-        if (req.url().includes("169.254") || req.url().includes("localhost")) {
-          networkRequests.push(req.url());
-        }
-      });
-
-      const url = result.request || `${result.endpoint}?q=${encodeURIComponent(result.payload)}`;
-      await page.goto(url, { timeout: 15000, waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(2000);
-
-      // Take screenshot
-      const screenshotBuffer = await page.screenshot({ type: "png" });
-      const screenshot = screenshotBuffer.toString("base64");
-
-      // Confirm based on vuln type
-      let confirmed = false;
-      if (result.vulnClass === "xss") {
-        confirmed = consoleAlerts.some(a => a.includes("DIALOG:alert") || a.includes("alert("));
-        if (!confirmed) {
-          const content = await page.content();
-          confirmed = content.includes(result.payload);
-        }
-      } else if (result.vulnClass === "ssrf") {
-        confirmed = networkRequests.length > 0;
-      } else if (result.vulnClass === "open_redirect") {
-        const currentUrl = page.url();
-        confirmed = currentUrl.includes("evil.com") || !currentUrl.includes(new URL(result.endpoint).hostname);
-      } else {
-        confirmed = result.found;
-      }
-
-      return { confirmed, screenshot, consoleAlerts, networkRequests };
-    } catch (err) {
-      logger.error("Browser replay error", { err });
-      return { confirmed: false, consoleAlerts, networkRequests };
-    } finally {
-      await page.close();
-    }
+    });
   }
 
   async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.context = null;
+    if (this.worker) {
+      this.worker.postMessage({ type: 'close' });
+      // Drain pending promises so callers don't hang
+      for (const [, p] of this.pending) {
+        clearTimeout(p.timer);
+        p.resolve({ confirmed: false, consoleAlerts: [], networkRequests: [] });
+      }
+      this.pending.clear();
+      this.worker = null;
     }
   }
 }
@@ -234,6 +275,14 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
 
     try {
       const response = await this.modelRouter.reason(prompt);
+      // Scan L4 AI output for prompt injection before trusting the parsed result
+      try {
+        const { promptInjectionDetector } = await import('../governance');
+        const check = promptInjectionDetector.detect(response, 'verifier-l4', 'Layer4AIConfirmation');
+        if (!check.safe) {
+          logger.warn('[VerifierAgent] Prompt injection in L4 response', { score: check.score, reasons: check.reasons });
+        }
+      } catch { /* non-critical */ }
       const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
       return {
         confirmed: Boolean(parsed.confirmed),
@@ -265,12 +314,14 @@ export class VerifierAgent {
   private layer4 = new Layer4AIConfirmation();
 
   async initialize(): Promise<void> {
+    await this.layer1.initialize();
     await this.layer3.initialize();
   }
 
   async verify(result: SolverResult): Promise<VerificationResult> {
     const findingId = result.taskId;
     const dedupHash = this.layer1.computeHash(result);
+    const simhash = this.layer1.computeSimHash(result);
 
     logger.info("VerifierAgent: Starting 4-layer verification", {
       findingId,
@@ -278,8 +329,8 @@ export class VerifierAgent {
       vulnClass: result.vulnClass,
     });
 
-    // Layer 1: Deduplication
-    const l1 = await this.layer1.check(dedupHash);
+    // Layer 1: Deduplication (exact SHA-256 + SimHash near-duplicate)
+    const l1 = await this.layer1.check(dedupHash, simhash);
     if (l1.isDuplicate) {
       logger.info("VerifierAgent: L1 deduplicated", { findingId, hash: dedupHash });
       return {

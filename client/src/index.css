@@ -87,6 +87,23 @@
   100% { transform: translateY(100%); }
 }
 
+/* Attack path step scan animation */
+@keyframes attack-scan {
+  0%   { top: 0; opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.6; }
+  100% { top: 100%; opacity: 0; }
+}
+
+/* Connector pulse for active attack path links */
+.connector-pulse {
+  animation: connector-glow 1.5s ease-in-out infinite alternate;
+}
+@keyframes connector-glow {
+  from { opacity: 0.3; box-shadow: 0 0 2px #00ff8820; }
+  to   { opacity: 1;   box-shadow: 0 0 6px #00ff8840; }
+}
+
 /* Code highlight override */
 pre { margin: 0; }
 

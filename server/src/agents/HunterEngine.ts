@@ -5,7 +5,7 @@
  * Features: Anomaly-first scanning, real-time strategy adaptation, Tool Knowledge System.
  */
 import { EventEmitter } from "events";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
@@ -17,8 +17,18 @@ import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
+import { promptKB } from "../intelligence/PromptKnowledgeBase";
+import { toolKnowledge } from "../lib/hunter/tool-knowledge";
+import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
+import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
+import { stealthCoordinator, dynamicRateLimiter } from "../lib/stealth";
+import { temporalDecay } from "../lib/hunter/temporal-decay";
+import { huntCortex } from "../lib/intelligence/hunt-cortex";
+import { metaReasoner } from "../lib/intelligence/meta-reasoning";
+import { backwardPlanner } from "../lib/intelligence/backward-planner";
+import { observationCompressor } from "../lib/intelligence/observation-compressor";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface Observation {
@@ -77,17 +87,23 @@ export interface HypothesisConfirmed {
 }
 
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
+// Commands return { bin, args } arrays — never interpolated shell strings —
+// to prevent command injection via attacker-controlled URLs.
 export const TOOL_KNOWLEDGE: Record<string, {
   description: string;
   vulnClasses: string[];
-  command: (url: string, opts?: Record<string, string>) => string;
+  command: (url: string, opts?: Record<string, string>) => { bin: string; args: string[] };
   parser: (output: string) => Record<string, unknown>;
   rateLimit: number; // seconds between invocations
 }> = {
   nmap: {
     description: "Network port scanner and service fingerprinter",
     vulnClasses: ["open_ports", "service_enumeration", "os_detection"],
-    command: (url) => `nmap -sV -sC --script=http-headers,http-title -p 80,443,8080,8443 ${new URL(url).hostname} --open -oX -`,
+    command: (url) => ({
+      bin: "nmap",
+      args: ["-sV", "-sC", "--script=http-headers,http-title", "-p", "80,443,8080,8443",
+             new URL(url).hostname, "--open", "-oX", "-"],
+    }),
     parser: (output) => {
       const ports: string[] = [];
       const matches = output.match(/portid="(\d+)"[^>]*state="open"/g) || [];
@@ -99,7 +115,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   nuclei: {
     description: "Fast vulnerability scanner with templated probes",
     vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "idor", "exposed_panels", "misconfig"],
-    command: (url, opts) => `nuclei -u ${url} -severity ${opts?.severity || "medium,high,critical"} -json -silent -timeout 10`,
+    command: (url, opts) => ({
+      bin: "nuclei",
+      args: ["-u", url, "-severity", opts?.severity || "medium,high,critical",
+             "-json", "-silent", "-timeout", "10"],
+    }),
     parser: (output) => {
       const findings: unknown[] = [];
       output.split("\n").filter(l => l.trim()).forEach(line => {
@@ -112,7 +132,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   ffuf: {
     description: "Fast web fuzzer for directory and parameter discovery",
     vulnClasses: ["hidden_endpoints", "backup_files", "admin_panels", "parameter_pollution"],
-    command: (url) => `ffuf -u ${url}/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,301,302,403 -t 50 -timeout 5 -json`,
+    command: (url) => ({
+      bin: "ffuf",
+      args: ["-u", `${url}/FUZZ`, "-w", "/usr/share/wordlists/dirb/common.txt",
+             "-mc", "200,301,302,403", "-t", "50", "-timeout", "5", "-json"],
+    }),
     parser: (output) => {
       try {
         const data = JSON.parse(output);
@@ -127,7 +151,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   sqlmap: {
     description: "Automated SQL injection detection and exploitation",
     vulnClasses: ["sqli", "blind_sqli", "time_based_sqli", "error_based_sqli"],
-    command: (url) => `sqlmap -u "${url}" --batch --level=2 --risk=2 --timeout=10 --output-dir=/tmp/sqlmap --forms 2>&1 | tail -50`,
+    command: (url) => ({
+      bin: "sqlmap",
+      args: ["-u", url, "--batch", "--level=2", "--risk=2",
+             "--timeout=10", "--output-dir=/tmp/sqlmap", "--forms"],
+    }),
     parser: (output) => {
       const injectable = /parameter .* is vulnerable|sqlmap identified/.test(output);
       const dbms = output.match(/back-end DBMS: (.+)/)?.[1] || "unknown";
@@ -138,7 +166,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   whatweb: {
     description: "Web technology fingerprinter",
     vulnClasses: ["tech_stack", "cms_detection", "framework_detection"],
-    command: (url) => `whatweb --no-errors --aggression=3 --log-json=- ${url}`,
+    command: (url) => ({
+      bin: "whatweb",
+      args: ["--no-errors", "--aggression=3", "--log-json=-", url],
+    }),
     parser: (output) => {
       try {
         const data = JSON.parse(output.split("\n").find(l => l.startsWith("[")) || "[]");
@@ -152,7 +183,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   nikto: {
     description: "Web server vulnerability scanner",
     vulnClasses: ["misconfig", "outdated_software", "dangerous_files", "headers"],
-    command: (url) => `nikto -h ${url} -Format json -timeout 10 -maxtime 60 2>&1`,
+    command: (url) => ({
+      bin: "nikto",
+      args: ["-h", url, "-Format", "json", "-timeout", "10", "-maxtime", "60"],
+    }),
     parser: (output) => {
       const vulns = output.match(/OSVDB-\d+:.+/g) || [];
       const items = output.match(/\+ .+/g) || [];
@@ -163,7 +197,11 @@ export const TOOL_KNOWLEDGE: Record<string, {
   gobuster: {
     description: "Directory/file brute-forcer",
     vulnClasses: ["hidden_endpoints", "backup_files", "exposed_configs"],
-    command: (url) => `gobuster dir -u ${url} -w /usr/share/wordlists/dirb/common.txt -q --no-error -t 50 --timeout 5s 2>/dev/null`,
+    command: (url) => ({
+      bin: "gobuster",
+      args: ["dir", "-u", url, "-w", "/usr/share/wordlists/dirb/common.txt",
+             "-q", "--no-error", "-t", "50", "--timeout", "5s"],
+    }),
     parser: (output) => {
       const found = output.match(/\/.+ \(\d+\)/g) || [];
       return { paths: found, count: found.length };
@@ -173,7 +211,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   curl_probe: {
     description: "HTTP header and response analysis",
     vulnClasses: ["security_headers", "cors", "csrf", "information_disclosure", "open_redirect"],
-    command: (url) => `curl -sI -L --max-time 10 "${url}"`,
+    command: (url) => ({
+      bin: "curl",
+      args: ["-sI", "-L", "--max-time", "10", url],
+    }),
     parser: (output) => {
       const headers: Record<string, string> = {};
       output.split("\n").forEach(line => {
@@ -189,6 +230,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
 };
 
+const MAX_OBSERVATIONS = 200;
+const MAX_HYPOTHESES = 50;
+const MAX_PROBES = 500;
+
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
 export class HunterEngine extends EventEmitter {
   private state!: HuntState;
@@ -196,16 +241,20 @@ export class HunterEngine extends EventEmitter {
   private scopeGuard = ScopeGuard.getInstance();
   private modelRouter = ModelRouter.getInstance();
   private roiModel = new ROIModel();
+  private rlWiring = new ReinforcementWiring();
   private toolLastUsed: Map<string, number> = new Map();
   private dbSessionId = 0;
   private campaignId = 0;
   private targetId = 0;
+  private hardBanned = false;
+  private consecutiveFailures = 0;
+  private banCheckDone = false;
 
   async startHunt(params: {
     targetUrl: string;
     programId: number;
     campaignId: number;
-    targetId: number;
+    targetId?: number;
     sessionId?: string;
     maxIterations?: number;
     budget?: Partial<HuntState["budget"]>;
@@ -213,7 +262,7 @@ export class HunterEngine extends EventEmitter {
   }): Promise<string> {
     const sessionUuid = params.sessionId || uuidv4();
     this.campaignId = params.campaignId;
-    this.targetId = params.targetId;
+    this.targetId = params.targetId ?? 0;
 
     this.state = {
       sessionId: sessionUuid,
@@ -237,7 +286,7 @@ export class HunterEngine extends EventEmitter {
     // Persist session and capture the real DB ID
     const [session] = await db.insert(huntSessions).values({
       campaignId: params.campaignId,
-      targetId: params.targetId,
+      targetId: params.targetId ?? 0,
       sessionUuid,
       phase: "observe",
       status: "running",
@@ -261,8 +310,19 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
+    this.rlWiring.onHuntStart({
+      sessionId: sessionUuid,
+      programId: params.programId,
+      programType: "web_app",
+    });
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
+
+    // Run stealth warmup before probing so WAF/CDN fingerprinting is pre-loaded
+    try {
+      const domain = new URL(params.targetUrl).hostname;
+      await stealthCoordinator.runWarmup(domain, 'generic', false, params.programId);
+    } catch { /* non-critical — target may not be reachable yet */ }
 
     // Run the main loop asynchronously
     this.runLoop().catch(err => {
@@ -273,16 +333,26 @@ export class HunterEngine extends EventEmitter {
     return sessionUuid;
   }
 
+  /** Yield to the Node.js event loop so other async tasks (socket.io, sibling hunts)
+   *  can process pending callbacks between heavy model-inference phases. */
+  private yieldToEventLoop(): Promise<void> {
+    return new Promise(resolve => setImmediate(resolve));
+  }
+
   private async runLoop(): Promise<void> {
     const startTime = Date.now();
 
     while (
       this.state.iteration < this.state.maxIterations &&
       this.state.budget.requestsMade < this.state.budget.maxRequests &&
-      (Date.now() - startTime) / 1000 < this.state.budget.maxTime
+      (Date.now() - startTime) / 1000 < this.state.budget.maxTime &&
+      !this.hardBanned
     ) {
       this.state.iteration++;
       this.state.budget.elapsed = (Date.now() - startTime) / 1000;
+
+      // Yield before each phase so concurrent hunts / socket events aren't starved
+      await this.yieldToEventLoop();
 
       this.emit("hunt:phase", { phase: this.state.phase, iteration: this.state.iteration });
 
@@ -290,14 +360,17 @@ export class HunterEngine extends EventEmitter {
         switch (this.state.phase) {
           case "observe":
             await this.observe();
+            await this.yieldToEventLoop();
             this.state.phase = "hypothesize";
             break;
           case "hypothesize":
             await this.hypothesize();
+            await this.yieldToEventLoop();
             this.state.phase = "probe";
             break;
           case "probe":
             await this.probe();
+            await this.yieldToEventLoop();
             this.state.phase = "update";
             break;
           case "update":
@@ -313,9 +386,50 @@ export class HunterEngine extends EventEmitter {
       } catch (err) {
         logger.error("Hunt phase error", { phase: this.state.phase, err });
       }
+
+      // Every 3 iterations check hunt health and trigger meta-reasoner pivot if degraded
+      if (this.state.iteration % 3 === 0) {
+        try {
+          const health = huntCortex.computeHuntHealth(this.state.sessionId);
+          if (health.health < 0.4) {
+            const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
+            if (decision.action === 'pivot') {
+              const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
+              const pivotHypotheses = paths.slice(0, 2).map(p => ({
+                id: uuidv4(),
+                vulnClass: p.path.vulnerability,
+                targetUrl: this.state.targetUrl,
+                reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
+                confidence: Math.min(0.85, p.adjustedLikelihood),
+                priority: Math.min(10, Math.round(p.path.priority)),
+                evidence: [],
+                status: 'pending' as const,
+                createdAt: Date.now(),
+              }));
+              this.state.hypotheses.push(...pivotHypotheses);
+              if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+                this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+                this.state.hypotheses.splice(MAX_HYPOTHESES);
+              }
+              this.state.phase = 'probe';
+              this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
+              logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
+            }
+          }
+        } catch { /* non-critical — health check failure must not stop the hunt */ }
+      }
     }
 
     this.state.phase = "complete";
+    observationCompressor.clearSession(this.state.sessionId);
+    this.rlWiring.onHuntComplete({
+      sessionId: this.state.sessionId,
+      programId: this.state.programId,
+      programType: "web_app",
+      confirmedFindings: this.state.confirmedFindings.length,
+      totalProbes: this.state.probes.length,
+      chainIds: [],
+    });
     await this.persistResults();
     this.emit("hunt:complete", {
       sessionId: this.state.sessionId,
@@ -368,6 +482,7 @@ export class HunterEngine extends EventEmitter {
     // Sort by anomaly score (anomaly-first scanning)
     obs.sort((a, b) => b.anomalyScore - a.anomalyScore);
     this.state.observations.push(...obs);
+    while (this.state.observations.length > MAX_OBSERVATIONS) this.state.observations.shift();
 
     this.emit("hunt:observations", { count: obs.length, observations: obs });
   }
@@ -377,15 +492,54 @@ export class HunterEngine extends EventEmitter {
     logger.info("HYPOTHESIZE phase", { session: this.state.sessionId });
 
     const context = this.buildContext();
-    const prompt = `You are a bug bounty hunter analyzing a web application.
+
+    // Pull smart orchestration template as structured context
+    const chainTemplate = promptKB.render("smart_tool_chain", {
+      goal: "vulnerability hypothesis generation",
+      current_findings: `${this.state.confirmedFindings.length} confirmed, ${this.state.observations.length} observations`,
+    });
+
+    // Build a rich query text from actual observation signals for semantic retrieval
+    // Compress old observations into a historical state vector so the prompt
+    // doesn't grow unboundedly across many iterations (context window management).
+    const { historicalSummary, recentObservations } = observationCompressor.compress(
+      this.state.sessionId,
+      this.state.observations,
+    );
+    const recentObs = recentObservations;
+    const obsTags = [...new Set(recentObs.flatMap(o => o.tags))].join(', ');
+    const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.hypothesis.vulnClass ?? ''))].join(', ');
+    const semanticQuery = [
+      `Target: ${this.state.targetUrl}`,
+      obsTags ? `Signals observed: ${obsTags}` : '',
+      confirmedClasses ? `Confirmed vulnerability classes: ${confirmedClasses}` : '',
+      `Hypothesizing: what vulnerabilities are most likely on this target`,
+    ].filter(Boolean).join('. ');
+
+    const domainKnowledge = await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7);
+
+    const prompt = `You are an expert security researcher performing bug bounty hunting. \
+Think step by step before generating hypotheses.
+
+Step 1 — Interpret the observations: what do the signals imply about the stack, \
+authentication model, and likely attack surface?
+Step 2 — Identify prerequisite conditions: which vulnerability classes have their \
+preconditions already satisfied by what you've observed?
+Step 3 — Estimate what confirming evidence would look like for each candidate class.
+Step 4 — Output your hypotheses as JSON.
 
 Target: ${this.state.targetUrl}
-Observations (anomaly-sorted):
-${JSON.stringify(this.state.observations.slice(-10), null, 2)}
+${historicalSummary ? `${historicalSummary}\n\n` : ''}Recent observations (anomaly-sorted):
+${JSON.stringify(recentObs, null, 2)}
 
 Current confirmed findings: ${this.state.confirmedFindings.length}
 Previously tested hypotheses: ${this.state.hypotheses.length}
 
+Orchestration context:
+${chainTemplate.split('\n').slice(0, 8).join('\n')}
+
+${toolKnowledge.getSummaryBlock()}
+${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
@@ -398,6 +552,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     try {
       const response = await this.modelRouter.reason(prompt);
+      // Guard against prompt injection in LLM output before parsing
+      try {
+        const { promptInjectionDetector } = await import('../governance');
+        const injection = promptInjectionDetector.detect(response, 'hunter-engine', 'HunterEngine');
+        if (!injection.safe) {
+          logger.warn('[HunterEngine] Prompt injection detected in model response', { score: injection.score, reasons: injection.reasons });
+        }
+      } catch { /* non-critical — governance unavailable */ }
       const parsed = JSON.parse(response.match(/\[[\s\S]+\]/)?.[0] || "[]");
 
       const newHypotheses: Hypothesis[] = parsed.map((h: Record<string, unknown>) => ({
@@ -415,6 +577,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // Sort by priority * confidence
       newHypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
       this.state.hypotheses.push(...newHypotheses);
+      if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+        this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+        this.state.hypotheses.splice(MAX_HYPOTHESES);
+      }
 
       this.emit("hunt:hypotheses", { count: newHypotheses.length, hypotheses: newHypotheses });
       logger.info("Generated hypotheses", { count: newHypotheses.length });
@@ -477,8 +643,45 @@ Return ONLY valid JSON array of hypothesis objects.`;
       };
 
       this.state.probes.push(result);
+      if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
+      this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result });
+
+      // Track consecutive failures; after 5+, do a canary HTTP check to confirm hard ban
+      if (result.success || probeResult.hardBanned) {
+        this.consecutiveFailures = 0;
+      } else {
+        this.consecutiveFailures++;
+      }
+
+      if (this.consecutiveFailures >= 5 && !this.banCheckDone) {
+        this.banCheckDone = true;
+        let canaryHostname = '';
+        try {
+          canaryHostname = new URL(hypothesis.targetUrl).hostname;
+          const resp = await axios.head(hypothesis.targetUrl, { timeout: 3000, validateStatus: () => true });
+          if (resp.status === 403) {
+            dynamicRateLimiter.recordResponse(canaryHostname, '/', 403, resp.headers as Record<string, string>);
+            this.hardBanned = true;
+            this.emit('hunt:hard_banned', { target: canaryHostname, reason: 'IP hard-banned (403 confirmed after consecutive failures)' });
+            logger.warn('[HunterEngine] Hard IP ban detected — terminating hunt early', { target: canaryHostname });
+            break;
+          }
+        } catch (err: unknown) {
+          // Network-level drops (ETIMEDOUT, ECONNRESET) indicate a broad IP block —
+          // the target dropped our connection entirely rather than returning 403.
+          const code = (err as { code?: string })?.code ?? '';
+          if (code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ENOTFOUND') {
+            this.hardBanned = true;
+            this.emit('hunt:hard_banned', { target: canaryHostname || hypothesis.targetUrl, reason: `IP hard-banned (network drop: ${code})` });
+            logger.warn('[HunterEngine] Network-level block detected — terminating hunt early', { code, target: canaryHostname });
+            break;
+          }
+        }
+      }
+
+      if (this.hardBanned) break;
     }
   }
 
@@ -497,12 +700,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
         if (newConfidence > 0.7) {
           hypothesis.status = "confirmed";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
           await this.persistFinding(confirmed);
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
         } else {
           // Gray zone (0.2–0.7): re-queue with a different tool, up to 2 retries
           hypothesis.retryCount = (hypothesis.retryCount || 0) + 1;
@@ -523,6 +728,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       } else {
         if (relatedProbes.length > 0) {
           hypothesis.status = "rejected";
+          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
           // Record miss in ROI model so success rates decay appropriately
           this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
         } else {
@@ -551,20 +757,64 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const waitTime = (tool.rateLimit * 1000) - (Date.now() - lastUsed);
     if (waitTime > 0) await new Promise(r => setTimeout(r, Math.min(waitTime, 5000)));
 
-    const cmd = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+    // Skip if target is known hard-banned — avoid wasting tool budget on blocked requests
+    try {
+      const hostname = new URL(url).hostname;
+      if (dynamicRateLimiter.isHardBanned(hostname)) {
+        return { hardBanned: true, duration: 0, command: '' };
+      }
+    } catch { /* non-critical — URL may not be parseable */ }
+
+    // Decay-aware timing: honour stealth coordinator recommendation before probing
+    try {
+      const domain = new URL(url).hostname;
+      const vendor = (this.state as unknown as Record<string, string>).detectedWafVendor ?? 'generic';
+      const status = stealthCoordinator.getStatus(this.state.sessionId, domain, vendor);
+      const decayState = temporalDecay.getDecayState(this.state.sessionId, domain, vendor);
+      if (decayState.recommendedWaitMs > 0) {
+        logger.debug('[HunterEngine] stealth timing delay', { status, waitMs: decayState.recommendedWaitMs });
+        await new Promise(r => setTimeout(r, Math.min(decayState.recommendedWaitMs, 30_000)));
+      }
+    } catch { /* non-critical — URL may not be parseable */ }
+
+    const { bin, args } = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+    const cmdString = `${bin} ${args.join(" ")}`;
     const start = Date.now();
 
     try {
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 30000 });
+      const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
-      return { ...parsed, duration: Date.now() - start, command: cmd };
+      // Feed raw output to autonomous brain and close the RL feedback loop
+      try {
+        const { getAutonomousBrain } = await import('../lib/intelligence');
+        const brain = getAutonomousBrain();
+        await brain.processObservation({
+          id: `obs-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          source: 'tool',
+          type: toolName,
+          rawOutput: stdout + stderr,
+          missionId: this.state.sessionId,
+          huntGoal: hypothesis?.vulnClass,
+          target: url,
+        });
+        brain.recordActionResult(this.state.sessionId, toolName, true, `tool succeeded: ${parsed.found ? 'finding' : 'no finding'}`);
+      } catch { /* non-critical */ }
+      return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
       const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
-      if (error.killed) return { timeout: true, duration: 30000, command: cmd };
-      const output = (error.stdout || "") + (error.stderr || "");
+      try {
+        const { getAutonomousBrain } = await import('../lib/intelligence');
+        getAutonomousBrain().recordActionResult(this.state.sessionId, toolName, false, error.killed ? 'timeout' : (error.message || 'unknown error'));
+      } catch { /* non-critical */ }
+      const timedOut = error.killed === true;
+      const partialOutput = (error.stdout || '') + (error.stderr || '');
       this.toolLastUsed.set(toolName, Date.now());
-      return { ...tool.parser(output), duration: Date.now() - start, command: cmd };
+      if (partialOutput.trim()) {
+        return { ...tool.parser(partialOutput), timedOut, duration: Date.now() - start, command: cmdString };
+      }
+      return { timeout: true, timedOut, duration: Date.now() - start, command: cmdString };
     }
   }
 
@@ -745,6 +995,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
   }
 
   private async persistResults(): Promise<void> {
+    const totalHypotheses = this.state.hypotheses.length;
+    const confirmedHypotheses = this.state.hypotheses.filter(h => h.status === 'confirmed').length;
+    const conversionRate = totalHypotheses > 0 ? confirmedHypotheses / totalHypotheses : 0;
+    logger.info('[HunterEngine] Hunt conversion rate', {
+      sessionId: this.state.sessionId,
+      totalHypotheses,
+      confirmedHypotheses,
+      conversionRate: Math.round(conversionRate * 1000) / 1000,
+    });
+
     try {
       await db.update(huntSessions)
         .set({

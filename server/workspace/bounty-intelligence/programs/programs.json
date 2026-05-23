@@ -1,0 +1,65 @@
+[
+  {
+    "name": "HackerOne Example",
+    "platform": "hackerone",
+    "url": "https://hackerone.com/example",
+    "handle": "example",
+    "id": "hackerone-example",
+    "enabled": true,
+    "addedAt": 1770569200850
+  },
+  {
+    "name": "Bugcrowd Test",
+    "platform": "bugcrowd",
+    "url": "https://bugcrowd.com/testcorp",
+    "handle": "testcorp",
+    "id": "bugcrowd-test",
+    "enabled": true,
+    "addedAt": 1770569251393
+  },
+  {
+    "name": "security",
+    "platform": "hackerone",
+    "url": "https://hackerone.com/security",
+    "handle": "security",
+    "id": "security",
+    "enabled": true,
+    "addedAt": 1770786068050
+  },
+  {
+    "name": "tesla",
+    "platform": "bugcrowd",
+    "url": "https://bugcrowd.com/tesla",
+    "handle": "tesla",
+    "id": "tesla",
+    "enabled": true,
+    "addedAt": 1770786068593
+  },
+  {
+    "name": "intigriti",
+    "platform": "intigriti",
+    "url": "https://app.intigriti.com/programs/intigriti",
+    "handle": "intigriti",
+    "id": "intigriti",
+    "enabled": true,
+    "addedAt": 1770786068866
+  },
+  {
+    "name": "example-target",
+    "platform": "synack",
+    "url": "https://platform.synack.com/targets/example-target",
+    "handle": "example-target",
+    "id": "example-target",
+    "enabled": true,
+    "addedAt": 1770786069613
+  },
+  {
+    "name": "yes-we-hack",
+    "platform": "yeswehack",
+    "url": "https://yeswehack.com/programs/yes-we-hack",
+    "handle": "yes-we-hack",
+    "id": "yes-we-hack",
+    "enabled": true,
+    "addedAt": 1770786069714
+  }
+]

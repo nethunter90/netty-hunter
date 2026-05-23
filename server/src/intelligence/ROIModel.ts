@@ -77,9 +77,12 @@ export class ROIModel {
       .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, vulnClass)))
       .limit(1);
 
-    const rlRate = stored && stored.totalCount > 0
-      ? (stored.successCount || 0) / stored.totalCount
-      : 0.15; // default 15% success rate
+    // Bayesian smoothing with Beta(1,3) prior (mean=0.25): (successes+1)/(total+4).
+    // At 0 observations → 0.25; at 5 failed attempts → 1/9 ≈ 0.11 (graceful, not 0.0).
+    // The prior dissolves naturally as data accumulates — no cliff edge at the 5-attempt boundary.
+    const n = stored?.totalCount ?? 0;
+    const s = stored?.successCount ?? 0;
+    const rlRate = (s + 1) / (n + 4);
 
     // Blend: 70% RL store rate, 30% program-specific historical rate (when available)
     const successRate = programSuccessRate && programSuccessRate > 0

@@ -236,3 +236,15 @@ export const findingsRelations = relations(findings, ({ one }) => ({
   huntSession: one(huntSessions, { fields: [findings.huntSessionId], references: [huntSessions.id] }),
   target: one(targets, { fields: [findings.targetId], references: [targets.id] }),
 }));
+
+// ─── Mission Memory Snapshots ─────────────────────────────────────────────────
+// Durable write-through store for MissionMemoryStore, keyed by the hunt/session UUID.
+// Replaces /tmp filesystem snapshots — survives container restarts and redeploys.
+export const missionMemorySnapshots = pgTable("mission_memory_snapshots", {
+  id: serial("id").primaryKey(),
+  huntId: varchar("hunt_id", { length: 128 }).notNull().unique(),
+  snapshot: jsonb("snapshot").notNull().default({}),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  huntIdIdx: uniqueIndex("mission_memory_hunt_id_idx").on(t.huntId),
+}));

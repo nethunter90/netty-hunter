@@ -9,7 +9,7 @@
  */
 import { db } from "../db";
 import { reinforcementStore as reinforcementTable } from "../db/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and, lt, sql } from "drizzle-orm";
 import logger from "../utils/logger";
 
 export type RLDomain =
@@ -166,23 +166,23 @@ export class UnifiedReinforcementStore {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   private async upsert(domain: RLDomain, key: string, value: Record<string, unknown>, success: boolean): Promise<void> {
-    const existing = await this.get(domain, key);
-    if (existing) {
-      await db.update(reinforcementTable).set({
-        successCount: existing.successCount + (success ? 1 : 0),
-        totalCount: existing.totalCount + 1,
+    // Atomic INSERT … ON CONFLICT DO UPDATE avoids the get-then-update race
+    // when multiple hunts run concurrently and record outcomes for the same key.
+    await db.insert(reinforcementTable).values({
+      domain,
+      key,
+      value,
+      successCount: success ? 1 : 0,
+      totalCount: 1,
+      weight: 1.0,
+    }).onConflictDoUpdate({
+      target: [reinforcementTable.domain, reinforcementTable.key],
+      set: {
+        successCount: sql`${reinforcementTable.successCount} + ${success ? 1 : 0}`,
+        totalCount: sql`${reinforcementTable.totalCount} + 1`,
         lastUpdated: new Date(),
-      }).where(and(eq(reinforcementTable.domain, domain), eq(reinforcementTable.key, key)));
-    } else {
-      await db.insert(reinforcementTable).values({
-        domain,
-        key,
-        value,
-        successCount: success ? 1 : 0,
-        totalCount: 1,
-        weight: 1.0,
-      });
-    }
+      },
+    });
   }
 
   private async get(domain: RLDomain, key: string): Promise<RLEntry | null> {

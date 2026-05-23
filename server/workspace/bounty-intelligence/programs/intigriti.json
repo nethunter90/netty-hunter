@@ -1,0 +1,116 @@
+{
+  "programId": "intigriti",
+  "name": "intigriti",
+  "platform": "intigriti",
+  "url": "https://app.intigriti.com/programs/intigriti",
+  "scope": {
+    "inScope": [
+      {
+        "type": "domain",
+        "identifier": "app.intigriti.com",
+        "maxSeverity": "critical",
+        "eligible": true
+      },
+      {
+        "type": "wildcard",
+        "identifier": "*.app.intigriti.com",
+        "maxSeverity": "critical",
+        "eligible": true
+      },
+      {
+        "type": "url",
+        "identifier": "https://app.intigriti.com",
+        "maxSeverity": "critical",
+        "eligible": true
+      },
+      {
+        "type": "url",
+        "identifier": "https://api.app.intigriti.com",
+        "maxSeverity": "critical",
+        "eligible": true
+      },
+      {
+        "type": "url",
+        "identifier": "https://app.app.intigriti.com",
+        "maxSeverity": "high",
+        "eligible": true
+      },
+      {
+        "type": "api",
+        "identifier": "https://api.app.intigriti.com/v1",
+        "maxSeverity": "critical",
+        "eligible": true
+      },
+      {
+        "type": "api",
+        "identifier": "https://api.app.intigriti.com/v2",
+        "maxSeverity": "critical",
+        "eligible": true
+      }
+    ],
+    "outOfScope": [
+      {
+        "type": "domain",
+        "identifier": "blog.app.intigriti.com",
+        "eligible": false,
+        "instruction": "Blog is out of scope"
+      },
+      {
+        "type": "domain",
+        "identifier": "support.app.intigriti.com",
+        "eligible": false,
+        "instruction": "Support portal is out of scope"
+      },
+      {
+        "type": "domain",
+        "identifier": "status.app.intigriti.com",
+        "eligible": false,
+        "instruction": "Status page is out of scope"
+      },
+      {
+        "type": "other",
+        "identifier": "Third-party services",
+        "eligible": false,
+        "instruction": "Do not test third-party integrations"
+      }
+    ],
+    "lastUpdated": 1770786069529
+  },
+  "rules": {
+    "disclosure": "coordinated",
+    "safeHarbor": true,
+    "maxBounty": 5000,
+    "minBounty": 50,
+    "responseTime": "5 business days",
+    "rules": [
+      "Do not access or modify other users' data",
+      "Do not perform denial of service attacks",
+      "Do not use automated scanners without prior approval",
+      "Report vulnerabilities promptly after discovery",
+      "Provide sufficient detail to reproduce the issue",
+      "Do not publicly disclose without written permission",
+      "Only test against accounts you own or have explicit permission to test"
+    ],
+    "exclusions": [
+      "Social engineering attacks",
+      "Physical security attacks",
+      "Denial of service",
+      "Spam or social engineering against employees",
+      "Clickjacking on pages with no sensitive actions",
+      "Self-XSS that requires victim to paste code",
+      "Missing best practices without demonstrable impact",
+      "Rate limiting or brute force issues without impact"
+    ],
+    "lastUpdated": 1770786069529
+  },
+  "description": "Intigriti bug bounty program for intigriti. Targets include app.intigriti.com and related assets.",
+  "lastFetched": 1770786069529,
+  "fetchHistory": [
+    {
+      "timestamp": 1770786069529,
+      "success": true,
+      "changesDetected": false
+    }
+  ],
+  "changes": []
+}

@@ -12,8 +12,12 @@ import { promisify } from "util";
 import axios from "axios";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
+import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { db } from "../db";
 import { solverResults } from "../db/schema";
+import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
+import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
+import { dynamicRateLimiter } from "../lib/stealth";
 
 const execAsync = promisify(exec);
 
@@ -33,7 +37,7 @@ export type VulnClass =
   | "xss" | "sqli" | "ssrf" | "lfi" | "rfi" | "rce" | "xxe"
   | "idor" | "auth_bypass" | "open_redirect" | "cors" | "csrf"
   | "info_disclosure" | "misconfig" | "exposed_admin" | "subdomain_takeover"
-  | "rate_limit_bypass" | "business_logic";
+  | "rate_limit_bypass" | "business_logic" | "security_headers";
 
 export interface SolverResult {
   taskId: string;
@@ -48,6 +52,24 @@ export interface SolverResult {
   response: string;
   duration: number;
   toolsUsed: string[];
+}
+
+// ─── Per-domain behavioral mimicry sessions ──────────────────────────────────
+// Each domain gets a stable session (consistent UA + referrer chain) for
+// the lifetime of the process, so successive probes look like the same user.
+const mimicry = new BehavioralMimicry();
+const domainSessions = new Map<string, MimicrySession>();
+
+function getMimicryHeaders(url: string, overrides?: Record<string, string>): Record<string, string> {
+  let hostname: string;
+  try { hostname = new URL(url).hostname; } catch { hostname = url; }
+  if (!domainSessions.has(hostname)) {
+    domainSessions.set(hostname, mimicry.buildSession(hostname));
+  }
+  const session = domainSessions.get(hostname)!;
+  // Use the second-to-last referrer in the chain (domain homepage → target feels natural)
+  const referrer = session.referrerChain[session.referrerChain.length - 2];
+  return { ...mimicry.buildHeaders(session, referrer), ...(overrides || {}) };
 }
 
 // ─── Per-domain rate limiter ──────────────────────────────────────────────────
@@ -85,25 +107,37 @@ abstract class BaseSolver {
     headers?: Record<string, string>,
     body?: string
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    let hostname = '';
+    try { hostname = new URL(url).hostname; } catch { /* malformed URL */ }
+
+    // Short-circuit if target is hard-banned — saves the full 10s timeout per probe
+    if (hostname && dynamicRateLimiter.isHardBanned(hostname)) {
+      return { status: 403, headers: {}, body: 'IP hard-banned — skipping probe' };
+    }
+
     try {
       const resp = await getDomainQueue(url).add(() => axios({
         method,
         url,
         params,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-          ...headers,
-        },
+        headers: getMimicryHeaders(url, headers),
         data: body,
         timeout: 10000,
         validateStatus: () => true,
         maxRedirects: 3,
       }));
-      return {
+      const result = {
         status: resp!.status,
         headers: resp!.headers as Record<string, string>,
         body: typeof resp!.data === "string" ? resp!.data.slice(0, 5000) : JSON.stringify(resp!.data).slice(0, 5000),
       };
+      // Feed status code into ban detector so hard IP bans (5× consecutive 403s) are flagged
+      if (hostname) {
+        try {
+          dynamicRateLimiter.recordResponse(hostname, new URL(url).pathname, result.status, result.headers);
+        } catch { /* non-critical */ }
+      }
+      return result;
     } catch (err: unknown) {
       const error = err as { message: string };
       return { status: 0, headers: {}, body: error.message };
@@ -586,7 +620,7 @@ class CSRFSolver extends BaseSolver {
 }
 
 class AuthBypassSolver extends BaseSolver {
-  private readonly bypassHeaders = [
+  private readonly bypassHeaders: Record<string, string>[] = [
     { "X-Original-URL": "/admin" },
     { "X-Forwarded-For": "127.0.0.1" },
     { "X-Remote-IP": "127.0.0.1" },
@@ -753,6 +787,27 @@ const SOLVER_REGISTRY: Partial<Record<VulnClass, new () => BaseSolver>> = {
 };
 
 // ─── Strategy Coordinator (Single Brain) ──────────────────────────────────────
+
+/** Truncate the observations object to avoid exceeding the model context window.
+ *  Keeps the top-level keys but summarises deep arrays to a count + sample. */
+function summariseObservations(raw: Record<string, unknown>, maxChars = 1200): string {
+  const full = JSON.stringify(raw, null, 2);
+  if (full.length <= maxChars) return full;
+
+  const condensed: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (Array.isArray(v)) {
+      condensed[k] = v.length <= 3 ? v : [...v.slice(0, 2), `…(${v.length - 2} more)`];
+    } else if (v && typeof v === 'object') {
+      const s = JSON.stringify(v);
+      condensed[k] = s.length > 200 ? s.slice(0, 200) + '…' : v;
+    } else {
+      condensed[k] = v;
+    }
+  }
+  return JSON.stringify(condensed, null, 2).slice(0, maxChars);
+}
+
 class StrategyCoordinator {
   private modelRouter = ModelRouter.getInstance();
 
@@ -760,7 +815,9 @@ class StrategyCoordinator {
     const prompt = `You are a bug bounty strategy coordinator analyzing an endpoint.
 
 Endpoint: ${endpoint}
-Observations: ${JSON.stringify(observations, null, 2)}
+Observations: ${summariseObservations(observations)}
+
+${toolKnowledge.getSummaryBlock()}
 
 Determine which vulnerability classes to test. Consider:
 - What technologies are present?

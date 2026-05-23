@@ -416,7 +416,7 @@ export default function Orchestration() {
               <div key={String(lm.layer)} className="mb-1.5">
                 <div className="flex items-center gap-1 text-[10px]">
                   <span className="text-hack-dim">L{String(lm.layer)}</span>
-                  {lm.gate && <Lock className="w-2.5 h-2.5 text-hack-red" />}
+                  {!!(lm.gate) && <Lock className="w-2.5 h-2.5 text-hack-red" />}
                   <span className="text-hack-text">{String(lm.name)}</span>
                 </div>
               </div>

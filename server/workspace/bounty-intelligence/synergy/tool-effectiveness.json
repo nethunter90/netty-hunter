@@ -1,0 +1,8 @@
+[
+  {
+    "tool": "nmap",
+    "totalExecutions": 1,
+    "findingProducingExecutions": 0,
+    "effectivenessRate": 0
+  }
+]

@@ -13,6 +13,9 @@ import { db } from "../db";
 import { wafProfiles } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import logger from "../utils/logger";
+import { temporalDecay } from "../lib/hunter/temporal-decay";
+import { stealthCoordinator } from "../lib/stealth";
+import { ScopeGuard } from "../middleware/scopeGuard";
 
 export interface WAFDetectionResult {
   detected: boolean;
@@ -305,8 +308,19 @@ export class IntelligenceSynthesizer {
   private correlations = new RuleCorrelationMatrix();
   private vendorProfiles = new VendorEvasionProfiles();
 
-  async synthesize(url: string, payload: string): Promise<UnifiedIntelligence> {
+  async synthesize(url: string, payload: string, sessionId = 'default', programId?: number): Promise<UnifiedIntelligence> {
     const domain = new URL(url).hostname;
+
+    // Scope gate: fail-closed before any HTTP traffic is sent
+    if (programId !== undefined) {
+      const scopeGuard = ScopeGuard.getInstance();
+      const { allowed, reason } = await scopeGuard.isInScope(url, programId);
+      if (!allowed) {
+        logger.warn('WAFBypass synthesize blocked by scope guard', { url, programId, reason });
+        throw new Error(`Out of scope: ${reason}`);
+      }
+    }
+
     const { waf } = await this.fingerprinter.fingerprint(url);
     const recommendedTechs = this.library.recommendTechniques(waf.vendor);
     const variants = this.library.generateVariants(payload, recommendedTechs);
@@ -315,16 +329,28 @@ export class IntelligenceSynthesizer {
     // Execute bypass attempts (limited to 5 to avoid detection)
     const results: EvasionResult[] = [];
     for (const variant of variants.slice(0, 5)) {
+      // Get timing recommendation from decay engine before each attempt
+      const probe = await stealthCoordinator.prepareProbe(
+        `${url}?q=${encodeURIComponent(variant.payload)}`,
+        variant.payload,
+        'waf_bypass',
+        { sessionId, domain, vendor: waf.vendor, stealthMode: 'balanced' }
+      );
+      if (probe.delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, probe.delayMs));
+      }
+
       const result = await this.executor.execute(url, variant.payload, variant.technique);
       results.push(result);
       await this.vendorProfiles.updateProfile(waf.vendor, domain, result);
+
+      // Record outcome in decay engine
+      stealthCoordinator.recordOutcome(sessionId, domain, waf.vendor, result.success, variant.technique);
     }
 
-    // Temporal decay: penalize old data
-    const lastUpdatedAge = vendorProfile.techniques
-      ? Math.min(...Object.values(vendorProfile.techniques).map(t => Date.now() - t.lastUsed))
-      : Infinity;
-    const decayScore = Math.max(0, 1 - (lastUpdatedAge / (7 * 24 * 3600 * 1000))); // 7-day decay
+    // Use TemporalDecayEngine for accurate decay state (replaces manual 7-day calc)
+    const decayState = temporalDecay.getDecayState(sessionId, domain, waf.vendor);
+    const decayScore = 1 - decayState.estimatedAnomalyScore;
 
     // Conflict detection: template override vs empirical
     const conflictFlags: string[] = [];
@@ -333,10 +359,15 @@ export class IntelligenceSynthesizer {
     if (empiricalBestTech && !recommendedTechs.includes(empiricalBestTech)) {
       conflictFlags.push(`Template recommends ${recommendedTechs[0]} but empirical data favors ${empiricalBestTech}`);
     }
+    if (decayState.inRecoveryWindow) {
+      conflictFlags.push(`In recovery window: anomaly=${decayState.estimatedAnomalyScore.toFixed(2)}, wait=${Math.round(decayState.recommendedWaitMs / 1000)}s`);
+    }
 
     logger.info("WAF Intelligence Synthesized", {
       url, vendor: waf.vendor, confidence: waf.confidence,
       successfulBypasses: results.filter(r => r.success).length,
+      anomalyScore: decayState.estimatedAnomalyScore,
+      decayProgress: decayState.decayProgress,
     });
 
     return {

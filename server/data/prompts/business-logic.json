@@ -1,0 +1,1002 @@
+[
+  {
+    "id": "T5-001",
+    "complexity": "L1",
+    "domain": "Rewards",
+    "scenario": "Loyalty points credited immediately after purchase request, before payment confirmation.",
+    "prompt": "Assess whether timing introduces abuse potential.",
+    "reasoning_focus": "Pre-settlement credit logic.",
+    "expected_answer": "This pre-settlement credit pattern introduces significant abuse potential. An attacker can initiate purchase requests, receive loyalty points immediately, then cancel or fail the payment before it settles. The credited points can be redeemed or transferred before the system reconciles the failed payment. Financial impact scales linearly with automation \u2014 a scripted attacker could generate thousands of phantom purchases per hour, accumulating redeemable points without any actual spend. Remediation requires moving point crediting to a post-settlement callback, implementing a pending-points state that only converts to redeemable upon payment confirmation, and adding velocity checks on purchase initiation.",
+    "evaluation_criteria": "Must identify the timing gap between purchase initiation and payment confirmation as the core vulnerability and propose a pending-points state or post-settlement crediting as the fix."
+  },
+  {
+    "id": "T5-002",
+    "complexity": "L1",
+    "domain": "Coupons",
+    "scenario": "Coupon discount applied before minimum cart validation.",
+    "prompt": "Evaluate business impact of rule ordering flaw.",
+    "reasoning_focus": "Validation order modeling.",
+    "expected_answer": "When the coupon discount is applied before the minimum cart value check, an attacker can add items exceeding the minimum threshold, apply the coupon to reduce the total below the minimum, and still pass validation since it already occurred on the pre-discount amount. This allows purchases at deep discounts that were never intended for low-value orders. The business impact includes margin erosion on every order that exploits this path. Remediation requires reordering the validation pipeline: first validate the cart minimum on the pre-discount subtotal, then apply the coupon, and finally re-validate that the post-discount total meets any floor constraints.",
+    "evaluation_criteria": "Must identify the validation ordering flaw where discount application precedes minimum cart check and explain how reordering the pipeline eliminates the bypass."
+  },
+  {
+    "id": "T5-003",
+    "complexity": "L1",
+    "domain": "Subscription",
+    "scenario": "User subscription downgraded but premium features remain accessible until cache refresh.",
+    "prompt": "Determine exploitability window.",
+    "reasoning_focus": "State synchronization lag.",
+    "expected_answer": "The exploitability window equals the cache TTL duration \u2014 if the entitlement cache refreshes every 15 minutes, a downgraded user retains premium access for up to 15 minutes after downgrade. An attacker can deliberately time feature-heavy operations (bulk exports, API calls, premium content downloads) within this window. If the cache is edge-distributed across CDN nodes, the window may vary by region and could be even longer. Financial impact includes consumption of premium resources without payment. Remediation requires implementing cache invalidation on subscription state change events, using a push-based entitlement model, or checking subscription status at the authorization layer on every sensitive operation.",
+    "evaluation_criteria": "Must quantify the exploitability window as equal to the cache TTL and recommend event-driven cache invalidation or real-time entitlement checks as the fix."
+  },
+  {
+    "id": "T5-004",
+    "complexity": "L1",
+    "domain": "Refunds",
+    "scenario": "Refund request does not verify product shipment status.",
+    "prompt": "Assess financial exposure risk.",
+    "reasoning_focus": "Refund condition validation.",
+    "expected_answer": "Without shipment status verification, a buyer can request and receive a refund for an item that has already been shipped or delivered, resulting in the buyer retaining both the product and the refund amount. This creates a direct financial loss equal to the product cost plus shipping expenses. At scale, this can be automated by submitting refund requests immediately after order placement but before shipment tracking is linked. The financial exposure is the total value of all in-flight orders at any given time. Remediation requires cross-referencing shipment status from the fulfillment system before approving any refund and implementing return-receipt confirmation for physical goods.",
+    "evaluation_criteria": "Must identify that the missing shipment verification allows buyers to retain both product and refund money, and recommend cross-referencing fulfillment status before refund approval."
+  },
+  {
+    "id": "T5-005",
+    "complexity": "L1",
+    "domain": "Marketplace",
+    "scenario": "Seller rating updated before transaction completion.",
+    "prompt": "Evaluate manipulation potential.",
+    "reasoning_focus": "Premature state transition.",
+    "expected_answer": "Premature rating updates allow sellers to inflate their reputation through shill transactions that are initiated but never completed. A seller can use colluding buyer accounts to initiate purchases, receive positive ratings immediately, then cancel the transactions. This artificially inflates the seller's trust score without genuine commerce. The manipulation undermines marketplace integrity, displaces legitimate sellers in search rankings, and can facilitate future fraud by building trust for scam listings. Remediation requires deferring rating updates until transaction finalization (payment confirmed, delivery acknowledged) and implementing rating rollback on cancellation.",
+    "evaluation_criteria": "Must identify shill transaction rating inflation as the primary attack and recommend deferring rating updates to post-transaction completion."
+  },
+  {
+    "id": "T5-006",
+    "complexity": "L1",
+    "domain": "Rewards",
+    "scenario": "A single purchase event fires two webhook notifications due to a retry mechanism, crediting loyalty points twice.",
+    "prompt": "Assess the conditions under which duplicate reward triggers create exploitable financial gain.",
+    "reasoning_focus": "Duplicate event trigger logic.",
+    "expected_answer": "The duplicate webhook creates a double-credit vulnerability whenever the retry mechanism fires before the first event is fully processed and acknowledged. An attacker can exploit this by engineering network conditions that trigger retries \u2014 such as accepting the webhook payload but responding slowly, forcing the sender to retry. Each duplicate event doubles the loyalty points credited for a single purchase. The financial gain is the value of the extra points multiplied by transaction volume. Remediation requires implementing idempotency keys on the reward crediting endpoint, deduplicating events by transaction ID before processing, and adding a cooldown window that rejects duplicate event payloads within a configurable time frame.",
+    "evaluation_criteria": "Must identify the idempotency gap in webhook processing and recommend deduplication via transaction-level idempotency keys."
+  },
+  {
+    "id": "T5-007",
+    "complexity": "L1",
+    "domain": "Subscription",
+    "scenario": "Free trial ends but account is not charged if the payment method fails silently; access continues until manual review.",
+    "prompt": "Determine the window of premium access without payment and assess whether silent failure creates exploitable access.",
+    "reasoning_focus": "Free trial renewal failure path.",
+    "expected_answer": "The exploitable window extends from trial expiration until a human reviewer catches the failed payment, which could be days or weeks depending on review queue depth. During this period, the user enjoys full premium access at zero cost. An attacker can deliberately use expired or insufficient payment methods to trigger silent failure, then continue using premium features indefinitely. If manual review only occurs on complaint or scheduled audit, the window could be months. Financial impact is the premium subscription rate multiplied by the number of users exploiting this path multiplied by duration. Remediation requires automated access suspension upon payment failure, immediate retry with grace period, and automatic downgrade after a defined number of failed attempts.",
+    "evaluation_criteria": "Must identify that silent payment failure combined with manual review creates an unbounded free access window and recommend automated access suspension on payment failure."
+  },
+  {
+    "id": "T5-008",
+    "complexity": "L1",
+    "domain": "Tax",
+    "scenario": "Tax calculation is performed on the pre-discount subtotal rather than the post-discount total.",
+    "prompt": "Evaluate whether tax over-collection or under-collection results and which direction introduces abuse potential.",
+    "reasoning_focus": "Tax calculation order relative to discounts.",
+    "expected_answer": "Calculating tax on the pre-discount subtotal results in tax over-collection \u2014 the customer pays tax on an amount higher than what they actually spent. This over-collection is not directly exploitable by attackers but creates regulatory and legal liability for the platform. In jurisdictions where tax must be calculated on the actual transaction amount, this constitutes a compliance violation. The platform collects excess tax that must be remitted or refunded. If customers discover the discrepancy, class-action exposure grows with transaction volume. Remediation requires recalculating tax on the post-discount total and auditing historical transactions for overcollection requiring refund.",
+    "evaluation_criteria": "Must correctly identify that pre-discount tax calculation causes over-collection, creating regulatory compliance risk rather than direct exploitation potential."
+  },
+  {
+    "id": "T5-009",
+    "complexity": "L1",
+    "domain": "Cart",
+    "scenario": "Cart total allows applied credits to reduce the total below zero, resulting in a negative balance.",
+    "prompt": "Assess what business rules should prevent a negative cart total and what outcomes occur if they are absent.",
+    "reasoning_focus": "Negative value edge case in cart totals.",
+    "expected_answer": "A negative cart total means the platform owes the customer money upon checkout, effectively turning a purchase into a payout. An attacker can exploit this by stacking store credits, gift cards, or promotional credits that exceed the cart value, then checking out to receive the negative balance as a refund or wallet credit. This converts promotional value into extractable cash. Business rules that should prevent this include: capping applied credits at the cart total, requiring a minimum positive balance after credits, and preventing checkout when the total is zero or negative. Without these rules, the platform hemorrhages money through credit-to-cash conversion.",
+    "evaluation_criteria": "Must identify that negative cart totals enable credit-to-cash conversion and recommend capping applied credits at the cart total as the primary control."
+  },
+  {
+    "id": "T5-010",
+    "complexity": "L1",
+    "domain": "Referrals",
+    "scenario": "Referral bonus is issued to the referrer when a new account is created using their link, with no identity verification on the new account.",
+    "prompt": "Assess whether self-referral or synthetic account creation can be used to generate artificial referral income.",
+    "reasoning_focus": "Referral bonus self-application logic.",
+    "expected_answer": "Without identity verification, an attacker can create unlimited synthetic accounts using disposable email addresses, each registering through their own referral link. Each synthetic account triggers a referral bonus to the primary account. At scale, automated scripts can generate hundreds of accounts per hour, each earning $5-$25 in referral bonuses. The financial exposure is the bonus amount multiplied by the number of synthetic accounts created before detection. Remediation requires device fingerprinting, phone number verification, requiring a qualifying action (purchase, deposit) from the referred account before bonus issuance, and implementing velocity limits on referral bonus accumulation per referrer.",
+    "evaluation_criteria": "Must identify the synthetic account creation attack vector and recommend requiring a qualifying action from the referred account before bonus issuance."
+  },
+  {
+    "id": "T5-011",
+    "complexity": "L1",
+    "domain": "Gift Cards",
+    "scenario": "Multiple gift cards can be applied to a single order without a cumulative cap, and the remaining balance is refunded as a new gift card on cancellation.",
+    "prompt": "Evaluate whether gift card stacking combined with order cancellation enables value amplification.",
+    "reasoning_focus": "Gift card stacking and refund interaction.",
+    "expected_answer": "This creates a gift card consolidation and potential value amplification loop. An attacker can apply multiple low-value gift cards to a single high-value order, then cancel the order to receive a single consolidated gift card for the full amount. If promotional gift cards with restrictions (expiry, category limits) are consolidated into unrestricted refund gift cards, the attacker converts restricted value into unrestricted value. Additionally, if rounding or processing fees differ between application and refund, small value gains can accumulate. Remediation requires refunding to original gift cards on cancellation, preserving original restrictions on refund cards, and implementing a cap on the number of gift cards per order.",
+    "evaluation_criteria": "Must identify the consolidation attack where restricted gift cards are converted to unrestricted refund cards and recommend refunding to original payment instruments."
+  },
+  {
+    "id": "T5-012",
+    "complexity": "L1",
+    "domain": "Pricing",
+    "scenario": "Item price is passed as a client-side parameter in the checkout request and is not validated server-side against the product catalog.",
+    "prompt": "Assess the financial impact of price override via parameter manipulation.",
+    "reasoning_focus": "Client-supplied price parameter trust.",
+    "expected_answer": "This is a critical business logic vulnerability allowing arbitrary price manipulation. An attacker can intercept the checkout request and modify the price parameter to any value \u2014 including $0.01 for a $1,000 item. Every transaction processed through this flow is vulnerable to total price override. The financial impact is potentially the entire catalog value, as any product can be purchased at any attacker-chosen price. This vulnerability is trivially exploitable using browser developer tools or a proxy like Burp Suite. Remediation requires server-side price lookup from the product catalog at checkout time, never trusting client-supplied price values, and implementing price integrity checks that compare the submitted price against the catalog price with zero tolerance.",
+    "evaluation_criteria": "Must identify this as a critical trust boundary violation where client-supplied prices must never be trusted and server-side catalog lookup is mandatory."
+  },
+  {
+    "id": "T5-013",
+    "complexity": "L1",
+    "domain": "Shipping",
+    "scenario": "Shipping fee is calculated at cart creation but not recalculated when items are added or removed before checkout.",
+    "prompt": "Evaluate whether shipping fee becomes stale and whether under-charging is exploitable.",
+    "reasoning_focus": "Shipping fee recalculation timing.",
+    "expected_answer": "The stale shipping fee creates a consistent under-charging vulnerability. An attacker can create a cart with a single lightweight item (triggering a low shipping fee), then add heavy or oversized items before checkout without the shipping fee updating. The platform absorbs the difference between the charged and actual shipping cost. At scale across thousands of orders, this margin erosion becomes material. The reverse is also possible \u2014 starting with heavy items and removing them, resulting in over-charging, which creates customer complaints and refund overhead. Remediation requires recalculating shipping on every cart modification event and at final checkout validation.",
+    "evaluation_criteria": "Must identify the stale fee problem from both under-charging and over-charging perspectives and recommend recalculation on every cart modification."
+  },
+  {
+    "id": "T5-014",
+    "complexity": "L1",
+    "domain": "Coupons",
+    "scenario": "A promo code is single-use per account but the check is performed against the account email, which is not normalized before comparison.",
+    "prompt": "Assess whether case variation or email alias tricks bypass the single-use restriction.",
+    "reasoning_focus": "Promo code reuse via identity normalization gap.",
+    "expected_answer": "Email normalization gaps allow trivial bypass of the single-use restriction. An attacker can reuse the same promo code by varying email case (user@gmail.com vs User@Gmail.com), using Gmail's dot-ignore feature (u.ser@gmail.com), or using the plus alias (user+1@gmail.com). Each variation passes the string comparison as a different email while delivering to the same inbox. This allows unlimited promo code reuse from a single actual account. Financial impact scales with the discount value multiplied by the number of variations tried. Remediation requires normalizing emails before comparison (lowercase, strip dots for Gmail, strip plus aliases), and ideally tracking promo usage by a secondary identifier like device fingerprint or payment method.",
+    "evaluation_criteria": "Must identify specific email normalization bypass techniques (case, dots, plus aliases) and recommend email normalization before uniqueness checks."
+  },
+  {
+    "id": "T5-015",
+    "complexity": "L1",
+    "domain": "E-commerce",
+    "scenario": "An item marked as in-stock in the UI was actually out-of-stock at the database layer due to a replication lag.",
+    "prompt": "Assess the downstream business logic risk when inventory display state lags behind the true inventory count.",
+    "reasoning_focus": "Inventory display vs reality divergence.",
+    "expected_answer": "Replication lag between the inventory database and the display layer creates overselling risk. Customers purchase items shown as available that are actually depleted, leading to order fulfillment failures, cancellations, and refund processing costs. During high-demand events (flash sales), this lag is amplified as inventory depletes rapidly while the display layer still shows availability. Each oversold order generates customer support cost, potential compensation, and reputational damage. The financial impact includes refund processing fees, customer acquisition cost loss, and potential regulatory issues for deceptive availability claims. Remediation requires reading inventory from the primary database for checkout validation, implementing optimistic locking on inventory decrements, and displaying estimated availability with appropriate disclaimers during high-traffic periods.",
+    "evaluation_criteria": "Must identify overselling as the primary risk from replication lag and recommend primary database reads at checkout time as the key control."
+  },
+  {
+    "id": "T5-016",
+    "complexity": "L1",
+    "domain": "Marketplace",
+    "scenario": "A seller can modify listing price after a buyer has already committed to checkout but before payment is captured.",
+    "prompt": "Evaluate whether late price modification creates an adverse buyer experience or financial dispute surface.",
+    "reasoning_focus": "Price mutability during checkout window.",
+    "expected_answer": "Late price modification during the checkout window creates both buyer harm and dispute surface. A malicious seller can bait buyers with a low price, wait for checkout commitment, then raise the price before payment capture \u2014 resulting in the buyer being charged more than expected. This violates price guarantee expectations and generates chargebacks, refund requests, and regulatory complaints. Even without malicious intent, legitimate price updates during active checkouts create inconsistent buyer experiences. Financial impact includes chargeback fees ($15-25 each), dispute processing costs, and customer trust erosion. Remediation requires price locking at checkout initiation, preventing seller price modifications on items with active checkout sessions, and validating the captured price against the price at commitment time.",
+    "evaluation_criteria": "Must identify the bait-and-switch attack vector and recommend price locking at checkout initiation as the primary control."
+  },
+  {
+    "id": "T5-017",
+    "complexity": "L1",
+    "domain": "Refunds",
+    "scenario": "Refund eligibility window is enforced using the purchase date stored on the client and submitted with the refund request.",
+    "prompt": "Assess whether client-supplied purchase date enables manipulation of the refund eligibility window.",
+    "reasoning_focus": "Client-side date trust in refund eligibility.",
+    "expected_answer": "Client-supplied purchase dates are trivially manipulable, allowing attackers to extend the refund eligibility window indefinitely. An attacker can modify the purchase date in the refund request to any recent date, making a months-old purchase appear to fall within the refund window. This completely bypasses the intended return policy. Any purchase, regardless of actual age, becomes refundable by simply submitting a fabricated recent purchase date. The financial impact is exposure of the entire historical order base to refund claims. Remediation requires using server-side purchase timestamps stored in the order database for eligibility checks, never trusting client-supplied dates for business-critical decisions, and logging all refund attempts with both client-supplied and server-stored dates for fraud detection.",
+    "evaluation_criteria": "Must identify that client-supplied dates are trivially forgeable and all eligibility checks must use server-side stored timestamps."
+  },
+  {
+    "id": "T5-018",
+    "complexity": "L1",
+    "domain": "Subscription",
+    "scenario": "Annual subscription is discounted by 20% but is refundable on a pro-rata basis without accounting for the discount rate.",
+    "prompt": "Evaluate whether a purchase-then-immediate-refund cycle allows extraction of value above the amount paid.",
+    "reasoning_focus": "Pro-rata refund vs discounted purchase price mismatch.",
+    "expected_answer": "This creates a direct arbitrage opportunity. If a user pays $96 for an annual plan (20% discount on $120) and immediately requests a pro-rata refund based on the undiscounted monthly rate ($10/month), they would receive approximately $110 back for 11 unused months \u2014 a $14 profit per cycle. An attacker can automate this: purchase annual at discount, use for one day, claim pro-rata refund at full rate, repeat. The financial exposure scales with the number of accounts executing this loop. Remediation requires calculating pro-rata refunds based on the actual amount paid (discounted rate), not the list price, and implementing minimum usage requirements before refund eligibility.",
+    "evaluation_criteria": "Must calculate the specific arbitrage value from the discount-rate vs refund-rate mismatch and recommend refund calculations based on actual paid amount."
+  },
+  {
+    "id": "T5-019",
+    "complexity": "L1",
+    "domain": "Flash Sales",
+    "scenario": "Flash sale price is applied to all items in the cart, including items added before the flash sale began.",
+    "prompt": "Assess whether cart timing allows flash sale price to be applied to non-qualifying items.",
+    "reasoning_focus": "Flash sale eligibility scope boundary.",
+    "expected_answer": "The flash sale price application to pre-existing cart items creates an unintended discount scope expansion. An attacker can pre-load their cart with high-value items at regular prices, then wait for a flash sale to begin. When the flash sale activates, all cart items \u2014 including those added before the sale \u2014 receive the discounted price despite not being intended flash sale targets. This bypasses any category or product restrictions on the flash sale and extends the discount to the entire catalog. Financial impact is the discount differential applied to all pre-loaded items. Remediation requires timestamping cart additions and only applying flash sale pricing to items added during the sale window, or re-validating flash sale eligibility at checkout against product-level sale inclusion rules.",
+    "evaluation_criteria": "Must identify the cart pre-loading attack and recommend timestamp-based eligibility checks or product-level flash sale validation at checkout."
+  },
+  {
+    "id": "T5-020",
+    "complexity": "L1",
+    "domain": "Digital Goods",
+    "scenario": "Discount code reduces digital product price to zero; order completes and download link is issued without payment.",
+    "prompt": "Determine whether a zero-value order for digital goods is a valid business outcome or a logic flaw.",
+    "reasoning_focus": "Zero-value order completion for non-physical goods.",
+    "expected_answer": "A zero-value digital goods order is almost certainly a logic flaw unless the business explicitly intends free distribution. Since digital goods have near-zero marginal delivery cost, the download link issuance creates no fulfillment cost, but the product value is entirely lost. An attacker can share the discount code to enable mass free downloads of premium digital content. Unlike physical goods where shipping costs create a natural floor, digital goods have no such protection. The financial impact is the full retail value of every digital product obtained at zero cost. Remediation requires implementing a minimum price floor for paid digital products that cannot be reduced below by discounts, requiring account verification for zero-value orders, or limiting discount codes to a maximum percentage (e.g., 90% off) rather than allowing absolute zero.",
+    "evaluation_criteria": "Must distinguish digital goods from physical goods in the zero-value context and recommend a minimum price floor or maximum discount percentage cap."
+  },
+  {
+    "id": "T5-021",
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "Funds reserved but not debited until settlement process.",
+    "prompt": "Model double-spend timing window.",
+    "reasoning_focus": "Authorization vs capture gap.",
+    "expected_answer": "The authorization-capture gap creates a double-spend window where reserved funds can be spent elsewhere before settlement. If the reserve is a soft hold that doesn't reduce available balance at the issuing bank, a user can initiate multiple transactions whose combined value exceeds their actual balance \u2014 each passes authorization because the holds haven't reduced the available balance yet. The timing window is the duration between authorization and capture/settlement, typically 1-7 days depending on processor. Financial exposure equals the user's available balance multiplied by the number of concurrent authorizations possible. Remediation requires hard holds that immediately reduce available balance, real-time balance checks that account for pending authorizations, and velocity limits on concurrent outstanding authorizations per account.",
+    "evaluation_criteria": "Must distinguish between soft and hard holds, quantify the timing window as the authorization-to-capture delay, and recommend hard holds with real-time balance checks."
+  },
+  {
+    "id": "T5-022",
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "Inventory decremented after payment callback, not at cart confirmation.",
+    "prompt": "Assess oversell abuse feasibility.",
+    "reasoning_focus": "Inventory state timing.",
+    "expected_answer": "Late inventory decrement creates a race condition where multiple buyers can purchase the same item simultaneously. Between cart confirmation and payment callback, the item appears available to all concurrent shoppers. In a flash sale with limited stock, hundreds of buyers could complete checkout for a single remaining item, all receiving order confirmations, but only one payment callback triggers the decrement. The platform must then cancel and refund the oversold orders, incurring processing fees, customer dissatisfaction, and operational overhead. Financial exposure includes payment processing fees on all failed orders ($0.30+ per transaction), customer support costs, and potential compensation. Remediation requires decrementing inventory at cart confirmation with a time-limited reservation (10-15 minutes) and releasing reserved stock if payment is not completed within the window.",
+    "evaluation_criteria": "Must identify the race condition between concurrent buyers and recommend inventory reservation at cart confirmation with time-limited holds."
+  },
+  {
+    "id": "T5-023",
+    "complexity": "L2",
+    "domain": "Rewards",
+    "scenario": "Referral bonus triggered on account creation without identity verification.",
+    "prompt": "Evaluate automation risk.",
+    "reasoning_focus": "Identity validation gap.",
+    "expected_answer": "The absence of identity verification makes referral bonus farming trivially automatable. An attacker can script account creation using disposable email services, each registration triggering a referral bonus to the attacker's primary account. With basic automation, hundreds of accounts can be created per hour, each generating $5-$25 in referral bonuses. The attack requires no financial investment and the accounts can be immediately abandoned after creation. Advanced attackers use residential proxies to avoid IP-based rate limiting and CAPTCHA solving services to bypass bot protections. Financial exposure is the referral bonus value multiplied by the creation rate multiplied by time until detection. Remediation requires multi-factor identity verification (phone, government ID), requiring a qualifying transaction from the referred account, and implementing machine learning-based bot detection on signup flows.",
+    "evaluation_criteria": "Must quantify the automation scale potential and recommend requiring qualifying actions from referred accounts plus bot detection mechanisms."
+  },
+  {
+    "id": "T5-024",
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "Upgrade processed before payment validation completes.",
+    "prompt": "Assess privilege escalation via cancellation timing.",
+    "reasoning_focus": "State sequencing flaw.",
+    "expected_answer": "The state sequencing flaw enables a privilege escalation pattern: initiate an upgrade to premium tier, receive premium access immediately, then cancel or fail the payment before validation completes. The user retains premium access for the duration between upgrade processing and payment failure handling. If the system doesn't automatically downgrade on payment failure, access persists indefinitely. An attacker can chain this with repeated upgrade-cancel cycles to maintain permanent premium access without payment. Financial impact is the premium tier price multiplied by the number of users exploiting the timing gap. Remediation requires implementing a pending-upgrade state that only activates premium features after payment confirmation, adding automated rollback on payment failure, and logging upgrade-cancel patterns for fraud detection.",
+    "evaluation_criteria": "Must identify the upgrade-then-cancel attack chain and recommend a pending-upgrade state with automated rollback on payment failure."
+  },
+  {
+    "id": "T5-025",
+    "complexity": "L2",
+    "domain": "Marketplace",
+    "scenario": "Payout webhook is triggered by a third-party payment processor and contains a seller ID but no cryptographic signature.",
+    "prompt": "Assess whether unsigned webhook payloads can be forged to trigger unauthorized payouts to arbitrary seller accounts.",
+    "reasoning_focus": "Webhook-based payout trigger without signature validation.",
+    "expected_answer": "Unsigned webhooks are trivially forgeable. An attacker who discovers or guesses the webhook endpoint URL can craft HTTP requests mimicking the payment processor's payload format, specifying any seller ID to trigger unauthorized payouts. The attack requires no authentication \u2014 just knowledge of the endpoint and payload structure, which can be obtained through API documentation, traffic interception, or brute force. Each forged webhook triggers a direct financial payout to the attacker-controlled seller account. Financial exposure is limited only by the platform's available payout balance and any rate limits on the webhook endpoint. Remediation requires implementing HMAC signature validation on all incoming webhooks using a shared secret, IP allowlisting for known processor IPs, and idempotency checks to prevent replay attacks.",
+    "evaluation_criteria": "Must identify webhook forgery as the primary attack vector and recommend HMAC signature validation plus IP allowlisting as essential controls."
+  },
+  {
+    "id": "T5-026",
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "Cashback is calculated as a percentage of the transaction total, but rounding is always performed up to the nearest cent.",
+    "prompt": "Model how rounding-up cashback across a large transaction volume accumulates into material financial overpayment.",
+    "reasoning_focus": "Cashback rounding error amplification.",
+    "expected_answer": "With always-round-up rounding, each transaction overpays cashback by an average of $0.005 (half a cent). At 10 million transactions per day, this accumulates to $50,000 daily overpayment, or approximately $18.25 million annually. An attacker aware of this behavior can maximize exploitation by executing many small transactions (e.g., $0.01 purchases with 1% cashback = $0.0001 rounded up to $0.01), turning a 100x rounding amplification per transaction. Automated micro-transactions can extract significant value purely from rounding overages. Financial impact compounds with transaction volume and is particularly severe for platforms with high daily transaction counts. Remediation requires implementing banker's rounding (round half to even), accumulating fractional cents in a suspense account, and applying rounding at the account level rather than per-transaction.",
+    "evaluation_criteria": "Must calculate the cumulative overpayment from per-transaction rounding at scale and recommend banker's rounding or account-level fractional accumulation."
+  },
+  {
+    "id": "T5-027",
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "Currency conversion rate is fetched once per session and cached for 60 minutes; users can initiate multiple transactions using the same cached rate.",
+    "prompt": "Assess whether stale conversion rate exploitation during volatile exchange periods creates financial arbitrage.",
+    "reasoning_focus": "Multi-currency conversion rate caching mismatch.",
+    "expected_answer": "During volatile forex periods (rate swings of 1-3% within 60 minutes), an attacker can exploit the stale cached rate for arbitrage. If the cached rate favors conversion in one direction and the live rate has moved significantly, the attacker executes large transactions at the favorable stale rate, then immediately converts back at the live rate on another platform for a guaranteed profit. With a 60-minute cache window during major economic events, rate movements of 2%+ are common, enabling substantial arbitrage on large transaction volumes. A $100,000 transaction during a 2% rate swing yields $2,000 risk-free profit per cycle. Remediation requires reducing cache TTL to under 30 seconds, implementing rate deviation checks that invalidate the cache when live rates move beyond a threshold, and adding per-session transaction limits during high-volatility periods.",
+    "evaluation_criteria": "Must identify the arbitrage opportunity during volatile periods with specific rate swing examples and recommend short-TTL caching with deviation-based invalidation."
+  },
+  {
+    "id": "T5-028",
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "Digital product (software license) is delivered immediately upon order creation; order can then be cancelled for a full refund within a 30-minute window.",
+    "prompt": "Model the abuse chain of obtaining digital product delivery then cancelling before the refund window closes.",
+    "reasoning_focus": "Order cancellation after digital delivery.",
+    "expected_answer": "The abuse chain is straightforward: place order, immediately receive the software license key or download, then cancel the order within 30 minutes for a full refund. The attacker retains the delivered digital product while recovering the payment. For software licenses, the key remains valid unless explicitly revoked on cancellation. For downloadable content, the files are already on the attacker's device. This can be automated to obtain unlimited digital products at zero cost. Financial impact is the full retail value of every digital product obtained through this method. Remediation requires revoking delivered license keys upon cancellation, implementing download token expiration tied to order status, excluding digital goods from the cancellation window once delivery is confirmed, or requiring manual review for digital product cancellations.",
+    "evaluation_criteria": "Must trace the complete abuse chain from order to delivery to cancellation and recommend license revocation on cancellation plus exclusion of delivered digital goods from refund windows."
+  },
+  {
+    "id": "T5-029",
+    "complexity": "L2",
+    "domain": "Pricing",
+    "scenario": "A price recalculation API endpoint is publicly accessible and recalculates cart totals when called directly without re-authenticating the user session.",
+    "prompt": "Assess whether an attacker can manipulate pricing by calling the recalculation API directly with modified input.",
+    "reasoning_focus": "API-based price recalculation without session binding.",
+    "expected_answer": "The unsecured recalculation endpoint allows direct price manipulation by any user or automated tool. An attacker can call the API with modified item quantities, prices, or discount codes and receive a recalculated total that the checkout system trusts. Since no session binding exists, the attacker can modify another user's cart or create synthetic cart states. The API effectively serves as a price oracle that can be fed false inputs to produce desired outputs. Financial exposure is unlimited \u2014 any order can have its total reduced to any amount. Remediation requires binding the recalculation endpoint to authenticated sessions, validating all inputs against server-side catalog data, signing the recalculated total cryptographically so it cannot be tampered with between recalculation and checkout, and implementing rate limiting on the endpoint.",
+    "evaluation_criteria": "Must identify the session-binding gap and price oracle manipulation risk, recommending cryptographic signing of recalculated totals and session authentication."
+  },
+  {
+    "id": "T5-030",
+    "complexity": "L2",
+    "domain": "Invoicing",
+    "scenario": "An invoice adjustment endpoint allows changing line-item quantities but does not revalidate the total against individual item prices.",
+    "prompt": "Evaluate whether invoice total manipulation is possible by adjusting quantities without triggering price revalidation.",
+    "reasoning_focus": "Invoice adjustment without total reconciliation.",
+    "expected_answer": "The missing reconciliation between quantity adjustments and total revalidation creates a direct invoice manipulation vulnerability. An attacker can increase quantities on low-priced items while the total remains unchanged, or decrease quantities without the total being reduced accordingly. More critically, if the endpoint allows negative quantities, the attacker can reduce the invoice total below zero. The lack of server-side total recalculation means the invoice total becomes disconnected from the actual line items, enabling arbitrary total manipulation. Financial impact is the difference between the manipulated total and the correct total for every affected invoice. Remediation requires server-side total recalculation on every line-item modification, rejecting negative quantities, and implementing an audit trail that compares pre and post-modification invoice states.",
+    "evaluation_criteria": "Must identify the disconnect between line-item modifications and total recalculation and recommend mandatory server-side total recomputation on every adjustment."
+  },
+  {
+    "id": "T5-031",
+    "complexity": "L2",
+    "domain": "Promotions",
+    "scenario": "A partial refund on an order with an applied promo code returns the discounted price but reinstates the full promo code for reuse.",
+    "prompt": "Model whether promo code reinstatement after a partial refund creates a value extraction loop.",
+    "reasoning_focus": "Promo code lifecycle during partial refund.",
+    "expected_answer": "This creates a clear value extraction loop. The attacker places a large order using a promo code (e.g., $50 off $200), pays $150. They then request a partial refund for one item (refunded at the discounted price). The promo code is fully reinstated for reuse. The attacker repeats with a new order, applying the same promo code again. Each cycle extracts the full promo code value while returning items at discounted prices, netting the discount differential. Over multiple cycles, the attacker accumulates significant value. Financial exposure is the promo code value multiplied by the number of cycles before detection. Remediation requires tracking promo code usage as consumed regardless of partial refunds, only reinstating promos on full order cancellations, and prorating the promo value reduction based on the refunded portion.",
+    "evaluation_criteria": "Must model the complete extraction loop with specific value calculations and recommend treating promo codes as consumed regardless of partial refund status."
+  },
+  {
+    "id": "T5-032",
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "Asynchronous event processor handles payment completions; duplicate events are not deduplicated before credit issuance.",
+    "prompt": "Assess conditions under which event duplication causes double-credit issuance and estimate the blast radius.",
+    "reasoning_focus": "Asynchronous event deduplication gap.",
+    "expected_answer": "Event duplication occurs under several conditions: message broker retries due to consumer acknowledgment timeouts, network partitions causing re-delivery, consumer crashes before acknowledgment, and manual event replay during incident recovery. Each duplicate event triggers a full credit issuance, resulting in double (or more) payment credits to user accounts. The blast radius depends on the duplication source \u2014 a broker retry affects individual transactions, while a network partition can duplicate thousands of events simultaneously. At 100,000 daily transactions with a 0.1% duplication rate, 100 double-credits occur daily, potentially millions in annual overpayment. Remediation requires implementing idempotency keys per event, using exactly-once processing semantics where available, maintaining a processed-event ledger for deduplication, and implementing reconciliation jobs that detect and reverse duplicate credits.",
+    "evaluation_criteria": "Must enumerate specific duplication conditions (retries, partitions, crashes) and recommend idempotency keys with a processed-event ledger for deduplication."
+  },
+  {
+    "id": "T5-033",
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "Discount cap for subscription plans is enforced per billing cycle, but billing cycle dates reset when a user changes plan tier.",
+    "prompt": "Evaluate whether plan tier switching can be used to reset the discount cap counter and stack additional discounts.",
+    "reasoning_focus": "Discount cap bypass via billing cycle reset.",
+    "expected_answer": "The billing cycle reset on tier change creates a discount cap bypass. An attacker can apply discounts up to the cap in the current cycle, switch to a different tier (resetting the cycle), apply discounts up to the cap again, and switch back \u2014 effectively doubling or multiplying their discount allowance. Each tier switch resets the counter, allowing unlimited discount stacking through rapid tier oscillation. If tier switches are free or low-cost, the attacker can cycle multiple times per month, accumulating discounts far beyond the intended cap. Financial exposure is the per-cycle discount cap multiplied by the number of tier switches. Remediation requires tracking discount usage across tier changes with a rolling window independent of billing cycles, implementing cooldown periods between tier switches, and charging prorated fees for tier changes.",
+    "evaluation_criteria": "Must identify the tier-switching cycle attack and recommend tracking discount usage across tier changes with a rolling window independent of billing cycle boundaries."
+  },
+  {
+    "id": "T5-034",
+    "complexity": "L2",
+    "domain": "Rewards",
+    "scenario": "Loyalty tier upgrade provides a bonus multiplier retroactively applied to the current month's already-credited points.",
+    "prompt": "Assess whether deliberate timing of large purchases before a tier upgrade amplifies point accumulation beyond design intent.",
+    "reasoning_focus": "Retroactive multiplier timing exploitation.",
+    "expected_answer": "The retroactive multiplier creates a timing exploitation pattern. An attacker accumulates a large volume of purchases just below the tier upgrade threshold, then makes a small qualifying purchase to trigger the upgrade. The bonus multiplier is then retroactively applied to all the month's prior purchases, amplifying points that were already earned at the lower rate. For example, $10,000 in purchases at 1x points (10,000 points) followed by a tier upgrade to 2x retroactively doubles to 20,000 points \u2014 gaining 10,000 bonus points from the retroactive application alone. This is especially impactful when combined with large purchase-then-return patterns where the purchase triggers the upgrade but the return doesn't revoke the tier. Remediation requires applying multipliers only to purchases made after the upgrade, or if retroactive application is a business requirement, excluding purchases that are subsequently returned.",
+    "evaluation_criteria": "Must identify the pre-loading strategy of accumulating purchases before triggering tier upgrade and recommend prospective-only multiplier application."
+  },
+  {
+    "id": "T5-035",
+    "complexity": "L2",
+    "domain": "Marketplace",
+    "scenario": "A buyer can submit multiple return requests for the same order through the API and UI simultaneously, each triggering a separate refund approval workflow.",
+    "prompt": "Model the race condition between simultaneous return requests and assess the financial exposure of duplicate refund approval.",
+    "reasoning_focus": "Simultaneous return request race condition.",
+    "expected_answer": "The race condition occurs because both the API and UI paths check for existing return requests before creating a new one, but neither acquires a lock. Two simultaneous requests both read 'no existing return' and both create return requests, each entering separate approval workflows. If both are approved (manually or automatically), the buyer receives double the refund amount for a single return. The financial exposure per incident is the full order value (one legitimate refund plus one duplicate). At platform scale with thousands of daily returns, even a small percentage of exploited race conditions generates significant overpayment. Remediation requires implementing a distributed lock on return request creation per order ID, using database-level unique constraints to prevent duplicate return records, and adding a reconciliation check before refund disbursement that verifies no prior refund exists for the same order.",
+    "evaluation_criteria": "Must identify the read-before-write race condition across API and UI paths and recommend distributed locking plus database unique constraints on return requests per order."
+  },
+  {
+    "id": "T5-036",
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "Wallet top-up bonus (10% match) is applied before the top-up transaction is confirmed by the payment processor.",
+    "prompt": "Evaluate whether initiating a top-up and then cancelling the payment retains the bonus credit.",
+    "reasoning_focus": "Top-up bonus pre-settlement timing.",
+    "expected_answer": "If the bonus is applied before payment confirmation, an attacker can initiate a top-up, receive the 10% bonus immediately in their wallet, then cancel or fail the payment. If the system only reverses the base top-up amount on failure but doesn't claw back the bonus, the attacker retains free bonus credit. Even if the bonus is also reversed, a timing window exists where the bonus can be spent or transferred before the reversal processes. A $1,000 top-up generates a $100 bonus; if the payment fails after the bonus is spent, the platform loses $100. Repeated at scale, this creates substantial financial exposure. Remediation requires applying bonuses only after payment confirmation via the processor's settlement callback, implementing a pending-bonus state, and preventing bonus expenditure until the underlying top-up is fully settled.",
+    "evaluation_criteria": "Must identify the bonus retention on payment failure scenario and recommend post-settlement bonus crediting with a pending-bonus state."
+  },
+  {
+    "id": "T5-037",
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "Free shipping threshold is evaluated using the pre-coupon cart total, not the post-coupon total.",
+    "prompt": "Assess whether coupon application sequence allows free shipping qualification on a below-threshold effective purchase.",
+    "reasoning_focus": "Shipping threshold calculation order relative to coupons.",
+    "expected_answer": "The evaluation order allows attackers to qualify for free shipping on effectively low-value orders. A customer adds items totaling $75 (above a $50 free shipping threshold), qualifies for free shipping, then applies a $40 coupon \u2014 resulting in an effective purchase of $35 with free shipping that should only apply to orders over $50. The platform absorbs shipping costs on an order that doesn't economically justify free shipping. At scale, this erodes shipping margin significantly, especially for heavy or distant shipments. The loss per order is the actual shipping cost (typically $5-15). Remediation requires re-evaluating the free shipping threshold after coupon application, or applying shipping fees based on the post-discount cart total, ensuring that the effective order value still meets the threshold.",
+    "evaluation_criteria": "Must identify the threshold bypass via coupon application order and recommend re-evaluation of shipping threshold after all discounts are applied."
+  },
+  {
+    "id": "T5-038",
+    "complexity": "L2",
+    "domain": "Auctions",
+    "scenario": "Bid amount is validated client-side only; the server accepts any bid amount submitted directly to the bid placement API.",
+    "prompt": "Model the impact of bidding below the minimum increment or above the reserve without UI-level constraint enforcement.",
+    "reasoning_focus": "Client-side bid validation without server enforcement.",
+    "expected_answer": "Without server-side validation, an attacker can submit bids at any amount directly to the API. Bidding $0.01 above the current bid (below minimum increment) can win auctions at artificially low prices if the server accepts it. Conversely, submitting bids above the reserve or at extreme values can disrupt the auction by locking out legitimate bidders. The attacker can also submit bids with negative amounts, potentially causing unexpected behavior in the auction settlement logic. The financial impact includes legitimate sellers receiving below-fair-value for auctioned items and auction integrity being completely compromised. Remediation requires server-side validation of minimum bid increment, maximum bid limits, bid amount positivity, and auction state verification (open, closed, cancelled) on every API call.",
+    "evaluation_criteria": "Must identify both below-increment and above-reserve attack vectors and emphasize that all bid validation must be enforced server-side."
+  },
+  {
+    "id": "T5-039",
+    "complexity": "L2",
+    "domain": "Travel",
+    "scenario": "Flight booking hold time is 24 hours; user can re-initiate a new hold on the same inventory item repeatedly, preventing it from appearing available to other users.",
+    "prompt": "Evaluate whether repeated hold extension constitutes inventory reservation abuse without purchase intent.",
+    "reasoning_focus": "Inventory hold abuse via repeated initiation.",
+    "expected_answer": "Repeated hold initiation creates a denial-of-service against inventory availability. An attacker can hold a seat for 24 hours, let the hold expire, immediately re-initiate a new hold, and repeat indefinitely \u2014 effectively reserving the seat permanently without purchasing. This prevents legitimate buyers from booking, causes revenue loss from unsold inventory, and can be weaponized by competitors to lock up rival flights' remaining seats. For premium cabins with limited inventory (2-8 seats), a single attacker can block all availability. Financial impact is the ticket revenue lost on perpetually held but unpurchased seats. Remediation requires implementing a maximum hold count per user per itinerary, adding progressive hold fees, requiring payment method validation at hold time, and implementing a cooldown period between consecutive holds on the same inventory.",
+    "evaluation_criteria": "Must identify the perpetual hold-release-rehold cycle as a denial of inventory attack and recommend hold count limits with cooldown periods."
+  },
+  {
+    "id": "T5-040",
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "A subscription plan with a 7-day trial is free for the first period; cancellation before day 7 prevents any charge, but the trial period restarts upon re-subscription with a new email.",
+    "prompt": "Assess whether trial reset via re-registration enables perpetual free access across a single service.",
+    "reasoning_focus": "Trial period reset via identity re-creation.",
+    "expected_answer": "The trial reset mechanism enables perpetual free access through email rotation. An attacker creates an account with email1@domain.com, uses the 7-day trial, cancels before charging, then creates a new account with email2@domain.com and starts another trial. With disposable email services providing unlimited addresses, this cycle can continue indefinitely. More sophisticated attackers use email aliases (user+1@gmail.com, user+2@gmail.com) from a single inbox. The financial impact is the subscription price multiplied by the number of users exploiting this pattern, which can be substantial for premium services. Remediation requires device fingerprinting, browser fingerprinting, payment method uniqueness checks, phone number verification, and IP-based trial limiting to prevent the same individual from obtaining multiple trials.",
+    "evaluation_criteria": "Must identify the email rotation attack pattern and recommend multi-signal identity verification (device fingerprint, phone, payment method) to prevent trial abuse."
+  },
+  {
+    "id": "T5-041",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Funds credited instantly; withdrawal limited by daily cap but cap resets at midnight UTC.",
+    "prompt": "Model multi-transaction abuse window.",
+    "reasoning_focus": "Rate-limit temporal modeling.",
+    "expected_answer": "The midnight UTC reset creates a double-withdrawal window. An attacker can withdraw up to the daily cap just before midnight UTC (e.g., 11:59 PM), then immediately withdraw another daily cap's worth after midnight (12:01 AM) \u2014 effectively extracting two days' worth of withdrawal limits within a 2-minute window. This is particularly dangerous for fraudulently credited funds because the attacker can extract double the daily cap before fraud detection systems process the next business day's review. For a $10,000 daily cap, $20,000 can be extracted in minutes. Combined with instant fund crediting from stolen payment methods, the blast radius doubles. Remediation requires implementing rolling 24-hour windows instead of fixed midnight resets, adding velocity checks that flag rapid withdrawals near the reset boundary, and implementing a pending period for newly credited funds before withdrawal eligibility.",
+    "evaluation_criteria": "Must identify the midnight boundary double-withdrawal pattern and recommend rolling 24-hour windows instead of fixed daily resets."
+  },
+  {
+    "id": "T5-042",
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "Escrow release triggered via webhook; signature validation weak.",
+    "prompt": "Assess payout manipulation chain.",
+    "reasoning_focus": "Webhook-driven financial state.",
+    "expected_answer": "The weak signature validation on the escrow release webhook creates a direct payout manipulation vector. If the signature uses a predictable algorithm (e.g., MD5) or a short/guessable secret, an attacker can forge valid signatures and craft webhook payloads that trigger escrow releases to their seller account. The attack chain is: discover webhook endpoint, reverse-engineer or brute-force the signing secret, craft a payload with the attacker's seller ID and a valid-looking transaction, submit to the webhook endpoint. Each successful forgery releases the full escrow amount. Financial exposure is the total value of all active escrow balances. Remediation requires upgrading to HMAC-SHA256 with a high-entropy secret (256+ bits), implementing webhook payload timestamp validation to prevent replay attacks, IP allowlisting the payment processor, and adding a secondary verification step that cross-references the webhook data against internal transaction records.",
+    "evaluation_criteria": "Must trace the complete forgery chain from endpoint discovery to secret brute-force to payload crafting and recommend HMAC-SHA256 with timestamp validation."
+  },
+  {
+    "id": "T5-043",
+    "complexity": "L3",
+    "domain": "Travel Platform",
+    "scenario": "Booking confirmed before third-party payment settlement.",
+    "prompt": "Evaluate refund loop abuse scenario.",
+    "reasoning_focus": "Cross-system reconciliation.",
+    "expected_answer": "The pre-settlement booking confirmation creates a refund loop: book a flight/hotel (confirmed immediately), receive booking confirmation and potentially travel, then cancel for a refund before the original payment settles with the third-party processor. The platform issues the refund from its own balance while the original payment never actually settles or is reversed by the processor. The attacker receives both the service (travel) and the refund. If the third-party processor eventually settles the original payment, the platform may also be debited \u2014 creating a triple loss (service provided + refund issued + processor debit). Financial exposure per incident is 2-3x the booking value. Remediation requires waiting for payment settlement before confirming bookings, implementing a provisional booking state, and reconciling refunds against confirmed settlements before disbursement.",
+    "evaluation_criteria": "Must model the triple-loss scenario (service + refund + processor debit) and recommend settlement-gated booking confirmation."
+  },
+  {
+    "id": "T5-044",
+    "complexity": "L3",
+    "domain": "Gaming",
+    "scenario": "In-game currency credited before fraud detection review.",
+    "prompt": "Model credit laundering potential.",
+    "reasoning_focus": "Fraud review timing gap.",
+    "expected_answer": "Pre-review crediting enables a credit laundering chain: purchase in-game currency with a stolen payment method, receive credits immediately, transfer or trade credits to a clean account (or purchase tradeable in-game items), then cash out the clean account through legitimate channels before fraud detection flags the original transaction. The laundering stages \u2014 placement (stolen card purchase), layering (in-game transfers and trades), and integration (cash-out) \u2014 mirror traditional money laundering. The fraud detection delay is the attacker's operational window. Even 15 minutes is sufficient to complete multiple transfer hops. Financial exposure is the total value of fraudulently purchased currency that exits the platform before reversal. Remediation requires holding newly purchased currency in a non-transferable state until fraud review clears, implementing transfer velocity limits on new accounts, and adding real-time fraud scoring that blocks high-risk transactions before crediting.",
+    "evaluation_criteria": "Must map the gaming credit flow to the three stages of money laundering (placement, layering, integration) and recommend non-transferable holds on new purchases pending fraud review."
+  },
+  {
+    "id": "T5-045",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Split payment across two methods is processed sequentially; first payment succeeds, second fails, but order is fulfilled based on first success status alone.",
+    "prompt": "Model the multi-step abuse chain of deliberately failing the second payment to receive goods while only partially paying.",
+    "reasoning_focus": "Split payment partial fulfillment logic.",
+    "expected_answer": "The abuse chain exploits the sequential processing and single-success fulfillment trigger. Step 1: initiate a $200 order split across two payment methods \u2014 $10 on a valid card, $190 on a card that will decline. Step 2: the first $10 payment succeeds, setting the order status to 'payment received.' Step 3: the second $190 payment fails, but the order is already marked as fulfilled based on the first success. Step 4: the order ships, and the attacker receives $200 worth of goods for $10. The financial exposure per transaction is the unpaid portion of the split. At scale, attackers can systematically underpay by maximizing the failing payment portion. Remediation requires implementing an 'all-or-nothing' payment model where fulfillment only triggers when all payment legs succeed, adding automatic order hold when any payment leg fails, and implementing rollback/reversal of successful legs when subsequent legs fail.",
+    "evaluation_criteria": "Must trace the specific abuse chain with dollar amounts showing partial payment exploitation and recommend all-or-nothing fulfillment logic with automatic rollback."
+  },
+  {
+    "id": "T5-046",
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "Chargeback initiated through the payment processor triggers a refund in the merchant system before the chargeback dispute is resolved, then the dispute is also won by the buyer.",
+    "prompt": "Model the double-recovery chain where both chargeback and platform refund are credited simultaneously.",
+    "reasoning_focus": "Chargeback vs platform refund race condition.",
+    "expected_answer": "The double-recovery chain results in the buyer receiving 2x the order value: once through the platform refund triggered by the chargeback notification, and once through the chargeback reversal from the payment processor. The merchant loses the product, the original payment, and an additional refund amount \u2014 plus chargeback fees ($15-25). The attack chain is: purchase item, receive delivery, file chargeback with the bank claiming non-delivery or defective goods. The platform auto-refunds upon chargeback notification. The bank also reverses the charge. The buyer pockets both the platform refund and the bank reversal. Financial exposure per incident is 2x order value plus chargeback fees. Remediation requires not auto-refunding on chargeback notifications but instead marking the order as disputed, waiting for dispute resolution before issuing any credit, and implementing a chargeback-refund mutual exclusion check.",
+    "evaluation_criteria": "Must identify the 2x recovery (platform refund + bank chargeback) and recommend suspending auto-refund on chargeback notifications pending dispute resolution."
+  },
+  {
+    "id": "T5-047",
+    "complexity": "L3",
+    "domain": "Rewards",
+    "scenario": "A loyalty tier upgrade grants a retroactive bonus, a signup bonus for the new tier, and enhanced cashback for the current period \u2014 all credited simultaneously upon a single qualifying transaction.",
+    "prompt": "Model the compounding effect of multiple simultaneous reward triggers on a single transaction and assess the intended vs actual payout.",
+    "reasoning_focus": "Loyalty tier upgrade bonus stacking.",
+    "expected_answer": "The simultaneous triggering of three reward mechanisms on a single transaction creates compounding value far beyond design intent. Consider a user spending $500 to qualify for Gold tier: (1) retroactive bonus applies 2x multiplier to the month's prior $2,000 spend = 2,000 extra points, (2) Gold signup bonus = 5,000 points, (3) enhanced 3% cashback on the $500 qualifying purchase = $15. Total value extracted from a single $500 transaction could exceed $70 in rewards when the intended single-transaction reward was ~$5. The compounding effect means the qualifying transaction ROI far exceeds 100%. An attacker can optimize this by timing a large purchase to simultaneously trigger all three mechanisms. Remediation requires capping total rewards per transaction, making bonus mechanisms mutually exclusive or sequential rather than simultaneous, and implementing a reward ceiling that limits total reward value to a percentage of the transaction amount.",
+    "evaluation_criteria": "Must calculate the compounding value of all three simultaneous reward triggers and demonstrate that the actual payout far exceeds design intent, recommending reward caps or mutual exclusivity."
+  },
+  {
+    "id": "T5-048",
+    "complexity": "L3",
+    "domain": "Refunds",
+    "scenario": "Refund API returns success and triggers wallet credit immediately; the UI-based refund path routes through a manual approval queue with a 48-hour SLA.",
+    "prompt": "Assess the inconsistency between API and UI refund paths and model how API direct access bypasses manual review gates.",
+    "reasoning_focus": "Refund API vs UI approval path inconsistency.",
+    "expected_answer": "The dual-path inconsistency means the manual review controls intended to catch fraudulent refunds are completely bypassed by anyone with API access. An attacker who discovers the API endpoint (through documentation, traffic interception, or reverse-engineering the web app) can submit refund requests that are immediately credited without human review. The 48-hour manual review queue becomes security theater \u2014 all fraud prevention through manual review is nullified. High-value refunds, suspicious patterns, and policy violations that would be caught by reviewers pass unchecked through the API path. Financial exposure is the total refund volume that would have been rejected by manual review. Remediation requires unifying both paths through the same approval workflow, applying the same business rules regardless of entry point, and implementing API-specific fraud scoring that replicates the manual review criteria programmatically.",
+    "evaluation_criteria": "Must identify the complete bypass of manual review controls via the API path and recommend unified approval workflows across all refund entry points."
+  },
+  {
+    "id": "T5-049",
+    "complexity": "L3",
+    "domain": "Microservices",
+    "scenario": "Price validation occurs in the product service but cart totaling occurs in the checkout service; no cryptographic binding ties the validated price to the checkout session.",
+    "prompt": "Model a chain where a price is validated in one service and then a lower price is substituted in the checkout service payload.",
+    "reasoning_focus": "Distributed microservice price validation gap.",
+    "expected_answer": "The absence of cryptographic binding between services creates a price substitution attack. The chain is: (1) request product price from the product service \u2014 receives $100, (2) modify the price to $1 in the checkout service request payload, (3) checkout service processes the $1 price because it has no way to verify the product service validated a different amount. The services operate independently with no shared signed state, so the checkout service trusts whatever price it receives. An attacker simply intercepts the inter-service communication or calls the checkout service directly with modified parameters. Financial impact is the price differential on every manipulated transaction. Remediation requires the product service to issue a signed price token (JWT or HMAC) that the checkout service verifies, implementing service mesh mutual TLS to prevent external callers, and adding reconciliation checks that compare cart totals against product catalog prices before order finalization.",
+    "evaluation_criteria": "Must model the inter-service price substitution attack and recommend cryptographic price tokens (signed JWTs) for binding validated prices across services."
+  },
+  {
+    "id": "T5-050",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Wallet transfer between accounts does not require re-authentication and has a higher transfer limit than withdrawal to external accounts.",
+    "prompt": "Assess whether a chain of internal wallet transfers followed by external withdrawal circumvents per-transaction external withdrawal limits.",
+    "reasoning_focus": "Wallet transfer without re-authentication to bypass limits.",
+    "expected_answer": "The limit disparity between internal transfers and external withdrawals creates a withdrawal limit bypass chain. An attacker controls multiple accounts (or colludes with accomplices). They transfer funds from Account A to Account B internally (no re-auth, high limit), then Account B withdraws to an external account at the withdrawal limit. Meanwhile, Account A also withdraws its remaining balance externally. The total externally withdrawn exceeds what Account A's withdrawal limit would have allowed alone. For large amounts, the attacker can chain through multiple intermediary accounts, each withdrawing at the individual limit. The lack of re-authentication makes internal transfers frictionless and automatable. Financial exposure is the difference between the internal transfer limit and the external withdrawal limit, multiplied by the number of controlled accounts. Remediation requires requiring re-authentication for transfers above a threshold, applying aggregate withdrawal limits across linked accounts, and implementing velocity detection for funds that arrive and immediately leave accounts.",
+    "evaluation_criteria": "Must trace the multi-account transfer-then-withdraw chain and recommend aggregate limits across linked accounts plus re-authentication for high-value transfers."
+  },
+  {
+    "id": "T5-051",
+    "complexity": "L3",
+    "domain": "Rewards",
+    "scenario": "A bonus issuance event is consumed from a message queue; the queue broker does not enforce exactly-once delivery, and the consumer does not implement idempotency checks.",
+    "prompt": "Model the multi-step chain from queue redelivery to bonus duplication and assess the financial magnitude at scale.",
+    "reasoning_focus": "Message queue exactly-once delivery failure for bonus issuance.",
+    "expected_answer": "The chain from redelivery to duplication follows this path: (1) consumer processes bonus issuance message and credits the account, (2) consumer crashes or times out before acknowledging the message, (3) broker redelivers the unacknowledged message to the same or another consumer, (4) second consumer processes the same message and credits the account again. Without idempotency checks, each redelivery results in an additional bonus credit. At platform scale with 1 million daily bonus events and a 0.5% redelivery rate, 5,000 duplicate bonuses occur daily. At $10 average bonus value, this generates $50,000/day in unintended payouts, or $18.25 million annually. During infrastructure incidents that cause mass redelivery, the duplication rate can spike to 10%+, creating sudden large-scale overpayment. Remediation requires implementing idempotency keys derived from the event ID, maintaining a processed-events store (Redis set or database table), and running periodic reconciliation to detect and reverse duplicate credits.",
+    "evaluation_criteria": "Must trace the complete redelivery chain with specific scale calculations and recommend event-ID-based idempotency with a processed-events store."
+  },
+  {
+    "id": "T5-052",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Settlement batch runs nightly; transactions initiated within the final 5 minutes before batch cutoff may appear in two consecutive batch windows due to a race condition in the batch selection query.",
+    "prompt": "Model how a transaction deliberately timed near batch cutoff can result in duplicate settlement processing.",
+    "reasoning_focus": "Settlement batch window boundary timing.",
+    "expected_answer": "The race condition occurs because the batch selection query uses a timestamp range (e.g., WHERE created_at >= batch_start AND created_at < batch_end). Transactions created in the final 5 minutes may be selected by the current batch while also meeting the selection criteria for the next batch if the cutoff boundary is not atomically enforced. The duplicate settlement chain: (1) transaction created at 11:57 PM, (2) current batch selects it at 11:58 PM, (3) batch processing takes 10 minutes, completing at 12:08 AM, (4) next batch starts at 12:00 AM and also selects the 11:57 PM transaction because it hasn't been marked as settled yet. The transaction settles twice, debiting or crediting the account double. An attacker who knows the batch cutoff time can deliberately time large transactions to fall in the boundary window. Remediation requires marking transactions as 'batch-claimed' atomically during selection using SELECT FOR UPDATE, implementing batch sequence numbers on transactions, and adding post-settlement reconciliation that detects duplicate settlements.",
+    "evaluation_criteria": "Must explain the batch boundary race condition with specific timing and recommend atomic claim-marking (SELECT FOR UPDATE) during batch selection."
+  },
+  {
+    "id": "T5-053",
+    "complexity": "L3",
+    "domain": "Gift Cards",
+    "scenario": "Gift card redemption is processed by two concurrent requests simultaneously due to missing distributed lock; both requests succeed and the full balance is deducted twice resulting in negative balance.",
+    "prompt": "Assess the gift card concurrent redemption race condition and evaluate the financial and inventory impact.",
+    "reasoning_focus": "Gift card redemption concurrency without locking.",
+    "expected_answer": "The concurrent redemption race condition allows double-spending a gift card's balance. Two simultaneous redemption requests both read the current balance (e.g., $100), both verify sufficient funds, and both deduct $100 \u2014 resulting in a -$100 balance. The attacker receives $200 worth of goods or services from a $100 gift card. The attack is trivially executable by sending two parallel HTTP requests within milliseconds. The negative balance may not be detected if the system doesn't check for negative balances post-transaction. Financial impact is the gift card face value per exploitation (100% overspend). At scale with automated scripts targeting multiple gift cards simultaneously, the total exposure equals the aggregate balance of all active gift cards. Remediation requires implementing distributed locks (Redis SETNX or database row-level locks) on gift card redemption, using optimistic concurrency control with version numbers, and adding a constraint preventing negative gift card balances.",
+    "evaluation_criteria": "Must identify the check-then-act race condition and recommend distributed locking or optimistic concurrency control with database constraints preventing negative balances."
+  },
+  {
+    "id": "T5-054",
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A seller initiates a payout request; the platform refunds a buyer simultaneously for the same transaction; both operations read the escrow balance before either writes, resulting in double disbursement.",
+    "prompt": "Model the concurrent read-before-write race condition between payout and refund operations on a shared escrow balance.",
+    "reasoning_focus": "Escrow concurrent depletion race condition.",
+    "expected_answer": "The race condition follows a classic TOCTOU (time-of-check-time-of-use) pattern. Thread A (payout): reads escrow balance of $500, validates sufficient funds, prepares $500 disbursement. Thread B (refund): reads same escrow balance of $500 (not yet updated), validates sufficient funds, prepares $500 refund. Both threads write: escrow becomes -$500 as both $500 disbursements execute. The platform has disbursed $1,000 from a $500 escrow \u2014 a $500 loss. This can be exploited by coordinating a seller payout request with a buyer refund request simultaneously. Financial exposure equals the escrow balance per exploited transaction. Remediation requires serializing escrow operations using database transactions with row-level locking (SELECT FOR UPDATE), implementing a state machine that prevents concurrent state transitions on the same escrow record, and adding a mutual exclusion mechanism between payout and refund operations on the same transaction.",
+    "evaluation_criteria": "Must identify the TOCTOU pattern with specific balance calculations showing double disbursement and recommend SELECT FOR UPDATE with state machine controls."
+  },
+  {
+    "id": "T5-055",
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "An enterprise subscription allows seat-based billing; seats are counted at invoice generation time but users can be added and removed freely between billing cycles.",
+    "prompt": "Model whether adding users to consume features and removing them before invoice generation circumvents per-seat billing.",
+    "reasoning_focus": "Seat counting timing window in subscription billing.",
+    "expected_answer": "The point-in-time seat counting creates a billing evasion pattern. An organization with 100 active users adds all 100 on day 1 of the billing cycle, uses the service for 29 days, then removes 90 users on the day before invoice generation, paying for only 10 seats. All 100 users had full access for 29 of 30 days but the organization is billed for 10 seats. This constitutes 90% underpayment. The pattern can be optimized by rotating user access \u2014 adding and removing different users throughout the month to maximize utilization while minimizing the invoice-day seat count. Financial exposure is the difference between actual peak usage and invoice-time seat count multiplied by the per-seat price. Remediation requires implementing high-water-mark billing (charging for the peak seat count during the cycle), daily seat snapshots with average or maximum billing, or metered billing that tracks actual user-days of access.",
+    "evaluation_criteria": "Must model the add-then-remove-before-invoice pattern and recommend high-water-mark or metered billing instead of point-in-time counting."
+  },
+  {
+    "id": "T5-056",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "A loan application is approved and funds disbursed; the applicant then updates their declared income retroactively via a profile edit endpoint that is not locked post-approval.",
+    "prompt": "Assess whether post-approval profile modification creates regulatory or financial reconciliation issues.",
+    "reasoning_focus": "Post-approval profile mutability in loan decisioning.",
+    "expected_answer": "Post-approval profile modification creates both regulatory and financial risks. An applicant can inflate their income to secure loan approval and favorable terms, receive the disbursement, then retroactively reduce their declared income \u2014 either to reduce tax obligations or to claim they were given an unaffordable loan in a potential dispute. This creates a regulatory compliance gap: the loan was approved based on information that no longer exists in the system, making it impossible to audit the decision basis. From a regulatory perspective, this violates KYC documentation requirements and could expose the lender to fair lending compliance violations. Financial impact includes inability to defend underwriting decisions in regulatory audits, potential loan losses from unqualified borrowers, and litigation risk. Remediation requires immutably snapshotting all application data at approval time, locking profile fields that informed the lending decision, and maintaining a full audit trail of any post-approval changes with regulatory flag triggers.",
+    "evaluation_criteria": "Must identify both the inflated-income approval fraud and the retroactive-reduction audit trail destruction and recommend immutable application snapshots at decision time."
+  },
+  {
+    "id": "T5-057",
+    "complexity": "L3",
+    "domain": "Cashback",
+    "scenario": "Cashback is calculated on the gross transaction amount before fee deduction; fee is collected separately; the net cashback exceeds the platform's net revenue on low-margin transactions.",
+    "prompt": "Model the transaction category where cashback percentage exceeds platform margin and assess cumulative financial exposure.",
+    "reasoning_focus": "Cashback rate exceeding platform margin on fee-heavy transactions.",
+    "expected_answer": "For a transaction with 3% cashback on gross amount, the platform must pay cashback on the full transaction including the portion that goes to fees. If the platform's net margin is 2% after processor fees and costs, but cashback is 3% of gross, every transaction operates at a -1% net loss. For a $100 transaction: platform earns $2 margin, pays $3 cashback, net loss of $1. An attacker can maximize exploitation by executing many transactions in the loss-generating category, effectively extracting platform capital. At 10,000 daily exploitative transactions averaging $100, the platform loses $10,000/day. High-fee categories (international transactions, premium card processing) amplify the loss because the platform's margin shrinks while cashback remains constant on gross. Remediation requires calculating cashback on net transaction amount after fees, implementing per-category cashback rate caps tied to category margins, and adding real-time margin monitoring that suspends cashback when net revenue turns negative.",
+    "evaluation_criteria": "Must calculate the specific margin-negative scenario with numbers and recommend cashback calculation on net amounts with category-specific rate caps."
+  },
+  {
+    "id": "T5-058",
+    "complexity": "L3",
+    "domain": "Affiliate",
+    "scenario": "Affiliate commission is calculated on the full order value including shipping; a high-shipping low-product-value order generates disproportionate commission payout.",
+    "prompt": "Assess whether affiliate link usage combined with inflated shipping selection maximizes commission extraction relative to platform revenue.",
+    "reasoning_focus": "Affiliate commission scope including non-product fees.",
+    "expected_answer": "The commission scope including shipping creates a commission inflation attack. An affiliate (or colluding buyer) selects a $1 product with $99 express international shipping through the affiliate link. The 10% affiliate commission is calculated on $100 (total order value), paying $10 in commission \u2014 10x the product value. The platform's margin on the $1 product is near zero, but it pays $10 in commission, creating a $9+ loss per transaction. This can be industrialized: the affiliate generates hundreds of low-value high-shipping orders through click farms, extracting commissions that far exceed platform revenue on those transactions. Financial exposure scales with the number of exploitable orders multiplied by the commission-to-margin differential. Remediation requires calculating affiliate commission only on product value excluding shipping and taxes, implementing commission caps as a percentage of product margin, and flagging affiliate accounts with abnormal shipping-to-product-value ratios.",
+    "evaluation_criteria": "Must calculate the specific commission inflation using a low-product high-shipping example and recommend excluding shipping from the commission base."
+  },
+  {
+    "id": "T5-059",
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Currency exchange transaction shows a favorable rate at initiation; the actual rate applied at settlement differs by 3% due to a batched execution model not disclosed to users.",
+    "prompt": "Evaluate the financial impact of rate slippage between initiation and settlement and assess whether the gap constitutes a business logic risk.",
+    "reasoning_focus": "Currency execution rate vs settlement rate slippage.",
+    "expected_answer": "A 3% rate slippage on currency exchange represents a significant undisclosed cost to users and a potential regulatory violation. For a $10,000 exchange, the user expects to receive the amount shown at initiation but actually receives $300 less due to settlement slippage. This constitutes a hidden fee that may violate consumer financial protection regulations requiring transparent fee disclosure. The batched execution model means all transactions within a batch window experience slippage, affecting every user during volatile periods. If the platform retains the slippage differential as undisclosed revenue, this compounds the regulatory risk. Financial impact to users is 3% of total exchange volume processed through the batched model. For the platform, the risk is regulatory fines, class-action litigation, and reputational damage. Remediation requires disclosing the batched execution model, showing guaranteed worst-case rates, implementing slippage protection (maximum deviation from displayed rate), and offering rate-locked executions for a transparent premium fee.",
+    "evaluation_criteria": "Must identify the regulatory and consumer protection implications of undisclosed rate slippage and recommend transparent disclosure with slippage protection mechanisms."
+  },
+  {
+    "id": "T5-060",
+    "complexity": "L3",
+    "domain": "Insurance",
+    "scenario": "Insurance premium calculation uses the policyholder's declared information; no verification occurs until claim time; premium is charged at the underdeclared risk rate.",
+    "prompt": "Model the financial exposure when premium is calculated on unverified declared risk and assess claim-time reconciliation impact.",
+    "reasoning_focus": "Unverified declaration in premium calculation.",
+    "expected_answer": "The deferred verification model creates adverse selection at scale. Policyholders systematically underdeclare risk factors (property value, health conditions, driving history) to reduce premiums, then file claims at full value. At claim time, the insurer discovers the mismatch and faces a choice: pay the full claim (absorbing the premium shortfall) or deny/reduce the claim (triggering litigation and regulatory scrutiny). Either outcome is financially adverse. The premium shortfall across an entire book of business with systematic underdeclaration can reach 20-40% of expected premium revenue. In high-claim-frequency lines (auto, health), the loss ratio deteriorates rapidly. Financial exposure is the aggregate claims payout minus the aggregate underdeclared premiums collected. Remediation requires implementing declaration verification at underwriting time (automated property value lookups, driving record checks, medical data integration), risk-based verification thresholds, and proportional claim reduction clauses for material misrepresentation.",
+    "evaluation_criteria": "Must identify the adverse selection dynamic from deferred verification and recommend automated verification at underwriting time with proportional claim reduction for misrepresentation."
+  },
+  {
+    "id": "T5-061",
+    "complexity": "L4",
+    "domain": "Marketplace SaaS",
+    "scenario": "Platform calculates seller commission separately from payout service.",
+    "prompt": "Model commission desynchronization abuse.",
+    "reasoning_focus": "Microservice financial drift.",
+    "expected_answer": "Commission desynchronization between the calculation and payout services creates exploitable drift. If the commission service calculates a 15% fee on a $100 sale ($15 commission, $85 payout) but the payout service processes based on a cached or stale commission rate (e.g., 10% from before a rate change), the seller receives $90 instead of $85 \u2014 a $5 overpayment per transaction. An attacker who knows about the synchronization delay can time high-volume sales during rate change windows to exploit the stale rate. At scale with thousands of sellers and rate change events, the cumulative financial drift becomes material. The desynchronization may also work in reverse, underpaying sellers and creating dispute liabilities. Remediation requires using a single source of truth for commission rates with atomic reads at payout time, implementing event-driven rate propagation with confirmation before processing, and running continuous reconciliation between commission calculations and actual payouts.",
+    "evaluation_criteria": "Must identify the stale rate exploitation during synchronization windows and recommend a single source of truth with atomic rate reads at payout time."
+  },
+  {
+    "id": "T5-062",
+    "complexity": "L4",
+    "domain": "Fintech API",
+    "scenario": "Payment microservice and accounting microservice update ledgers asynchronously.",
+    "prompt": "Assess ledger inconsistency window.",
+    "reasoning_focus": "Distributed state modeling.",
+    "expected_answer": "The asynchronous ledger updates create a consistency window where the payment ledger and accounting ledger reflect different states. During this window, the payment service may show a successful transaction while the accounting service hasn't recorded it yet \u2014 or vice versa. This inconsistency enables several abuse patterns: (1) requesting a refund from the accounting service for a transaction it hasn't yet recorded, causing it to credit without a corresponding debit, (2) using the payment service's confirmed state to access services while the accounting service shows no charge, (3) exploiting the window for regulatory reporting discrepancies. The inconsistency window duration depends on queue depth, consumer processing speed, and failure handling \u2014 typically milliseconds to minutes, but potentially hours during outages. Remediation requires implementing saga patterns with compensating transactions, using event sourcing with a single event log as the source of truth, and deploying real-time reconciliation that alerts on inter-service ledger divergence exceeding a threshold.",
+    "evaluation_criteria": "Must identify specific abuse patterns enabled by the ledger inconsistency window and recommend saga patterns with event sourcing and real-time reconciliation."
+  },
+  {
+    "id": "T5-063",
+    "complexity": "L4",
+    "domain": "Subscription SaaS",
+    "scenario": "Multi-tenant billing logic applies global discount configuration.",
+    "prompt": "Model cross-tenant financial impact.",
+    "reasoning_focus": "Tenant isolation in billing.",
+    "expected_answer": "Global discount configuration without tenant isolation means a discount intended for Tenant A is applied to all tenants, including Tenants B through Z. If Tenant A negotiates a 50% enterprise discount that is stored globally, all tenants receive the 50% reduction \u2014 causing immediate revenue loss of 50% across the entire customer base. The cross-tenant impact is catastrophic: a platform with 1,000 tenants paying $100/month loses $50,000/month if a single tenant's discount is globally applied. Even without malicious intent, configuration errors in shared billing systems have outsized blast radius. An insider or compromised admin account could deliberately create a global discount as a destructive attack. Financial exposure is the discount percentage multiplied by total platform revenue. Remediation requires strict tenant-scoped discount configuration with namespace isolation, requiring dual authorization for discount changes, implementing a preview/dry-run mode that shows the blast radius before applying changes, and adding automated alerting for revenue deviation above thresholds.",
+    "evaluation_criteria": "Must quantify the cross-tenant blast radius with specific revenue impact calculations and recommend tenant-scoped configuration with dual authorization."
+  },
+  {
+    "id": "T5-064",
+    "complexity": "L4",
+    "domain": "Coupons",
+    "scenario": "A global coupon configuration is stored in a shared cache layer and applies to all tenants; a misconfigured admin updates the global coupon to 100% discount affecting all active sessions.",
+    "prompt": "Model the cross-tenant financial blast radius of a single misconfigured global coupon binding.",
+    "reasoning_focus": "Global coupon configuration cross-tenant misbinding.",
+    "expected_answer": "A 100% global coupon immediately makes all products free across every tenant's storefront. The blast radius propagates at the speed of cache access \u2014 every active session checking coupon validity receives the 100% discount. With an e-commerce platform processing 10,000 orders per hour across all tenants, a 1-hour exposure window at 100% discount results in $0 revenue on potentially millions in GMV. The damage includes: all orders placed during the window are fulfilled at zero revenue, inventory is depleted without payment, and rollback requires cancelling and reprocessing thousands of orders \u2014 generating massive customer support load and reputational damage. The financial exposure equals the platform's hourly GMV multiplied by exposure duration. Remediation requires implementing maximum discount caps in the configuration schema (e.g., never allow >90%), requiring dual-admin approval for discount changes above a threshold, adding real-time revenue anomaly detection that triggers automatic coupon suspension, and testing configuration changes in a sandbox before cache propagation.",
+    "evaluation_criteria": "Must calculate the blast radius using hourly GMV multiplied by exposure duration and recommend configuration caps, dual-admin approval, and real-time revenue anomaly detection."
+  },
+  {
+    "id": "T5-065",
+    "complexity": "L4",
+    "domain": "Pricing",
+    "scenario": "A SaaS platform operates across multiple regions with region-specific pricing; the currency and price for a user's region are determined by the client-supplied Accept-Language header with no server-side geolocation validation.",
+    "prompt": "Assess how cross-region pricing mismatch via header spoofing enables purchasing at lower regional price points.",
+    "reasoning_focus": "Cross-region pricing trust boundary via client header.",
+    "expected_answer": "Header spoofing enables trivial price arbitrage across regions. An attacker in a high-price region (US, $100/month) spoofs Accept-Language to a low-price region (India, $10/month equivalent) and purchases the identical product at 90% discount. The platform delivers the same SaaS service regardless of pricing region, so the attacker receives full value at a fraction of the intended price. This requires no technical sophistication \u2014 browser extensions or a single header modification accomplishes the bypass. At scale, entire user communities share the optimal header value for minimum pricing. Financial impact is the price differential between the user's true region and the spoofed region, multiplied by the number of users exploiting the bypass. Remediation requires server-side geolocation using IP-based geo databases (MaxMind, IP2Location), validating payment method country against pricing region, and implementing pricing tier locks tied to account registration country rather than per-request headers.",
+    "evaluation_criteria": "Must identify the trivial header spoofing technique and recommend server-side IP geolocation with payment method country validation."
+  },
+  {
+    "id": "T5-066",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A bulk payment API endpoint processes up to 10,000 transactions per request and applies per-transaction validation only after the batch is accepted; malformed transaction entries are skipped silently.",
+    "prompt": "Model how bulk API operations with post-acceptance validation create a window where invalid transactions bypass per-item business rules.",
+    "reasoning_focus": "Bulk API validation bypass via batch acceptance.",
+    "expected_answer": "The post-acceptance validation model creates two exploit vectors. First, malformed but financially significant transactions that are silently skipped may still trigger side effects (balance reservations, notifications, audit entries) before being validated. Second, an attacker can embed invalid transactions that exploit edge cases in the silent-skip logic \u2014 for example, negative amounts that are skipped by the formatter but processed by the credit engine. The batch acceptance confirms all 10,000 transactions as 'received' before validation, creating a commitment state that downstream systems may act on. If the batch confirmation triggers downstream processes (settlement queuing, notification dispatch) before per-item validation completes, invalid transactions propagate through the pipeline. Remediation requires synchronous per-item validation before batch acceptance, explicit rejection of invalid items with detailed error responses (no silent skipping), and implementing a two-phase commit where the batch is accepted provisionally, validated item-by-item, then confirmed or rolled back.",
+    "evaluation_criteria": "Must identify both the silent-skip side effects and the batch-acceptance-before-validation timing issue and recommend synchronous per-item validation before acceptance."
+  },
+  {
+    "id": "T5-067",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "Financial event logs are stored immutably but the event replay system allows re-processing historical events when triggered by an admin flag; no secondary authorization is required for replay initiation.",
+    "prompt": "Model how financial event replay without dual authorization can be used to re-execute historical transactions and amplify payouts.",
+    "reasoning_focus": "Financial event replay authorization gap.",
+    "expected_answer": "The single-admin replay trigger creates an insider threat vector with unlimited financial amplification potential. A compromised or malicious admin can replay historical high-value payout events, causing the system to re-execute them as new transactions. Since the events are valid (they were legitimately processed originally), the replay produces legitimate-looking transactions that pass all validation checks. The admin can target specific high-value events for replay, selectively amplifying payouts to specific accounts. With access to the full event history, a single replay session could re-execute millions of dollars in historical payouts. The attack is difficult to detect because the replayed events are identical to legitimate historical events. Remediation requires implementing dual-authorization (two-person rule) for any event replay, adding unique replay markers that prevent financial re-execution, implementing a separate replay ledger that tracks replayed events for reconciliation, and adding real-time alerting on aggregate payout volume spikes.",
+    "evaluation_criteria": "Must identify the insider threat from single-admin replay authority and recommend dual-authorization (two-person rule) with replay markers preventing financial re-execution."
+  },
+  {
+    "id": "T5-068",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A rounding function truncates fractions of a cent at each of 50 microservice nodes; the sum of truncated fractions across 10 million transactions per day accumulates into a significant undisclosed balance.",
+    "prompt": "Model the systemic financial impact of distributed fractional rounding across a high-volume transaction platform.",
+    "reasoning_focus": "Distributed rounding error aggregation at scale.",
+    "expected_answer": "This is a modern 'salami slicing' scenario. With 50 nodes each truncating fractions, the average loss per transaction per node is $0.005 (half a cent). Across 50 nodes: $0.005 \u00d7 50 = $0.25 lost per transaction to truncation. At 10 million transactions per day: $0.25 \u00d7 10,000,000 = $2,500,000 daily in truncated value. Annually, this accumulates to over $900 million in undisclosed fractional rounding losses. These truncated fractions must go somewhere \u2014 either they silently benefit the platform (undisclosed revenue), disappear into accounting rounding errors, or accumulate in suspense accounts. If an insider redirects these fractions to a controlled account, it's a classic Office Space / Superman III attack. The distributed nature across 50 nodes makes detection extremely difficult because each node's truncation is individually immaterial. Remediation requires implementing decimal arithmetic (not floating-point) across all nodes, centralizing rounding to a single reconciliation point, tracking fractional remainders in a suspense account, and performing daily fractional reconciliation across all nodes.",
+    "evaluation_criteria": "Must calculate the specific daily and annual truncation loss across nodes and transactions and recommend centralized rounding with decimal arithmetic and fractional suspense accounting."
+  },
+  {
+    "id": "T5-069",
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "Marketplace escrow is released when the buyer marks the order as received; a race condition allows marking received and simultaneously initiating a dispute, triggering both escrow release and dispute refund.",
+    "prompt": "Assess the concurrent escrow release and dispute initiation race condition and estimate the total financial exposure.",
+    "reasoning_focus": "Simultaneous escrow release and dispute trigger race.",
+    "expected_answer": "The race condition allows double disbursement: the seller receives the escrow release (buyer confirmed receipt) while the buyer simultaneously receives a dispute refund \u2014 the platform pays out 2x the escrow amount. The attack is executed by sending two concurrent API requests: one to the 'mark received' endpoint and one to the 'initiate dispute' endpoint within milliseconds. Both requests read the escrow state as 'held' before either writes a status change, so both operations proceed. For a $500 escrow, the platform disburses $500 to the seller and $500 to the buyer \u2014 a $500 net loss. The financial exposure at platform scale is the average escrow value multiplied by the number of exploited transactions. With marketplace GMV of $10M/day and even 0.1% exploitation rate, daily exposure is $10,000. Remediation requires implementing state machine transitions with database-level locking (SELECT FOR UPDATE on the escrow record), making 'received' and 'disputed' mutually exclusive terminal states, and adding a processing lock that prevents concurrent state transitions.",
+    "evaluation_criteria": "Must calculate the 2x disbursement from the race condition and recommend mutual exclusion between received and disputed states with database-level locking."
+  },
+  {
+    "id": "T5-070",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "Payout API is accessible to sellers; a misconfigured rate-limit allows 500 payout requests per minute; each request triggers a payout if the account balance covers the amount.",
+    "prompt": "Model how rate-limit misconfiguration on a payout endpoint enables high-velocity extraction from seller accounts.",
+    "reasoning_focus": "Payout API rate-limit bypass enabling velocity abuse.",
+    "expected_answer": "The misconfigured rate limit of 500 requests/minute on a payout endpoint enables rapid fund extraction. An attacker with a compromised seller account containing $50,000 can initiate 500 payout requests of $100 each within 60 seconds, extracting the entire balance before any manual review or fraud detection can intervene. Even with proper balance validation, the high velocity ensures funds are extracted faster than recovery is possible. If the attacker compromises multiple seller accounts, they can drain them in parallel. With 10 compromised accounts at $50,000 each, $500,000 can be extracted in under 2 minutes. The appropriate rate limit for payout operations should be 1-5 per hour with mandatory re-authentication and manual approval above a threshold. Remediation requires reducing the payout rate limit to single-digit requests per hour, implementing step-up authentication for payout requests, requiring manual approval for payouts above a threshold, and implementing velocity-based holds that freeze accounts when payout frequency exceeds normal patterns.",
+    "evaluation_criteria": "Must calculate the extraction velocity at 500 requests/minute and recommend drastically lower rate limits with step-up authentication and manual approval thresholds."
+  },
+  {
+    "id": "T5-071",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A platform with 2 million users runs a coordinated referral campaign; two colluding accounts can each refer each other in a mutual referral loop because the system does not detect circular referral chains.",
+    "prompt": "Model the financial impact of coordinated multi-account circular referral chains at platform scale.",
+    "reasoning_focus": "Circular referral detection gap at platform scale.",
+    "expected_answer": "Circular referral chains enable unlimited bonus extraction. Account A refers Account B (A receives $25 bonus), Account B refers Account A (B receives $25 bonus) \u2014 total extraction: $50 from two accounts that referred each other. Extending to chains of 10+ colluding accounts creates complex referral graphs that are harder to detect: A\u2192B\u2192C\u2192D\u2192...\u2192A, with each link generating a bonus. At platform scale with 2 million users, even 1% participation in circular schemes (20,000 users in 10,000 pairs) generates $500,000 in fraudulent referral bonuses. Organized fraud rings can create thousands of synthetic accounts specifically for circular referral exploitation. The financial impact compounds if referral bonuses have no cap per account. Remediation requires implementing graph-based cycle detection on the referral network (detecting A\u2192B\u2192A patterns), limiting referral bonuses per account per time period, requiring qualifying actions (purchases, deposits) from referred accounts before bonus disbursement, and analyzing referral networks for suspicious clustering patterns.",
+    "evaluation_criteria": "Must model the circular referral chain with specific financial calculations and recommend graph-based cycle detection with qualifying action requirements."
+  },
+  {
+    "id": "T5-072",
+    "complexity": "L4",
+    "domain": "Affiliate",
+    "scenario": "Affiliate payout chain involves four services: tracking, attribution, approval, and disbursement; the disbursement service does not verify that approval was granted by the attribution service before paying.",
+    "prompt": "Model the payout chain authorization gap and assess whether disbursement can be triggered without upstream attribution approval.",
+    "reasoning_focus": "Multi-service affiliate payout chain authorization bypass.",
+    "expected_answer": "The missing cross-service authorization check creates a disbursement bypass. An attacker who gains access to the disbursement service API (or exploits an injection vulnerability) can submit payout requests directly, skipping tracking, attribution, and approval entirely. The disbursement service processes the request because it doesn't verify that the payout was approved by the upstream attribution service. The attack chain: discover the disbursement API endpoint, craft a valid-looking payout request with an attacker-controlled account and amount, submit directly. Each successful bypass results in unauthorized fund extraction. Financial exposure is the sum of all unauthorized payouts before detection. The four-service architecture provides defense-in-depth only if each service validates the output of its predecessor. Remediation requires implementing a signed approval token that the attribution service issues and the disbursement service cryptographically verifies before processing, adding cross-service audit trails that reconcile tracked \u2192 attributed \u2192 approved \u2192 disbursed chains, and implementing the principle that the disbursement service must never process requests not originating from the approval service.",
+    "evaluation_criteria": "Must trace the direct disbursement bypass chain and recommend cryptographic approval tokens that the disbursement service must verify from the attribution service."
+  },
+  {
+    "id": "T5-073",
+    "complexity": "L4",
+    "domain": "Lending",
+    "scenario": "A buy-now-pay-later service splits payment into installments; the first installment is charged at checkout but subsequent installments use a payment method stored without re-authorization; the stored method can be updated between installments.",
+    "prompt": "Assess the financial risk when the payment method for future installments can be replaced with an invalid or contested card between billing cycles.",
+    "reasoning_focus": "Installment payment method mutability between cycles.",
+    "expected_answer": "Payment method mutability between installments creates a deliberate default attack vector. An attacker uses a valid card for the first installment, receives the goods, then replaces the stored payment method with an expired, stolen, or prepaid card with insufficient funds. Subsequent installments fail, and the attacker has received full product value while paying only the first installment (typically 25% of total). The platform absorbs the remaining 75% as bad debt. At scale, organized groups can systematically exploit this across multiple accounts and purchases. The financial exposure per transaction is 75% of the order value (3 of 4 installments defaulted). With average BNPL orders of $200, each exploitation costs $150 in unrecoverable debt. Remediation requires locking the payment method for the duration of the installment plan, pre-authorizing the full remaining balance at checkout time, implementing credit checks that evaluate the customer's ability to pay all installments, and adding early fraud detection flags for payment method changes on active installment plans.",
+    "evaluation_criteria": "Must identify the deliberate default attack via payment method swap and recommend payment method locking for the installment duration with full-balance pre-authorization."
+  },
+  {
+    "id": "T5-074",
+    "complexity": "L4",
+    "domain": "Insurance",
+    "scenario": "A group insurance policy prices all members based on the lowest-risk member's profile; individual members can join and leave groups dynamically with pricing recalculated monthly.",
+    "prompt": "Model how dynamic group membership manipulation can be used to artificially lower group risk scores and reduce premium costs.",
+    "reasoning_focus": "Dynamic group composition gaming for premium reduction.",
+    "expected_answer": "Dynamic membership enables systematic premium manipulation. A high-risk group temporarily adds low-risk members (healthy young adults with clean records) before the monthly pricing calculation, reducing the group's average risk score and premium. After pricing is locked for the cycle, the low-risk members leave, returning the group to its true high-risk composition while retaining the low-risk premium. The group is effectively insured at an artificially low rate that doesn't reflect actual risk. For a 20-person high-risk group, temporarily adding 30 low-risk members can halve the average risk score, potentially reducing premiums by 40-60%. If the low-risk members are synthetic or colluding, the cost is only their pro-rated premium for a few days. Financial exposure is the premium shortfall relative to the group's true risk, compounded across all gaming groups and claim events. Remediation requires implementing minimum membership duration requirements, using rolling average risk calculations that account for membership changes, and weighting risk scores by membership tenure.",
+    "evaluation_criteria": "Must model the temporary low-risk member injection strategy with premium reduction calculations and recommend minimum membership duration with tenure-weighted risk scoring."
+  },
+  {
+    "id": "T5-075",
+    "complexity": "L4",
+    "domain": "Gaming",
+    "scenario": "A virtual currency exchange allows trading between two in-game currencies at platform-set rates; arbitrage is possible between two items that can be converted through a cycle of three trades returning more than the starting amount.",
+    "prompt": "Model the triangular arbitrage cycle in a virtual economy and assess the financial extraction potential at scale.",
+    "reasoning_focus": "Virtual economy triangular arbitrage loop.",
+    "expected_answer": "Triangular arbitrage exploits rate inconsistencies across three currency pairs. If Currency A \u2192 B at 1:10, B \u2192 C at 1:5, and C \u2192 A at 1:0.025, then starting with 100 A: trade to 1,000 B, trade to 200 C, trade back to 100 \u00d7 0.025\u207b\u00b9 = 200 C \u00d7 ... (the cycle produces more A than started). Each cycle amplifies the starting amount by the arbitrage multiplier. An automated bot can execute thousands of cycles per second, extracting unlimited virtual currency from the economy. This causes hyperinflation in the virtual economy, devalues all legitimate player holdings, and if virtual currency can be cashed out, creates direct financial loss. The extraction potential is bounded only by execution speed and liquidity. Remediation requires ensuring exchange rates satisfy the no-arbitrage condition (product of all rates in any cycle equals 1), implementing circuit breakers that halt trading when rate inconsistencies exceed a threshold, and adding per-account trading velocity limits that prevent high-frequency cycling.",
+    "evaluation_criteria": "Must demonstrate the triangular arbitrage calculation with specific rates and recommend enforcing the no-arbitrage condition where the product of cycle rates equals 1."
+  },
+  {
+    "id": "T5-076",
+    "complexity": "L4",
+    "domain": "Subscription",
+    "scenario": "Enterprise SaaS allows customers to purchase additional API quota units as add-ons; unused units roll over indefinitely; a bug allows purchasing negative quantities, which deducts from the invoice total.",
+    "prompt": "Assess how negative quantity purchases on add-on items reduce the invoice total and the downstream billing impact.",
+    "reasoning_focus": "Negative quantity add-on purchase reducing invoice total.",
+    "expected_answer": "Negative quantity add-ons create a direct invoice manipulation vector. An attacker purchases -1000 API quota units at $0.10 each, adding -$100 to the invoice. If the base subscription is $200/month, the invoice total drops to $100. Repeated negative purchases can reduce the total to zero or below. If negative invoice totals trigger credit issuance, the attacker converts negative quantity purchases into platform credits \u2014 effectively generating money. The bug also corrupts quota tracking: negative quantities deducted from the quota pool may cause integer underflow, resulting in near-unlimited API access. Downstream impact includes billing system confusion, revenue reporting inaccuracies, and potential accounting system errors when negative line items are processed. Remediation requires input validation rejecting quantities \u2264 0, implementing unsigned integer types for quantity fields, adding invoice total floor constraints (minimum $0), and auditing historical invoices for negative quantity entries.",
+    "evaluation_criteria": "Must identify both the invoice reduction and potential integer underflow in quota tracking and recommend strict input validation rejecting non-positive quantities."
+  },
+  {
+    "id": "T5-077",
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A financial platform processes cross-border payments; local regulatory caps limit transfer amounts per transaction; the API allows submitting multiple concurrent transfers that collectively exceed the regulatory cap within the same processing window.",
+    "prompt": "Model how concurrent transfer submissions exploit the per-transaction cap while collectively exceeding regulatory limits.",
+    "reasoning_focus": "Concurrent transfer regulatory cap bypass.",
+    "expected_answer": "The per-transaction regulatory cap without aggregate enforcement creates a structuring vulnerability. A $10,000 per-transaction cap can be bypassed by submitting 100 concurrent $9,999 transfers totaling $999,900 \u2014 each individual transfer passes the per-transaction check. The API processes them concurrently, so no single request triggers the regulatory flag. This constitutes financial structuring (smurfing), which is illegal in most jurisdictions and carries severe regulatory penalties. The concurrent processing means aggregate checks that run after individual validation miss the coordinated submissions because they occur within the same processing window. Financial and regulatory exposure includes anti-money-laundering (AML) violations, regulatory fines (potentially millions), and loss of banking licenses. Remediation requires implementing real-time aggregate transfer tracking per account per time window, applying Suspicious Activity Report (SAR) thresholds to aggregate amounts not just per-transaction amounts, adding velocity checks that flag multiple near-cap transfers, and implementing a brief processing delay between concurrent transfers to allow aggregate checks.",
+    "evaluation_criteria": "Must identify this as a structuring/smurfing pattern with regulatory AML implications and recommend real-time aggregate transfer tracking against regulatory thresholds."
+  },
+  {
+    "id": "T5-078",
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "Platform takes a 15% transaction fee; fee is calculated on the buyer payment minus shipping; a seller sets a $0 product price with $100 shipping, effectively reducing the fee to near zero.",
+    "prompt": "Assess how fee calculation scope relative to shipping costs enables fee avoidance at the platform level.",
+    "reasoning_focus": "Transaction fee scope bypass via shipping inflation.",
+    "expected_answer": "The fee calculation excluding shipping creates a systematic fee avoidance mechanism. A $100 transaction normally generates $15 in platform fees. By structuring the sale as $0 product + $100 shipping, the fee calculation base becomes $0, generating $0 in fees. The buyer pays the same $100 total, but the platform receives nothing. This can be adopted by all sellers on the platform once the technique is known, potentially reducing platform fee revenue to near zero. Even partial shifting (e.g., $20 product + $80 shipping on a $100 sale) reduces the fee from $15 to $3. Financial impact is the platform's total fee revenue multiplied by the adoption rate of shipping inflation among sellers. Remediation requires calculating fees on the total transaction amount including shipping, implementing maximum shipping fee caps relative to product price (e.g., shipping cannot exceed 50% of product price), flagging listings where shipping exceeds product price for manual review, and including shipping in the fee base contractually in seller agreements.",
+    "evaluation_criteria": "Must calculate the fee reduction from shipping inflation with specific dollar examples and recommend including shipping in the fee calculation base."
+  },
+  {
+    "id": "T5-079",
+    "complexity": "L4",
+    "domain": "Rewards",
+    "scenario": "A corporate rewards platform credits bonuses based on team size reported by managers; team size is self-reported with no HR system verification; inflated team sizes result in disproportionate team-level bonuses.",
+    "prompt": "Model the financial impact of self-reported team size inflation on bonus allocation at enterprise scale.",
+    "reasoning_focus": "Self-reported metric manipulation in bonus calculation.",
+    "expected_answer": "Self-reported team sizes without verification create a moral hazard where managers inflate headcount to increase bonus allocation. A manager with 10 actual reports who claims 20 receives double the team bonus budget. At enterprise scale with 500 managers each inflating by an average of 30%, the bonus pool overspend is significant: if the intended bonus budget is $5M and average inflation is 30%, actual payout reaches $6.5M \u2014 a $1.5M overspend. The inflation compounds when bonus formulas use progressive brackets (larger teams get higher per-capita bonuses). Individual managers face no downside from inflation because bonuses are distributed at their discretion. Financial impact is the aggregate bonus overpayment across all inflated teams. Remediation requires integrating with the HRIS (Human Resources Information System) for real-time headcount verification, implementing audit trails that compare reported vs HRIS team sizes, adding approval gates for team size changes, and conducting periodic reconciliation of bonus allocation against actual organizational structure.",
+    "evaluation_criteria": "Must quantify the enterprise-scale bonus overspend from systematic inflation and recommend HRIS integration for automated headcount verification."
+  },
+  {
+    "id": "T5-080",
+    "complexity": "L4",
+    "domain": "Token Economy",
+    "scenario": "A tokenized asset platform allows fractional ownership; a bug in the fractional calculation allows a user to own 0.9999 + 0.9999 = 2.0000 shares of a single unit by exploiting floating-point addition across two separate purchase transactions.",
+    "prompt": "Model how floating-point precision errors in fractional asset calculation result in ownership exceeding 100% of a unit.",
+    "reasoning_focus": "Floating-point precision failure in fractional asset ledger.",
+    "expected_answer": "Floating-point arithmetic in IEEE 754 double precision cannot exactly represent many decimal fractions, causing accumulation errors. When 0.9999 is stored as a float, it may be represented as 0.99990000000000001 or similar. Two separate purchases of 0.9999 shares might sum to 1.99980000000000002, which rounds to 2.0000 \u2014 creating ownership of 200% of a single asset unit. This means the system has sold more than exists, creating a phantom asset liability. At scale across thousands of fractional ownership transactions, cumulative floating-point errors can create significant over-allocation. If the underlying asset is a real-world asset (real estate, securities), the over-allocation creates legal liability because rights have been sold that don't exist. Financial exposure is the value of all phantom fractional shares that exceed 100% ownership. Remediation requires using fixed-point decimal arithmetic (not floating-point) for all financial calculations, implementing ownership cap validation that ensures total fractional ownership never exceeds 1.0000 per unit using integer-based fractional representation (e.g., basis points), and adding reconciliation that detects over-allocation.",
+    "evaluation_criteria": "Must explain the IEEE 754 floating-point precision failure mechanism and recommend fixed-point decimal arithmetic with integer-based fractional representation."
+  },
+  {
+    "id": "T5-081",
+    "complexity": "L5",
+    "domain": "Fintech Core",
+    "scenario": "Transaction validation logic split across three microservices with eventual consistency.",
+    "prompt": "Model systemic abuse potential.",
+    "reasoning_focus": "Consistency model failure.",
+    "expected_answer": "Eventual consistency across three validation microservices creates systemic abuse windows where transactions pass partial validation but not full validation. If Service A validates account status, Service B validates transaction limits, and Service C validates fraud rules \u2014 and each operates on eventually consistent data \u2014 an attacker can exploit the propagation delay between services. A transaction that should be rejected by the aggregate rules passes because each service sees a different snapshot of the user's state. For example, Service A sees the account as active (not yet updated after suspension), Service B sees the limit as available (not yet updated after prior transactions), and Service C's fraud model hasn't ingested the latest suspicious patterns. The systemic risk is proportional to the consistency lag multiplied by transaction throughput. Remediation requires implementing synchronous validation for high-value transactions, using a coordination service that aggregates validation results before committing, and deploying compensating transactions that detect and reverse post-hoc validation failures.",
+    "evaluation_criteria": "Must model the multi-service partial validation gap from eventual consistency and recommend synchronous validation for high-value transactions with compensating transactions."
+  },
+  {
+    "id": "T5-082",
+    "complexity": "L5",
+    "domain": "Global Platform",
+    "scenario": "Currency conversion handled client-side before server validation.",
+    "prompt": "Assess large-scale financial manipulation risk.",
+    "reasoning_focus": "Trust boundary violation.",
+    "expected_answer": "Client-side currency conversion is a critical trust boundary violation that enables unlimited financial manipulation. An attacker can modify the conversion rate in the client-side code or intercept the API request and substitute any exchange rate \u2014 converting $1 USD to $1,000 EUR, for example. Since the server trusts the client-converted amount, the attacker can purchase at artificially favorable rates across all currencies. The manipulation is particularly devastating on a global platform because the attacker can exploit any currency pair, choosing the most profitable manipulation direction. At platform scale with millions of daily cross-currency transactions, even a small percentage of manipulated conversions causes massive financial loss. The risk extends beyond individual transactions to systemic ledger corruption as manipulated amounts propagate through accounting systems. Remediation requires performing all currency conversion server-side using authenticated rate feeds, never trusting client-supplied converted amounts, validating transaction amounts against server-calculated conversions with zero tolerance, and implementing rate anomaly detection that flags conversions deviating from market rates.",
+    "evaluation_criteria": "Must identify client-side conversion as a critical trust boundary violation and recommend mandatory server-side conversion with authenticated rate feeds."
+  },
+  {
+    "id": "T5-083",
+    "complexity": "L5",
+    "domain": "Payments",
+    "scenario": "Payment status relies solely on third-party callback without server reconciliation.",
+    "prompt": "Evaluate settlement integrity risk.",
+    "reasoning_focus": "Callback trust failure.",
+    "expected_answer": "Relying solely on third-party callbacks for payment status creates a catastrophic single point of failure. If the callback endpoint is compromised, spoofed, or the third-party has an outage, the platform's entire payment state becomes unreliable. An attacker can forge successful payment callbacks to receive goods without paying. During third-party outages, legitimate payments may not be confirmed, causing fulfillment failures. More subtly, if callbacks arrive out of order (refund callback before payment callback), the system state becomes corrupted. Without server-side reconciliation against the payment processor's records, there is no mechanism to detect discrepancies. The financial exposure equals the total value of all transactions where callback-reported status differs from actual processor status \u2014 potentially the entire transaction volume during a compromise period. Remediation requires implementing periodic server-initiated reconciliation (polling the processor's API for transaction status), verifying callbacks cryptographically, implementing a dual-confirmation model where both callback and server poll must agree before changing payment state, and maintaining an independent ledger for cross-reference.",
+    "evaluation_criteria": "Must identify the callback-only model as a single point of failure and recommend dual-confirmation (callback plus server-initiated reconciliation) with independent ledger."
+  },
+  {
+    "id": "T5-084",
+    "complexity": "L5",
+    "domain": "Marketplace",
+    "scenario": "Admin API allows manual payout adjustment without dual authorization.",
+    "prompt": "Assess insider and external abuse potential.",
+    "reasoning_focus": "Authorization governance modeling.",
+    "expected_answer": "Single-admin payout adjustment authority creates both insider threat and external compromise vectors. An insider can manually adjust payouts to siphon funds to controlled accounts \u2014 increasing payouts to colluding sellers or creating phantom payout adjustments. An external attacker who compromises a single admin account gains the same capability without any additional authorization barrier. The absence of dual authorization means there is no segregation of duties, no second pair of eyes, and no approval workflow for financial adjustments. At marketplace scale with millions in daily payouts, even small per-transaction adjustments accumulate rapidly. A single compromised admin session could redirect hundreds of thousands of dollars before detection. Remediation requires implementing dual-authorization (maker-checker) for all payout adjustments, logging all adjustments with immutable audit trails, setting maximum per-adjustment limits that require escalation, implementing anomaly detection on payout patterns, and requiring re-authentication with MFA before any manual financial adjustment.",
+    "evaluation_criteria": "Must assess both insider and external compromise scenarios and recommend maker-checker dual authorization with immutable audit trails and re-authentication."
+  },
+  {
+    "id": "T5-085",
+    "complexity": "L5",
+    "domain": "Enterprise SaaS",
+    "scenario": "An org-wide discount configuration applied by a super-admin propagates to all tenants immediately with no approval gate or preview; a misconfiguration sets all subscription prices to $0.",
+    "prompt": "Model the systemic revenue impact of an org-wide discount misconfiguration that immediately zeroes all active subscription prices.",
+    "reasoning_focus": "Org-wide discount misconfiguration blast radius.",
+    "expected_answer": "An immediate propagation of 100% discount to all tenants zeroes all revenue for the duration the misconfiguration is active. For a platform with $10M monthly recurring revenue (MRR) and 10,000 tenants, every minute of exposure eliminates $231 in revenue (assuming uniform billing). If the misconfiguration runs for 24 hours before detection, $333,000 in subscription charges are missed. More critically, subscriptions renewed during the window lock in the $0 price \u2014 if the billing system doesn't retroactively correct, those renewals remain free until the next billing cycle. The blast radius extends to all active sessions where pricing is cached: even after the configuration is fixed, edge caches may serve the $0 price for their TTL duration. Additionally, customers who notice may screenshot the $0 price as a contractual commitment. Remediation requires implementing preview/dry-run for pricing changes showing revenue impact before application, requiring board-level approval for changes affecting >X% of revenue, implementing gradual rollout (10% of tenants first), adding automatic rollback triggers when revenue drops below a threshold, and maintaining pricing change audit trails with rollback capability.",
+    "evaluation_criteria": "Must calculate the revenue impact per time unit and identify the renewal lock-in risk, recommending preview/dry-run with automatic rollback triggers."
+  },
+  {
+    "id": "T5-086",
+    "complexity": "L5",
+    "domain": "Fintech Reporting",
+    "scenario": "Financial reporting aggregation service reads from the payments database and the refunds database separately without a coordinating transaction; during high-volume periods, reports reflect some payments but not yet the corresponding refunds.",
+    "prompt": "Model how reporting drift between payment and refund databases creates systemic financial misrepresentation in real-time dashboards.",
+    "reasoning_focus": "Financial reporting drift between asynchronous data sources.",
+    "expected_answer": "The separate, uncoordinated reads create point-in-time inconsistency where the report shows inflated net revenue because payments are recorded but corresponding refunds haven't propagated to the refund database yet. During peak hours when refund processing lags, the dashboard may overstate revenue by the total pending refund volume. If executive decisions (investment, hiring, expansion) are made based on the inflated dashboard figures, the business consequences extend beyond reporting errors. For regulatory reporting, the drift can cause compliance violations \u2014 financial statements must reflect accurate net positions. The drift magnitude scales with transaction volume and refund processing latency. At $1M/hour in transaction volume with a 10% refund rate and 30-minute refund lag, the dashboard consistently overstates revenue by $50,000. Remediation requires implementing snapshot-consistent reads across both databases (distributed transactions or consistent read timestamps), using materialized views that join both sources atomically, and adding drift detection that compares expected vs actual refund ratios and flags anomalies.",
+    "evaluation_criteria": "Must quantify the revenue overstatement from refund processing lag and recommend snapshot-consistent reads or materialized views joining both sources atomically."
+  },
+  {
+    "id": "T5-087",
+    "complexity": "L5",
+    "domain": "Fintech Core",
+    "scenario": "A nightly ledger reconciliation job compares the internal ledger against the external bank statement; the reconciliation marks unmatched items as pending indefinitely without escalation, accumulating a growing pool of unresolved transactions.",
+    "prompt": "Model the systemic financial risk when unreconciled items accumulate indefinitely and assess the regulatory and audit implications.",
+    "reasoning_focus": "Ledger reconciliation bypass via indefinite pending state.",
+    "expected_answer": "Indefinite pending states create an ever-growing pool of unresolved financial discrepancies that mask fraud, errors, and systemic issues. Over months, this pool can grow to represent millions in unreconciled transactions. The accumulation creates several risks: (1) legitimate errors compound because they're never investigated, (2) fraudulent transactions hide within the noise of pending items, (3) regulatory auditors interpret large unreconciled pools as a material weakness in internal controls, potentially triggering enforcement actions. Banks and financial institutions face regulatory requirements (SOX, Basel III) to resolve reconciliation items within defined timeframes. An indefinite pending state violates these requirements. The systemic risk is that the true financial position of the platform becomes unknowable \u2014 the difference between the internal ledger and reality grows unbounded. Remediation requires implementing escalation tiers (48-hour \u2192 manager review, 7-day \u2192 director review, 30-day \u2192 CFO review), setting maximum unreconciled balance thresholds that trigger automatic account freezes, aging reports with mandatory resolution deadlines, and automated matching algorithms that resolve common discrepancy patterns.",
+    "evaluation_criteria": "Must identify the accumulating unknowable financial position and regulatory compliance violations and recommend tiered escalation with mandatory resolution deadlines."
+  },
+  {
+    "id": "T5-088",
+    "complexity": "L5",
+    "domain": "Refunds",
+    "scenario": "A platform processes 500,000 refunds per day; a logic bug introduced in a deployment causes 0.1% of refund amounts to be multiplied by 10; the error runs for 48 hours before detection.",
+    "prompt": "Model the total financial exposure of a systematic refund calculation error running at scale for 48 hours and assess detection and recovery complexity.",
+    "reasoning_focus": "Systematic refund calculation error at platform scale.",
+    "expected_answer": "At 500,000 refunds/day, 0.1% affected = 500 over-refunds per day. Over 48 hours: 1,000 affected refunds. If the average refund is $50, the 10x multiplication makes each affected refund $500 instead of $50 \u2014 an overpayment of $450 per affected refund. Total financial exposure: 1,000 \u00d7 $450 = $450,000 in excess refunds over 48 hours. Recovery complexity is high: identifying which 1,000 of 1,000,000 total refunds were affected requires log analysis against the deployment timestamp. Clawing back funds from customers who received 10x refunds involves legal considerations, customer communication, and payment processor reversal fees. Some affected customers may have already spent the excess funds, making recovery partial at best. Detection delay of 48 hours suggests insufficient monitoring \u2014 a 10x spike in refund amounts should trigger immediate alerting. Remediation requires implementing refund amount anomaly detection (alerting on amounts exceeding historical averages by >2x), canary deployments that route a small percentage of refunds through new code first, pre-deployment testing with production-scale refund data, and automated rollback triggers tied to refund amount KPIs.",
+    "evaluation_criteria": "Must calculate the total financial exposure with specific numbers and assess recovery complexity including legal and operational challenges of clawback."
+  },
+  {
+    "id": "T5-089",
+    "complexity": "L5",
+    "domain": "Payroll",
+    "scenario": "An automated payout engine processes contractor payments; a bug causes contractors to be paid twice when their payment profile contains a Unicode character in the name field; the engine runs weekly for 3 months before discovery.",
+    "prompt": "Model the cumulative financial impact of a data encoding flaw causing duplicate payroll processing and assess the recovery and reconciliation burden.",
+    "reasoning_focus": "Automated payout duplication via data encoding flaw.",
+    "expected_answer": "A Unicode-triggered duplicate payment affects every contractor with non-ASCII characters in their name \u2014 which in a global workforce could be 20-40% of contractors. Assuming 1,000 contractors, 300 affected, average weekly payment of $2,000: weekly overpayment = 300 \u00d7 $2,000 = $600,000. Over 13 weeks (3 months): $7.8 million in duplicate payments. The data encoding nature of the bug makes it subtle \u2014 it affects a specific character set, not all payments, making pattern detection difficult without explicit Unicode analysis. Recovery burden includes: identifying all affected payments across 13 weeks of payroll records, calculating exact overpayment per contractor, initiating 3,900 individual recovery actions (300 contractors \u00d7 13 weeks), managing contractor disputes and legal issues in multiple jurisdictions with different overpayment recovery laws, and accounting system corrections for 3 months of inaccurate financial records. Remediation requires implementing character encoding normalization in the payment pipeline, comprehensive integration testing with international character sets, weekly payment reconciliation that compares expected vs actual disbursements, and duplicate payment detection that flags multiple payments to the same contractor within a cycle.",
+    "evaluation_criteria": "Must calculate cumulative 3-month financial impact with specific contractor and payment figures and assess the multi-jurisdictional recovery burden."
+  },
+  {
+    "id": "T5-090",
+    "complexity": "L5",
+    "domain": "Tax",
+    "scenario": "A global e-commerce platform calculates tax using a microservice that is not versioned with the tax rate database; a tax rate update deploys to the database before the calculation service is updated, causing the wrong rate to apply for a 6-hour window across all regions.",
+    "prompt": "Model the systemic tax miscalculation impact of an uncoordinated tax rate deployment window across a global transaction volume.",
+    "reasoning_focus": "Tax calculation architecture deployment coordination flaw.",
+    "expected_answer": "During the 6-hour desynchronization window, the tax service applies stale rates to all transactions globally. If the rate change is an increase (e.g., 8% \u2192 10%), the platform under-collects tax for 6 hours and owes the difference to tax authorities. If the rate decreases, the platform over-collects and must refund customers. For a global platform processing $10M in taxable transactions per hour, a 2-percentage-point miscalculation for 6 hours affects $60M in transactions \u2014 creating a $1.2M tax liability shortfall or overcollection. The impact is compounded across multiple jurisdictions with different rate changes: some regions may be under-collected while others are over-collected, requiring jurisdiction-by-jurisdiction reconciliation. Regulatory penalties for systematic tax miscalculation can exceed the miscalculated amount. Remediation requires atomic deployment of tax rates and calculation service updates (blue-green deployment), implementing tax rate versioning with backwards compatibility during transition, running shadow-mode calculation that compares old and new rates before switching, and maintaining a tax audit trail that enables retroactive correction of affected transactions.",
+    "evaluation_criteria": "Must calculate the tax liability from the rate desynchronization across global transaction volume and recommend atomic deployment with versioned tax rate propagation."
+  },
+  {
+    "id": "T5-091",
+    "complexity": "L5",
+    "domain": "Fintech",
+    "scenario": "A multi-region payment platform routes transactions to regional processors based on the user's IP geolocation; a CDN misconfiguration routes all traffic through a single region, which applies that region's promotional cashback rate to all global transactions.",
+    "prompt": "Model the financial exposure of a routing misconfiguration that applies a regional promotional rate to the full global transaction volume.",
+    "reasoning_focus": "Multi-region routing misconfiguration and unintended financial scope.",
+    "expected_answer": "A CDN misconfiguration routing all traffic through a single region with a promotional cashback rate creates massive unintended financial exposure. If the promotional region offers 5% cashback (vs 1% globally) and handles $50M in daily global transaction volume, the misconfiguration increases daily cashback payouts from $500,000 (1% of $50M) to $2,500,000 (5% of $50M) \u2014 a $2M daily overpayment. Over a typical 4-hour detection window, the excess cashback is $333,000. The exposure scales with the difference between the regional promotional rate and the standard rate, and with global transaction volume. Secondary impacts include: processor fees in the wrong region, currency conversion costs, regulatory issues from routing transactions through incorrect jurisdictions, and data residency violations. Remediation requires implementing routing health checks that verify geographic distribution matches expected patterns, adding cashback budget monitoring with automatic rate suspension when budgets are exceeded, separating promotional rate configuration from routing logic, and implementing multi-region routing validation that alerts on traffic concentration anomalies.",
+    "evaluation_criteria": "Must calculate the daily cashback overpayment from rate misapplication at global volume and recommend routing health checks with cashback budget monitoring."
+  },
+  {
+    "id": "T5-092",
+    "complexity": "L5",
+    "domain": "Token Lifecycle",
+    "scenario": "A payment token issued at checkout has a 30-minute validity window; due to a missing expiry check in the processing service, tokens remain valid indefinitely and can be replayed hours later.",
+    "prompt": "Model the financial risk of indefinitely valid payment tokens and assess the scale of potential replay abuse across active token inventory.",
+    "reasoning_focus": "Payment token lifecycle validation failure.",
+    "expected_answer": "Indefinitely valid payment tokens create a replay attack surface across the entire token inventory. Every payment token ever issued remains exploitable \u2014 an attacker who intercepts or obtains any historical token can replay it to initiate charges against the original payer's payment method. If the platform issues 100,000 tokens per day and none expire, the attack surface grows by 100,000 tokens daily. After 30 days, 3 million unexpired tokens exist, any of which can be replayed for the original transaction amount. A compromised token database or log file containing historical tokens provides an attacker with a massive arsenal for unauthorized charges. Even tokens from completed transactions can be replayed to charge the customer again. Financial exposure is the aggregate transaction value of all unexpired tokens. Remediation requires implementing token expiry validation at the processing service layer (not just at issuance), invalidating tokens after single use, adding token revocation on transaction completion or cancellation, and conducting an immediate audit to identify and invalidate all outstanding unexpired tokens in the system.",
+    "evaluation_criteria": "Must calculate the growing attack surface from accumulating unexpired tokens and recommend processing-layer expiry validation with single-use token invalidation."
+  },
+  {
+    "id": "T5-093",
+    "complexity": "L5",
+    "domain": "Subscription",
+    "scenario": "A SaaS billing platform allows customers to change their billing cycle from monthly to annual mid-cycle; the proration logic credits the unused monthly days at the full monthly rate instead of the discounted annual equivalent.",
+    "prompt": "Model how billing cycle reset proration errors create systematic overpayment or underpayment and assess the aggregate financial exposure across the customer base.",
+    "reasoning_focus": "Billing cycle reset proration calculation error.",
+    "expected_answer": "The proration error creates a systematic overpayment to switching customers. A customer paying $100/month switches to annual ($960/year = $80/month effective) on day 15 of their monthly cycle. The correct proration credit for 15 unused days is 15/30 \u00d7 $80 = $40. But the system credits at the monthly rate: 15/30 \u00d7 $100 = $50 \u2014 a $10 overpayment per customer. At scale with 10,000 customers switching per month, the overpayment is $100,000/month or $1.2M annually. Customers who understand the proration error are incentivized to switch mid-cycle to maximize the credit, then switch back \u2014 gaming the proration differential repeatedly. The aggregate exposure compounds as the error applies to every mid-cycle switch in perpetuity until fixed. Remediation requires calculating proration credits based on the effective daily rate of the destination plan (not the source plan), implementing unit tests for all proration scenarios including mid-cycle switches, and adding reconciliation reports that compare expected vs actual proration credits.",
+    "evaluation_criteria": "Must calculate the per-customer overpayment and aggregate annual exposure and recommend proration based on the destination plan's effective rate."
+  },
+  {
+    "id": "T5-094",
+    "complexity": "L5",
+    "domain": "Fintech",
+    "scenario": "A central payment orchestration service routes transactions to one of five payment processors based on cost optimization; a scoring bug routes 80% of transactions to the highest-cost processor for 72 hours.",
+    "prompt": "Model the excess cost incurred by a payment routing logic failure and assess the systemic impact on platform margin.",
+    "reasoning_focus": "Payment routing optimization failure and margin impact.",
+    "expected_answer": "The routing failure redirects the majority of transaction volume to the most expensive processor, eliminating routing-based cost savings. If the five processors charge 1.5%, 2.0%, 2.5%, 2.8%, and 3.5% respectively, and optimal routing distributes volume to minimize cost (majority to 1.5% processor), the weighted average cost might be 1.8%. With the bug routing 80% to the 3.5% processor, the weighted average rises to approximately 3.2%. On daily transaction volume of $20M, normal processing cost is $360,000/day (1.8%); with the bug it's $640,000/day (3.2%) \u2014 an excess cost of $280,000/day. Over 72 hours: $840,000 in excess processing fees. If the platform's overall margin is 2-3%, the excess processing cost can consume the entire margin, making every transaction unprofitable during the bug window. Remediation requires implementing routing distribution monitoring with automatic alerts on concentration changes, A/B testing routing changes before full deployment, maintaining processor cost dashboards with anomaly detection, and implementing automatic fallback to rule-based routing when scoring deviations exceed thresholds.",
+    "evaluation_criteria": "Must calculate the excess processing cost with specific processor rates and volume figures and recommend routing distribution monitoring with automatic anomaly alerts."
+  },
+  {
+    "id": "T5-095",
+    "complexity": "L5",
+    "domain": "Escrow",
+    "scenario": "A real estate escrow platform holds funds for transactions averaging $400,000; a logic flaw allows the escrow release condition to be triggered by either party rather than requiring joint confirmation, enabling unilateral fund release.",
+    "prompt": "Model the financial and legal risk of unilateral escrow release in a high-value real estate transaction context.",
+    "reasoning_focus": "Escrow release authorization requiring joint confirmation.",
+    "expected_answer": "Unilateral escrow release in real estate transactions creates catastrophic financial and legal exposure. A seller can release the $400,000 escrow to themselves without buyer confirmation, effectively taking the funds without completing the property transfer. Alternatively, a buyer's agent could redirect funds before closing conditions are met. Each unilateral release exposes the platform to the full transaction amount in liability \u2014 $400,000 per transaction. At platform scale with 100 daily closings, the total escrowed amount at risk is $40M daily. Legal exposure extends beyond the transaction amount: the platform is a licensed fiduciary, and unauthorized fund release violates escrow licensing regulations, potentially resulting in license revocation, regulatory fines, and criminal liability for officers. The reputational damage from a single unauthorized release could destroy the platform. Remediation requires implementing multi-party confirmation (both buyer and seller must approve), integrating with title company and closing agent verification systems, implementing time-locked release windows with mandatory review periods, and adding real-time monitoring with automatic suspension of releases that don't have dual confirmation.",
+    "evaluation_criteria": "Must quantify the per-transaction and platform-scale financial exposure and identify fiduciary and criminal liability implications, recommending multi-party confirmation."
+  },
+  {
+    "id": "T5-096",
+    "complexity": "L5",
+    "domain": "Lending",
+    "scenario": "A peer-to-peer lending platform matches borrowers and lenders using an automated auction engine; a bug in the interest rate flooring logic allows negative interest rates on certain loan tenors, paying borrowers to hold debt.",
+    "prompt": "Model the financial impact of negative interest rate loans at platform scale and assess the capital exposure to lenders.",
+    "reasoning_focus": "Interest rate flooring failure in loan auction logic.",
+    "expected_answer": "Negative interest rate loans invert the lending relationship \u2014 lenders pay borrowers for the privilege of lending money. An attacker who discovers the affected tenors can borrow at negative rates and earn guaranteed returns by holding the debt. If the bug affects 5-year tenors and allows -2% interest, a $100,000 loan generates $2,000/year in payments from the lender to the borrower. At platform scale with 500 loans originated daily, even 5% affected by the bug (25 loans) at $100,000 average would generate $50,000/day in negative interest obligations for lenders. Lender capital is being eroded rather than growing \u2014 the opposite of the platform's value proposition. The bug creates unlimited demand for borrowing on the affected tenors, as rational actors will borrow infinite amounts at negative rates. Financial exposure grows unbounded until the floor is fixed. Remediation requires implementing a hard floor of 0% (or the platform's minimum rate) in the auction engine, adding interest rate range validation at loan origination, implementing circuit breakers that halt origination when rates deviate beyond expected bounds, and auditing all existing loans for negative rate exposure.",
+    "evaluation_criteria": "Must model the inverted lender-borrower dynamic from negative rates with specific financial calculations and recommend hard interest rate floors with circuit breakers."
+  },
+  {
+    "id": "T5-097",
+    "complexity": "L5",
+    "domain": "Insurance",
+    "scenario": "A catastrophic event causes 10,000 simultaneous insurance claims; the claims processing system was designed for a maximum of 500 concurrent claims; under load, the deduplication service fails and duplicate claims are auto-approved.",
+    "prompt": "Model the financial exposure of mass duplicate claim approval under system load and assess the business continuity and reinsurance implications.",
+    "reasoning_focus": "Claims processing deduplication failure under catastrophic load.",
+    "expected_answer": "Under 20x design capacity load, the deduplication service fails, allowing each of the 10,000 claims to be processed multiple times. If each claim is processed an average of 3 times due to retry storms under load, 30,000 claim payouts are issued for 10,000 actual claims \u2014 20,000 duplicate payouts. At an average claim value of $50,000 for a catastrophic event, the 20,000 duplicate payouts total $1 billion in excess disbursement on top of the $500 million in legitimate claims. This $1 billion exposure may exceed the insurer's reinsurance treaty limits, which were calculated based on legitimate claim volumes, not system-error-amplified volumes. The insurer faces potential insolvency. Business continuity impact includes: inability to process legitimate late-filing claims, regulatory scrutiny, and policyholder trust destruction. Remediation requires implementing deduplication that degrades gracefully under load (using persistent storage, not in-memory), load-testing claims systems at catastrophic event scale (10-50x normal), implementing claim amount budgeting that caps total payouts against reinsurance limits, and deploying queue-based claim processing with exactly-once delivery guarantees.",
+    "evaluation_criteria": "Must calculate the duplicate payout volume under load failure and assess reinsurance treaty and insolvency implications, recommending graceful degradation and catastrophic-scale load testing."
+  },
+  {
+    "id": "T5-098",
+    "complexity": "L5",
+    "domain": "Fintech",
+    "scenario": "A platform migrates its ledger system; during migration, a 4-hour window exists where the old and new ledgers operate in parallel; transfers initiated during this window appear in both ledgers, and both settle independently.",
+    "prompt": "Model the systemic double-settlement risk during a ledger migration parallel-run window and assess the reconciliation complexity post-migration.",
+    "reasoning_focus": "Ledger migration parallel-run double-settlement window.",
+    "expected_answer": "The parallel-run window creates double-settlement for every transfer initiated during the 4-hour period. If the platform processes 50,000 transfers per hour, 200,000 transfers during the window are recorded in both ledgers and settled twice \u2014 each recipient receives double the intended amount. At an average transfer of $200, the total double-settlement exposure is $40 million (200,000 \u00d7 $200 excess). Post-migration reconciliation complexity is extreme: the team must identify all 200,000 affected transfers, determine which ledger's settlement is authoritative, reverse the duplicate settlements (requiring payment processor cooperation for external transfers), and handle cases where recipients have already spent the duplicate funds. The reconciliation requires transaction-by-transaction comparison across two different ledger schemas and formats. Time to full reconciliation can extend weeks to months. Remediation for future migrations requires a cutover model (not parallel-run) with transactions queued during the switch, implementing a migration coordinator that writes to both ledgers but settles from only one, adding a reconciliation checkpoint that compares both ledgers at the end of the parallel window before committing the migration, and running the parallel window with settlement disabled on the new ledger (shadow mode only).",
+    "evaluation_criteria": "Must calculate the double-settlement exposure across the 4-hour window and assess the reconciliation complexity, recommending shadow-mode parallel runs with single-ledger settlement."
+  },
+  {
+    "id": "T5-099",
+    "complexity": "L5",
+    "domain": "Cryptocurrency",
+    "scenario": "A decentralized exchange smart contract has a reentrancy guard but the guard is applied at the function level; a cross-function reentrancy between withdraw() and swap() bypasses the guard, allowing balance extraction before state update.",
+    "prompt": "Model the cross-function reentrancy exploitation pattern and assess the total extractable value from the liquidity pool.",
+    "reasoning_focus": "Cross-function reentrancy in financial smart contract logic.",
+    "expected_answer": "Cross-function reentrancy bypasses per-function guards because withdraw() and swap() each have their own guard but share state (user balances, pool reserves). The attack: (1) attacker calls withdraw(), triggering an external call to the attacker's contract during ETH transfer, (2) the attacker's fallback function calls swap() \u2014 which is not blocked because swap()'s guard is independent, (3) swap() reads the pre-update balance (withdraw hasn't completed state update yet), allowing the attacker to swap using funds that are simultaneously being withdrawn. The attacker extracts value from both the withdrawal and the swap using the same balance. Total extractable value is bounded by the liquidity pool's reserves \u2014 in extreme cases, the entire pool can be drained. Historical precedents (The DAO hack, $60M; various DeFi exploits, $100M+) demonstrate the scale of cross-function reentrancy losses. Remediation requires implementing a global reentrancy guard (mutex) across all state-mutating functions, following the checks-effects-interactions pattern in all functions, using pull-over-push payment patterns, and conducting formal verification of cross-function interaction invariants.",
+    "evaluation_criteria": "Must trace the specific cross-function reentrancy between withdraw() and swap() and recommend a global reentrancy mutex with checks-effects-interactions pattern."
+  },
+  {
+    "id": "T5-100",
+    "complexity": "L5",
+    "domain": "Fintech Platform",
+    "scenario": "A super-app integrating payments, lending, insurance, and investment products shares a single identity and wallet service; a logic flaw allows a single transaction to simultaneously satisfy the debit condition in payments and the credit condition in the investment service.",
+    "prompt": "Model the systemic financial impact of a cross-product transaction that simultaneously satisfies conflicting debit and credit conditions across integrated financial services.",
+    "reasoning_focus": "Cross-product financial state consistency failure in super-app architecture.",
+    "expected_answer": "The shared wallet with cross-product logic flaws enables a financial perpetual motion machine. A single $1,000 transaction debits the wallet for a payment (satisfying the payments service) while simultaneously crediting the same $1,000 as an investment deposit (satisfying the investment service). The user has both paid for goods AND invested $1,000, despite only $1,000 leaving their wallet. This is possible because each service independently reads the wallet balance, validates the debit or credit condition, and executes \u2014 without awareness that another service is simultaneously acting on the same balance. The financial impact cascades: the investment service books a $1,000 asset, the payments service debits $1,000, but the wallet only decreased by $1,000 total \u2014 creating a $1,000 phantom asset. At scale, this creates systemic balance sheet inflation across the super-app. Each exploited transaction creates $1,000 in phantom value. If this extends to lending (using phantom investments as collateral), the risk amplifies through leverage. Remediation requires implementing a central financial orchestration layer that serializes cross-product transactions, using distributed transactions or saga patterns across services, implementing a unified balance that cannot be simultaneously consumed by multiple services, and adding cross-product reconciliation that detects balance sheet discrepancies between services.",
+    "evaluation_criteria": "Must model the phantom asset creation from simultaneous debit-credit across products and recommend a central financial orchestration layer with serialized cross-product transactions."
+  }
+]

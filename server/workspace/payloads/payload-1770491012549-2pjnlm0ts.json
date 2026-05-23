@@ -1,0 +1,14 @@
+{
+  "id": "payload-1770491012549-2pjnlm0ts",
+  "name": "Basic XSS Alert",
+  "category": "xss",
+  "payload": "<script>alert(1)</script>",
+  "description": "Simple XSS popup test",
+  "tags": [
+    "basic",
+    "detection"
+  ],
+  "usageCount": 0,
+  "createdAt": "2026-02-07T19:03:32.549Z",
+  "updatedAt": "2026-02-07T19:03:32.549Z"
+}

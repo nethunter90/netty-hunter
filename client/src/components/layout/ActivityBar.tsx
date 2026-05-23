@@ -2,7 +2,8 @@ import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Target, Terminal, ShieldAlert,
-  Brain, FileText, LogOut, User, Shield, Layers
+  Brain, FileText, LogOut, User, Shield, Layers, Crosshair,
+  DollarSign, Swords
 } from "lucide-react";
 import { authAPI } from "../../lib/api";
 import toast from "react-hot-toast";
@@ -22,6 +23,9 @@ const NAV_ITEMS = [
   { id: "intelligence", icon: Brain, label: "Intelligence", path: "/intelligence" },
   { id: "reports", icon: FileText, label: "Reports", path: "/reports" },
   { id: "orchestration", icon: Layers, label: "Orchestration", path: "/orchestration" },
+  { id: "hunter", icon: Crosshair, label: "Hunter", path: "/hunter" },
+  { id: "bounty", icon: DollarSign, label: "Bounty", path: "/bounty" },
+  { id: "missions", icon: Swords, label: "Missions", path: "/missions" },
 ];
 
 export default function ActivityBar({ activeView, onViewChange, user, onLogout }: ActivityBarProps) {

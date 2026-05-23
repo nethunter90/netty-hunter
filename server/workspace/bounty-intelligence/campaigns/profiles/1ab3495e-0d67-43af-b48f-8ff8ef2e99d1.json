@@ -1,0 +1,2834 @@
+{
+  "id": "1ab3495e-0d67-43af-b48f-8ff8ef2e99d1",
+  "target": {
+    "domain": "http://localhost:3000",
+    "industry": "unknown",
+    "techStack": {
+      "language": null,
+      "framework": null,
+      "server": null,
+      "database": null,
+      "cdn": null,
+      "jsLibraries": []
+    },
+    "defensePosture": {
+      "wafType": null,
+      "wafStrictness": "moderate",
+      "rateLimiting": {
+        "detected": false,
+        "threshold": null,
+        "resetWindow": null
+      },
+      "errorVerbosity": "standard",
+      "cspPolicy": {
+        "present": false,
+        "strictness": "none",
+        "reportOnly": false
+      },
+      "securityHeaders": {
+        "hsts": false,
+        "xFrameOptions": false,
+        "xContentType": false,
+        "referrerPolicy": null
+      },
+      "cookieFlags": {
+        "httpOnly": false,
+        "secure": false,
+        "sameSite": null
+      },
+      "authMechanisms": [],
+      "apiStyle": "rest"
+    }
+  },
+  "hunt": {
+    "goal": "find-vulns",
+    "startedAt": "2026-02-11T01:40:25.301Z",
+    "completedAt": "2026-02-11T01:43:15.399Z",
+    "durationMinutes": 3,
+    "tasksExecuted": 2,
+    "toolsUsed": [
+      "OWASP Juice Shop",
+      "nginx",
+      "React"
+    ]
+  },
+  "techniques": [
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/robots.txt",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/dump.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/database.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/site.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/archive.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/localhost.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/backup.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000/127.0.0.1.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//robots.txt",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.jks",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//127.0.0.1.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//database.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.tar",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.tar.lzma",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.egg",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//site.war",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.alz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//dump.tar.bz2",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//localhost.pem",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//backup.cer",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "nikto-finding",
+      "variant": "nikto-finding",
+      "targetEndpoint": "http://localhost:3000//archive.tgz",
+      "toolsUsed": [],
+      "result": "partial",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "http://localhost:3000",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    },
+    {
+      "technique": "XSS",
+      "variant": "XSS",
+      "targetEndpoint": "http://localhost:3000/",
+      "toolsUsed": [],
+      "result": "success",
+      "timeSpentMinutes": 0,
+      "confidenceScore": 0.5
+    }
+  ],
+  "findings": [
+    {
+      "id": "9964f52d-58eb-4b65-ab80-8d1d0e5a0ac7",
+      "vulnType": "nikto-finding",
+      "severity": "critical",
+      "endpoint": "http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "17b0d412-318a-4f26-b2c0-32d84683f780",
+      "vulnType": "nikto-finding",
+      "severity": "low",
+      "endpoint": "http://localhost:3000/robots.txt",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "44a4eed5-f8ed-496d-a0bc-c0fceafe224e",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "7e7f0600-4402-4051-82bc-22db4de84556",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "01729338-abd0-4bef-b029-31646d222a50",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4e35d5f6-2768-496d-a104-cb80c4c7a291",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "87500d61-c731-486d-9c43-7d26474e3834",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "89fc5b7c-aaad-4aaf-b24e-cc80c580d459",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "e11ffbbd-ef0e-4d2a-89eb-61a6784a56fb",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "41583411-6f71-444e-9214-a37a0ddfee9a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "86b876f5-1bc1-4aa2-bfa2-d424e7606509",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "2308c254-4a95-4615-9874-e838486eac21",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f08639ef-fdea-43db-a9a1-3bc0073cb7cf",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "688ab200-cb96-43fb-9284-94c7d2eafbb0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4ec76be6-84ca-40c9-a511-fd9b90c6af27",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "ed9ea3e1-7f9e-4c65-8353-1f88dac6482a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "84eb4ecc-198a-4564-b948-ca7c507e5505",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "cf152bee-5b1e-455a-940c-2706be935f21",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "70f577ef-8ea0-4f24-bcb8-ab71f8e0038f",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6ec7bff0-cf93-4c7b-81a3-11652315d610",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "d5b2bd88-b2d1-496c-954d-c4a963250abc",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "908a7b46-abd8-43ce-84a0-b8268d7def84",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "1312894f-95ab-4725-9877-8d7a50750cf1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6a0ab143-4f93-4e1b-897f-10d1ac335ec9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "5562063b-89f7-47c5-9345-67a04097b865",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "78813e25-af44-4635-8c43-5481be4e79c8",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "17a2599b-9810-43e7-bcae-b154b00d6d98",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f51d7761-c38b-429c-bf58-d03f82c54a4b",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "eee33ba4-1fb2-4643-8283-7a62bbd1e3f3",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6d463816-126e-497e-a995-713e9a8a78db",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "220e7dc3-75c8-417c-aa82-babe63875ad5",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "375ddd89-3e96-4aa9-a087-e77babeb6181",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4c748520-cdae-437b-be01-a033a8182601",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8f125f30-5c23-4d5d-9b38-7faf84e5b3d0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "45fb25c0-81c3-40d0-8822-a1e50f2b0e51",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "0a5b344e-08a7-463a-8af1-2fb3cbe7b7a9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "85cd424f-e9c0-4ceb-a42d-d592019f3be9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8385d62c-6daa-409f-b82c-c3dc70de270c",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "660353f6-6950-402a-9ee2-d27249d5fce0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8b937063-a8cd-4e21-b205-fb7caf3e5ba7",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "523bca4c-9391-4a2f-ab5e-94b00e514e13",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "405624a8-a7f8-4a3e-92ea-39c70628acaf",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "fedb49f1-1a66-4ff5-a5b5-7c23ab414176",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "1db21882-b736-4ea4-8d75-c6981c791fc9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f7b46457-5e10-4967-ae46-136f35da4bf0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f1e65878-2a48-42e1-9445-16e46a72c799",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f03c16e3-e9fe-4be6-a28f-854ad5f8e559",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "fd54fceb-e314-4fa7-bb01-9150e161517d",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4e47d711-36e6-4667-b32e-88aa6be9a3d0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "857c1146-dda5-4a7c-8062-6a9b5b0a4b9f",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "42dd57c9-d6e8-4f5c-8206-2bbffe205654",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6178ee51-3c7c-4f16-9ce0-10e33bc1488d",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9660484c-78f8-487c-a489-89e080ed2af0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8c367cde-a631-4d3e-baec-27121c873fe1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6101323e-f52a-4b9d-a141-48e83aef287a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "18502176-0d1d-4141-9897-9b42e3968046",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/dump.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6e532584-cb74-4f2b-969b-34e7e5798ff6",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6260b22e-267b-495a-8005-41a21b4cafe0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "a9e84141-254b-44ff-8464-5eff2405b378",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "5857f87a-c87b-4733-89e5-5ff6993df0ad",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "19b04a4c-3345-4433-8da5-23957cb043ea",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "ebb6e64d-d897-4aec-804f-f4493e67b015",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f13ca8c3-0da9-4e91-807b-540c5e0d0582",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "739b533a-7117-4910-bd74-2a70edcaa8f0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "236f71c8-7820-4a3c-9a2a-653e2a4104dd",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9d6f43b3-39a0-44a3-8ead-e10fc19db05b",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/database.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "70f1e526-a594-4eae-b91c-39052dcf77bd",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "908f8904-74c7-440d-ba49-a94fe6f6b481",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/site.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "dc4af99d-5d72-4344-aa01-880e97c6c552",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/archive.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "aeabb255-8c4c-47c5-886c-b266382f2ac3",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/localhost.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "0b245519-6018-468b-995d-877e4be367db",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/backup.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "410fcef2-8b9d-4adf-ad55-415169ca4e93",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/127.0.0.1.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9ad2ef3c-8e65-41a8-ab44-88ebc601d15c",
+      "vulnType": "nikto-finding",
+      "severity": "critical",
+      "endpoint": "http://localhost:3000//",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f031da4b-85e6-40ce-b4f5-e78f37fab9ff",
+      "vulnType": "nikto-finding",
+      "severity": "low",
+      "endpoint": "http://localhost:3000//robots.txt",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "b8c9cc18-2125-46ab-b41c-c7ecc7d7d095",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "a648a6c5-ff0d-4225-9fad-2cfadedf8d9b",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "60366132-d151-4f7b-8526-f659ce274461",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "66c92f40-1e23-45bd-ac5f-821b7405dc97",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4cfbb87d-3f99-45a0-b54a-5ce66bc3ac46",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "1aa883dd-46b1-4fc2-9b8d-ed27b9be4327",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "5e178d07-dfd7-4f58-9bde-f1ef9ee8d52b",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "263f250c-7880-47e3-85ca-5b117a8a08e6",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "c642e7ea-8040-494e-abff-12266a3f14e3",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "287ac025-75ef-46fe-bad0-a3b1923eaa40",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "b297d792-5373-4179-9169-0ac7f89fa280",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "502dedde-7110-4fb1-b2c4-4bb85a9eca47",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "06b19c49-0bc4-4c62-9438-ea3aaea3d39a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4a2aeed8-f92b-42e6-9774-bb734e94e517",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "0a9ae46f-c4b2-45bd-b4c9-647bda2de220",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "7f109034-7883-4845-80be-de09d8ebeaf0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "193ec84d-5ae6-4004-a870-5264c0c40f25",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "d98c6850-ee5e-48fd-8b00-1a7c41ec04a1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "3bad2328-cdb1-44f5-b818-2e0c4258e1d1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "ddaeafbc-c5f0-45f9-b219-2b5301db0dd3",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "d3ae9335-73f7-4d7f-9400-1b74b1ac4764",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "65c2e6de-c199-4785-95e8-35187d62e2d2",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "117a66ea-e313-4214-a182-477fc5b1a4a7",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9ef00d7d-eb77-48a5-b11b-c5d33ed36dd0",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "2a3af770-4690-43b4-9dac-f9a4ad8afb88",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "17ee7208-c35e-4783-b06c-6474c43973bb",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "3d94558a-9a44-4ef8-82ff-ede95ef473ed",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6b2efc75-824e-4046-9a84-b742c4e5bc3e",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "bc007c31-033e-4146-ae47-a33d46681d82",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "ab53eb85-8c40-4b26-beea-69bb79a7cd30",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "425a4511-8a11-467a-8eb8-0ea0cee122de",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "50e79c38-c5ce-4545-8f6d-bee9fde48bab",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f226db05-d777-444e-af85-d9b53ab5579d",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4efe723c-5efd-4908-8607-5449134dab90",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "0f57500b-9fbe-458f-910f-37370ffd8c40",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "dba784b8-48e2-476a-80e5-71a8d58811dc",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "b3121032-f6fa-4b22-8be4-d6b0d3e700d9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4d741075-887f-4136-9ffe-addf9fc65c48",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "cc53ac1b-cae7-4a01-b3b2-74a475670b8c",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "d959aab2-523e-4926-8f91-a3f2a886d1a2",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "255cdff5-ce53-4530-9597-fd25996f64e7",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8b8dadf1-4fb3-4f77-bee5-d1e9161aed69",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "333ace57-3b17-42cf-acdd-d6bf9819b812",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "5f801e51-0259-4cf7-9962-ab35fe58ef66",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "7d3aff78-dee4-4b7f-bde9-fdb2d2221105",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "e2890752-8195-41e9-8214-0fdc30778c3a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6bd25f32-1509-423d-bed0-19c9c87e8bc9",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.jks",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "139be692-d9d9-49e8-8e20-43bed06891ae",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6f62bfce-5579-4a90-8339-47fa28a92ec1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "20c5cdf8-2d56-4817-96cf-f47cb2903162",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//127.0.0.1.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "26de29d5-d1d3-4698-8ba9-7dcd0b40196f",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "50adf8cb-82db-4e32-9f88-36ebed0406bb",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "89223573-1e2f-4f46-8fda-8e34f102eed7",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9742f4c8-0fcf-4af9-9efa-c0441c4da434",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "6da895d1-3da1-4102-8c89-fbd26d8a9a26",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "26e2bb74-6773-4a7a-be6b-556a9fbbe686",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "9695a284-0c56-46ae-acec-efc6cb1d80db",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "77d2aa7b-a9cc-4a1a-ad0c-5d47d60eb774",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "969f695e-7b51-4a21-8f3b-17ec276c853e",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "5dd4eee1-d176-4336-b924-46602fa71f67",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//database.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "88ac782c-5899-4514-9a00-d1d1eb1d2360",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.tar",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "3258575a-d1b2-422f-944a-548e284522c1",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.tar.lzma",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "4d99f6a4-f69e-40cf-b137-6b6172f657c4",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.egg",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "2ae7960b-33c1-4fe9-8d47-b98767dcff49",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "33c07124-2d29-4b01-b050-46a2556d8074",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//site.war",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "f3744651-105d-482a-8978-eb1f0bcce763",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.alz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "3de24e94-49cb-4068-b589-e5ea7c776153",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//dump.tar.bz2",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "c7d49bb2-2cf3-4905-81c0-a4e2544c1501",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//localhost.pem",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8d4a73ad-a3a6-457b-8b40-27f1b311817e",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//backup.cer",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "cdcb75e7-c654-404c-8b91-8ee858fa9d7a",
+      "vulnType": "nikto-finding",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000//archive.tgz",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "nikto-finding",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "8196dcc7-9490-4591-a4a3-f60a8b6060bc",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    },
+    {
+      "id": "57321300-d53a-4db8-b294-9ce213c5ed38",
+      "vulnType": "XSS",
+      "severity": "medium",
+      "endpoint": "http://localhost:3000/",
+      "technique": "scanner",
+      "cvssScore": 0,
+      "title": "XSS",
+      "confirmedAt": "2026-02-11T01:43:15.398Z"
+    }
+  ],
+  "outcome": "success"
+}

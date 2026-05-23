@@ -167,6 +167,35 @@ router.post("/stop/:id", (req: Request, res: Response) => {
   return res.json({ ok: true, orchestrationId: req.params.id, status: "aborted" });
 });
 
+// ── Stats endpoint (must be before /:id to avoid swallowing "stats") ──────────
+router.get("/stats/summary", async (_req: Request, res: Response) => {
+  try {
+    const allFindings = await db.select().from(findings).orderBy(desc(findings.createdAt)).limit(100);
+    const verified = allFindings.filter(f => f.verificationStatus === "confirmed" || f.verificationStatus === "probable");
+    const bySeverity = allFindings.reduce<Record<string, number>>((acc, f) => {
+      acc[f.severity] = (acc[f.severity] || 0) + 1;
+      return acc;
+    }, {});
+    const byVulnType = allFindings.reduce<Record<string, number>>((acc, f) => {
+      acc[f.vulnType] = (acc[f.vulnType] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({
+      activeOrchestrations: activeOrchestrations.size,
+      totalFindings: allFindings.length,
+      verifiedFindings: verified.length,
+      verificationRate: allFindings.length > 0
+        ? Math.round((verified.length / allFindings.length) * 100) / 100
+        : 0,
+      bySeverity,
+      byVulnType,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 // ── Get orchestration state ────────────────────────────────────────────────────
 router.get("/:id", (req: Request, res: Response) => {
   const active = activeOrchestrations.get(req.params.id);
@@ -204,35 +233,6 @@ router.get("/", async (_req: Request, res: Response) => {
     }));
 
     return res.json({ live: liveList, recent: result });
-  } catch (err) {
-    return res.status(500).json({ error: String(err) });
-  }
-});
-
-// ── Stats endpoint ─────────────────────────────────────────────────────────────
-router.get("/stats/summary", async (_req: Request, res: Response) => {
-  try {
-    const allFindings = await db.select().from(findings).orderBy(desc(findings.createdAt)).limit(100);
-    const verified = allFindings.filter(f => f.verificationStatus === "confirmed" || f.verificationStatus === "probable");
-    const bySeverity = allFindings.reduce<Record<string, number>>((acc, f) => {
-      acc[f.severity] = (acc[f.severity] || 0) + 1;
-      return acc;
-    }, {});
-    const byVulnType = allFindings.reduce<Record<string, number>>((acc, f) => {
-      acc[f.vulnType] = (acc[f.vulnType] || 0) + 1;
-      return acc;
-    }, {});
-
-    return res.json({
-      activeOrchestrations: activeOrchestrations.size,
-      totalFindings: allFindings.length,
-      verifiedFindings: verified.length,
-      verificationRate: allFindings.length > 0
-        ? Math.round((verified.length / allFindings.length) * 100) / 100
-        : 0,
-      bySeverity,
-      byVulnType,
-    });
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
