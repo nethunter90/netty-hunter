@@ -189,27 +189,44 @@ class GraphWiring {
     const huntId = event.huntId;
     if (!huntId) return;
     const vulnType = event.data?.vulnType as string;
-    if (!vulnType) return;
-    // Merge verification status into the vulnerability node if it already exists
+    const findingId = String(event.data?.findingId ?? '');
+    if (!vulnType || !findingId) return;
+
     const existing = offensiveGraphDB.findNode(huntId, 'vulnerability', vulnType);
-    if (existing) {
-      await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
-        properties: { verified: true, verifiedAt: Date.now(), finalConfidence: event.data?.finalConfidence },
-      });
-    }
+    if (!existing) return;
+    // Idempotency: first write for this findingId wins — prevents duplicate events
+    // or out-of-order finding_rejected arriving later from overwriting a confirmed verdict.
+    if (existing.properties?.verificationId === findingId) return;
+
+    await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
+      properties: {
+        verified: true,
+        verifiedAt: Date.now(),
+        finalConfidence: event.data?.finalConfidence,
+        verificationId: findingId,
+      },
+    });
   }
 
   private async onFindingRejected(event: AgentEvent): Promise<void> {
     const huntId = event.huntId;
     if (!huntId) return;
     const vulnType = event.data?.vulnType as string;
-    if (!vulnType) return;
+    const findingId = String(event.data?.findingId ?? '');
+    if (!vulnType || !findingId) return;
+
     const existing = offensiveGraphDB.findNode(huntId, 'vulnerability', vulnType);
-    if (existing) {
-      await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
-        properties: { verified: false, rejectedAt: Date.now(), verdict: event.data?.verdict },
-      });
-    }
+    if (!existing) return;
+    if (existing.properties?.verificationId === findingId) return;
+
+    await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
+      properties: {
+        verified: false,
+        rejectedAt: Date.now(),
+        verdict: event.data?.verdict,
+        verificationId: findingId,
+      },
+    });
   }
 
   async populateFromMemory(huntId: string): Promise<{ nodes: number; edges: number }> {

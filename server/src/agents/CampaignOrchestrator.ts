@@ -59,6 +59,8 @@ export interface OrchestrateParams {
   budget?: { maxRequests: number; maxTime: number };
   /** Override: force specific vuln classes */
   focusVulnClasses?: string[];
+  /** Resume an interrupted campaign instead of creating a new one */
+  resumeCampaignId?: number;
 }
 
 export interface LayerStatus {
@@ -238,21 +240,40 @@ export class CampaignOrchestrator extends EventEmitter {
       return { passed: false, data: { reason: "Budget maxRequests out of bounds (10–50000)" } };
     }
 
-    // 1d. Create audited campaign record
-    const [campaign] = await db.insert(campaigns).values({
-      programId: params.programId,
-      name: `[ORC] ${params.targetUrl} – ${new Date().toISOString()}`,
-      goal: params.goal || `Autonomous vulnerability hunt on ${params.targetUrl}`,
-      status: "running",
-      huntMode: params.mode || "forward",
-      strategy: {},
-      budget,
-      startedAt: new Date(),
-    }).returning();
+    // 1d. Create or resume campaign record
+    let campaign: typeof campaigns.$inferSelect;
+    if (params.resumeCampaignId) {
+      const [existing] = await db.select().from(campaigns)
+        .where(eq(campaigns.id, params.resumeCampaignId)).limit(1);
+      if (!existing) {
+        this.audit(1, "governance_rejected", { reason: `Campaign ${params.resumeCampaignId} not found` });
+        return { passed: false, data: { reason: "Resume campaign not found" } };
+      }
+      // Reopen the campaign for continued execution
+      const [updated] = await db.update(campaigns)
+        .set({ status: "running", startedAt: existing.startedAt ?? new Date() })
+        .where(eq(campaigns.id, params.resumeCampaignId))
+        .returning();
+      campaign = updated;
+      this.audit(1, "campaign_resumed", { campaignId: campaign.id });
+    } else {
+      const [created] = await db.insert(campaigns).values({
+        programId: params.programId,
+        name: `[ORC] ${params.targetUrl} – ${new Date().toISOString()}`,
+        goal: params.goal || `Autonomous vulnerability hunt on ${params.targetUrl}`,
+        status: "running",
+        huntMode: params.mode || "forward",
+        strategy: {},
+        budget,
+        startedAt: new Date(),
+      }).returning();
+      campaign = created;
+    }
 
     this.state.campaignId = campaign.id;
 
-    // Sync findingsCount from DB so a resumed campaign starts from the correct base
+    // Reconcile findingsCount from DB — catches both fresh starts (0) and
+    // resumed campaigns where prior findings already exist in the table.
     const [countRow] = await db.select({ n: sql<number>`count(*)` })
       .from(findings).where(eq(findings.campaignId, campaign.id));
     this.state.findingsCount = Number(countRow?.n ?? 0);
@@ -509,14 +530,32 @@ export class CampaignOrchestrator extends EventEmitter {
     const verified: unknown[] = [];
     const rejected: unknown[] = [];
 
-    // Fetch confirmed findings from DB for this campaign
-    let dbFindings: (typeof findings.$inferSelect)[] = [];
+    // Fetch findings for this campaign from DB (authoritative source)
+    let allDbFindings: (typeof findings.$inferSelect)[] = [];
     if (this.state.campaignId) {
-      dbFindings = await db.select().from(findings)
+      allDbFindings = await db.select().from(findings)
         .where(eq(findings.campaignId, this.state.campaignId))
         .orderBy(desc(findings.createdAt));
     }
 
+    // Reconciliation: findings already confirmed in a prior run are promoted
+    // directly into the verified list without re-running the 4-layer pipeline.
+    // This makes resume after a crash idempotent and prevents double-billing
+    // the expensive Playwright + AI confirmation passes.
+    const alreadyConfirmed = allDbFindings.filter(f => f.verificationStatus === 'confirmed');
+    const needsVerification = allDbFindings.filter(f => f.verificationStatus !== 'confirmed');
+
+    for (const f of alreadyConfirmed) {
+      verified.push({ finding: f, verification: { finalVerdict: 'confirmed', finalConfidence: f.confidence } });
+      this.state.verifiedCount++;
+    }
+
+    this.audit(5, "reconciliation_complete", {
+      alreadyConfirmed: alreadyConfirmed.length,
+      needsVerification: needsVerification.length,
+    });
+
+    const dbFindings = needsVerification;
     // Run 4-layer anti-hallucination pipeline on each finding
     for (const dbFinding of dbFindings) {
       this.emit("l5:verifying", { findingId: dbFinding.id });

@@ -1,9 +1,9 @@
-import fs from 'fs';
-import path from 'path';
 import { MissionMemory, Endpoint, Technology, Vulnerability, Credential } from './types';
+import { db } from '../../db';
+import { missionMemorySnapshots } from '../../db/schema';
+import { eq } from 'drizzle-orm';
 
 const MAX_ENDPOINTS = 2000;
-const SNAPSHOT_DIR = '/tmp/netty-hunter-memory';
 const MAX_TECHNOLOGIES = 500;
 const MAX_VULNERABILITIES = 500;
 const MAX_SUBDOMAINS = 1000;
@@ -14,37 +14,43 @@ const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2,
 export class MissionMemoryStore {
   private memories: Map<string, MissionMemory> = new Map();
 
-  private snapshotPath(huntId: string): string {
-    return path.join(SNAPSHOT_DIR, `${huntId}.json`);
-  }
-
   private snapshot(huntId: string): void {
     const memory = this.memories.get(huntId);
     if (!memory) return;
-    try {
-      if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
-      fs.writeFileSync(this.snapshotPath(huntId), JSON.stringify(memory), 'utf8');
-    } catch { /* non-critical: persistence failure must not block the hunt */ }
+    // Fire-and-forget: persistence failure must never block the hunt
+    db.insert(missionMemorySnapshots).values({
+      huntId,
+      snapshot: memory as unknown as Record<string, unknown>,
+      updatedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: missionMemorySnapshots.huntId,
+      set: { snapshot: memory as unknown as Record<string, unknown>, updatedAt: new Date() },
+    }).catch(() => { /* non-critical */ });
   }
 
-  restore(huntId: string): boolean {
+  async restore(huntId: string): Promise<boolean> {
     try {
-      const raw = fs.readFileSync(this.snapshotPath(huntId), 'utf8');
-      const memory: MissionMemory = JSON.parse(raw);
-      // Re-hydrate Date objects that JSON.parse returns as strings
+      const [row] = await db.select()
+        .from(missionMemorySnapshots)
+        .where(eq(missionMemorySnapshots.huntId, huntId))
+        .limit(1);
+      if (!row) return false;
+
+      const memory = row.snapshot as unknown as MissionMemory;
+      // Re-hydrate Date objects that JSON serialization turns into strings
       memory.lastUpdated = new Date(memory.lastUpdated);
-      for (const ep of memory.endpoints) ep.discoveredAt = new Date(ep.discoveredAt);
+      for (const ep of memory.endpoints ?? []) ep.discoveredAt = new Date(ep.discoveredAt);
       this.memories.set(huntId, memory);
-      console.log(`[MissionMemory] Restored snapshot for hunt ${huntId} (${memory.endpoints.length} endpoints, ${memory.vulnerabilities.length} vulns)`);
+      console.log(`[MissionMemory] Restored from DB for hunt ${huntId} (${memory.endpoints?.length ?? 0} endpoints, ${memory.vulnerabilities?.length ?? 0} vulns)`);
       return true;
     } catch {
       return false;
     }
   }
 
-  initialize(huntId: string, initialDomains: string[]): MissionMemory {
-    // Resume from snapshot if available (crash recovery)
-    if (this.restore(huntId)) {
+  async initialize(huntId: string, initialDomains: string[]): Promise<MissionMemory> {
+    // Authoritative source: DB snapshot wins over a cold start
+    if (await this.restore(huntId)) {
       return this.memories.get(huntId)!;
     }
 
@@ -186,7 +192,9 @@ export class MissionMemoryStore {
 
   clear(huntId: string): void {
     this.memories.delete(huntId);
-    try { fs.unlinkSync(this.snapshotPath(huntId)); } catch { /* already gone */ }
+    db.delete(missionMemorySnapshots)
+      .where(eq(missionMemorySnapshots.huntId, huntId))
+      .catch(() => { /* non-critical */ });
   }
 }
 

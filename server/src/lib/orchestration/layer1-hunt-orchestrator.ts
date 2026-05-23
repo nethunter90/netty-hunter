@@ -51,7 +51,7 @@ export class HuntOrchestrator {
 
     this.hunts.set(hunt.id, hunt);
 
-    missionMemory.initialize(hunt.id, [config.target]);
+    await missionMemory.initialize(hunt.id, [config.target]);
 
     console.log(`[HuntOrchestrator] Created hunt: ${hunt.id} for ${hunt.target} (stealth=${hunt.stealthMode}, resource=${hunt.resourceClass})`);
 
