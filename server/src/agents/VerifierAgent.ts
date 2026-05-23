@@ -12,7 +12,7 @@ import { chromium, Browser, BrowserContext, Page } from "playwright";
 import crypto from "crypto";
 import { db } from "../db";
 import { findings } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc, isNotNull } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import type { SolverResult } from "./SolverPool";
@@ -34,6 +34,19 @@ export interface VerificationResult {
 class Layer1Dedup {
   private hashCache = new Set<string>();
   private simHash = new SimHashDedup();
+
+  async initialize(): Promise<void> {
+    // Preload the last 500 dedup hashes from DB so restarts don't reprocess
+    // findings that were already confirmed before the process stopped.
+    const recent = await db.select({ dedupHash: findings.dedupHash })
+      .from(findings)
+      .where(isNotNull(findings.dedupHash))
+      .orderBy(desc(findings.createdAt))
+      .limit(500);
+    for (const row of recent) {
+      if (row.dedupHash) this.hashCache.add(row.dedupHash);
+    }
+  }
 
   computeHash(result: SolverResult): string {
     const normalized = {
@@ -317,6 +330,7 @@ export class VerifierAgent {
   private layer4 = new Layer4AIConfirmation();
 
   async initialize(): Promise<void> {
+    await this.layer1.initialize();
     await this.layer3.initialize();
   }
 

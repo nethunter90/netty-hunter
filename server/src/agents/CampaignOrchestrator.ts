@@ -18,7 +18,7 @@ import { db } from "../db";
 import {
   programs, campaigns, targets, findings,
 } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import logger from "../utils/logger";
 
 import { ScopeGuard } from "../middleware/scopeGuard";
@@ -35,6 +35,7 @@ import { NucleiTemplateGenerator } from "../intelligence/NucleiGenerator";
 import { HuntStrategyBuilder } from "../routes/huntStrategy";
 import { exploitChainIntelligence } from "../lib/hunter/chain-intelligence";
 import { bountyIntelligenceService } from "../lib/bounty-intelligence";
+import { eventBus } from "../lib/orchestration/layer3-event-bus";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,11 @@ export class CampaignOrchestrator extends EventEmitter {
 
     this.state.campaignId = campaign.id;
 
+    // Sync findingsCount from DB so a resumed campaign starts from the correct base
+    const [countRow] = await db.select({ n: sql<number>`count(*)` })
+      .from(findings).where(eq(findings.campaignId, campaign.id));
+    this.state.findingsCount = Number(countRow?.n ?? 0);
+
     // 1e. Register target
     const [target] = await db.insert(targets).values({
       programId: params.programId,
@@ -414,6 +420,20 @@ export class CampaignOrchestrator extends EventEmitter {
       rawFindings.push(d);
       this.state.findingsCount++;
       this.emit("l4:finding_raw", d);
+      // Publish to shared event bus so graph-wiring can create a vulnerability node
+      if (this.state.campaignId) {
+        const f = (d as any).finding;
+        eventBus.publish('vulnerability_found', 'orchestrator', String(this.state.campaignId), {
+          vulnerability: {
+            type: f?.vulnClass || f?.vulnType || 'unknown',
+            severity: f?.severity || 'medium',
+            confidence: f?.confidence || 0.5,
+            endpoint: f?.endpoint || '',
+            evidence: f?.evidence ? String(f.evidence).slice(0, 500) : '',
+            discoveredBy: 'hunter-engine',
+          },
+        });
+      }
     });
     engine.on("hunt:update", d => this.emit("l4:strategy_update", d));
     engine.on("hunt:error", d => this.emit("l4:error", d));
@@ -459,6 +479,13 @@ export class CampaignOrchestrator extends EventEmitter {
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
       }
+    }
+
+    // Reconcile in-memory counter with DB to catch any persistence gaps
+    if (this.state.campaignId) {
+      const [countRow] = await db.select({ n: sql<number>`count(*)` })
+        .from(findings).where(eq(findings.campaignId, this.state.campaignId));
+      this.state.findingsCount = Number(countRow?.n ?? this.state.findingsCount);
     }
 
     this.audit(4, "execution_complete", {
@@ -525,9 +552,22 @@ export class CampaignOrchestrator extends EventEmitter {
           }).where(eq(findings.id, dbFinding.id));
 
           this.emit("l5:verified", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          // Reconcile graph node verification status
+          eventBus.publish('finding_verified', 'orchestrator', String(this.state.campaignId || ''), {
+            vulnType: dbFinding.vulnType,
+            endpoint: String(dbFinding.targetId || ''),
+            findingId: dbFinding.id,
+            finalConfidence: verification.finalConfidence,
+          });
         } else {
           rejected.push({ finding: dbFinding, verification });
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          eventBus.publish('finding_rejected', 'orchestrator', String(this.state.campaignId || ''), {
+            vulnType: dbFinding.vulnType,
+            endpoint: String(dbFinding.targetId || ''),
+            findingId: dbFinding.id,
+            verdict: verification.finalVerdict,
+          });
         }
       } catch (err) {
         logger.warn("Verification failed for finding", { findingId: dbFinding.id, err });
@@ -592,29 +632,35 @@ export class CampaignOrchestrator extends EventEmitter {
           dedupHash: finding.dedupHash || "",
         };
 
-        // Report
-        const report = await reportGen.generate(mockSolverResult, mockVerification, {
-          severity: finding.severity,
-          programName: "Bug Bounty Program",
-          targetUrl: params.targetUrl,
-          huntDate: finding.createdAt.toISOString().split("T")[0],
-        });
-        reports.push(report.reportMarkdown);
+        // Idempotency: skip regeneration if the report was already written
+        // (handles crash-then-resume between L5 update and L6 report writes).
+        if (finding.reportDraft) {
+          reports.push(finding.reportDraft);
+        } else {
+          const report = await reportGen.generate(mockSolverResult, mockVerification, {
+            severity: finding.severity,
+            programName: "Bug Bounty Program",
+            targetUrl: params.targetUrl,
+            huntDate: finding.createdAt.toISOString().split("T")[0],
+          });
+          reports.push(report.reportMarkdown);
+          await db.update(findings)
+            .set({ reportDraft: report.reportMarkdown })
+            .where(eq(findings.id, finding.id));
+        }
 
-        await db.update(findings)
-          .set({ reportDraft: report.reportMarkdown })
-          .where(eq(findings.id, finding.id));
-
-        // Nuclei template
-        const tmpl = nucleiGen.generateTemplate(mockSolverResult, mockVerification, {
-          severity: finding.severity,
-          programName: "Bug Bounty Program",
-        });
-        nucleiTemplates.push(tmpl);
-
-        await db.update(findings)
-          .set({ nucleiTemplate: tmpl })
-          .where(eq(findings.id, finding.id));
+        if (finding.nucleiTemplate) {
+          nucleiTemplates.push(finding.nucleiTemplate);
+        } else {
+          const tmpl = nucleiGen.generateTemplate(mockSolverResult, mockVerification, {
+            severity: finding.severity,
+            programName: "Bug Bounty Program",
+          });
+          nucleiTemplates.push(tmpl);
+          await db.update(findings)
+            .set({ nucleiTemplate: tmpl })
+            .where(eq(findings.id, finding.id));
+        }
 
         this.emit("l6:report_generated", { findingId: finding.id });
       } catch (err) {

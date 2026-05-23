@@ -34,6 +34,18 @@ class GraphWiring {
       });
     });
 
+    eventBus.on('finding_verified', (event: AgentEvent) => {
+      this.onFindingVerified(event).catch(err => {
+        console.error('[GraphWiring] Error processing finding_verified:', err);
+      });
+    });
+
+    eventBus.on('finding_rejected', (event: AgentEvent) => {
+      this.onFindingRejected(event).catch(err => {
+        console.error('[GraphWiring] Error processing finding_rejected:', err);
+      });
+    });
+
     console.log('[GraphWiring] Event wiring initialized for offensive graph DB');
   }
 
@@ -170,6 +182,33 @@ class GraphWiring {
           });
         }
       }
+    }
+  }
+
+  private async onFindingVerified(event: AgentEvent): Promise<void> {
+    const huntId = event.huntId;
+    if (!huntId) return;
+    const vulnType = event.data?.vulnType as string;
+    if (!vulnType) return;
+    // Merge verification status into the vulnerability node if it already exists
+    const existing = offensiveGraphDB.findNode(huntId, 'vulnerability', vulnType);
+    if (existing) {
+      await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
+        properties: { verified: true, verifiedAt: Date.now(), finalConfidence: event.data?.finalConfidence },
+      });
+    }
+  }
+
+  private async onFindingRejected(event: AgentEvent): Promise<void> {
+    const huntId = event.huntId;
+    if (!huntId) return;
+    const vulnType = event.data?.vulnType as string;
+    if (!vulnType) return;
+    const existing = offensiveGraphDB.findNode(huntId, 'vulnerability', vulnType);
+    if (existing) {
+      await offensiveGraphDB.addNode(huntId, 'vulnerability', vulnType, {
+        properties: { verified: false, rejectedAt: Date.now(), verdict: event.data?.verdict },
+      });
     }
   }
 

@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { MissionMemory, Endpoint, Technology, Vulnerability, Credential } from './types';
 
 const MAX_ENDPOINTS = 2000;
+const SNAPSHOT_DIR = '/tmp/netty-hunter-memory';
 const MAX_TECHNOLOGIES = 500;
 const MAX_VULNERABILITIES = 500;
 const MAX_SUBDOMAINS = 1000;
@@ -11,7 +14,40 @@ const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2,
 export class MissionMemoryStore {
   private memories: Map<string, MissionMemory> = new Map();
 
+  private snapshotPath(huntId: string): string {
+    return path.join(SNAPSHOT_DIR, `${huntId}.json`);
+  }
+
+  private snapshot(huntId: string): void {
+    const memory = this.memories.get(huntId);
+    if (!memory) return;
+    try {
+      if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+      fs.writeFileSync(this.snapshotPath(huntId), JSON.stringify(memory), 'utf8');
+    } catch { /* non-critical: persistence failure must not block the hunt */ }
+  }
+
+  restore(huntId: string): boolean {
+    try {
+      const raw = fs.readFileSync(this.snapshotPath(huntId), 'utf8');
+      const memory: MissionMemory = JSON.parse(raw);
+      // Re-hydrate Date objects that JSON.parse returns as strings
+      memory.lastUpdated = new Date(memory.lastUpdated);
+      for (const ep of memory.endpoints) ep.discoveredAt = new Date(ep.discoveredAt);
+      this.memories.set(huntId, memory);
+      console.log(`[MissionMemory] Restored snapshot for hunt ${huntId} (${memory.endpoints.length} endpoints, ${memory.vulnerabilities.length} vulns)`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   initialize(huntId: string, initialDomains: string[]): MissionMemory {
+    // Resume from snapshot if available (crash recovery)
+    if (this.restore(huntId)) {
+      return this.memories.get(huntId)!;
+    }
+
     const seedEndpoints: Endpoint[] = initialDomains
       .filter(d => d.startsWith('http'))
       .map(d => ({
@@ -67,6 +103,7 @@ export class MissionMemoryStore {
     memory.endpoints.push(...newEndpoints);
     while (memory.endpoints.length > MAX_ENDPOINTS) memory.endpoints.shift();
     memory.lastUpdated = new Date();
+    if (newEndpoints.length > 0) this.snapshot(huntId);
   }
 
   addTechnologies(huntId: string, technologies: Technology[]): void {
@@ -91,11 +128,13 @@ export class MissionMemoryStore {
     const memory = this.memories.get(huntId);
     if (!memory) return;
 
+    let added = 0;
     for (const vuln of vulnerabilities) {
       const key = `${vuln.endpoint}:${vuln.type}`;
       const existing = memory.vulnerabilities.find(v => `${v.endpoint}:${v.type}` === key);
       if (!existing) {
         memory.vulnerabilities.push(vuln);
+        added++;
       } else {
         const inRank = SEVERITY_RANK[vuln.severity] ?? 0;
         const exRank = SEVERITY_RANK[existing.severity] ?? 0;
@@ -107,6 +146,7 @@ export class MissionMemoryStore {
     }
     while (memory.vulnerabilities.length > MAX_VULNERABILITIES) memory.vulnerabilities.shift();
     memory.lastUpdated = new Date();
+    if (added > 0) this.snapshot(huntId);
   }
 
   addCredentials(huntId: string, credentials: Credential[]): void {
@@ -146,6 +186,7 @@ export class MissionMemoryStore {
 
   clear(huntId: string): void {
     this.memories.delete(huntId);
+    try { fs.unlinkSync(this.snapshotPath(huntId)); } catch { /* already gone */ }
   }
 }
 

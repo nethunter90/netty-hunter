@@ -228,10 +228,23 @@ export class TemporalDecayEngine {
     const domain = attempt.category; // category field carries domain in evasion context
     const k = this.key(sessionId, domain);
     if (!this.history.has(k)) this.history.set(k, []);
-    this.history.get(k)!.push(attempt);
+    const arr = this.history.get(k)!;
+    arr.push(attempt);
+    // Cap per-key history to prevent unbounded growth for long-running sessions
+    if (arr.length > 500) arr.splice(0, arr.length - 500);
+    // Evict stale sessions lazily when the Map grows large
+    if (this.history.size > 200) this.evictStale();
     logger.debug('[TemporalDecay] recorded attempt', {
       sessionId, domain, succeeded: attempt.succeeded, technique: attempt.technique,
     });
+  }
+
+  private evictStale(): void {
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000; // 2-hour TTL per session:domain key
+    for (const [k, arr] of this.history) {
+      const latest = arr.length > 0 ? arr[arr.length - 1].attemptedAt : 0;
+      if (latest < cutoff) this.history.delete(k);
+    }
   }
 
   /** Analyse temporal phase transitions for a session/domain pair. */
