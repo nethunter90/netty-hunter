@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   Layers, Play, Square, Shield, Target, Brain, Cpu, CheckCircle2,
-  XCircle, Clock, AlertTriangle, ChevronRight, BarChart3, Zap,
-  RefreshCw, FileText, Lock
+  XCircle, Clock, AlertTriangle, BarChart3, Zap, RefreshCw, Lock,
 } from "lucide-react";
 import { bountyAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import axios from "axios";
+import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -18,36 +18,10 @@ interface LayerStatus {
   startedAt?: number;
   completedAt?: number;
   durationMs?: number;
-  result?: Record<string, unknown>;
   error?: string;
 }
 
-interface AuditEntry {
-  ts: number;
-  layer: number;
-  event: string;
-  detail: Record<string, unknown>;
-}
-
-interface OrchestrationState {
-  orchestrationId: string;
-  campaignId?: number;
-  phase: string;
-  layers: LayerStatus[];
-  findingsCount: number;
-  verifiedCount: number;
-  startedAt: number;
-  audit: AuditEntry[];
-}
-
-interface LogEntry {
-  ts: string;
-  layer?: number;
-  type: "info" | "success" | "error" | "warning" | "finding" | "audit";
-  message: string;
-}
-
-// ── Layer icons & metadata ─────────────────────────────────────────────────────
+// ── Layer metadata ─────────────────────────────────────────────────────────────
 
 const LAYER_ICONS = [Lock, Target, Brain, Cpu, CheckCircle2, BarChart3];
 const LAYER_COLORS = [
@@ -67,6 +41,12 @@ const LAYER_DESC = [
   "4-layer anti-hallucination · Playwright gate · Deduplication",
   "Reinforcement learning · CAMS tracking · Reports · Nuclei templates",
 ];
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function now(): string {
+  return new Date().toISOString().slice(11, 23);
+}
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -91,147 +71,169 @@ export default function Orchestration() {
   const [phase, setPhase] = useState<string>("idle");
   const [findings, setFindings] = useState(0);
   const [verified, setVerified] = useState(0);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [layerMeta, setLayerMeta] = useState<Record<string, unknown>[]>([]);
 
-  const logRef = useRef<HTMLDivElement>(null);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+
   const socket = getSocket();
+
+  function pushEvent(ev: ActivityEvent) {
+    setActivityEvents(prev => [...prev, ev]);
+  }
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
-    // Fetch static layer metadata
     axios.get("/api/orchestration/layers").then(r => setLayerMeta(r.data?.layers || [])).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logs]);
 
   // ── Socket.IO wiring ───────────────────────────────────────────────────────
 
   useEffect(() => {
-    const addLog = (type: LogEntry["type"], message: string, layer?: number) => {
-      setLogs(prev => [...prev.slice(-300), {
-        ts: new Date().toISOString().slice(11, 23),
-        type,
-        layer,
-        message,
-      }]);
-    };
-
     socket.on("orchestration:created", ({ orchestrationId: id }: { orchestrationId: string }) => {
       setOrchestrationId(id);
       socket.emit("subscribe:orchestration", { orchestrationId: id });
-      addLog("info", `Orchestration created: ${id.slice(0, 8)}…`);
     });
 
     socket.on("orchestration:started", () => {
       setPhase("running");
-      addLog("info", "6-layer orchestration pipeline started");
     });
 
     socket.on("orchestration:layer_start", (d: { layer: number; name: string }) => {
       setLayers(prev => prev.map(l =>
         l.layer === d.layer ? { ...l, phase: "running", startedAt: Date.now() } : l
       ));
-      setPhase(`l${d.layer}_${d.name.toLowerCase().replace(/ /g, "_")}`);
-      addLog("info", `→ Layer ${d.layer}: ${d.name} started`, d.layer);
+      setPhase(`l${d.layer}`);
+      pushEvent({ type: "layer_start", ts: now(), layer: d.layer, name: d.name });
     });
 
     socket.on("orchestration:layer_complete", (d: {
       layer: number; name: string; passed: boolean; durationMs: number;
     }) => {
       setLayers(prev => prev.map(l =>
-        l.layer === d.layer ? {
-          ...l,
-          phase: d.passed ? "passed" : "failed",
-          completedAt: Date.now(),
-          durationMs: d.durationMs,
-        } : l
+        l.layer === d.layer ? { ...l, phase: d.passed ? "passed" : "failed", completedAt: Date.now(), durationMs: d.durationMs } : l
       ));
-      addLog(
-        d.passed ? "success" : "error",
-        `✓ Layer ${d.layer}: ${d.name} ${d.passed ? "PASSED" : "FAILED"} (${d.durationMs}ms)`,
-        d.layer
-      );
+      pushEvent({ type: "layer_done", ts: now(), layer: d.layer, name: d.name, passed: d.passed, durationMs: d.durationMs });
     });
 
     socket.on("orchestration:layer_error", (d: { layer: number; name: string; error: string }) => {
       setLayers(prev => prev.map(l =>
         l.layer === d.layer ? { ...l, phase: "failed", error: d.error } : l
       ));
-      addLog("error", `✗ Layer ${d.layer} error: ${d.error}`, d.layer);
-    });
-
-    socket.on("orchestration:audit", (d: AuditEntry) => {
-      addLog("audit", `[L${d.layer}] ${d.event}: ${JSON.stringify(d.detail).slice(0, 120)}`, d.layer);
+      pushEvent({ type: "error", ts: now(), message: `L${d.layer} ${d.name}: ${d.error}` });
     });
 
     socket.on("orchestration:complete", () => {
       setPhase("complete");
       setLoading(false);
-      addLog("success", "✓ All 6 layers complete – orchestration finished");
       toast.success("Orchestration complete!");
     });
 
     socket.on("orchestration:aborted", (d: { reason: string }) => {
       setPhase("aborted");
       setLoading(false);
-      addLog("error", `Orchestration aborted: ${d.reason}`);
+      pushEvent({ type: "error", ts: now(), message: `Aborted: ${d.reason}` });
       toast.error(`Aborted: ${d.reason}`);
     });
 
     socket.on("orchestration:error", (d: { error: string }) => {
       setPhase("error");
       setLoading(false);
-      addLog("error", `Fatal: ${d.error}`);
+      pushEvent({ type: "error", ts: now(), message: d.error });
       toast.error(`Orchestration error: ${d.error}`);
     });
 
-    // Layer 4 execution events
+    // ── L4 Execution Engine ────────────────────────────────────────────────
+
     socket.on("l4:phase", (d: { phase: string; iteration?: number }) => {
-      addLog("info", `  [L4] Phase: ${d.phase}${d.iteration != null ? ` (iter ${d.iteration})` : ""}`, 4);
-    });
-    socket.on("l4:finding_raw", () => {
-      setFindings(f => f + 1);
-      addLog("finding", "  [L4] Raw finding detected", 4);
-    });
-    socket.on("l4:solver_finding", () => {
-      setFindings(f => f + 1);
-      addLog("finding", "  [L4] Solver finding detected", 4);
-    });
-    socket.on("l4:error", (d: { error: string }) => {
-      addLog("warning", `  [L4] Engine warning: ${d.error}`, 4);
+      pushEvent({ type: "phase", ts: now(), phase: d.phase, iteration: d.iteration ?? 0 });
     });
 
-    // Layer 5 verification events
+    socket.on("l4:hypotheses", (d: { count: number; hypotheses?: any[] }) => {
+      const hyps: any[] = d.hypotheses ?? [];
+      hyps.forEach(h => {
+        pushEvent({
+          type: "hypothesis",
+          ts: now(),
+          id: h.id ?? String(Math.random()),
+          vulnClass: h.vulnClass ?? "unknown",
+          reasoning: h.reasoning ?? h.evidence?.join("; ") ?? "",
+          confidence: h.confidence ?? 0,
+        });
+      });
+    });
+
+    socket.on("l4:probing", (d: { hypothesisId: string; vulnClass: string }) => {
+      pushEvent({ type: "probe_start", ts: now(), hypothesisId: d.hypothesisId, vulnClass: d.vulnClass });
+    });
+
+    socket.on("l4:probe_result", (d: { hypothesisId: string; result: any }) => {
+      const r = d.result ?? {};
+      pushEvent({
+        type: "probe_result",
+        ts: now(),
+        hypothesisId: d.hypothesisId,
+        tool: r.tool ?? "unknown",
+        success: !!r.success,
+        output: r.output ?? r.parsed?.raw ?? "",
+        durationMs: r.duration ?? 0,
+      });
+    });
+
+    socket.on("l4:finding_raw", (d: { finding?: any }) => {
+      const f = d.finding ?? d;
+      const h = f.hypothesis ?? {};
+      setFindings(n => n + 1);
+      pushEvent({
+        type: "finding",
+        ts: now(),
+        vulnClass: h.vulnClass ?? "unknown",
+        severity: f.severity ?? "medium",
+        confidence: h.confidence ?? 0,
+        payload: f.exploitPayload ?? h.evidence?.join("; "),
+      });
+    });
+
+    socket.on("l4:solver_finding", (d: { result?: any }) => {
+      const r = d.result ?? d;
+      setFindings(n => n + 1);
+      pushEvent({ type: "solver_finding", ts: now(), vulnClass: r.vulnClass ?? "unknown" });
+    });
+
+    socket.on("l4:error", (d: { error: string }) => {
+      pushEvent({ type: "error", ts: now(), message: `[L4] ${d.error}` });
+    });
+
+    // ── L5 Verification ────────────────────────────────────────────────────
+
     socket.on("l5:verified", (d: { findingId: number; verdict: string }) => {
       setVerified(v => v + 1);
-      addLog("success", `  [L5] Finding #${d.findingId} verified: ${d.verdict}`, 5);
-    });
-    socket.on("l5:rejected", (d: { findingId: number; verdict: string }) => {
-      addLog("warning", `  [L5] Finding #${d.findingId} rejected: ${d.verdict}`, 5);
+      pushEvent({ type: "verified", ts: now(), findingId: d.findingId, verdict: d.verdict });
     });
 
-    // Layer 6 harvest events
-    socket.on("l6:report_generated", (d: { findingId: number }) => {
-      addLog("success", `  [L6] Report generated for finding #${d.findingId}`, 6);
+    socket.on("l5:rejected", (d: { findingId: number; verdict: string }) => {
+      pushEvent({ type: "rejected", ts: now(), findingId: d.findingId, verdict: d.verdict });
     });
-    socket.on("l6:autonomy_updated", (d: { compositeScore: number }) => {
-      addLog("info", `  [L6] CAMS updated: ${d.compositeScore}/100`, 6);
+
+    // ── L6 Harvest ────────────────────────────────────────────────────────
+
+    socket.on("l6:report_generated", (d: { findingId: number }) => {
+      pushEvent({ type: "verified", ts: now(), findingId: d.findingId, verdict: "report generated" });
+    });
+
+    socket.on("l6:autonomy_updated", (_d: { compositeScore: number }) => {
+      // no visual needed — kept for completeness
     });
 
     return () => {
       [
         "orchestration:created", "orchestration:started", "orchestration:layer_start",
-        "orchestration:layer_complete", "orchestration:layer_error", "orchestration:audit",
+        "orchestration:layer_complete", "orchestration:layer_error",
         "orchestration:complete", "orchestration:aborted", "orchestration:error",
-        "l4:phase", "l4:finding_raw", "l4:solver_finding", "l4:error",
+        "l4:phase", "l4:hypotheses", "l4:probing", "l4:probe_result",
+        "l4:finding_raw", "l4:solver_finding", "l4:error",
         "l5:verified", "l5:rejected",
         "l6:report_generated", "l6:autonomy_updated",
       ].forEach(evt => socket.off(evt));
@@ -244,9 +246,8 @@ export default function Orchestration() {
     if (!selectedProgram) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
 
-    // Reset state
     setLayers(prev => prev.map(l => ({ ...l, phase: "pending", startedAt: undefined, completedAt: undefined, durationMs: undefined, error: undefined })));
-    setLogs([]);
+    setActivityEvents([]);
     setFindings(0);
     setVerified(0);
     setPhase("starting");
@@ -280,7 +281,7 @@ export default function Orchestration() {
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-hack-border bg-hack-surface flex-shrink-0">
         <Layers className="w-4 h-4 text-hack-accent" strokeWidth={1.5} />
-        <span className="text-sm font-mono text-hack-accent glow-green tracking-widest">
+        <span className="text-sm font-mono text-hack-accent tracking-widest">
           6-LAYER ORCHESTRATION & GOVERNANCE MODEL
         </span>
         <div className="ml-auto flex items-center gap-3 text-[10px] text-hack-dim">
@@ -307,8 +308,8 @@ export default function Orchestration() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Config Panel */}
-        <div className="w-64 flex-shrink-0 border-r border-hack-border bg-hack-surface flex flex-col overflow-y-auto">
+        {/* Left: Config */}
+        <div className="w-60 flex-shrink-0 border-r border-hack-border bg-hack-surface flex flex-col overflow-y-auto">
           <div className="p-3 border-b border-hack-border">
             <div className="text-[10px] text-hack-dim tracking-widest mb-3">HUNT CONFIGURATION</div>
 
@@ -425,7 +426,7 @@ export default function Orchestration() {
         </div>
 
         {/* Center: Layer Status Grid */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="w-80 flex-shrink-0 flex flex-col overflow-hidden border-r border-hack-border">
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {layers.map((layer, idx) => {
               const Icon = LAYER_ICONS[idx];
@@ -445,7 +446,6 @@ export default function Orchestration() {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    {/* Layer number */}
                     <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 border ${
                       isActive ? colorClass :
                       isPassed ? "border-hack-green/40 text-hack-green bg-hack-green/10" :
@@ -455,7 +455,6 @@ export default function Orchestration() {
                       <Icon className="w-3.5 h-3.5" strokeWidth={1.5} />
                     </div>
 
-                    {/* Layer info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-hack-dim">L{layer.layer}</span>
@@ -477,12 +476,11 @@ export default function Orchestration() {
                       {layer.error && (
                         <div className="text-[10px] text-hack-red mt-0.5 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                          {layer.error.slice(0, 80)}
+                          {layer.error.slice(0, 60)}
                         </div>
                       )}
                     </div>
 
-                    {/* Status badge */}
                     <div className="flex-shrink-0 text-right">
                       <div className={`text-[10px] px-2 py-0.5 rounded border font-mono ${
                         isActive ? "text-hack-accent border-hack-accent/30 bg-hack-accent/10 animate-pulse" :
@@ -501,7 +499,6 @@ export default function Orchestration() {
                     </div>
                   </div>
 
-                  {/* Progress bar for active layer */}
                   {isActive && (
                     <div className="mt-2 h-0.5 bg-hack-muted rounded overflow-hidden">
                       <div className="h-full bg-hack-accent animate-pulse w-full" />
@@ -512,12 +509,12 @@ export default function Orchestration() {
             })}
           </div>
 
-          {/* Bottom stats bar */}
+          {/* Stats bar */}
           {(findings > 0 || phase === "complete") && (
-            <div className="border-t border-hack-border bg-hack-surface p-2 flex items-center gap-6 text-[10px] flex-shrink-0">
+            <div className="border-t border-hack-border bg-hack-surface p-2 flex items-center gap-4 text-[10px] flex-shrink-0">
               <div className="flex items-center gap-1.5 text-hack-yellow">
                 <Zap className="w-3 h-3" />
-                <span>{findings} raw findings</span>
+                <span>{findings} raw</span>
               </div>
               <div className="flex items-center gap-1.5 text-hack-green">
                 <CheckCircle2 className="w-3 h-3" />
@@ -525,72 +522,22 @@ export default function Orchestration() {
               </div>
               <div className="flex items-center gap-1.5 text-hack-dim">
                 <Shield className="w-3 h-3" />
-                <span>
-                  {findings > 0 ? Math.round((verified / findings) * 100) : 0}% verification rate
-                </span>
+                <span>{findings > 0 ? Math.round((verified / findings) * 100) : 0}%</span>
               </div>
               {orchestrationId && (
-                <div className="ml-auto text-hack-dim">
-                  ID: {orchestrationId.slice(0, 8)}…
-                </div>
+                <div className="ml-auto text-hack-dim">{orchestrationId.slice(0, 8)}…</div>
               )}
             </div>
           )}
         </div>
 
-        {/* Right: Audit Log */}
-        <div className="w-72 flex-shrink-0 border-l border-hack-border bg-hack-bg flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-hack-border bg-hack-surface flex-shrink-0">
-            <FileText className="w-3 h-3 text-hack-dim" strokeWidth={1.5} />
-            <span className="text-[10px] text-hack-dim tracking-widest">AUDIT LOG</span>
-            <span className="ml-auto text-[9px] text-hack-dim">{logs.length} entries</span>
-          </div>
-
-          <div
-            ref={logRef}
-            className="flex-1 overflow-y-auto p-2 space-y-0.5"
-          >
-            {logs.length === 0 ? (
-              <div className="text-[10px] text-hack-dim text-center mt-6 opacity-60">
-                Launch orchestration to see live audit trail
-              </div>
-            ) : (
-              logs.map((log, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[9px] font-mono leading-tight">
-                  <span className="text-hack-dim flex-shrink-0">{log.ts}</span>
-                  {log.layer && (
-                    <span className={`flex-shrink-0 px-1 rounded ${
-                      LAYER_COLORS[log.layer - 1].split(" ")[0]
-                    }`}>
-                      L{log.layer}
-                    </span>
-                  )}
-                  <span className={
-                    log.type === "success" ? "text-hack-green" :
-                    log.type === "error" ? "text-hack-red" :
-                    log.type === "warning" ? "text-hack-yellow" :
-                    log.type === "finding" ? "text-hack-orange" :
-                    log.type === "audit" ? "text-hack-blue" :
-                    "text-hack-dim"
-                  }>
-                    {log.message}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Quick-clear log */}
-          {logs.length > 0 && (
-            <div className="border-t border-hack-border p-1.5 flex-shrink-0">
-              <button
-                onClick={() => setLogs([])}
-                className="text-[9px] text-hack-dim hover:text-hack-text w-full text-center"
-              >
-                CLEAR LOG
-              </button>
-            </div>
-          )}
+        {/* Right: Live Activity Feed */}
+        <div className="flex-1 overflow-hidden">
+          <LiveActivityFeed
+            events={activityEvents}
+            isRunning={isRunning}
+            title="EXECUTION STREAM"
+          />
         </div>
       </div>
     </div>

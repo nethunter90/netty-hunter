@@ -1,18 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
-  Terminal, Play, Square, Crosshair, Target, Zap, Eye, Brain,
-  ChevronRight, AlertTriangle, CheckCircle2, Clock, RefreshCw
+  Terminal, Play, Square, Eye, Brain, Target, RefreshCw, CheckCircle2,
 } from "lucide-react";
 import { hunterAPI, bountyAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
-
-interface LogEntry {
-  time: string;
-  type: "info" | "warning" | "success" | "error" | "phase" | "finding";
-  message: string;
-  data?: Record<string, unknown>;
-}
+import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
 
 interface ActiveSession {
   sessionUuid: string;
@@ -23,6 +16,18 @@ interface ActiveSession {
   findings: number;
 }
 
+const PHASE_ICONS: Record<string, React.ReactNode> = {
+  observe:     <Eye className="w-3 h-3 text-hack-cyan" />,
+  hypothesize: <Brain className="w-3 h-3 text-hack-purple" />,
+  probe:       <Target className="w-3 h-3 text-hack-orange" />,
+  update:      <RefreshCw className="w-3 h-3 text-hack-blue" />,
+  complete:    <CheckCircle2 className="w-3 h-3 text-hack-accent" />,
+};
+
+function ts(): string {
+  return new Date().toISOString().slice(11, 23);
+}
+
 export default function HuntConsole() {
   const [programs, setPrograms] = useState<Record<string, unknown>[]>([]);
   const [selectedProgram, setSelectedProgram] = useState<number>(0);
@@ -31,12 +36,16 @@ export default function HuntConsole() {
   const [goal, setGoal] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
-  const logRef = useRef<HTMLDivElement>(null);
+
   const socket = getSocket();
+
+  function push(ev: ActivityEvent) {
+    setActivityEvents(prev => [...prev, ev]);
+  }
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
@@ -44,65 +53,124 @@ export default function HuntConsole() {
   }, []);
 
   useEffect(() => {
-    // Socket event listeners
-    const events = [
-      "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
-      "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
-      "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
-    ];
+    socket.on("hunt:started", (data: any) => {
+      push({ type: "phase", ts: ts(), phase: "observe", iteration: 0 });
+    });
 
-    events.forEach(event => {
-      socket.on(event, (data: Record<string, unknown>) => {
-        const entry: LogEntry = {
-          time: new Date().toISOString().slice(11, 23),
-          type: event.includes("error") ? "error" : event.includes("finding") ? "finding" : event.includes("complete") ? "success" : "info",
-          message: formatEventMessage(event, data),
-          data,
-        };
-        setLogs(prev => [...prev.slice(-200), entry]);
+    socket.on("hunt:phase", (data: any) => {
+      const phase = String(data.phase || "observe");
+      const iteration = Number(data.iteration || 0);
+      push({ type: "phase", ts: ts(), phase, iteration });
+      setActiveSessions(prev => prev.map(s =>
+        s.sessionUuid === String(data.sessionUuid || "")
+          ? { ...s, phase, iteration }
+          : s
+      ));
+    });
 
-        // Update active sessions
-        if (event === "hunt:phase") {
-          setActiveSessions(prev => prev.map(s =>
-            s.sessionUuid === String(data.sessionUuid || "") ? { ...s, phase: String(data.phase || ""), iteration: Number(data.iteration || 0) } : s
-          ));
-        }
-        if (event === "hunt:finding_confirmed") {
-          setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
-          toast.success(`Finding confirmed: ${String((data.finding as any)?.hypothesis?.vulnClass || "unknown")}`);
-        }
-        if (event === "hunt:complete") {
-          setActiveSessions(prev => prev.map(s =>
-            s.sessionUuid === String(data.sessionId || "") ? { ...s, status: "complete" } : s
-          ));
-        }
+    socket.on("hunt:observations", (_data: any) => {
+      // observations are context — no explicit event row needed
+    });
+
+    socket.on("hunt:hypotheses", (data: any) => {
+      const hyps: any[] = data.hypotheses ?? [];
+      hyps.forEach(h => {
+        push({
+          type: "hypothesis",
+          ts: ts(),
+          id: h.id ?? String(Math.random()),
+          vulnClass: h.vulnClass ?? "unknown",
+          reasoning: h.reasoning ?? h.evidence?.join("; ") ?? "",
+          confidence: h.confidence ?? 0,
+        });
       });
     });
 
-    return () => { events.forEach(e => socket.off(e)); };
+    socket.on("hunt:probing", (data: any) => {
+      push({
+        type: "probe_start",
+        ts: ts(),
+        hypothesisId: String(data.hypothesisId || ""),
+        vulnClass: String(data.vulnClass || ""),
+      });
+    });
+
+    socket.on("hunt:probe_result", (data: any) => {
+      const r = data.result ?? data;
+      push({
+        type: "probe_result",
+        ts: ts(),
+        hypothesisId: String(data.hypothesisId || ""),
+        tool: String(r.tool ?? "unknown"),
+        success: !!r.success,
+        output: String(r.output ?? r.parsed?.raw ?? ""),
+        durationMs: Number(r.duration ?? 0),
+      });
+    });
+
+    socket.on("hunt:finding_confirmed", (data: any) => {
+      const f = data.finding ?? data;
+      const h = f.hypothesis ?? {};
+      push({
+        type: "finding",
+        ts: ts(),
+        vulnClass: h.vulnClass ?? "unknown",
+        severity: f.severity ?? "medium",
+        confidence: h.confidence ?? 0,
+        payload: f.exploitPayload ?? h.evidence?.join("; "),
+      });
+      setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
+      toast.success(`Finding: ${h.vulnClass ?? "unknown"}`);
+    });
+
+    socket.on("hunt:update", (_data: any) => {});
+
+    socket.on("hunt:complete", (data: any) => {
+      push({
+        type: "complete",
+        ts: ts(),
+        findings: Number(data.findings ?? 0),
+        iterations: Number(data.iterations ?? 0),
+      });
+      setActiveSessions(prev => prev.map(s =>
+        s.sessionUuid === String(data.sessionId || "") ? { ...s, status: "complete" } : s
+      ));
+    });
+
+    socket.on("hunt:error", (data: any) => {
+      push({ type: "error", ts: ts(), message: String(data.error || "Unknown error") });
+    });
+
+    socket.on("solver:started", (data: any) => {
+      push({ type: "probe_start", ts: ts(), hypothesisId: "solver", vulnClass: String(data.vulnClass || "") });
+    });
+
+    socket.on("solver:complete", (data: any) => {
+      push({
+        type: "probe_result",
+        ts: ts(),
+        hypothesisId: "solver",
+        tool: "solver",
+        success: Number(data.confidence ?? 0) > 0.5,
+        output: `confidence=${Number(data.confidence ?? 0).toFixed(2)}`,
+        durationMs: 0,
+      });
+    });
+
+    socket.on("solver:finding", (data: any) => {
+      const r = data.result ?? data;
+      push({ type: "solver_finding", ts: ts(), vulnClass: String(r.vulnClass ?? "unknown") });
+      setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
+    });
+
+    return () => {
+      [
+        "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
+        "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
+        "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
+      ].forEach(e => socket.off(e));
+    };
   }, []);
-
-  // Auto-scroll logs
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logs]);
-
-  const formatEventMessage = (event: string, data: Record<string, unknown>): string => {
-    switch (event) {
-      case "hunt:started": return `Hunt started on ${String(data.targetUrl || "")}`;
-      case "hunt:phase": return `[${String(data.phase || "").toUpperCase()}] iteration ${data.iteration}`;
-      case "hunt:observations": return `Generated ${Number(data.count || 0)} observations (anomaly-sorted)`;
-      case "hunt:hypotheses": return `Generated ${Number(data.count || 0)} hypotheses`;
-      case "hunt:probing": return `Probing: ${String(data.vulnClass || "")} → ${String(data.hypothesisId || "").slice(0, 8)}...`;
-      case "hunt:finding_confirmed": return `FINDING CONFIRMED: ${String((data.finding as any)?.hypothesis?.vulnClass || "?")} [${String((data.finding as any)?.severity || "")}]`;
-      case "hunt:complete": return `Hunt complete: ${Number(data.findings || 0)} findings in ${Number(data.iterations || 0)} iterations`;
-      case "hunt:error": return `ERROR: ${String(data.error || "")}`;
-      case "solver:started": return `Solver spawned: ${String(data.vulnClass || "")}`;
-      case "solver:complete": return `Solver done: ${String(data.vulnClass || "")} confidence=${Number(data.confidence || 0).toFixed(2)}`;
-      case "solver:finding": return `SOLVER FINDING: ${String((data.result as Record<string, unknown>)?.vulnClass || "")}`;
-      default: return `${event}: ${JSON.stringify(data).slice(0, 100)}`;
-    }
-  };
 
   const startHunt = async () => {
     if (!selectedProgram) return toast.error("Select a program first");
@@ -110,7 +178,7 @@ export default function HuntConsole() {
     if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
 
     setLoading(true);
-    setLogs([]);
+    setActivityEvents([]);
 
     try {
       const res = await hunterAPI.startHunt({
@@ -133,16 +201,13 @@ export default function HuntConsole() {
       };
       setActiveSessions(prev => [...prev, session]);
 
-      // Subscribe to session events
       if (res.data.sessionUuid) {
         socket.emit("subscribe:hunt", { sessionUuid: res.data.sessionUuid });
       }
-
-      addLog("success", `Hunt started: ${res.data.sessionUuid || res.data.planId}`);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
       toast.error(error.response?.data?.error || "Failed to start hunt");
-      addLog("error", `Failed to start hunt: ${error.response?.data?.error}`);
+      push({ type: "error", ts: ts(), message: `Failed to start: ${error.response?.data?.error}` });
     } finally {
       setLoading(false);
     }
@@ -151,25 +216,9 @@ export default function HuntConsole() {
   const stopHunt = async (uuid: string) => {
     await hunterAPI.stopHunt(uuid).catch(() => {});
     setActiveSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
-    addLog("warning", `Hunt stopped: ${uuid}`);
   };
 
-  const addLog = (type: LogEntry["type"], message: string) => {
-    setLogs(prev => [...prev, { time: new Date().toISOString().slice(11, 23), type, message }]);
-  };
-
-  const LOG_COLORS: Record<string, string> = {
-    info: "text-hack-text", warning: "text-hack-yellow", success: "text-hack-accent",
-    error: "text-hack-red", phase: "text-hack-cyan", finding: "text-hack-orange",
-  };
-
-  const PHASE_ICONS: Record<string, React.ReactNode> = {
-    observe: <Eye className="w-3 h-3 text-hack-cyan" />,
-    hypothesize: <Brain className="w-3 h-3 text-hack-purple" />,
-    probe: <Target className="w-3 h-3 text-hack-orange" />,
-    update: <RefreshCw className="w-3 h-3 text-hack-blue" />,
-    complete: <CheckCircle2 className="w-3 h-3 text-hack-accent" />,
-  };
+  const isRunning = activeSessions.some(s => s.status === "running");
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -185,9 +234,9 @@ export default function HuntConsole() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Hunt Config */}
-        <div className="w-80 border-r border-hack-border flex flex-col overflow-hidden flex-shrink-0">
-          <div className="p-3 space-y-3 overflow-y-auto terminal-scroll flex-1">
+        {/* Left: Config */}
+        <div className="w-72 border-r border-hack-border flex flex-col overflow-hidden flex-shrink-0">
+          <div className="p-3 space-y-3 overflow-y-auto flex-1">
             <div>
               <label className="hack-label">Target Program</label>
               <select
@@ -196,7 +245,7 @@ export default function HuntConsole() {
                 onChange={e => setSelectedProgram(parseInt(e.target.value))}
               >
                 <option value={0}>-- Select Program --</option>
-                {programs.map((p: Record<string, unknown>) => (
+                {programs.map((p: any) => (
                   <option key={Number(p.id)} value={Number(p.id)}>{String(p.name)}</option>
                 ))}
               </select>
@@ -243,13 +292,13 @@ export default function HuntConsole() {
               <label className="hack-label">Hunt Template</label>
               <select className="hack-input w-full" value={selectedTemplate} onChange={e => setSelectedTemplate(e.target.value)}>
                 <option value="">-- Auto-select --</option>
-                {templates.map((t: Record<string, unknown>) => (
+                {templates.map((t: any) => (
                   <option key={String(t.id)} value={String(t.id)}>{String(t.name)}</option>
                 ))}
               </select>
-              {selectedTemplate && templates.find((t: Record<string, unknown>) => String(t.id) === selectedTemplate) && (
+              {selectedTemplate && (
                 <div className="text-[9px] text-hack-dim mt-1 font-mono">
-                  {String((templates.find((t: Record<string, unknown>) => String(t.id) === selectedTemplate) as Record<string, unknown>)?.description || "")}
+                  {String((templates.find((t: any) => String(t.id) === selectedTemplate) as any)?.description || "")}
                 </div>
               )}
             </div>
@@ -264,23 +313,23 @@ export default function HuntConsole() {
               disabled={loading || !selectedProgram || !targetUrl}
               className="hack-btn-primary w-full flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? (
-                <span className="w-3 h-3 border border-hack-bg border-t-transparent rounded-full animate-spin" />
-              ) : <Play className="w-3.5 h-3.5" />}
+              {loading
+                ? <span className="w-3 h-3 border border-hack-bg border-t-transparent rounded-full animate-spin" />
+                : <Play className="w-3.5 h-3.5" />}
               {loading ? "INITIALIZING..." : "LAUNCH HUNT"}
             </button>
           </div>
 
           {/* Active sessions */}
           {activeSessions.length > 0 && (
-            <div className="border-t border-hack-border p-3 space-y-2">
+            <div className="border-t border-hack-border p-3 space-y-2 flex-shrink-0">
               <div className="text-[10px] text-hack-dim font-mono uppercase mb-2">Active Hunts</div>
               {activeSessions.map(session => (
                 <div key={session.sessionUuid} className="hack-panel p-2 text-[10px] font-mono">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
                       <span className={`status-dot ${session.status === "running" ? "status-running" : "status-complete"}`} />
-                      <span className="text-hack-text truncate max-w-[120px]">{session.targetUrl}</span>
+                      <span className="text-hack-text truncate max-w-[140px]">{session.targetUrl}</span>
                     </div>
                     {session.status === "running" && (
                       <button onClick={() => stopHunt(session.sessionUuid)} className="text-hack-red hover:text-hack-red/80">
@@ -301,48 +350,13 @@ export default function HuntConsole() {
           )}
         </div>
 
-        {/* Right: Terminal Output */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-hack-bg">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-hack-border bg-hack-surface flex-shrink-0">
-            <div className="flex gap-1.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-hack-red/80" />
-              <div className="w-2.5 h-2.5 rounded-full bg-hack-yellow/80" />
-              <div className="w-2.5 h-2.5 rounded-full bg-hack-accent/80" />
-            </div>
-            <span className="text-[10px] font-mono text-hack-dim ml-2">hunt-engine — /bin/hunter</span>
-            <button onClick={() => setLogs([])} className="ml-auto text-[10px] text-hack-dim hover:text-hack-text font-mono">CLEAR</button>
-          </div>
-
-          <div
-            ref={logRef}
-            className="flex-1 overflow-y-auto terminal-scroll p-4 font-mono text-[11px] space-y-0.5"
-          >
-            {logs.length === 0 ? (
-              <div className="text-hack-dim">
-                <div>Welcome to <span className="text-hack-accent">Sentinel Primordial</span> Hunt Console</div>
-                <div className="mt-2">Select a program, enter target URL, and launch a hunt.</div>
-                <div className="mt-1">The Hunter Engine will autonomously:</div>
-                <div className="ml-2 space-y-0.5 mt-1 text-hack-dim/70">
-                  <div><span className="text-hack-cyan">→ OBSERVE</span>: Fingerprint target and collect anomalies</div>
-                  <div><span className="text-hack-purple">→ HYPOTHESIZE</span>: Generate vulnerability hypotheses via AI</div>
-                  <div><span className="text-hack-orange">→ PROBE</span>: Test hypotheses with real security tools</div>
-                  <div><span className="text-hack-blue">→ UPDATE</span>: Update confidence scores and persist findings</div>
-                </div>
-                <div className="mt-3 terminal-cursor">_</div>
-              </div>
-            ) : logs.map((log, i) => (
-              <div key={i} className={`flex gap-2 leading-5 ${LOG_COLORS[log.type]}`}>
-                <span className="text-hack-dim flex-shrink-0">[{log.time}]</span>
-                <span className="flex-shrink-0">
-                  {log.type === "finding" ? <Zap className="w-3 h-3 inline text-hack-orange" /> :
-                   log.type === "error" ? <AlertTriangle className="w-3 h-3 inline text-hack-red" /> :
-                   log.type === "success" ? <CheckCircle2 className="w-3 h-3 inline text-hack-accent" /> :
-                   <ChevronRight className="w-3 h-3 inline text-hack-dim" />}
-                </span>
-                <span>{log.message}</span>
-              </div>
-            ))}
-          </div>
+        {/* Right: Live Activity Feed */}
+        <div className="flex-1 overflow-hidden">
+          <LiveActivityFeed
+            events={activityEvents}
+            isRunning={isRunning}
+            title="hunt-engine — /bin/hunter"
+          />
         </div>
       </div>
     </div>
