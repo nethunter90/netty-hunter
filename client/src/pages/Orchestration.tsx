@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import {
   Layers, Play, Square, Shield, Target, Brain, Cpu, CheckCircle2,
-  XCircle, Clock, AlertTriangle, BarChart3, Zap, RefreshCw, Lock,
+  XCircle, Clock, AlertTriangle, BarChart3, Zap, RefreshCw, Lock, ChevronDown, ChevronUp,
 } from "lucide-react";
-import { bountyAPI } from "../lib/api";
+import { bountyAPI, hunterAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import axios from "axios";
@@ -75,6 +75,8 @@ export default function Orchestration() {
   const [layerMeta, setLayerMeta] = useState<Record<string, unknown>[]>([]);
 
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  const [campaigns, setCampaigns] = useState<Array<{id: number; createdAt: string; status: string; findingsTotal?: number; targetUrl?: string}>>([]);
+  const [showTimeline, setShowTimeline] = useState(false);
 
   const socket = getSocket();
 
@@ -87,6 +89,7 @@ export default function Orchestration() {
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     axios.get("/api/orchestration/layers").then(r => setLayerMeta(r.data?.layers || [])).catch(() => {});
+    hunterAPI.getCampaigns().then(r => setCampaigns((r.data || []).slice(0, 20))).catch(() => {});
   }, []);
 
   // ── Socket.IO wiring ───────────────────────────────────────────────────────
@@ -296,7 +299,15 @@ export default function Orchestration() {
         <span className="text-sm font-mono text-hack-accent tracking-widest">
           6-LAYER ORCHESTRATION & GOVERNANCE MODEL
         </span>
-        <div className="ml-auto flex items-center gap-3 text-[10px] text-hack-dim">
+        <button
+          onClick={() => setShowTimeline(v => !v)}
+          className="ml-auto hack-btn text-[10px] flex items-center gap-1"
+          title="Toggle campaign timeline"
+        >
+          {showTimeline ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          TIMELINE
+        </button>
+        <div className="flex items-center gap-3 text-[10px] text-hack-dim">
           {isRunning && (
             <span className="flex items-center gap-1 text-hack-accent">
               <RefreshCw className="w-3 h-3 animate-spin" />
@@ -318,6 +329,40 @@ export default function Orchestration() {
           )}
         </div>
       </div>
+
+      {/* Campaign Timeline */}
+      {showTimeline && (
+        <div className="border-b border-hack-border bg-hack-surface flex-shrink-0 max-h-48 overflow-y-auto terminal-scroll">
+          <div className="px-4 py-2 border-b border-hack-border/50 flex items-center gap-2">
+            <span className="text-[10px] font-mono text-hack-accent tracking-widest">CAMPAIGN TIMELINE</span>
+            <span className="text-[9px] text-hack-dim font-mono">({campaigns.length} recent)</span>
+          </div>
+          {campaigns.length === 0 ? (
+            <div className="px-4 py-3 text-[10px] text-hack-dim font-mono">No campaigns found.</div>
+          ) : (
+            <div className="divide-y divide-hack-border/30">
+              {campaigns.map(c => {
+                const statusColor =
+                  c.status === "confirmed" || c.status === "complete" ? "text-hack-green border-hack-green/30 bg-hack-green/5" :
+                  c.status === "failed" || c.status === "aborted" ? "text-hack-red border-hack-red/30 bg-hack-red/5" :
+                  c.status === "running" ? "text-hack-accent border-hack-accent/30 bg-hack-accent/5" :
+                  "text-hack-dim border-hack-border bg-hack-muted";
+                const truncatedUrl = c.targetUrl ? (c.targetUrl.length > 40 ? c.targetUrl.slice(0, 40) + "…" : c.targetUrl) : "—";
+                return (
+                  <div key={c.id} className="px-4 py-1.5 flex items-center gap-3 text-[10px] font-mono hover:bg-hack-muted/20">
+                    <span className="text-hack-dim w-16 flex-shrink-0">{new Date(c.createdAt).toISOString().slice(0, 10)}</span>
+                    <span className={`px-1.5 py-0.5 rounded border text-[9px] flex-shrink-0 ${statusColor}`}>{c.status.toUpperCase()}</span>
+                    {c.findingsTotal != null && (
+                      <span className="text-hack-yellow flex-shrink-0">{c.findingsTotal} findings</span>
+                    )}
+                    <span className="text-hack-dim truncate">{truncatedUrl}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Config */}

@@ -49,6 +49,15 @@ import { writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { programs } from "../db/schema";
+import { parameterDiscovery } from "../lib/tools/parameter-discovery";
+import { oauthProber } from "../lib/tools/oauth-probe";
+import { massAssignmentProber } from "../lib/tools/mass-assignment-probe";
+import { businessLogicProber } from "../lib/tools/business-logic-probe";
+import { twoFactorBypassProber } from "../lib/tools/two-factor-bypass";
+import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
+import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
+import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
+import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 
 const execFileAsync = promisify(execFile);
 
@@ -811,6 +820,170 @@ export class HunterEngine extends EventEmitter {
           this.emit("hunt:plan_seeded", { sessionId: this.state.sessionId, goal: plan.goal, phases: plan.phases.length });
         } catch (err) { logger.debug("[HunterEngine] Backward planner seeding skipped", { err: String(err) }); }
       })();
+
+      // Tech-payload selector — extract tech stack and inject tech-specific hypotheses
+      await (async () => {
+        try {
+          const techObs = this.state.observations.find(o => o.source === "whatweb");
+          const techList: string[] = [];
+          if (techObs?.data?.technologies && Array.isArray(techObs.data.technologies)) {
+            for (const entry of techObs.data.technologies) {
+              if (typeof entry === "object" && entry !== null) {
+                techList.push(...Object.keys(entry as Record<string, unknown>));
+              }
+            }
+          }
+          if (techList.length > 0) {
+            const profile = techPayloadSelector.select(techList);
+            for (const payload of profile.payloads.slice(0, 5)) {
+              this.state.hypotheses.push({
+                id: uuidv4(), vulnClass: payload.vulnClass,
+                targetUrl: this.state.targetUrl,
+                reasoning: `Tech-specific (${profile.detected.join(",")}): ${payload.description}`,
+                confidence: 0.6, priority: 7,
+                evidence: [], status: "pending", createdAt: Date.now(),
+              });
+            }
+            if (profile.payloads.length > 0) this.emit("hunt:tech_payloads", { sessionId: this.state.sessionId, techs: profile.detected, payloadCount: profile.payloads.length });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Tech payload selector skipped", { err: String(err) }); }
+      })();
+
+      // Parameter discovery — find injectable params via batch fuzzing
+      await (async () => {
+        try {
+          const paramResult = await parameterDiscovery.discover(this.state.targetUrl, this.authHeaders);
+          for (const hyp of paramResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (paramResult.discovered.length > 0) {
+            this.emit("hunt:params_discovered", { sessionId: this.state.sessionId, count: paramResult.discovered.length, params: paramResult.discovered.slice(0, 10).map(p => p.name) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Parameter discovery skipped", { err: String(err) }); }
+      })();
+
+      // OAuth probe — detect OAuth/OIDC flows and test for misconfigurations
+      await (async () => {
+        try {
+          const oauthResult = await oauthProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of oauthResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (oauthResult.vulns.length > 0) {
+            this.emit("hunt:oauth_vulns", { sessionId: this.state.sessionId, count: oauthResult.vulns.length, issues: oauthResult.vulns.map(v => v.issue) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] OAuth probe skipped", { err: String(err) }); }
+      })();
+
+      // Mass assignment probe — test for privileged field injection on update/register endpoints
+      await (async () => {
+        try {
+          const maResult = await massAssignmentProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of maResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (maResult.vulns.length > 0) {
+            this.emit("hunt:mass_assignment", { sessionId: this.state.sessionId, count: maResult.vulns.length, endpoints: maResult.vulns.map(v => v.endpoint) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Mass assignment probe skipped", { err: String(err) }); }
+      })();
+
+      // Business logic probe — test cart, coupon, pricing flows for logic flaws
+      await (async () => {
+        try {
+          const bizResult = await businessLogicProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of bizResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (bizResult.vulns.length > 0) {
+            this.emit("hunt:business_logic", { sessionId: this.state.sessionId, count: bizResult.vulns.length, types: [...new Set(bizResult.vulns.map(v => v.technique))] });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Business logic probe skipped", { err: String(err) }); }
+      })();
+
+      // 2FA bypass probe — test for OTP skip, null code, step skip attacks
+      await (async () => {
+        try {
+          const tfaResult = await twoFactorBypassProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of tfaResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (tfaResult.vulns.length > 0) {
+            this.emit("hunt:2fa_bypass", { sessionId: this.state.sessionId, count: tfaResult.vulns.length, techniques: tfaResult.vulns.map(v => v.technique) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] 2FA bypass probe skipped", { err: String(err) }); }
+      })();
+
+      // JWT confusion probe — alg:none, weak secrets, kid injection
+      await (async () => {
+        try {
+          const jwtResult = await jwtConfusionProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of jwtResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (jwtResult.vulns.length > 0) {
+            this.emit("hunt:jwt_vulns", { sessionId: this.state.sessionId, count: jwtResult.vulns.length, techniques: jwtResult.vulns.map(v => v.technique) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] JWT confusion probe skipped", { err: String(err) }); }
+      })();
+
+      // Open redirect chain probe — detect open redirects and chain to OAuth/XSS
+      await (async () => {
+        try {
+          const orResult = await openRedirectChainProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of orResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (orResult.vulns.length > 0) {
+            this.emit("hunt:open_redirect", { sessionId: this.state.sessionId, count: orResult.vulns.length, chained: orResult.vulns.filter(v => v.chainable).length });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Open redirect chain probe skipped", { err: String(err) }); }
+      })();
+
+      // Blind XXE probe — OOB-based XML external entity detection
+      await (async () => {
+        try {
+          const xxeResult = await blindXXEProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of xxeResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (xxeResult.vulns.length > 0) {
+            this.emit("hunt:xxe_found", { sessionId: this.state.sessionId, count: xxeResult.vulns.length, oobConfirmed: xxeResult.vulns.some(v => v.oobReceived) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Blind XXE probe skipped", { err: String(err) }); }
+      })();
     }
   }
 
@@ -1357,6 +1530,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
       host_header_injection: "curl_probe",
       crlf_injection: "curl_probe",
       cookie_flags: "curl_probe",
+      oauth_misconfiguration: "curl_probe",
+      mass_assignment: "curl_probe",
+      business_logic: "curl_probe",
+      two_factor_bypass: "curl_probe",
+      jwt_confusion: "jwt_tool",
+      parameter_injection: "nuclei",
+      hidden_params: "ffuf",
     };
     return vulnToolMap[vulnClass] || "nuclei";
   }

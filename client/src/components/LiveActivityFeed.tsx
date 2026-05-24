@@ -34,7 +34,16 @@ export type ActivityEvent =
   | { type: "ws_vulns"; ts: string; count: number; endpoints: string[]; issues: string[] }
   | { type: "bucket_exposed"; ts: string; buckets: Array<{ url: string; provider: string; listable: boolean }> }
   | { type: "proto_pollution"; ts: string; count: number; reflected: boolean }
-  | { type: "race_condition"; ts: string; count: number; endpoints: string[] };
+  | { type: "race_condition"; ts: string; count: number; endpoints: string[] }
+  | { type: "tech_payloads"; ts: string; techs: string[]; payloadCount: number }
+  | { type: "params_discovered"; ts: string; count: number; params: string[] }
+  | { type: "oauth_vulns"; ts: string; count: number; issues: string[] }
+  | { type: "mass_assignment"; ts: string; count: number; endpoints: string[] }
+  | { type: "business_logic"; ts: string; count: number; types: string[] }
+  | { type: "two_fa_bypass"; ts: string; count: number; techniques: string[] }
+  | { type: "jwt_vulns"; ts: string; count: number; techniques: string[] }
+  | { type: "open_redirect"; ts: string; count: number; chained: number }
+  | { type: "xxe_found"; ts: string; count: number; oobConfirmed: boolean };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -608,6 +617,187 @@ function TakeoverFoundRow({ ev }: { ev: ActivityEvent & { type: "takeover_found"
   );
 }
 
+function TechPayloadsRow({ ev }: { ev: ActivityEvent & { type: "tech_payloads" } }) {
+  return (
+    <div className="border border-hack-blue/30 bg-hack-blue/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Code className="w-3.5 h-3.5 text-hack-blue flex-shrink-0" />
+        <span className="text-hack-blue font-bold">Tech payloads selected</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-blue/30 text-hack-blue bg-hack-blue/10 font-mono">
+          {ev.payloadCount} payloads
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.techs.slice(0, 6).map(t => (
+          <span key={t} className="text-[9px] px-1 py-0.5 rounded border border-hack-dim/30 text-hack-dim bg-hack-muted font-mono">{t}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ParamsDiscoveredRow({ ev }: { ev: ActivityEvent & { type: "params_discovered" } }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border border-hack-yellow/30 bg-hack-yellow/5 rounded p-2 my-1">
+      <button onClick={() => setExpanded(x => !x)} className="flex items-center gap-2 text-[10px] font-mono w-full text-left">
+        <Target className="w-3.5 h-3.5 text-hack-yellow flex-shrink-0" />
+        <span className="text-hack-yellow font-bold">Parameters discovered</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-yellow/30 text-hack-yellow bg-hack-yellow/10 font-mono">
+          {ev.count} params
+        </span>
+        {ev.params.length > 0 && (expanded ? <ChevronDown className="w-3 h-3 text-hack-dim ml-auto" /> : <ChevronRight className="w-3 h-3 text-hack-dim ml-auto" />)}
+      </button>
+      {expanded && ev.params.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1 ml-5">
+          {ev.params.map(p => (
+            <span key={p} className="text-[9px] px-1 py-0.5 rounded border border-hack-yellow/30 text-hack-yellow bg-hack-yellow/10 font-mono">{p}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OAuthVulnsRow({ ev }: { ev: ActivityEvent & { type: "oauth_vulns" } }) {
+  return (
+    <div className="border border-hack-orange/40 bg-hack-orange/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Shield className="w-3.5 h-3.5 text-hack-orange flex-shrink-0" />
+        <span className="text-hack-orange font-bold">OAuth misconfiguration</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/40 text-hack-orange bg-hack-orange/10 font-mono">
+          {ev.count} {ev.count === 1 ? "issue" : "issues"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.issues.map(i => (
+          <span key={i} className="text-[9px] px-1 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">{i}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MassAssignmentRow({ ev }: { ev: ActivityEvent & { type: "mass_assignment" } }) {
+  return (
+    <div className="border border-hack-red/40 bg-hack-red/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <AlertTriangle className="w-3.5 h-3.5 text-hack-red flex-shrink-0" />
+        <span className="text-hack-red font-bold">Mass assignment</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono">
+          {ev.count} endpoint{ev.count !== 1 ? "s" : ""}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      {ev.endpoints.length > 0 && (
+        <div className="text-[9px] text-hack-dim mt-0.5 ml-5 font-mono truncate">{ev.endpoints[0]}</div>
+      )}
+    </div>
+  );
+}
+
+function BusinessLogicRow({ ev }: { ev: ActivityEvent & { type: "business_logic" } }) {
+  return (
+    <div className="border border-hack-orange/40 bg-hack-orange/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Zap className="w-3.5 h-3.5 text-hack-orange flex-shrink-0" />
+        <span className="text-hack-orange font-bold">Business logic flaw</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">
+          {ev.count} {ev.count === 1 ? "issue" : "issues"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.types.map(t => (
+          <span key={t} className="text-[9px] px-1 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">{t}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TwoFABypassRow({ ev }: { ev: ActivityEvent & { type: "two_fa_bypass" } }) {
+  return (
+    <div className="border border-hack-red/50 bg-hack-red/8 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Shield className="w-3.5 h-3.5 text-hack-red flex-shrink-0 animate-pulse" />
+        <span className="text-hack-red font-bold">2FA bypass found</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono">
+          {ev.count} technique{ev.count !== 1 ? "s" : ""}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.techniques.map(t => (
+          <span key={t} className="text-[9px] px-1 py-0.5 rounded border border-hack-red/30 text-hack-red bg-hack-red/10 font-mono">{t}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function JWTVulnsRow({ ev }: { ev: ActivityEvent & { type: "jwt_vulns" } }) {
+  return (
+    <div className="border border-hack-purple/40 bg-hack-purple/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Code className="w-3.5 h-3.5 text-hack-purple flex-shrink-0" />
+        <span className="text-hack-purple font-bold">JWT vulnerability</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-purple/30 text-hack-purple bg-hack-purple/10 font-mono">
+          {ev.count} issue{ev.count !== 1 ? "s" : ""}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.techniques.map(t => (
+          <span key={t} className="text-[9px] px-1 py-0.5 rounded border border-hack-purple/30 text-hack-purple bg-hack-purple/10 font-mono">{t}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OpenRedirectRow({ ev }: { ev: ActivityEvent & { type: "open_redirect" } }) {
+  return (
+    <div className="border border-hack-yellow/40 bg-hack-yellow/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Globe className="w-3.5 h-3.5 text-hack-yellow flex-shrink-0" />
+        <span className="text-hack-yellow font-bold">Open redirect</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-yellow/30 text-hack-yellow bg-hack-yellow/10 font-mono">
+          {ev.count} found
+        </span>
+        {ev.chained > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/30 text-hack-red bg-hack-red/10 font-mono">
+            {ev.chained} chained
+          </span>
+        )}
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+    </div>
+  );
+}
+
+function XXEFoundRow({ ev }: { ev: ActivityEvent & { type: "xxe_found" } }) {
+  return (
+    <div className="border border-hack-red/40 bg-hack-red/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Target className="w-3.5 h-3.5 text-hack-red flex-shrink-0" />
+        <span className="text-hack-red font-bold">XXE found</span>
+        {ev.oobConfirmed && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono animate-pulse">
+            OOB CONFIRMED
+          </span>
+        )}
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/30 text-hack-red bg-hack-red/10 font-mono ml-auto">
+          {ev.count} vector{ev.count !== 1 ? "s" : ""}
+        </span>
+        <span className="text-hack-dim">{ev.ts}</span>
+      </div>
+    </div>
+  );
+}
+
 function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
   return (
     <div className="flex items-center gap-2 py-0.5 text-[10px] font-mono text-hack-red">
@@ -754,6 +944,24 @@ export function LiveActivityFeed({
               return <ProtoPollutionRow key={key} ev={ev} />;
             case "race_condition":
               return <RaceConditionRow key={key} ev={ev} />;
+            case "tech_payloads":
+              return <TechPayloadsRow key={key} ev={ev} />;
+            case "params_discovered":
+              return <ParamsDiscoveredRow key={key} ev={ev} />;
+            case "oauth_vulns":
+              return <OAuthVulnsRow key={key} ev={ev} />;
+            case "mass_assignment":
+              return <MassAssignmentRow key={key} ev={ev} />;
+            case "business_logic":
+              return <BusinessLogicRow key={key} ev={ev} />;
+            case "two_fa_bypass":
+              return <TwoFABypassRow key={key} ev={ev} />;
+            case "jwt_vulns":
+              return <JWTVulnsRow key={key} ev={ev} />;
+            case "open_redirect":
+              return <OpenRedirectRow key={key} ev={ev} />;
+            case "xxe_found":
+              return <XXEFoundRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

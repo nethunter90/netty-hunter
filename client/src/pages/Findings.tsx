@@ -46,6 +46,7 @@ export default function Findings() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ title: "", severity: "", description: "", impact: "" });
   const [saving, setSaving] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const load = () => {
     setLoading(true);
@@ -132,6 +133,23 @@ export default function Findings() {
     }
   };
 
+  const bulkVerify = async () => {
+    for (const id of selectedIds) {
+      await hunterAPI.verifyFinding(id).catch(() => {});
+    }
+    toast.success(`Verified ${selectedIds.size} findings`);
+    setSelectedIds(new Set());
+    load();
+  };
+
+  const bulkExport = () => {
+    const toExport = findings.filter(f => selectedIds.has(f.id));
+    const blob = new Blob([JSON.stringify(toExport, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement("a"), { href: url, download: `findings-selected-${Date.now()}.json` }).click();
+    URL.revokeObjectURL(url);
+  };
+
   const VERIFICATION_ICON: Record<string, React.ReactNode> = {
     confirmed: <CheckCircle2 className="w-3 h-3 text-hack-accent" />,
     rejected: <XCircle className="w-3 h-3 text-hack-red" />,
@@ -187,6 +205,16 @@ export default function Findings() {
           </div>
         </div>
 
+        {/* Bulk action bar */}
+        {selectedIds.size > 0 && (
+          <div className="px-3 py-2 bg-hack-accent/10 border-b border-hack-accent/30 flex items-center gap-2 flex-shrink-0">
+            <span className="text-[9px] font-mono text-hack-accent">{selectedIds.size} selected</span>
+            <button onClick={() => bulkVerify()} className="hack-btn text-[9px] flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />VERIFY ALL</button>
+            <button onClick={() => bulkExport()} className="hack-btn text-[9px] flex items-center gap-1"><Download className="w-3 h-3" />EXPORT</button>
+            <button onClick={() => setSelectedIds(new Set())} className="hack-btn text-[9px] ml-auto">CLEAR</button>
+          </div>
+        )}
+
         {/* List */}
         <div className="flex-1 overflow-y-auto terminal-scroll">
           {loading ? (
@@ -202,6 +230,12 @@ export default function Findings() {
                 className={`p-3 border-b border-hack-border cursor-pointer transition-colors hover:bg-hack-muted/30 ${selected?.id === f.id ? "bg-hack-muted/50 border-l-2 border-l-hack-accent" : ""} ${SEVERITY_BG[f.severity]}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <input type="checkbox"
+                      checked={selectedIds.has(f.id)}
+                      onChange={e => setSelectedIds(prev => { const next = new Set(prev); e.target.checked ? next.add(f.id) : next.delete(f.id); return next; })}
+                      onClick={e => e.stopPropagation()}
+                      className="accent-hack-accent w-3 h-3 flex-shrink-0 mt-0.5"
+                    />
                     {VERIFICATION_ICON[f.verificationStatus] || VERIFICATION_ICON.pending}
                     <span className="text-[10px] font-mono text-hack-text truncate">{f.title}</span>
                   </div>

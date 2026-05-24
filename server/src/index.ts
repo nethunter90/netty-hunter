@@ -228,6 +228,11 @@ io.on("connection", (socket) => {
       "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",
       "hunt:ssrf_pivot", "hunt:changes_detected", "hunt:secrets_found",
       "hunt:ws_vulns", "hunt:bucket_exposed", "hunt:proto_pollution", "hunt:race_condition",
+      "hunt:host_header", "hunt:crlf", "hunt:cookie_flags", "hunt:endpoints_discovered",
+      "hunt:plan_seeded", "hunt:tech_payloads", "hunt:params_discovered",
+      "hunt:oauth_vulns", "hunt:mass_assignment", "hunt:business_logic",
+      "hunt:2fa_bypass", "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
+      "hunt:chain_seeded", "hunt:pivot",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));
     });
@@ -271,6 +276,22 @@ io.on("connection", (socket) => {
     engine.on("hunt:bucket_exposed", (data) => socket.emit("hunt:bucket_exposed", data));
     engine.on("hunt:proto_pollution", (data) => socket.emit("hunt:proto_pollution", data));
     engine.on("hunt:race_condition", (data) => socket.emit("hunt:race_condition", data));
+    engine.on("hunt:host_header", (data) => socket.emit("hunt:host_header", data));
+    engine.on("hunt:crlf", (data) => socket.emit("hunt:crlf", data));
+    engine.on("hunt:cookie_flags", (data) => socket.emit("hunt:cookie_flags", data));
+    engine.on("hunt:endpoints_discovered", (data) => socket.emit("hunt:endpoints_discovered", data));
+    engine.on("hunt:plan_seeded", (data) => socket.emit("hunt:plan_seeded", data));
+    engine.on("hunt:tech_payloads", (data) => socket.emit("hunt:tech_payloads", data));
+    engine.on("hunt:params_discovered", (data) => socket.emit("hunt:params_discovered", data));
+    engine.on("hunt:oauth_vulns", (data) => socket.emit("hunt:oauth_vulns", data));
+    engine.on("hunt:mass_assignment", (data) => socket.emit("hunt:mass_assignment", data));
+    engine.on("hunt:business_logic", (data) => socket.emit("hunt:business_logic", data));
+    engine.on("hunt:2fa_bypass", (data) => socket.emit("hunt:2fa_bypass", data));
+    engine.on("hunt:jwt_vulns", (data) => socket.emit("hunt:jwt_vulns", data));
+    engine.on("hunt:open_redirect", (data) => socket.emit("hunt:open_redirect", data));
+    engine.on("hunt:xxe_found", (data) => socket.emit("hunt:xxe_found", data));
+    engine.on("hunt:chain_seeded", (data) => socket.emit("hunt:chain_seeded", data));
+    engine.on("hunt:pivot", (data) => socket.emit("hunt:pivot", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);

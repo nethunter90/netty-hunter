@@ -257,6 +257,33 @@ export default function HuntConsole() {
     socket.on("hunt:race_condition", (data: any) => {
       push({ type: "race_condition", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [] });
     });
+    socket.on("hunt:tech_payloads", (data: any) => {
+      push({ type: "tech_payloads", ts: ts(), techs: Array.isArray(data.techs) ? data.techs.map(String) : [], payloadCount: Number(data.payloadCount || 0) });
+    });
+    socket.on("hunt:params_discovered", (data: any) => {
+      push({ type: "params_discovered", ts: ts(), count: Number(data.count || 0), params: Array.isArray(data.params) ? data.params.map(String) : [] });
+    });
+    socket.on("hunt:oauth_vulns", (data: any) => {
+      push({ type: "oauth_vulns", ts: ts(), count: Number(data.count || 0), issues: Array.isArray(data.issues) ? data.issues.map(String) : [] });
+    });
+    socket.on("hunt:mass_assignment", (data: any) => {
+      push({ type: "mass_assignment", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [] });
+    });
+    socket.on("hunt:business_logic", (data: any) => {
+      push({ type: "business_logic", ts: ts(), count: Number(data.count || 0), types: Array.isArray(data.types) ? data.types.map(String) : [] });
+    });
+    socket.on("hunt:2fa_bypass", (data: any) => {
+      push({ type: "two_fa_bypass", ts: ts(), count: Number(data.count || 0), techniques: Array.isArray(data.techniques) ? data.techniques.map(String) : [] });
+    });
+    socket.on("hunt:jwt_vulns", (data: any) => {
+      push({ type: "jwt_vulns", ts: ts(), count: Number(data.count || 0), techniques: Array.isArray(data.techniques) ? data.techniques.map(String) : [] });
+    });
+    socket.on("hunt:open_redirect", (data: any) => {
+      push({ type: "open_redirect", ts: ts(), count: Number(data.count || 0), chained: Number(data.chained || 0) });
+    });
+    socket.on("hunt:xxe_found", (data: any) => {
+      push({ type: "xxe_found", ts: ts(), count: Number(data.count || 0), oobConfirmed: Boolean(data.oobConfirmed) });
+    });
 
     return () => {
       [
@@ -268,6 +295,9 @@ export default function HuntConsole() {
         "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
         "hunt:secrets_found", "hunt:ws_vulns", "hunt:bucket_exposed",
         "hunt:proto_pollution", "hunt:race_condition",
+        "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
+        "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
+        "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
       ].forEach(e => socket.off(e));
     };
   }, []);
