@@ -21,6 +21,7 @@ pool.connect().then(client => {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS mission_memory_hunt_id_idx
       ON mission_memory_snapshots (hunt_id);
+    ALTER TABLE programs ADD COLUMN IF NOT EXISTS schedule_interval INTEGER NOT NULL DEFAULT 0;
   `).catch(() => { /* non-critical: table may already exist */ })
     .finally(() => client.release());
 }).catch(() => { /* DB not yet available; pool will retry on first real query */ });

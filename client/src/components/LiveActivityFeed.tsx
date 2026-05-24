@@ -30,7 +30,11 @@ export type ActivityEvent =
   | { type: "report_submitted"; ts: string; platform: string; reportId?: string; reportUrl?: string }
   | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number }
   | { type: "secrets_found"; ts: string; count: number; types: string[] }
-  | { type: "takeover_found"; ts: string; targets: Array<{ subdomain: string; service: string; confidence: number }> };
+  | { type: "takeover_found"; ts: string; targets: Array<{ subdomain: string; service: string; confidence: number }> }
+  | { type: "ws_vulns"; ts: string; count: number; endpoints: string[]; issues: string[] }
+  | { type: "bucket_exposed"; ts: string; buckets: Array<{ url: string; provider: string; listable: boolean }> }
+  | { type: "proto_pollution"; ts: string; count: number; reflected: boolean }
+  | { type: "race_condition"; ts: string; count: number; endpoints: string[] };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -477,6 +481,88 @@ function ChangesDetectedRow({ ev }: { ev: ActivityEvent & { type: "changes_detec
   );
 }
 
+function WSVulnsRow({ ev }: { ev: ActivityEvent & { type: "ws_vulns" } }) {
+  return (
+    <div className="border border-hack-cyan/40 bg-hack-cyan/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Wifi className="w-3.5 h-3.5 text-hack-cyan flex-shrink-0" />
+        <span className="text-hack-cyan font-bold">WebSocket vulns found</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-cyan/30 text-hack-cyan bg-hack-cyan/10 font-mono">
+          {ev.count} {ev.count === 1 ? "issue" : "issues"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.issues.map(i => (
+          <span key={i} className="text-[9px] px-1 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">{i}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BucketExposedRow({ ev }: { ev: ActivityEvent & { type: "bucket_exposed" } }) {
+  return (
+    <div className="border border-hack-red/50 bg-hack-red/8 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Server className="w-3.5 h-3.5 text-hack-red flex-shrink-0 animate-pulse" />
+        <span className="text-hack-red font-bold">Cloud bucket exposed</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono">
+          {ev.buckets.length} {ev.buckets.length === 1 ? "bucket" : "buckets"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="mt-1 ml-5 space-y-0.5">
+        {ev.buckets.slice(0, 3).map(b => (
+          <div key={b.url} className="text-[9px] font-mono text-hack-dim">
+            <span className="text-hack-text">{b.url}</span>
+            <span className="text-hack-orange ml-1">[{b.provider}]</span>
+            {b.listable && <span className="text-hack-red ml-1 font-bold">LISTABLE</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProtoPollutionRow({ ev }: { ev: ActivityEvent & { type: "proto_pollution" } }) {
+  return (
+    <div className="border border-hack-purple/40 bg-hack-purple/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Code className="w-3.5 h-3.5 text-hack-purple flex-shrink-0" />
+        <span className="text-hack-purple font-bold">Prototype pollution</span>
+        {ev.reflected && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono animate-pulse">
+            REFLECTED
+          </span>
+        )}
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-purple/30 text-hack-purple bg-hack-purple/10 font-mono">
+          {ev.count} {ev.count === 1 ? "payload" : "payloads"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+    </div>
+  );
+}
+
+function RaceConditionRow({ ev }: { ev: ActivityEvent & { type: "race_condition" } }) {
+  return (
+    <div className="border border-hack-orange/50 bg-hack-orange/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <RefreshCw className="w-3.5 h-3.5 text-hack-orange flex-shrink-0 animate-spin" />
+        <span className="text-hack-orange font-bold">Race condition detected</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/40 text-hack-orange bg-hack-orange/10 font-mono">
+          {ev.count} endpoint{ev.count !== 1 ? "s" : ""}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      {ev.endpoints.length > 0 && (
+        <div className="mt-1 ml-5 text-[9px] font-mono text-hack-dim truncate">{ev.endpoints[0]}</div>
+      )}
+    </div>
+  );
+}
+
 function SecretsFoundRow({ ev }: { ev: ActivityEvent & { type: "secrets_found" } }) {
   return (
     <div className="border border-hack-red/50 bg-hack-red/8 rounded p-2 my-1">
@@ -660,6 +746,14 @@ export function LiveActivityFeed({
               return <SecretsFoundRow key={key} ev={ev} />;
             case "takeover_found":
               return <TakeoverFoundRow key={key} ev={ev} />;
+            case "ws_vulns":
+              return <WSVulnsRow key={key} ev={ev} />;
+            case "bucket_exposed":
+              return <BucketExposedRow key={key} ev={ev} />;
+            case "proto_pollution":
+              return <ProtoPollutionRow key={key} ev={ev} />;
+            case "race_condition":
+              return <RaceConditionRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

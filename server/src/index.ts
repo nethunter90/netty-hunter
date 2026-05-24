@@ -27,6 +27,9 @@ import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
 import { initializeAutonomousBrain } from "./lib/intelligence";
 import { callbackServer } from "./lib/oob/callback-server";
+import { db } from "./db";
+import { programs } from "./db/schema";
+import { gt } from "drizzle-orm";
 
 const PgSession = connectPg(session);
 
@@ -208,6 +211,7 @@ io.on("connection", (socket) => {
       "orchestration:targets_expanded", "orchestration:takeover_found",
       "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",
       "hunt:ssrf_pivot", "hunt:changes_detected", "hunt:secrets_found",
+      "hunt:ws_vulns", "hunt:bucket_exposed", "hunt:proto_pollution", "hunt:race_condition",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));
     });
@@ -247,6 +251,10 @@ io.on("connection", (socket) => {
     engine.on("hunt:changes_detected", (data) => socket.emit("hunt:changes_detected", data));
     engine.on("hunt:oob_hit", (data) => socket.emit("hunt:oob_hit", data));
     engine.on("hunt:secrets_found", (data) => socket.emit("hunt:secrets_found", data));
+    engine.on("hunt:ws_vulns", (data) => socket.emit("hunt:ws_vulns", data));
+    engine.on("hunt:bucket_exposed", (data) => socket.emit("hunt:bucket_exposed", data));
+    engine.on("hunt:proto_pollution", (data) => socket.emit("hunt:proto_pollution", data));
+    engine.on("hunt:race_condition", (data) => socket.emit("hunt:race_condition", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);
@@ -283,6 +291,38 @@ io.on("connection", (socket) => {
     logger.info("Socket disconnected", { id: socket.id });
   });
 });
+
+// ─── Scheduled Re-scan Engine ─────────────────────────────────────────────────
+// Check every 15 minutes if any programs are due for a re-scan.
+setInterval(async () => {
+  try {
+    const scheduled = await db.select().from(programs)
+      .where(gt(programs.scheduleInterval, 0));
+    for (const prog of scheduled) {
+      const interval = (prog.scheduleInterval ?? 0) * 60 * 60 * 1000;
+      const lastHunted = prog.lastHunted ? prog.lastHunted.getTime() : 0;
+      if (Date.now() - lastHunted < interval) continue;
+
+      const scope = (prog.scope as string[]) || [];
+      const targetUrl = scope[0];
+      if (!targetUrl) continue;
+
+      logger.info("[Scheduler] Triggering scheduled re-scan", { programId: prog.id, name: prog.name });
+      io.emit("scheduler:rescan_started", { programId: prog.id, name: prog.name, targetUrl });
+
+      const orchestrator = new CampaignOrchestrator();
+      orchestrator.orchestrate({
+        programId: prog.id,
+        targetUrl,
+        budget: { maxRequests: 2000, maxTime: 1800 },
+      }).catch(err => {
+        logger.warn("[Scheduler] Re-scan failed", { programId: prog.id, err: String(err) });
+      });
+    }
+  } catch (err) {
+    logger.debug("[Scheduler] tick error (non-critical)", { err: String(err) });
+  }
+}, 15 * 60 * 1000); // every 15 min
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 httpServer.listen(PORT, () => {

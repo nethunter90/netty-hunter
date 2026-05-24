@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Target, Plus, Star, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, ChevronDown, ChevronRight } from "lucide-react";
+import { Target, Plus, Star, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, CalendarClock } from "lucide-react";
 import { bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -27,6 +27,7 @@ interface Program {
   active: boolean;
   tags: string[];
   authConfig?: AuthConfig;
+  scheduleInterval?: number;
 }
 
 const PLATFORMS = ["hackerone", "bugcrowd", "intigriti", "synack", "yeswehack", "other"];
@@ -43,6 +44,7 @@ export default function Programs() {
   const [authModalId, setAuthModalId] = useState<number | null>(null);
   const [authForm, setAuthForm] = useState<AuthConfig>({ authType: "form" });
   const [savingAuth, setSavingAuth] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "", platform: "hackerone", programHandle: "",
     scope: "", outOfScope: "", maxPayout: "5000", avgPayout: "500",
@@ -110,6 +112,19 @@ export default function Programs() {
       toast.error("Failed to save auth config");
     } finally {
       setSavingAuth(false);
+    }
+  };
+
+  const setSchedule = async (id: number, hours: number) => {
+    setSavingSchedule(id);
+    try {
+      await bountyAPI.updateProgram(id, { scheduleInterval: hours });
+      toast.success(hours > 0 ? `Re-scan every ${hours}h` : "Schedule disabled");
+      load();
+    } catch {
+      toast.error("Failed to update schedule");
+    } finally {
+      setSavingSchedule(null);
     }
   };
 
@@ -227,6 +242,11 @@ export default function Programs() {
                             <TrendingUp className="w-2.5 h-2.5" /> ROI: {prog.roiScore}
                           </span>
                         )}
+                        {(prog.scheduleInterval ?? 0) > 0 && (
+                          <span className="flex items-center gap-1 text-[10px] text-hack-cyan font-mono">
+                            <CalendarClock className="w-2.5 h-2.5" /> every {prog.scheduleInterval}h
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -235,6 +255,21 @@ export default function Programs() {
                       className={`hack-btn p-1.5 ${prog.authConfig ? "text-hack-accent border-hack-accent/30" : ""}`}>
                       <Lock className="w-3 h-3" />
                     </button>
+                    <div className="relative group/sched">
+                      <button title="Set re-scan schedule"
+                        className={`hack-btn p-1.5 ${(prog.scheduleInterval ?? 0) > 0 ? "text-hack-cyan border-hack-cyan/30" : ""}`}
+                        disabled={savingSchedule === prog.id}>
+                        <CalendarClock className="w-3 h-3" />
+                      </button>
+                      <div className="absolute right-0 top-full mt-1 bg-hack-surface border border-hack-border rounded shadow-lg z-10 hidden group-hover/sched:block min-w-[120px]">
+                        {[0, 4, 8, 12, 24, 48, 168].map(h => (
+                          <button key={h} onClick={() => setSchedule(prog.id, h)}
+                            className={`block w-full text-left px-3 py-1.5 text-[10px] font-mono hover:bg-hack-muted transition-colors ${(prog.scheduleInterval ?? 0) === h ? "text-hack-accent" : "text-hack-dim"}`}>
+                            {h === 0 ? "Disabled" : h < 24 ? `Every ${h}h` : h === 24 ? "Daily" : h === 48 ? "Every 2d" : "Weekly"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button onClick={() => handleDelete(prog.id)} className="hack-btn-danger p-1.5">
                       <Trash2 className="w-3 h-3" />
                     </button>

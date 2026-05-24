@@ -243,12 +243,19 @@ export default function HuntConsole() {
     });
 
     socket.on("hunt:secrets_found", (data: any) => {
-      push({
-        type: "secrets_found",
-        ts: ts(),
-        count: Number(data.count || 0),
-        types: Array.isArray(data.types) ? data.types.map(String) : [],
-      });
+      push({ type: "secrets_found", ts: ts(), count: Number(data.count || 0), types: Array.isArray(data.types) ? data.types.map(String) : [] });
+    });
+    socket.on("hunt:ws_vulns", (data: any) => {
+      push({ type: "ws_vulns", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [], issues: Array.isArray(data.issues) ? data.issues.map(String) : [] });
+    });
+    socket.on("hunt:bucket_exposed", (data: any) => {
+      push({ type: "bucket_exposed", ts: ts(), buckets: Array.isArray(data.buckets) ? data.buckets : [] });
+    });
+    socket.on("hunt:proto_pollution", (data: any) => {
+      push({ type: "proto_pollution", ts: ts(), count: Number(data.count || 0), reflected: Boolean(data.reflected) });
+    });
+    socket.on("hunt:race_condition", (data: any) => {
+      push({ type: "race_condition", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [] });
     });
 
     return () => {
@@ -259,7 +266,8 @@ export default function HuntConsole() {
         "hunt:cve_seeded", "l5:public_duplicate",
         "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
         "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
-        "hunt:secrets_found",
+        "hunt:secrets_found", "hunt:ws_vulns", "hunt:bucket_exposed",
+        "hunt:proto_pollution", "hunt:race_condition",
       ].forEach(e => socket.off(e));
     };
   }, []);

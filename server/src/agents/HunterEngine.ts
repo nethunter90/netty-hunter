@@ -36,6 +36,10 @@ import { payloadMutator } from "../lib/tools/payload-mutator";
 import { changeDetector } from "../lib/tools/change-detector";
 import { secretScanner } from "../lib/tools/secret-scanner";
 import { notificationService } from "../lib/services/notification-service";
+import { webSocketProber } from "../lib/tools/websocket-probe";
+import { cloudBucketProber } from "../lib/tools/cloud-bucket-probe";
+import { prototypePollutionProber } from "../lib/tools/prototype-pollution-probe";
+import { raceConditionDetector } from "../lib/tools/race-condition-detector";
 import { programs } from "../db/schema";
 
 const execFileAsync = promisify(execFile);
@@ -657,6 +661,79 @@ export class HunterEngine extends EventEmitter {
           logger.debug("[HunterEngine] Change detection skipped (non-critical)", { err: String(err) });
         }
       })();
+
+      // WebSocket security probing
+      await (async () => {
+        try {
+          const wsResult = await webSocketProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of wsResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (wsResult.vulns.length > 0) {
+            this.emit("hunt:ws_vulns", { sessionId: this.state.sessionId, count: wsResult.vulns.length, endpoints: wsResult.endpointsFound, issues: wsResult.vulns.map(v => v.issue) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] WS probe skipped", { err: String(err) }); }
+      })();
+
+      // Cloud bucket exposure probing
+      await (async () => {
+        try {
+          const bucketResult = await cloudBucketProber.probe(this.state.targetUrl);
+          for (const hyp of bucketResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (bucketResult.buckets.length > 0) {
+            this.emit("hunt:bucket_exposed", { sessionId: this.state.sessionId, buckets: bucketResult.buckets.map(b => ({ url: b.bucketUrl, provider: b.provider, listable: b.listable })) });
+            for (const bucket of bucketResult.buckets) {
+              if (bucket.severity === "critical" || bucket.severity === "high") {
+                await notificationService.notifyIfWorthy({ type: "finding_confirmed", severity: bucket.severity, vulnType: "cloud_storage_exposure", targetUrl: bucket.bucketUrl, detail: bucket.detail }).catch(() => {});
+              }
+            }
+          }
+        } catch (err) { logger.debug("[HunterEngine] Bucket probe skipped", { err: String(err) }); }
+      })();
+
+      // Prototype pollution probing
+      await (async () => {
+        try {
+          const ppResult = await prototypePollutionProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of ppResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (ppResult.vulns.length > 0) {
+            this.emit("hunt:proto_pollution", { sessionId: this.state.sessionId, count: ppResult.vulns.length, reflected: ppResult.vulns.some(v => v.reflected) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Prototype pollution probe skipped", { err: String(err) }); }
+      })();
+
+      // Race condition probing
+      await (async () => {
+        try {
+          const raceResult = await raceConditionDetector.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of raceResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (raceResult.vulns.length > 0) {
+            this.emit("hunt:race_condition", { sessionId: this.state.sessionId, count: raceResult.vulns.length, endpoints: raceResult.vulns.map(v => v.endpoint) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Race condition probe skipped", { err: String(err) }); }
+      })();
     }
   }
 
@@ -1161,6 +1238,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
       csrf: "curl_probe",
       info_disclosure: "curl_probe",
       xxe: "nuclei",
+      race_condition: "curl_probe",
+      prototype_pollution: "curl_probe",
+      cloud_storage_exposure: "curl_probe",
+      broken_auth: "jwt_tool",
+      websocket: "curl_probe",
     };
     return vulnToolMap[vulnClass] || "nuclei";
   }

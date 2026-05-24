@@ -30,6 +30,7 @@ export const programs = pgTable("programs", {
   active: boolean("active").notNull().default(true),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
+  scheduleInterval: integer("schedule_interval").default(0), // hours between auto re-scans; 0 = disabled
   authConfig: jsonb("auth_config").$type<{
     loginUrl?: string;
     username?: string;
