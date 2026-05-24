@@ -22,6 +22,7 @@ import graphRoutes from "./routes/graph";
 import intelligenceRoutes from "./routes/intelligence";
 import juiceshopRoutes from "./routes/juiceshop";
 import xbowRoutes from "./routes/xbow";
+import settingsRoutes from "./routes/settings";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -35,6 +36,20 @@ const PgSession = connectPg(session);
 
 // Ensure log dir exists
 try { mkdirSync("logs", { recursive: true }); } catch { /* already exists */ }
+
+// ─── Load persisted settings into process.env ─────────────────────────────────
+import("./db").then(({ db: _db }) => {
+  import("./db/schema").then(({ reinforcementStore: rs }) => {
+    import("drizzle-orm").then(({ like }) => {
+      _db.select().from(rs).where(like(rs.domain, "settings")).then(rows => {
+        for (const row of rows) {
+          if (row.key && row.value != null) process.env[row.key] = String(row.value);
+        }
+        logger.info(`Settings loaded from DB (${rows.length} keys)`);
+      }).catch(() => {});
+    });
+  });
+}).catch(() => {});
 
 // ─── Autonomous Brain ─────────────────────────────────────────────────────────
 initializeAutonomousBrain();
@@ -135,6 +150,7 @@ app.use("/api/graph", requireAuth, graphRoutes);
 app.use("/api/intelligence", requireAuth, intelligenceRoutes);
 app.use("/api/juiceshop", requireAuth, juiceshopRoutes);
 app.use("/api/xbow", requireAuth, xbowRoutes);
+app.use("/api/settings", requireAuth, settingsRoutes);
 
 // OOB callback receiver — no auth required (external targets call this)
 app.all("/api/callback/:beaconId", (req, res) => {

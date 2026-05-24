@@ -29,6 +29,7 @@ export const hunterAPI = {
   getFinding: (id: number) => api.get(`/hunt/findings/${id}`),
   verifyFinding: (id: number) => api.post(`/hunt/findings/${id}/verify`),
   updateFinding: (id: number, data: Record<string, unknown>) => api.patch(`/hunt/findings/${id}`, data),
+  exportFindings: (format: "csv" | "json") => api.get(`/hunt/findings/export?format=${format}`, { responseType: "blob" }),
   getNucleiTemplate: (id: number) => api.post(`/hunt/findings/${id}/nuclei-template`),
   generateReport: (id: number, body?: Record<string, unknown>) => api.post(`/hunt/findings/${id}/report`, body || {}),
   spawnSolvers: (data: Record<string, unknown>) => api.post("/hunt/solve", data),

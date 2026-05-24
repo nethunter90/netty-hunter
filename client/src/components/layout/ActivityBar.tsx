@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Target, Terminal, ShieldAlert,
   Brain, FileText, LogOut, User, Shield, Layers, Crosshair,
-  DollarSign, Swords
+  DollarSign, Swords, Settings
 } from "lucide-react";
 import { authAPI } from "../../lib/api";
 import toast from "react-hot-toast";
@@ -26,6 +26,7 @@ const NAV_ITEMS = [
   { id: "hunter", icon: Crosshair, label: "Hunter", path: "/hunter" },
   { id: "bounty", icon: DollarSign, label: "Bounty", path: "/bounty" },
   { id: "missions", icon: Swords, label: "Missions", path: "/missions" },
+  { id: "settings", icon: Settings, label: "Settings", path: "/settings" },
 ];
 
 export default function ActivityBar({ activeView, onViewChange, user, onLogout }: ActivityBarProps) {

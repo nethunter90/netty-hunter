@@ -40,6 +40,14 @@ import { webSocketProber } from "../lib/tools/websocket-probe";
 import { cloudBucketProber } from "../lib/tools/cloud-bucket-probe";
 import { prototypePollutionProber } from "../lib/tools/prototype-pollution-probe";
 import { raceConditionDetector } from "../lib/tools/race-condition-detector";
+import { hostHeaderProber } from "../lib/tools/host-header-probe";
+import { crlfProber } from "../lib/tools/crlf-probe";
+import { cookieFlagChecker } from "../lib/tools/cookie-flag-checker";
+import { jsSPACrawler } from "../lib/tools/js-spa-crawler";
+import { ATTACK_TREES } from "../intelligence/ExploitChain";
+import { writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { programs } from "../db/schema";
 
 const execFileAsync = promisify(execFile);
@@ -734,6 +742,75 @@ export class HunterEngine extends EventEmitter {
           }
         } catch (err) { logger.debug("[HunterEngine] Race condition probe skipped", { err: String(err) }); }
       })();
+
+      // Host header injection probing
+      await (async () => {
+        try {
+          const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of hhResult.hypotheses) {
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+          }
+          if (hhResult.vulns.length > 0) this.emit("hunt:host_header", { sessionId: this.state.sessionId, count: hhResult.vulns.length, techniques: hhResult.vulns.map(v => v.technique) });
+        } catch (err) { logger.debug("[HunterEngine] Host header probe skipped", { err: String(err) }); }
+      })();
+
+      // CRLF injection probing
+      await (async () => {
+        try {
+          const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of crlfResult.hypotheses) {
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+          }
+          if (crlfResult.vulns.length > 0) this.emit("hunt:crlf", { sessionId: this.state.sessionId, count: crlfResult.vulns.length });
+        } catch (err) { logger.debug("[HunterEngine] CRLF probe skipped", { err: String(err) }); }
+      })();
+
+      // Cookie security flag checking
+      await (async () => {
+        try {
+          const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders);
+          for (const hyp of cookieResult.hypotheses) {
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+          }
+          if (cookieResult.issues.length > 0) this.emit("hunt:cookie_flags", { sessionId: this.state.sessionId, issues: cookieResult.issues.length, sessionCookies: cookieResult.issues.filter(i => i.isSessionCookie).length });
+        } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
+      })();
+
+      // JS/SPA crawling — extract hidden API endpoints from JS bundles
+      await (async () => {
+        try {
+          const crawlResult = await jsSPACrawler.crawl(this.state.targetUrl, this.authHeaders);
+          for (const hyp of crawlResult.hypotheses) {
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+          }
+          if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url) });
+        } catch (err) { logger.debug("[HunterEngine] JS/SPA crawl skipped", { err: String(err) }); }
+      })();
+
+      // Backward planner — seed goal-directed attack path hypotheses
+      await (async () => {
+        try {
+          const plan = backwardPlanner.planHunt(
+            this.state.sessionId,
+            "account_compromise",
+            { complexity: 0.5, wafDetected: false, cloudHosted: false, authRequired: !!this.authConfig },
+            { programId: String(this.state.programId), programAge: 180, reportCount: 50, noveltyFloor: 0.2 }
+          );
+          for (const phase of plan.phases.slice(0, 2)) {
+            for (const action of phase.actions.slice(0, 3)) {
+              const vulnClass = action.toLowerCase().replace(/[^a-z_]/g, "_");
+              this.state.hypotheses.push({
+                id: uuidv4(), vulnClass: vulnClass || "misconfig",
+                targetUrl: this.state.targetUrl,
+                reasoning: `Backward planner: ${plan.goal} — ${phase.name}: ${action}`,
+                confidence: 0.5, priority: 6,
+                evidence: [], status: "pending", createdAt: Date.now(),
+              });
+            }
+          }
+          this.emit("hunt:plan_seeded", { sessionId: this.state.sessionId, goal: plan.goal, phases: plan.phases.length });
+        } catch (err) { logger.debug("[HunterEngine] Backward planner seeding skipped", { err: String(err) }); }
+      })();
     }
   }
 
@@ -1100,6 +1177,22 @@ Return ONLY valid JSON array of hypothesis objects.`;
               }
             })();
           }
+          // Exploit chain seeding — if this vuln matches a chain step, seed next steps
+          for (const [chainId, chain] of Object.entries(ATTACK_TREES)) {
+            const matchingStep = chain.steps.find(s => s.vulnClass === hypothesis.vulnClass);
+            if (!matchingStep) continue;
+            const nextStep = chain.steps.find(s => s.stepNumber === matchingStep.stepNumber + 1);
+            if (!nextStep) continue;
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: nextStep.vulnClass, targetUrl: this.state.targetUrl,
+              reasoning: `Exploit chain [${chain.name}] step ${nextStep.stepNumber}: ${nextStep.description}`,
+              confidence: 0.65, priority: 9,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+            this.emit("hunt:chain_seeded", { sessionId: this.state.sessionId, chainId, chainName: chain.name, step: nextStep.stepNumber, vulnClass: nextStep.vulnClass });
+            logger.info("[HunterEngine] Chain continuation seeded", { chainId, step: nextStep.stepNumber });
+          }
+
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
@@ -1173,6 +1266,24 @@ Return ONLY valid JSON array of hypothesis objects.`;
     } catch { /* non-critical — URL may not be parseable */ }
 
     const { bin, args } = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+
+    // Nuclei template rotation — inject previously generated custom templates
+    if (toolName === "nuclei") {
+      try {
+        const domain = new URL(url).hostname;
+        const saved = await db.select({ nucleiTemplate: findings.nucleiTemplate })
+          .from(findings)
+          .where(eq(findings.nucleiTemplate, findings.nucleiTemplate))
+          .limit(10);
+        const templates = saved.map(r => r.nucleiTemplate).filter(Boolean) as string[];
+        if (templates.length > 0) {
+          const tmplPath = join(tmpdir(), `netty-custom-${domain.replace(/\./g, "-")}-${Date.now()}.yaml`);
+          await writeFile(tmplPath, templates.join("\n---\n"), "utf8");
+          args.push("-t", tmplPath);
+        }
+      } catch { /* non-critical — continue without custom templates */ }
+    }
+
     // Inject auth headers so tools probe authenticated surfaces
     if (this.authHeaders && Object.keys(this.authHeaders).length > 0) {
       args.push(...this.buildAuthArgs(toolName, this.authHeaders));
@@ -1243,6 +1354,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
       cloud_storage_exposure: "curl_probe",
       broken_auth: "jwt_tool",
       websocket: "curl_probe",
+      host_header_injection: "curl_probe",
+      crlf_injection: "curl_probe",
+      cookie_flags: "curl_probe",
     };
     return vulnToolMap[vulnClass] || "nuclei";
   }

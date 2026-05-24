@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
-  ShieldAlert, CheckCircle2, XCircle, AlertTriangle, Filter,
-  FileText, Code2, Search, ExternalLink, RefreshCw, Pencil, Save, X
+  ShieldAlert, CheckCircle2, XCircle, AlertTriangle,
+  FileText, Code2, Search, RefreshCw, Pencil, Save, X, Download
 } from "lucide-react";
 import { hunterAPI } from "../lib/api";
 import toast from "react-hot-toast";
@@ -150,9 +150,20 @@ export default function Findings() {
               <ShieldAlert className="w-3.5 h-3.5 text-hack-accent" />
               <span className="text-[10px] font-mono uppercase text-hack-accent">Findings ({filtered.length})</span>
             </div>
-            <button onClick={load} className="text-hack-dim hover:text-hack-text">
-              <RefreshCw className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button onClick={() => {
+                hunterAPI.exportFindings("csv").then(r => {
+                  const url = URL.createObjectURL(r.data);
+                  Object.assign(document.createElement("a"), { href: url, download: `findings-${Date.now()}.csv` }).click();
+                  URL.revokeObjectURL(url);
+                }).catch(() => toast.error("Export failed"));
+              }} title="Export CSV" className="text-hack-dim hover:text-hack-text">
+                <Download className="w-3 h-3" />
+              </button>
+              <button onClick={load} className="text-hack-dim hover:text-hack-text">
+                <RefreshCw className="w-3 h-3" />
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-hack-dim" />

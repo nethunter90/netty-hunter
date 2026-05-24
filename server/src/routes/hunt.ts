@@ -355,6 +355,31 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
   return res.json(report);
 });
 
+// Export findings as CSV or JSON
+router.get("/findings/export", async (req: Request, res: Response) => {
+  const format = String(req.query.format || "json");
+  const rows = await db.select().from(findings).orderBy(desc(findings.createdAt));
+
+  if (format === "csv") {
+    const headers = ["id", "title", "vulnType", "severity", "confidence", "verificationStatus", "targetId", "cvssScore", "dedupHash", "createdAt"];
+    const csv = [
+      headers.join(","),
+      ...rows.map(f => headers.map(h => {
+        const v = (f as Record<string, unknown>)[h];
+        const s = v == null ? "" : String(v);
+        return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(","))
+    ].join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="findings-${Date.now()}.csv"`);
+    return res.send(csv);
+  }
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="findings-${Date.now()}.json"`);
+  return res.json(rows);
+});
+
 // Spawn solver pool on a specific endpoint
 router.post("/solve", async (req: Request, res: Response) => {
   const { endpoint, programId, observations } = req.body;
