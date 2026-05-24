@@ -43,6 +43,7 @@ import { eventBus } from "../lib/orchestration/layer3-event-bus";
 import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
 import { nvdClient } from "../lib/intelligence/nvd-client";
+import { reportSubmitter } from "../lib/intelligence/report-submitter";
 
 const VULN_TYPE_TO_CWE: Record<string, number> = {
   xss: 79, sqli: 89, ssrf: 918, lfi: 22, rce: 78, idor: 639,
@@ -748,6 +749,47 @@ export class CampaignOrchestrator extends EventEmitter {
           }).where(eq(findings.id, dbFinding.id));
 
           this.emit("l5:verified", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+
+          // Platform report submission — fire-and-forget, non-blocking
+          if (prog?.platform && prog?.programHandle) {
+            const platform = prog.platform as "hackerone" | "bugcrowd" | "intigriti" | "yeswehack";
+            if (["hackerone", "bugcrowd", "intigriti", "yeswehack"].includes(platform)) {
+              reportSubmitter.submit({
+                title: `[${(dbFinding.severity ?? "medium").toUpperCase()}] ${dbFinding.vulnType} in ${params.targetUrl}`,
+                vulnType: dbFinding.vulnType,
+                severity: (dbFinding.severity ?? "medium") as "critical" | "high" | "medium" | "low" | "informational",
+                description: dbFinding.description ?? "",
+                reproductionSteps: Array.isArray(dbFinding.reproductionSteps)
+                  ? (dbFinding.reproductionSteps as string[]).join("\n")
+                  : String(dbFinding.reproductionSteps ?? "See evidence"),
+                impact: dbFinding.impact ?? `${dbFinding.vulnType} vulnerability with CVSS ${dbFinding.cvssScore ?? 5.0}`,
+                remediation: dbFinding.remediation ?? undefined,
+                cvssScore: dbFinding.cvssScore ?? undefined,
+                cweId: dbFinding.cweId ?? undefined,
+                cveId: dbFinding.cveId ?? undefined,
+                targetUrl: params.targetUrl,
+                exploitPayload: dbFinding.exploitPayload ?? undefined,
+                programHandle: prog.programHandle,
+                platform,
+              }).then(result => {
+                if (result.success) {
+                  this.emit("l5:report_submitted", {
+                    findingId: dbFinding.id,
+                    platform,
+                    reportId: result.reportId,
+                    reportUrl: result.reportUrl,
+                  });
+                  db.update(findings).set({
+                    reportDraft: result.reportUrl ? `Submitted: ${result.reportUrl}` : `Report ID: ${result.reportId}`,
+                    submittedAt: new Date(),
+                  }).where(eq(findings.id, dbFinding.id)).catch(() => {});
+                } else if (!result.draftOnly) {
+                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, error: result.error });
+                }
+              }).catch(() => {});
+            }
+          }
+
           // Reconcile graph node verification status
           eventBus.publish('finding_verified', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,

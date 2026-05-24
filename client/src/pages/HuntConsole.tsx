@@ -213,6 +213,35 @@ export default function HuntConsole() {
       });
     });
 
+    socket.on("hunt:ssrf_pivot", (data: any) => {
+      push({
+        type: "ssrf_pivot",
+        ts: ts(),
+        reachable: Array.isArray(data.reachable) ? (data.reachable as unknown[]).map(String) : [],
+        cloudMeta: !!data.cloudMeta,
+        newHypotheses: Number(data.newHypotheses || 0),
+      });
+    });
+
+    socket.on("hunt:changes_detected", (data: any) => {
+      push({
+        type: "changes_detected",
+        ts: ts(),
+        newEndpoints: Array.isArray(data.newEndpoints) ? (data.newEndpoints as unknown[]).map(String) : [],
+        changed: Number(data.changed || 0),
+      });
+    });
+
+    socket.on("l5:report_submitted", (data: any) => {
+      push({
+        type: "report_submitted",
+        ts: ts(),
+        platform: String(data.platform || ""),
+        reportId: data.reportId ? String(data.reportId) : undefined,
+        reportUrl: data.reportUrl ? String(data.reportUrl) : undefined,
+      });
+    });
+
     return () => {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
@@ -220,6 +249,7 @@ export default function HuntConsole() {
         "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
         "hunt:cve_seeded", "l5:public_duplicate",
         "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
+        "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
       ].forEach(e => socket.off(e));
     };
   }, []);

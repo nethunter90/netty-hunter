@@ -31,6 +31,9 @@ import { nvdClient } from "../lib/intelligence/nvd-client";
 import { sessionManager, AuthConfig } from "../lib/tools/session-manager";
 import { callbackServer } from "../lib/oob/callback-server";
 import { graphqlProber } from "../lib/tools/graphql-probe";
+import { ssrfChainProber } from "../lib/tools/ssrf-chain-prober";
+import { payloadMutator } from "../lib/tools/payload-mutator";
+import { changeDetector } from "../lib/tools/change-detector";
 import { programs } from "../db/schema";
 
 const execFileAsync = promisify(execFile);
@@ -541,6 +544,34 @@ export class HunterEngine extends EventEmitter {
       await this.probeGraphQL().catch(err =>
         logger.warn("[HunterEngine] GraphQL probing failed (non-critical)", { err: String(err) })
       );
+      // Diff-based change detection — compare endpoint responses against last baseline
+      await (async () => {
+        try {
+          const changeReport = await changeDetector.detect(this.state.targetUrl, this.authHeaders);
+          for (const hyp of changeReport.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(),
+              vulnClass: hyp.vulnClass,
+              targetUrl: this.state.targetUrl,
+              reasoning: hyp.reasoning,
+              confidence: hyp.confidence,
+              priority: hyp.priority,
+              evidence: [],
+              status: "pending",
+              createdAt: Date.now(),
+            });
+          }
+          if (changeReport.newEndpoints.length > 0 || changeReport.changedEndpoints.length > 0) {
+            this.emit("hunt:changes_detected", {
+              sessionId: this.state.sessionId,
+              newEndpoints: changeReport.newEndpoints,
+              changed: changeReport.changedEndpoints.length,
+            });
+          }
+        } catch (err) {
+          logger.debug("[HunterEngine] Change detection skipped (non-critical)", { err: String(err) });
+        }
+      })();
     }
   }
 
@@ -751,6 +782,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
   private async probe(): Promise<void> {
     logger.info("PROBE phase", { session: this.state.sessionId });
 
+    // Refresh auth session if it expired mid-hunt (30-min TTL)
+    if (this.authConfig) {
+      try {
+        const refreshed = await sessionManager.ensureSession(this.state.programId, this.authConfig);
+        this.authHeaders = refreshed.headers;
+      } catch { /* non-critical — continue unauthenticated */ }
+    }
+
     const pending = this.state.hypotheses
       .filter(h => h.status === "pending")
       .slice(0, 3); // probe top 3 per iteration
@@ -851,6 +890,33 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
           await this.persistFinding(confirmed);
+
+          // SSRF chain pivot — after SSRF confirmed, probe internal services
+          if (hypothesis.vulnClass === "ssrf") {
+            (async () => {
+              try {
+                const ssrfParam = ssrfChainProber.detectSSRFParam(hypothesis.targetUrl);
+                const pivot = await ssrfChainProber.probe(hypothesis.targetUrl, ssrfParam, this.authHeaders);
+                for (const ph of pivot.pivotHypotheses) {
+                  this.state.hypotheses.push({
+                    id: uuidv4(), vulnClass: ph.vulnClass, targetUrl: hypothesis.targetUrl,
+                    reasoning: ph.reasoning, confidence: ph.confidence, priority: ph.priority,
+                    evidence: [], status: "pending", createdAt: Date.now(),
+                  });
+                }
+                if (pivot.reachableEndpoints.length > 0) {
+                  this.emit("hunt:ssrf_pivot", {
+                    sessionId: this.state.sessionId,
+                    reachable: pivot.reachableEndpoints,
+                    cloudMeta: !!pivot.cloudMetadata,
+                    newHypotheses: pivot.pivotHypotheses.length,
+                  });
+                }
+              } catch (err) {
+                logger.debug("[HunterEngine] SSRF pivot non-critical", { err: String(err) });
+              }
+            })();
+          }
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
@@ -924,6 +990,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
     } catch { /* non-critical — URL may not be parseable */ }
 
     const { bin, args } = tool.command(url, hypothesis ? { severity: "medium,high,critical" } : undefined);
+    // Inject auth headers so tools probe authenticated surfaces
+    if (this.authHeaders && Object.keys(this.authHeaders).length > 0) {
+      args.push(...this.buildAuthArgs(toolName, this.authHeaders));
+    }
     const cmdString = `${bin} ${args.join(" ")}`;
     const start = Date.now();
 
@@ -1008,6 +1078,40 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const currentTool = this.selectTool(hypothesis.vulnClass);
     const currentIdx = rotation.indexOf(currentTool);
     return rotation[(currentIdx + 1) % rotation.length];
+  }
+
+  private buildAuthArgs(toolName: string, headers: Record<string, string>): string[] {
+    const args: string[] = [];
+    for (const [key, value] of Object.entries(headers)) {
+      switch (toolName) {
+        case "nuclei":
+        case "ffuf":
+          args.push("-H", `${key}: ${value}`);
+          break;
+        case "curl_probe":
+          args.push("-H", `${key}: ${value}`);
+          break;
+        case "sqlmap":
+          if (key.toLowerCase() === "cookie") {
+            args.push("--cookie", value);
+          } else {
+            args.push("--headers", `${key}: ${value}`);
+          }
+          break;
+        case "whatweb":
+          args.push("--header", `${key}: ${value}`);
+          break;
+        case "gobuster":
+          args.push("-H", `${key}: ${value}`);
+          break;
+        case "nikto":
+          if (key.toLowerCase() === "cookie") {
+            args.push("-c", value);
+          }
+          break;
+      }
+    }
+    return args;
   }
 
   private async runOOBProbe(targetUrl: string, vulnClass: string): Promise<boolean> {

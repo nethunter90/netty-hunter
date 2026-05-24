@@ -25,7 +25,10 @@ export type ActivityEvent =
   | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number }
   | { type: "oob_hit"; ts: string; beaconId: string; ip: string }
   | { type: "targets_expanded"; ts: string; count: number; targets: string[] }
-  | { type: "graphql_schema"; ts: string; endpoint: string; typeCount: number; injectableCount: number };
+  | { type: "graphql_schema"; ts: string; endpoint: string; typeCount: number; injectableCount: number }
+  | { type: "ssrf_pivot"; ts: string; reachable: string[]; cloudMeta: boolean; newHypotheses: number }
+  | { type: "report_submitted"; ts: string; platform: string; reportId?: string; reportUrl?: string }
+  | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -393,6 +396,85 @@ function GraphqlSchemaRow({ ev }: { ev: ActivityEvent & { type: "graphql_schema"
   );
 }
 
+function SSRFPivotRow({ ev }: { ev: ActivityEvent & { type: "ssrf_pivot" } }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border border-hack-red/50 bg-hack-red/5 rounded p-2 my-1">
+      <button onClick={() => setExpanded(x => !x)} className="flex items-center gap-2 text-[10px] font-mono w-full text-left">
+        <Target className="w-3.5 h-3.5 text-hack-red flex-shrink-0" />
+        <span className="text-hack-red font-bold">SSRF pivot</span>
+        {ev.cloudMeta && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono animate-pulse">
+            CLOUD METADATA
+          </span>
+        )}
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono ml-auto">
+          {ev.reachable.length} endpoints · +{ev.newHypotheses} hyp
+        </span>
+        <span className="text-hack-dim">{ev.ts}</span>
+      </button>
+      {expanded && ev.reachable.length > 0 && (
+        <div className="mt-1 ml-5 space-y-0.5">
+          {ev.reachable.slice(0, 6).map(r => (
+            <div key={r} className="text-[9px] text-hack-dim font-mono">{r}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportSubmittedRow({ ev }: { ev: ActivityEvent & { type: "report_submitted" } }) {
+  return (
+    <div className="border border-hack-green/40 bg-hack-green/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <CheckCircle2 className="w-3.5 h-3.5 text-hack-green flex-shrink-0" />
+        <span className="text-hack-green font-bold">Report submitted</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-green/30 text-hack-green bg-hack-green/10 font-mono uppercase">
+          {ev.platform}
+        </span>
+        {ev.reportId && (
+          <span className="text-[9px] text-hack-dim font-mono">#{ev.reportId}</span>
+        )}
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      {ev.reportUrl && (
+        <div className="text-[9px] text-hack-cyan mt-0.5 ml-5 font-mono truncate">{ev.reportUrl}</div>
+      )}
+    </div>
+  );
+}
+
+function ChangesDetectedRow({ ev }: { ev: ActivityEvent & { type: "changes_detected" } }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border border-hack-yellow/40 bg-hack-yellow/5 rounded p-2 my-1">
+      <button onClick={() => setExpanded(x => !x)} className="flex items-center gap-2 text-[10px] font-mono w-full text-left">
+        <RefreshCw className="w-3.5 h-3.5 text-hack-yellow flex-shrink-0" />
+        <span className="text-hack-yellow font-bold">Target changes detected</span>
+        {ev.newEndpoints.length > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-yellow/30 text-hack-yellow bg-hack-yellow/10 font-mono">
+            {ev.newEndpoints.length} new
+          </span>
+        )}
+        {ev.changed > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">
+            {ev.changed} changed
+          </span>
+        )}
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </button>
+      {expanded && ev.newEndpoints.length > 0 && (
+        <div className="mt-1 ml-5 space-y-0.5">
+          {ev.newEndpoints.slice(0, 5).map(ep => (
+            <div key={ep} className="text-[9px] text-hack-dim font-mono truncate">+ {ep}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
   return (
     <div className="flex items-center gap-2 py-0.5 text-[10px] font-mono text-hack-red">
@@ -521,6 +603,12 @@ export function LiveActivityFeed({
               return <TargetsExpandedRow key={key} ev={ev} />;
             case "graphql_schema":
               return <GraphqlSchemaRow key={key} ev={ev} />;
+            case "ssrf_pivot":
+              return <SSRFPivotRow key={key} ev={ev} />;
+            case "report_submitted":
+              return <ReportSubmittedRow key={key} ev={ev} />;
+            case "changes_detected":
+              return <ChangesDetectedRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:
