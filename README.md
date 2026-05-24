@@ -27,7 +27,7 @@ A full 6-layer multi-agent hunt pipeline with event-driven coordination, distrib
 - **Layer 1 — Hunt Orchestrator**: Central coordinator managing hunt lifecycle across recon, scanning, exploitation, and reporting phases; drives dynamic phase transitions and integrates with meta-reasoner and decision trace logger
 - **Layer 2 — Agent Loop**: Agent lifecycle management — creation, tool queue execution, scan completion tracking, and results ingestion for all 39 integrated tools; imports stealth flags and timing profiles per tool invocation
 - **Layer 3 — Event Bus**: Typed pub-sub with specialized publication methods for findings, endpoint characterizations, defense detections, and phase completions; persists event history per hunt; also carries `finding_verified` and `finding_rejected` events from the Campaign Orchestrator so graph-wiring can reconcile verification outcomes with graph state
-- **Layer 4 — Cognitive Agents**: AI-powered OrchestratorAgent, TaskPlannerAgent, AnalystAgent, ResearcherAgent, CoverageValidatorAgent — all backed by the AI bridge and mission memory; TaskPlannerAgent.createPlan() is called at scanning phase entry to build a structured scan plan from discovered endpoints; AnalystAgent.findPatterns() is called before report generation to surface cross-finding patterns
+- **Layer 4 — Cognitive Agents**: AI-powered OrchestratorAgent, TaskPlannerAgent, AnalystAgent, ResearcherAgent, CoverageValidatorAgent — all backed by the AI bridge and mission memory; TaskPlannerAgent.createPlan() is called at scanning phase entry to build a structured scan plan from discovered endpoints; AnalystAgent.findPatterns() is called before report generation to surface cross-finding patterns; ResearcherAgent.lookupCVE() is wired to the NVD API — real CVE records, CVSS scores, and exploit references returned for any query
 - **Layer 5 — Meta Agents**: 10 specialized concrete agents — ReconAgent, ExploitAgent, CredentialAgent, IntelAgent, BlueTeamAgent, PivotAgent, ReportAgent, WordlistAgent, SimGenAgent, SmartAgent; each with metadata profiles and tool chain awareness
 - **Layer 5 — CodeGen Agent**: Self-modifying agent for code generation and TypeScript validation with approval gates and risk classification; writes and validates its own output before committing
 - **Layer 6 — AI Bridge**: Ollama integration for agent prompting with template management, confidence thresholds, and simulation fallback when no model is available
@@ -66,6 +66,7 @@ An independent 8-pillar governance system that audits, constrains, and monitors 
 - **MITRE Prerequisite Tree**: ATT&CK technique dependency graph — identifies prerequisite chains, choke points, and technique orderings; queryable by capability or technique ID
 - **Offensive Graph DB**: In-memory + PostgreSQL attack graph with typed nodes (endpoint, vulnerability, technique, tool, credential) and weighted edges (exploits, targets, discovered_by, derived_from, produces); full traversal and shortest-path queries
 - **Graph Wiring**: Event-driven graph population — listens to `vulnerability_found`, `tool_completed`, `phase_changed`, `endpoint_characterized`, `finding_verified`, and `finding_rejected` events and automatically builds and reconciles the attack graph in real time; verification outcomes are merged into existing vulnerability nodes using a `verificationId` idempotency key — the first event for a given finding ID wins, preventing duplicate events or out-of-order delivery from corrupting the confirmed/rejected state
+- **NVD CVE Client** (`lib/intelligence/nvd-client.ts`): Live integration with the NIST National Vulnerability Database API 2.0 — keyword search by tech name + version, CWE-based lookup, CVSS score extraction with V31→V30→V2 fallback chain; sliding-window rate limiter (4 req/30s without key, 45/30s with `NVD_API_KEY`); 1-hour session cache per query key; all methods fail open (return `[]`) on any error or timeout; CVE seeding fires on the first observe pass — WhatWeb-detected server-side technologies (Apache, Nginx, WordPress, Tomcat, etc.) are cross-referenced against NVD and any CVEs with CVSS ≥ 7.0 are injected as high-priority hypotheses (confidence 0.7, priority 8–10) before the generic hunt loop starts; confirmed findings are automatically tagged with `cweId` (static map: XSS→CWE-79, SQLi→CWE-89, etc.) and `cveId` (NVD lookup by CWE, best match with CVSS ≥ 6.0) — fields that previously always stored NULL
 - **Hunt Lab Runner**: Runs hunts against lab profiles (OWASP Juice Shop) with determinism checking, outcome scoring, and adaptive threshold feedback
 - **Offline Fallback**: Tiered fallback decision logic when orchestrator is unavailable — uses reasoning engine, hunt cortex signals, and tool fallback chains from seed knowledge
 - **Hunt Strategy Builder**: Auto-populates structured execution plans based on hunt goals, selects optimal tool chains, orders steps by phase, and supports dynamic step injection and mid-hunt adaptation
@@ -125,6 +126,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 - **Playwright Worker Thread** (`workers/playwright-worker.ts`): Layer 3 browser replay runs in a dedicated `worker_threads` Worker so Playwright's page lifecycle — navigation, dialog interception, screenshot capture, content extraction — never blocks the main event loop during concurrent verifications; a message-passing protocol carries serialized `SolverResult` objects to the worker and returns structured replay results; 35-second per-replay timeout with clean pending-promise drain on `close()`; dev (tsx) and prod (compiled JS) paths are both handled by runtime path detection in `spawnWorker()`
 - **SimHash Near-Duplicate Engine** (`lib/intelligence/simhash.ts`): 64-bit FNV-1a-based weighted shingle fingerprinting; catches near-duplicates the exact hash misses (e.g. same XSS payload on `/search?q=` vs `/search?query=`); Hamming-distance comparison across a bounded 5,000-entry ring buffer keeps memory flat across long hunts
 - **ObservationCompressor** (`lib/intelligence/observation-compressor.ts`): historical state vector for context window management; once a session accumulates more than 20 observations the compressor retains the 8 most-recent observations verbatim and condenses older ones into a compact state vector — dominant anomaly signals (tag-frequency weighted by anomaly score), source coverage breakdown, average and peak anomaly scores; the vector is merged across iterations so no information is lost, only recoded as a dense string; injected into `hypothesize()` above the raw observation block, keeping prompt length bounded across arbitrarily long hunts
+- **Public Disclosure Detector** (`lib/intelligence/public-disclosure-detector.ts`): Before a confirmed finding is submitted, checks whether the same vulnerability has already been publicly disclosed by another hunter on the same program — calls HackerOne (Basic auth), Bugcrowd (Token auth), and Intigriti (Bearer auth) APIs with a per-run session cache; two-tier matching: `confirmed_duplicate` (vuln type AND target domain both match) routes the finding to the rejected array and emits `l5:public_duplicate`; `likely_duplicate` (vuln type only) passes through to `verified` with a warning event; `skipped` when no API token is configured; findings are tagged with `disclosureCheckStatus`, `publicDisclosureUrl`, and `publicDisclosureNote` in the DB regardless of outcome
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data, annotating hypotheses with conflict context and reducing confidence
 - **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
@@ -206,6 +208,7 @@ workspace/
 - **Per-Domain Autonomy Gating**: Tracks autonomy independently across 6 operational domains — global autonomy level capped by the weakest-performing domain; each domain has a `naturalCeiling` constant that normalizes structurally-limited domains (e.g. exploit chain depth caps at 0.6 on most programs) so a permanently hard domain cannot indefinitely suppress global deployment mode; CAMS and regression alerts still use raw scores
 - **Lab Profiles**: OWASP Juice Shop ground-truth vulnerability profiles (32 challenges across 7 categories) with LabScorer — measures finding quality against known-answer datasets for calibration validation
 - **Juice Shop Lab** (`/api/juiceshop/*`): Full Docker lifecycle management for the OWASP Juice Shop CTF lab — spawn/stop container, poll readiness, run hardcoded or adaptive benchmark scans against 32 challenges, persist run history to `workspace/lab-runs/`; CTFBenchmark UI provides Start Lab / Stop Lab buttons and live scan results with difficulty and category breakdowns
+- **XBOW CTF Benchmark** (`/api/xbow/*`): Per-challenge Docker container lifecycle for XBOW CTF challenges — each challenge spawns its own container on a dedicated port (18000+), probes common paths for `flag{…}` patterns, and tears down in a finally block; 5 built-in stub challenges (sqli-basic, xss-reflect, idor-user, ssrf-internal, rce-deserialization) serve the UI when Docker or the XBOW repo is unavailable; adaptive mode uses `huntLabRunner.runHunt()` when Ollama is available; run history persisted to `workspace/lab-runs/xbow-*.json`
 
 ---
 
@@ -258,7 +261,7 @@ workspace/
 ### Frontend (React + Vite + TypeScript + Tailwind)
 
 - Dark hacker aesthetic with green terminal accents
-- Real-time hunt console with Socket.IO live updates
+- **Live Activity Feed** (`components/LiveActivityFeed.tsx`): Replaces flat timestamped text logs in both HuntConsole and Orchestration pages with a real-time typed event stream; distinct visual treatment per event type — hypothesis cards (Brain icon, confidence bar, collapsible reasoning), probe rows that animate while in-flight and resolve ✓/✗ with elapsed time, prominent finding cards (orange border, severity chip, payload snippet), CVE-seeded cards (cyan border, CVE ID badges colored by CVSS severity), public duplicate cards (orange = blocked submission, yellow = warning), strategy pivot cards, hard IP ban alerts; auto-scrolls to bottom on new events; `▸ scanning…` pulse when hunt is running but idle for >3s
 - Dashboard with ROI charts, autonomy metrics, recent findings
 - Program management with scope configuration
 - Findings panel with 4-layer verification workflow
@@ -284,6 +287,7 @@ workspace/
 | `GET/POST /api/bounty-intelligence/*` | Scope analysis, payout estimation, duplicate detection, report coaching, submission optimization, program fetcher, campaign learning, tool synergy, triage prediction, full pipeline |
 | `GET/POST /api/reasoning/*` | Decision traces, calibration stats, hunt cortex health, lab runs, adaptive thresholds, divergence analysis |
 | `GET/POST /api/juiceshop/*` | Juice Shop Docker lifecycle (spawn/stop/status), challenge list, benchmark run (hardcoded/adaptive/hybrid), abort, run history |
+| `GET/POST /api/xbow/*` | XBOW CTF Docker lifecycle (status, clone-repo), challenge list, benchmark run/abort, run history |
 | `GET/POST /api/graph/*` | Offensive graph nodes/edges, shortest path, per-hunt summaries |
 | `GET/POST /api/intelligence/*` | Playbooks, tool selection, strategy planning, attack paths, MITRE techniques, pivot evaluation |
 | `GET /api/governance/stats` | Governance decision counts by pillar/verdict/risk |
@@ -348,6 +352,18 @@ EMBED_MODEL=nomic-embed-text
 VIRUSTOTAL_API_KEY=
 SHODAN_API_KEY=
 ABUSEIPDB_API_KEY=
+
+# Optional — NVD CVE database (free account gives 45 req/30s vs 4 req/30s anonymous)
+NVD_API_KEY=
+
+# Optional — bug bounty platform APIs for public disclosure checking
+HACKERONE_USERNAME=
+HACKERONE_API_TOKEN=
+BUGCROWD_API_TOKEN=
+INTIGRITI_API_TOKEN=
+
+# Optional — XBOW CTF challenge repo
+XBOW_REPO_URL=https://github.com/xbow-org/challenges
 ```
 
 ---
@@ -390,6 +406,8 @@ All tools are executed through the **Tool Runner** stealth layer — each invoca
 - **Epsilon-greedy exploration** — `getToolRecommendation()` reserves a 15% probability slot for tools with fewer than 10 historical attempts on the current vuln class; proven high-EV tools still fill the first 4 slots, but novel tools are guaranteed periodic exposure so RL history cannot permanently suppress techniques that haven't been fairly evaluated
 - **Bayesian prior on sparse data** — the ROI model uses a Beta(1,3) posterior `(successCount+1)/(totalCount+4)` rather than a flat sparse prior; at zero data points the effective rate is 0.25 (optimistic exploration); as observations accumulate the prior dissolves into the empirical rate; no cliff-edge transition means a technique that fails its first few attempts degrades gradually, not catastrophically
 - **Hard IP ban detection** — the Dynamic Rate Limiter tracks consecutive 403 responses per target hostname separately from 429 backoff; after 5 consecutive 403s the target is hard-banned for 1 hour; a broad network-level block (ETIMEDOUT/ECONNRESET) in the HunterEngine canary also sets the ban; `isHardBanned()` is checked before every tool execution in HunterEngine and before every HTTP probe in SolverPool; the CampaignOrchestrator skips the SolverPool supplement entirely for banned targets
+- **CVE-kickstarted hunting** — on the first observe pass WhatWeb-detected server-side technologies (Apache, Nginx, WordPress, Tomcat, etc.) are cross-referenced against the NVD in real time; CVEs with CVSS ≥ 7.0 are injected as high-priority hypotheses (confidence 0.7, priority 8–10) before the generic hypothesis loop begins, eliminating cold-start guessing against targets running known-vulnerable software; confirmed findings are automatically tagged with CWE IDs and CVE IDs for richer submission reports
+- **Public disclosure gate** — before any confirmed finding reaches the submission queue, the platform checks whether the same vulnerability type has already been publicly disclosed by another hunter on the same program via HackerOne, Bugcrowd, and Intigriti APIs; `confirmed_duplicate` findings are dropped silently; `likely_duplicate` findings pass through with a warning flag; the gate fails open (skipped status) when no API token is configured so it never blocks a hunt
 - **Temporal decay** — intelligence ages uniformly across all reinforcement domains to prevent stale data from biasing decisions; per-session probe history is bounded to 500 entries per domain and evicted after a 2-hour TTL so decay model accuracy degrades gracefully rather than silently clipping
 - **Prompt injection hardening** — all LLM outputs in the hot path (HunterEngine hypothesis generation, VerifierAgent Layer 4 AI confirmation) are scanned by PromptInjectionDetector before parsing; untrusted model responses are flagged and logged before their content is trusted
 - **Semantic reasoning examples** — the AI loop receives the 7 most contextually relevant prompt examples per hypothesis cycle via embedding-based retrieval, not keyword matching
