@@ -10,6 +10,9 @@
  */
 import crypto from "crypto";
 import axios from "axios";
+import { db } from "../../db";
+import { missionMemorySnapshots } from "../../db/schema";
+import { eq } from "drizzle-orm";
 import logger from "../../utils/logger";
 
 interface EndpointSnapshot {
@@ -44,7 +47,40 @@ const COMMON_PATHS = [
 ];
 
 class ChangeDetector {
-  private snapshots = new Map<string, Map<string, EndpointSnapshot>>();
+  private cache = new Map<string, Map<string, EndpointSnapshot>>();
+
+  private snapshotKey(base: string): string {
+    return `change-detector:${base}`;
+  }
+
+  private async loadFromDB(base: string): Promise<Map<string, EndpointSnapshot> | null> {
+    try {
+      const [row] = await db.select().from(missionMemorySnapshots)
+        .where(eq(missionMemorySnapshots.huntId, this.snapshotKey(base))).limit(1);
+      if (!row) return null;
+      const data = row.snapshot as Record<string, EndpointSnapshot>;
+      const m = new Map<string, EndpointSnapshot>();
+      for (const [k, v] of Object.entries(data)) m.set(k, v);
+      return m;
+    } catch { return null; }
+  }
+
+  private async saveToDB(base: string, snapMap: Map<string, EndpointSnapshot>): Promise<void> {
+    try {
+      const data: Record<string, EndpointSnapshot> = {};
+      for (const [k, v] of snapMap) data[k] = v;
+      await db.insert(missionMemorySnapshots).values({
+        huntId: this.snapshotKey(base),
+        snapshot: data as unknown as Record<string, unknown>,
+        updatedAt: new Date(),
+      }).onConflictDoUpdate({
+        target: [missionMemorySnapshots.huntId],
+        set: { snapshot: data as unknown as Record<string, unknown>, updatedAt: new Date() },
+      });
+    } catch (err) {
+      logger.debug("[ChangeDetector] DB persist failed (non-critical)", { err: String(err) });
+    }
+  }
 
   async snapshot(targetUrl: string, authHeaders: Record<string, string> = {}): Promise<Map<string, EndpointSnapshot>> {
     const base = this.extractBase(targetUrl);
@@ -66,7 +102,9 @@ class ChangeDetector {
 
   async detect(targetUrl: string, authHeaders: Record<string, string> = {}): Promise<ChangeReport> {
     const base = this.extractBase(targetUrl);
-    const prev = this.snapshots.get(base);
+    // Load prev snapshot from memory cache, then fall back to DB
+    let prev = this.cache.get(base);
+    if (!prev) prev = await this.loadFromDB(base) ?? undefined;
     const current = await this.snapshot(targetUrl, authHeaders);
 
     const report: ChangeReport = {
@@ -78,8 +116,9 @@ class ChangeDetector {
     };
 
     if (!prev) {
-      // First run — store and return empty diff
-      this.snapshots.set(base, current);
+      // First run — store baseline and return empty diff
+      this.cache.set(base, current);
+      await this.saveToDB(base, current);
       logger.info("[ChangeDetector] First snapshot stored", { base, endpoints: current.size });
       return report;
     }
@@ -146,8 +185,9 @@ class ChangeDetector {
       }
     }
 
-    // Update snapshot
-    this.snapshots.set(base, current);
+    // Persist updated snapshot
+    this.cache.set(base, current);
+    await this.saveToDB(base, current);
 
     logger.info("[ChangeDetector] Diff complete", {
       base,

@@ -205,8 +205,9 @@ io.on("connection", (socket) => {
       "l4:solver_finding", "l4:error",
       "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate", "l5:report_submitted",
       "l6:report_generated", "l6:autonomy_updated",
-      "orchestration:targets_expanded", "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",
-      "hunt:ssrf_pivot", "hunt:changes_detected",
+      "orchestration:targets_expanded", "orchestration:takeover_found",
+      "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",
+      "hunt:ssrf_pivot", "hunt:changes_detected", "hunt:secrets_found",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));
     });
@@ -245,6 +246,7 @@ io.on("connection", (socket) => {
     engine.on("hunt:ssrf_pivot", (data) => socket.emit("hunt:ssrf_pivot", data));
     engine.on("hunt:changes_detected", (data) => socket.emit("hunt:changes_detected", data));
     engine.on("hunt:oob_hit", (data) => socket.emit("hunt:oob_hit", data));
+    engine.on("hunt:secrets_found", (data) => socket.emit("hunt:secrets_found", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);

@@ -34,6 +34,8 @@ import { graphqlProber } from "../lib/tools/graphql-probe";
 import { ssrfChainProber } from "../lib/tools/ssrf-chain-prober";
 import { payloadMutator } from "../lib/tools/payload-mutator";
 import { changeDetector } from "../lib/tools/change-detector";
+import { secretScanner } from "../lib/tools/secret-scanner";
+import { notificationService } from "../lib/services/notification-service";
 import { programs } from "../db/schema";
 
 const execFileAsync = promisify(execFile);
@@ -260,6 +262,61 @@ export const TOOL_KNOWLEDGE: Record<string, {
       return { headers, missingSecurityHeaders: missing };
     },
     rateLimit: 1,
+  },
+  tplmap: {
+    description: "Server-side template injection detection and exploitation",
+    vulnClasses: ["ssti", "rce"],
+    command: (url) => ({
+      bin: "tplmap",
+      args: ["-u", url, "--level", "5", "--os-cmd", "id"],
+    }),
+    parser: (output) => {
+      const found = /Template Injection|Tplmap identified|injection point/i.test(output);
+      const engine = output.match(/Template engine: (\w+)/i)?.[1] ?? "unknown";
+      return { found, engine, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 30,
+  },
+  dalfox: {
+    description: "Fast XSS parameter analysis tool with blind XSS support",
+    vulnClasses: ["xss"],
+    command: (url) => ({
+      bin: "dalfox",
+      args: ["url", url, "--silence", "--output", "/dev/stdout", "--format", "plain"],
+    }),
+    parser: (output) => {
+      const findings = output.match(/\[POC\].+/g) || [];
+      return { found: findings.length > 0, findings, count: findings.length, rawOutput: output.slice(0, 800) };
+    },
+    rateLimit: 15,
+  },
+  jwt_tool: {
+    description: "JWT algorithm confusion, none algorithm, and claim manipulation testing",
+    vulnClasses: ["auth_bypass"],
+    command: (url) => ({
+      bin: "python3",
+      args: ["/usr/local/bin/jwt_tool.py", url, "-t", url, "-M", "at", "-cv"],
+    }),
+    parser: (output) => {
+      const vulnerable = /Exploit possible|none algorithm|algorithm confusion/i.test(output);
+      const technique = output.match(/\[\+\] (.+)/)?.[1] ?? "";
+      return { vulnerable, technique, rawOutput: output.slice(0, 600) };
+    },
+    rateLimit: 20,
+  },
+  smuggler: {
+    description: "HTTP request smuggling detection (CL.TE and TE.CL)",
+    vulnClasses: ["http_smuggling"],
+    command: (url) => ({
+      bin: "python3",
+      args: ["/usr/local/bin/smuggler.py", "-u", url, "--no-color"],
+    }),
+    parser: (output) => {
+      const vulnerable = /Issue found|CL\.TE|TE\.CL|TE\.TE/i.test(output);
+      const type = output.match(/(CL\.TE|TE\.CL|TE\.TE)/)?.[1] ?? "unknown";
+      return { vulnerable, type: vulnerable ? type : null, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 60,
   },
 };
 
@@ -544,6 +601,34 @@ export class HunterEngine extends EventEmitter {
       await this.probeGraphQL().catch(err =>
         logger.warn("[HunterEngine] GraphQL probing failed (non-critical)", { err: String(err) })
       );
+      // Secret scanning — look for leaked credentials in response bodies
+      await (async () => {
+        try {
+          const secretResult = await secretScanner.scan(this.state.targetUrl, this.authHeaders);
+          if (secretResult.matches.length > 0) {
+            for (const hyp of secretResult.hypotheses) {
+              this.state.hypotheses.push({
+                id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+                reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+                evidence: [], status: "pending", createdAt: Date.now(),
+              });
+            }
+            this.emit("hunt:secrets_found", {
+              sessionId: this.state.sessionId,
+              count: secretResult.matches.length,
+              types: [...new Set(secretResult.matches.map(m => m.type))],
+            });
+            await notificationService.notifyIfWorthy({
+              type: "secret_found",
+              targetUrl: this.state.targetUrl,
+              detail: secretResult.matches.map(m => `${m.type}: ${m.value}`).join(", "),
+            });
+          }
+        } catch (err) {
+          logger.debug("[HunterEngine] Secret scan skipped (non-critical)", { err: String(err) });
+        }
+      })();
+
       // Diff-based change detection — compare endpoint responses against last baseline
       await (async () => {
         try {
@@ -807,8 +892,21 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
       // Select appropriate tool — honour retry hint if set, otherwise auto-select
       const toolName = hypothesis.toolHint || this.selectTool(hypothesis.vulnClass);
-      delete hypothesis.toolHint; // consume the hint so it doesn't persist to future probes
-      const probeResult = await this.runTool(toolName, hypothesis.targetUrl, hypothesis);
+      delete hypothesis.toolHint;
+
+      // On gray-zone retries (retryCount > 0), inject WAF-bypass payload mutations
+      let probeUrl = hypothesis.targetUrl;
+      if ((hypothesis.retryCount ?? 0) > 0) {
+        const mutations = payloadMutator.mutate(hypothesis.vulnClass);
+        if (mutations.length > 0) {
+          const params = payloadMutator.findInjectableParams(hypothesis.targetUrl);
+          if (params.length > 0 && mutations[0]) {
+            probeUrl = payloadMutator.injectPayload(hypothesis.targetUrl, params[0], mutations[0].variant);
+          }
+        }
+      }
+
+      const probeResult = await this.runTool(toolName, probeUrl, hypothesis);
 
       // OOB beacon probe for blind/async vuln classes that don't produce immediate signals
       const oobClasses = ["ssrf", "xss", "sqli", "rce", "xxe"];
@@ -890,6 +988,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
           await this.persistFinding(confirmed);
+          notificationService.notifyIfWorthy({
+            type: "finding_confirmed",
+            severity: confirmed.severity,
+            vulnType: confirmed.hypothesis.vulnClass,
+            targetUrl: confirmed.hypothesis.targetUrl,
+            cvssScore: confirmed.cvssScore,
+            detail: confirmed.hypothesis.reasoning.slice(0, 200),
+          }).catch(() => {});
 
           // SSRF chain pivot — after SSRF confirmed, probe internal services
           if (hypothesis.vulnClass === "ssrf") {
@@ -1036,11 +1142,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
   private selectTool(vulnClass: string): string {
     const vulnToolMap: Record<string, string> = {
-      xss: "nuclei",
+      xss: "dalfox",
       sqli: "sqlmap",
       ssrf: "nuclei",
       lfi: "nuclei",
       rce: "nuclei",
+      ssti: "tplmap",
+      auth_bypass: "jwt_tool",
+      http_smuggling: "smuggler",
       idor: "curl_probe",
       misconfig: "nikto",
       hidden_endpoints: "ffuf",
@@ -1051,7 +1160,6 @@ Return ONLY valid JSON array of hypothesis objects.`;
       cors: "curl_probe",
       csrf: "curl_probe",
       info_disclosure: "curl_probe",
-      auth_bypass: "nuclei",
       xxe: "nuclei",
     };
     return vulnToolMap[vulnClass] || "nuclei";

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   ShieldAlert, CheckCircle2, XCircle, AlertTriangle, Filter,
-  FileText, Code2, Search, ExternalLink, RefreshCw
+  FileText, Code2, Search, ExternalLink, RefreshCw, Pencil, Save, X
 } from "lucide-react";
 import { hunterAPI } from "../lib/api";
 import toast from "react-hot-toast";
@@ -43,6 +43,9 @@ export default function Findings() {
   const [detailTab, setDetailTab] = useState<"details" | "nuclei" | "report">("details");
   const [verifying, setVerifying] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ title: "", severity: "", description: "", impact: "" });
+  const [saving, setSaving] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -103,6 +106,29 @@ export default function Findings() {
       toast.error("Failed to generate report");
     } finally {
       setGeneratingReport(false);
+    }
+  };
+
+  const startEdit = (f: Finding) => {
+    setEditForm({ title: f.title, severity: f.severity, description: f.description || "", impact: "" });
+    setEditing(true);
+    setDetailTab("details");
+  };
+
+  const saveFinding = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      const res = await hunterAPI.updateFinding(selected.id, editForm as Record<string, unknown>);
+      const updated = res.data as Finding;
+      setSelected(updated);
+      setFindings(prev => prev.map(f => f.id === updated.id ? updated : f));
+      setEditing(false);
+      toast.success("Finding updated");
+    } catch {
+      toast.error("Failed to update finding");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -211,18 +237,34 @@ export default function Findings() {
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={() => verify(selected.id)} disabled={verifying}
-                    className="hack-btn flex items-center gap-1 text-[10px]">
-                    <CheckCircle2 className="w-3 h-3" /> VERIFY
-                  </button>
-                  <button onClick={() => generateNuclei(selected.id)}
-                    className="hack-btn flex items-center gap-1 text-[10px]">
-                    <Code2 className="w-3 h-3" /> NUCLEI
-                  </button>
-                  <button onClick={() => generateReport(selected.id)} disabled={generatingReport}
-                    className="hack-btn flex items-center gap-1 text-[10px]">
-                    <FileText className="w-3 h-3" /> REPORT
-                  </button>
+                  {editing ? (
+                    <>
+                      <button onClick={() => setEditing(false)} className="hack-btn flex items-center gap-1 text-[10px]">
+                        <X className="w-3 h-3" /> CANCEL
+                      </button>
+                      <button onClick={saveFinding} disabled={saving} className="hack-btn-primary flex items-center gap-1 text-[10px]">
+                        <Save className="w-3 h-3" /> {saving ? "SAVING…" : "SAVE"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => startEdit(selected)} className="hack-btn flex items-center gap-1 text-[10px]">
+                        <Pencil className="w-3 h-3" /> EDIT
+                      </button>
+                      <button onClick={() => verify(selected.id)} disabled={verifying}
+                        className="hack-btn flex items-center gap-1 text-[10px]">
+                        <CheckCircle2 className="w-3 h-3" /> VERIFY
+                      </button>
+                      <button onClick={() => generateNuclei(selected.id)}
+                        className="hack-btn flex items-center gap-1 text-[10px]">
+                        <Code2 className="w-3 h-3" /> NUCLEI
+                      </button>
+                      <button onClick={() => generateReport(selected.id)} disabled={generatingReport}
+                        className="hack-btn flex items-center gap-1 text-[10px]">
+                        <FileText className="w-3 h-3" /> REPORT
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -241,30 +283,62 @@ export default function Findings() {
             <div className="flex-1 overflow-y-auto terminal-scroll p-4">
               {detailTab === "details" && (
                 <div className="space-y-4">
-                  <div>
-                    <div className="hack-label">Description</div>
-                    <div className="text-[11px] font-mono text-hack-text leading-relaxed bg-hack-surface p-3 rounded border border-hack-border">
-                      {selected.description}
-                    </div>
-                  </div>
-                  {selected.exploitPayload && (
-                    <div>
-                      <div className="hack-label">Exploit Payload</div>
-                      <pre className="text-[10px] font-mono text-hack-orange bg-hack-surface p-3 rounded border border-hack-border overflow-x-auto">
-                        {selected.exploitPayload.slice(0, 1000)}
-                      </pre>
-                    </div>
+                  {editing ? (
+                    <>
+                      <div>
+                        <label className="hack-label">Title</label>
+                        <input className="hack-input w-full" value={editForm.title}
+                          onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="hack-label">Severity</label>
+                        <select className="hack-input w-full" value={editForm.severity}
+                          onChange={e => setEditForm(f => ({ ...f, severity: e.target.value }))}>
+                          {["critical", "high", "medium", "low", "info"].map(s => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="hack-label">Description</label>
+                        <textarea className="hack-input w-full h-32 resize-none" value={editForm.description}
+                          onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="hack-label">Impact</label>
+                        <textarea className="hack-input w-full h-20 resize-none" value={editForm.impact}
+                          onChange={e => setEditForm(f => ({ ...f, impact: e.target.value }))}
+                          placeholder="Describe the potential impact of this vulnerability..." />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="hack-label">Description</div>
+                        <div className="text-[11px] font-mono text-hack-text leading-relaxed bg-hack-surface p-3 rounded border border-hack-border">
+                          {selected.description}
+                        </div>
+                      </div>
+                      {selected.exploitPayload && (
+                        <div>
+                          <div className="hack-label">Exploit Payload</div>
+                          <pre className="text-[10px] font-mono text-hack-orange bg-hack-surface p-3 rounded border border-hack-border overflow-x-auto">
+                            {selected.exploitPayload.slice(0, 1000)}
+                          </pre>
+                        </div>
+                      )}
+                      {selected.dedupHash && (
+                        <div>
+                          <div className="hack-label">Dedup Hash</div>
+                          <div className="text-[10px] font-mono text-hack-dim">{selected.dedupHash}</div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="hack-label">Created</div>
+                        <div className="text-[10px] font-mono text-hack-dim">{new Date(selected.createdAt).toISOString()}</div>
+                      </div>
+                    </>
                   )}
-                  {selected.dedupHash && (
-                    <div>
-                      <div className="hack-label">Dedup Hash</div>
-                      <div className="text-[10px] font-mono text-hack-dim">{selected.dedupHash}</div>
-                    </div>
-                  )}
-                  <div>
-                    <div className="hack-label">Created</div>
-                    <div className="text-[10px] font-mono text-hack-dim">{new Date(selected.createdAt).toISOString()}</div>
-                  </div>
                 </div>
               )}
 

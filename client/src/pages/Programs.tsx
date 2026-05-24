@@ -1,7 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { Target, Plus, Star, TrendingUp, Clock, DollarSign, RefreshCw, Trash2 } from "lucide-react";
+import { Target, Plus, Star, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, ChevronDown, ChevronRight } from "lucide-react";
 import { bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
+
+interface AuthConfig {
+  authType: "form" | "basic" | "bearer";
+  loginUrl?: string;
+  username?: string;
+  password?: string;
+  usernameField?: string;
+  passwordField?: string;
+  tokenHeaderName?: string;
+  sessionCookieNames?: string[];
+}
 
 interface Program {
   id: number;
@@ -15,6 +26,7 @@ interface Program {
   roiScore: number;
   active: boolean;
   tags: string[];
+  authConfig?: AuthConfig;
 }
 
 const PLATFORMS = ["hackerone", "bugcrowd", "intigriti", "synack", "yeswehack", "other"];
@@ -28,6 +40,9 @@ export default function Programs() {
   const [rankings, setRankings] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [authModalId, setAuthModalId] = useState<number | null>(null);
+  const [authForm, setAuthForm] = useState<AuthConfig>({ authType: "form" });
+  const [savingAuth, setSavingAuth] = useState(false);
   const [form, setForm] = useState({
     name: "", platform: "hackerone", programHandle: "",
     scope: "", outOfScope: "", maxPayout: "5000", avgPayout: "500",
@@ -76,6 +91,26 @@ export default function Programs() {
     await bountyAPI.deleteProgram(id);
     toast.success("Program archived");
     load();
+  };
+
+  const openAuthModal = (prog: Program) => {
+    setAuthForm(prog.authConfig ?? { authType: "form" });
+    setAuthModalId(prog.id);
+  };
+
+  const saveAuth = async () => {
+    if (!authModalId) return;
+    setSavingAuth(true);
+    try {
+      await bountyAPI.updateProgram(authModalId, { authConfig: authForm });
+      toast.success("Auth config saved");
+      setAuthModalId(null);
+      load();
+    } catch {
+      toast.error("Failed to save auth config");
+    } finally {
+      setSavingAuth(false);
+    }
   };
 
   return (
@@ -196,6 +231,10 @@ export default function Programs() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => openAuthModal(prog)} title="Configure authentication"
+                      className={`hack-btn p-1.5 ${prog.authConfig ? "text-hack-accent border-hack-accent/30" : ""}`}>
+                      <Lock className="w-3 h-3" />
+                    </button>
                     <button onClick={() => handleDelete(prog.id)} className="hack-btn-danger p-1.5">
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -220,6 +259,81 @@ export default function Programs() {
           </div>
         )}
       </div>
+
+      {/* Auth Config Modal */}
+      {authModalId !== null && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setAuthModalId(null); }}>
+          <div className="hack-panel w-[480px] p-5 space-y-4 border-hack-accent/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-hack-accent" />
+                <span className="text-xs font-mono font-bold text-hack-accent">AUTH CONFIG</span>
+              </div>
+              <button onClick={() => setAuthModalId(null)} className="text-hack-dim hover:text-hack-text text-[10px] font-mono">CLOSE</button>
+            </div>
+            <div className="text-[9px] text-hack-dim font-mono">
+              Configure authentication so hunts probe behind the login wall.
+            </div>
+
+            <div>
+              <label className="hack-label">Auth Type</label>
+              <div className="flex gap-2">
+                {(["form", "basic", "bearer"] as const).map(t => (
+                  <button key={t} onClick={() => setAuthForm(f => ({ ...f, authType: t }))}
+                    className={`flex-1 py-1.5 text-[10px] font-mono uppercase rounded border transition-all ${authForm.authType === t ? "bg-hack-accent/10 text-hack-accent border-hack-accent/30" : "text-hack-dim border-hack-border hover:text-hack-text"}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(authForm.authType === "form" || authForm.authType === "bearer") && (
+              <div>
+                <label className="hack-label">Login URL</label>
+                <input className="hack-input w-full" value={authForm.loginUrl ?? ""} onChange={e => setAuthForm(f => ({ ...f, loginUrl: e.target.value }))} placeholder="https://target.com/login" />
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="hack-label">Username / Email</label>
+                <input className="hack-input w-full" value={authForm.username ?? ""} onChange={e => setAuthForm(f => ({ ...f, username: e.target.value }))} placeholder="hunter@example.com" />
+              </div>
+              <div>
+                <label className="hack-label">Password</label>
+                <input type="password" className="hack-input w-full" value={authForm.password ?? ""} onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))} placeholder="••••••••" />
+              </div>
+            </div>
+
+            {authForm.authType === "form" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="hack-label">Username Field Name</label>
+                  <input className="hack-input w-full" value={authForm.usernameField ?? ""} onChange={e => setAuthForm(f => ({ ...f, usernameField: e.target.value }))} placeholder="username" />
+                </div>
+                <div>
+                  <label className="hack-label">Password Field Name</label>
+                  <input className="hack-input w-full" value={authForm.passwordField ?? ""} onChange={e => setAuthForm(f => ({ ...f, passwordField: e.target.value }))} placeholder="password" />
+                </div>
+              </div>
+            )}
+
+            {authForm.authType === "bearer" && (
+              <div>
+                <label className="hack-label">Token Header Name</label>
+                <input className="hack-input w-full" value={authForm.tokenHeaderName ?? ""} onChange={e => setAuthForm(f => ({ ...f, tokenHeaderName: e.target.value }))} placeholder="Authorization" />
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-hack-border">
+              <button onClick={() => { setAuthForm({ authType: "form" }); }} className="hack-btn text-[10px]">CLEAR</button>
+              <button onClick={saveAuth} disabled={savingAuth} className="hack-btn-primary text-[10px]">
+                {savingAuth ? "SAVING…" : "SAVE AUTH CONFIG"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

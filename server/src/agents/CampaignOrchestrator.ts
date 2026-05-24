@@ -44,6 +44,8 @@ import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
 import { nvdClient } from "../lib/intelligence/nvd-client";
 import { reportSubmitter } from "../lib/intelligence/report-submitter";
+import { subdomainTakeoverChecker } from "../lib/tools/subdomain-takeover";
+import { notificationService } from "../lib/services/notification-service";
 
 const VULN_TYPE_TO_CWE: Record<string, number> = {
   xss: 79, sqli: 89, ssrf: 918, lfi: 22, rce: 78, idor: 639,
@@ -174,6 +176,24 @@ export class CampaignOrchestrator extends EventEmitter {
       const program = govResult.data.program as { scope?: unknown[] } | undefined;
       const expandedTargets = await this.expandTargets(params.targetUrl, program?.scope || []);
       this.audit(1, "targets_expanded", { count: expandedTargets.length });
+
+      // ── Subdomain takeover check (non-blocking, runs on expanded targets) ─
+      if (expandedTargets.length > 0) {
+        subdomainTakeoverChecker.checkSubdomains(expandedTargets.slice(0, 30)).then(vulnSubs => {
+          if (vulnSubs.length > 0) {
+            this.emit("orchestration:takeover_found", { targets: vulnSubs });
+            for (const v of vulnSubs) {
+              notificationService.notifyIfWorthy({
+                type: "finding_confirmed",
+                severity: "high",
+                vulnType: "subdomain_takeover",
+                targetUrl: v.subdomain,
+                detail: v.evidence,
+              }).catch(() => {});
+            }
+          }
+        }).catch(() => {});
+      }
 
       // ── Layer 2: Target Intelligence ─────────────────────────────────────
       const intelResult = await this.runLayer(2, () => this.layer2_targetIntelligence(params));

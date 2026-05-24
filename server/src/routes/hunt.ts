@@ -214,6 +214,24 @@ router.get("/findings/:id", async (req: Request, res: Response) => {
   return res.json(finding);
 });
 
+// Update finding (title, severity, description, impact)
+router.patch("/findings/:id", async (req: Request, res: Response) => {
+  const [finding] = await db.select().from(findings)
+    .where(eq(findings.id, parseInt(req.params.id))).limit(1);
+  if (!finding) return res.status(404).json({ error: "Finding not found" });
+
+  const allowed = ["title", "severity", "description", "impact"] as const;
+  const updates: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No updatable fields provided" });
+
+  await db.update(findings).set({ ...updates, updatedAt: new Date() }).where(eq(findings.id, parseInt(req.params.id)));
+  const [updated] = await db.select().from(findings).where(eq(findings.id, parseInt(req.params.id))).limit(1);
+  return res.json(updated);
+});
+
 // Verify a finding (run 4-layer pipeline)
 router.post("/findings/:id/verify", async (req: Request, res: Response) => {
   const [finding] = await db.select().from(findings)

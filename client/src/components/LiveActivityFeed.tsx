@@ -28,7 +28,9 @@ export type ActivityEvent =
   | { type: "graphql_schema"; ts: string; endpoint: string; typeCount: number; injectableCount: number }
   | { type: "ssrf_pivot"; ts: string; reachable: string[]; cloudMeta: boolean; newHypotheses: number }
   | { type: "report_submitted"; ts: string; platform: string; reportId?: string; reportUrl?: string }
-  | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number };
+  | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number }
+  | { type: "secrets_found"; ts: string; count: number; types: string[] }
+  | { type: "takeover_found"; ts: string; targets: Array<{ subdomain: string; service: string; confidence: number }> };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -475,6 +477,51 @@ function ChangesDetectedRow({ ev }: { ev: ActivityEvent & { type: "changes_detec
   );
 }
 
+function SecretsFoundRow({ ev }: { ev: ActivityEvent & { type: "secrets_found" } }) {
+  return (
+    <div className="border border-hack-red/50 bg-hack-red/8 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <AlertTriangle className="w-3.5 h-3.5 text-hack-red flex-shrink-0 animate-pulse" />
+        <span className="text-hack-red font-bold">Secrets found</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/40 text-hack-red bg-hack-red/10 font-mono">
+          {ev.count} {ev.count === 1 ? "match" : "matches"}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-1 ml-5">
+        {ev.types.slice(0, 6).map(t => (
+          <span key={t} className="text-[9px] px-1 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TakeoverFoundRow({ ev }: { ev: ActivityEvent & { type: "takeover_found" } }) {
+  return (
+    <div className="border border-hack-orange/50 bg-hack-orange/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Globe className="w-3.5 h-3.5 text-hack-orange flex-shrink-0" />
+        <span className="text-hack-orange font-bold">Subdomain takeover</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/40 text-hack-orange bg-hack-orange/10 font-mono">
+          {ev.targets.length} vulnerable
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="mt-1 ml-5 space-y-0.5">
+        {ev.targets.slice(0, 4).map(t => (
+          <div key={t.subdomain} className="text-[9px] font-mono text-hack-dim">
+            <span className="text-hack-text">{t.subdomain}</span> → <span className="text-hack-orange">{t.service}</span>
+            <span className="text-hack-dim ml-1">({Math.round(t.confidence * 100)}%)</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
   return (
     <div className="flex items-center gap-2 py-0.5 text-[10px] font-mono text-hack-red">
@@ -609,6 +656,10 @@ export function LiveActivityFeed({
               return <ReportSubmittedRow key={key} ev={ev} />;
             case "changes_detected":
               return <ChangesDetectedRow key={key} ev={ev} />;
+            case "secrets_found":
+              return <SecretsFoundRow key={key} ev={ev} />;
+            case "takeover_found":
+              return <TakeoverFoundRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

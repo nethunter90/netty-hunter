@@ -28,6 +28,7 @@ export const hunterAPI = {
   getFindings: (filters?: Record<string, string>) => api.get("/hunt/findings", { params: filters }),
   getFinding: (id: number) => api.get(`/hunt/findings/${id}`),
   verifyFinding: (id: number) => api.post(`/hunt/findings/${id}/verify`),
+  updateFinding: (id: number, data: Record<string, unknown>) => api.patch(`/hunt/findings/${id}`, data),
   getNucleiTemplate: (id: number) => api.post(`/hunt/findings/${id}/nuclei-template`),
   generateReport: (id: number, body?: Record<string, unknown>) => api.post(`/hunt/findings/${id}/report`, body || {}),
   spawnSolvers: (data: Record<string, unknown>) => api.post("/hunt/solve", data),

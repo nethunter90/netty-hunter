@@ -242,6 +242,15 @@ export default function HuntConsole() {
       });
     });
 
+    socket.on("hunt:secrets_found", (data: any) => {
+      push({
+        type: "secrets_found",
+        ts: ts(),
+        count: Number(data.count || 0),
+        types: Array.isArray(data.types) ? data.types.map(String) : [],
+      });
+    });
+
     return () => {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
@@ -250,6 +259,7 @@ export default function HuntConsole() {
         "hunt:cve_seeded", "l5:public_duplicate",
         "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
         "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
+        "hunt:secrets_found",
       ].forEach(e => socket.off(e));
     };
   }, []);
