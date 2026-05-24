@@ -111,7 +111,11 @@ const TOOL_PARAMETERS: Record<string, any> = {
   xsstrike: {},
   commix: { flags: '--batch' },
   jwt_tool: { flags: '-M at' },
-  graphql_introspection: {},
+  graphql_introspection: {
+    paths: ["/graphql", "/api/graphql", "/gql", "/v1/graphql", "/query", "/api/query"],
+    timeout: 10000,
+    followIntrospection: true,
+  },
   feroxbuster: { wordlist: '/usr/share/wordlists/common.txt' },
 };
 

@@ -173,6 +173,34 @@ export default function HuntConsole() {
       });
     });
 
+    socket.on("hunt:graphql_schema", (data: any) => {
+      push({
+        type: "graphql_schema",
+        ts: ts(),
+        endpoint: String(data.endpoint || ""),
+        typeCount: Number(data.typeCount || 0),
+        injectableCount: Number(data.injectableCount || 0),
+      });
+    });
+
+    socket.on("hunt:oob_hit", (data: any) => {
+      push({
+        type: "oob_hit",
+        ts: ts(),
+        beaconId: String(data.beaconId || ""),
+        ip: String(data.ip || "unknown"),
+      });
+    });
+
+    socket.on("oob:hit", (data: any) => {
+      push({
+        type: "oob_hit",
+        ts: ts(),
+        beaconId: String(data.beaconId || ""),
+        ip: String(data.ip || "unknown"),
+      });
+    });
+
     socket.on("l5:public_duplicate", (data: any) => {
       push({
         type: "public_duplicate",
@@ -191,6 +219,7 @@ export default function HuntConsole() {
         "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
         "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
         "hunt:cve_seeded", "l5:public_duplicate",
+        "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
       ].forEach(e => socket.off(e));
     };
   }, []);

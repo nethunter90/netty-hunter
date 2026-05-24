@@ -13,7 +13,11 @@
  * Each layer emits real-time events consumed by the frontend and HTTP clients.
  */
 import { EventEmitter } from "events";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
+
+const execFileAsync = promisify(execFile);
 import { db } from "../db";
 import {
   programs, campaigns, targets, findings,
@@ -165,6 +169,11 @@ export class CampaignOrchestrator extends EventEmitter {
       const govResult = await this.runLayer(1, () => this.layer1_governance(params));
       if (!govResult.passed) return this.abort("Governance gate rejected request", t0);
 
+      // ── Subdomain expansion (between L1 and L2) ──────────────────────────
+      const program = govResult.data.program as { scope?: unknown[] } | undefined;
+      const expandedTargets = await this.expandTargets(params.targetUrl, program?.scope || []);
+      this.audit(1, "targets_expanded", { count: expandedTargets.length });
+
       // ── Layer 2: Target Intelligence ─────────────────────────────────────
       const intelResult = await this.runLayer(2, () => this.layer2_targetIntelligence(params));
 
@@ -173,7 +182,7 @@ export class CampaignOrchestrator extends EventEmitter {
 
       // ── Layer 4: Execution Engine ────────────────────────────────────────
       const execResult = await this.runLayer(4, () =>
-        this.layer4_executionEngine(params, stratResult.data)
+        this.layer4_executionEngine(params, stratResult.data, expandedTargets)
       );
 
       // ── Layer 5: Verification Gate ───────────────────────────────────────
@@ -315,6 +324,42 @@ export class CampaignOrchestrator extends EventEmitter {
     };
   }
 
+  // ── Subdomain expansion ────────────────────────────────────────────────────
+  private async expandTargets(targetUrl: string, scope: unknown[]): Promise<string[]> {
+    const discovered: string[] = [targetUrl];
+    try {
+      const apex = new URL(targetUrl).hostname.replace(/^www\./, "");
+      const { stdout } = await execFileAsync("subfinder", ["-d", apex, "-silent"], { timeout: 30_000 });
+      const subdomains = stdout.trim().split("\n").filter(Boolean);
+      for (const sub of subdomains) {
+        const url = `https://${sub}`;
+        if (this.isInScope(url, scope)) discovered.push(url);
+      }
+      logger.info("[Orchestrator] Subdomain expansion complete", { apex, found: subdomains.length, inScope: discovered.length - 1 });
+    } catch (err) {
+      logger.debug("[Orchestrator] Subdomain expansion failed (non-critical)", { err: String(err) });
+    }
+    const unique = [...new Set(discovered)];
+    this.emit("orchestration:targets_expanded", { count: unique.length, targets: unique });
+    return unique;
+  }
+
+  private isInScope(url: string, scope: unknown[]): boolean {
+    try {
+      const hostname = new URL(url).hostname;
+      for (const entry of scope) {
+        const s = String(entry);
+        if (s.startsWith("*.")) {
+          const base = s.slice(2);
+          if (hostname === base || hostname.endsWith(`.${base}`)) return true;
+        } else if (hostname === s || hostname.endsWith(`.${s}`)) {
+          return true;
+        }
+      }
+    } catch { /* non-critical */ }
+    return scope.length === 0; // if no scope defined, allow everything
+  }
+
   // ── Layer 2: Target Intelligence ───────────────────────────────────────────
   private async layer2_targetIntelligence(
     params: OrchestrateParams
@@ -429,7 +474,8 @@ export class CampaignOrchestrator extends EventEmitter {
   // ── Layer 4: Execution Engine ──────────────────────────────────────────────
   private async layer4_executionEngine(
     params: OrchestrateParams,
-    stratData: Record<string, unknown>
+    stratData: Record<string, unknown>,
+    expandedTargets: string[] = []
   ): Promise<{ passed: boolean; data: Record<string, unknown> }> {
     this.audit(4, "execution_start", {
       targetUrl: params.targetUrl,
@@ -467,6 +513,9 @@ export class CampaignOrchestrator extends EventEmitter {
     });
     engine.on("hunt:update", d => this.emit("l4:strategy_update", d));
     engine.on("hunt:error", d => this.emit("l4:error", d));
+    engine.on("hunt:cve_seeded", d => this.emit("hunt:cve_seeded", d));
+    engine.on("hunt:graphql_schema", d => this.emit("hunt:graphql_schema", d));
+    engine.on("hunt:oob_hit", d => this.emit("hunt:oob_hit", d));
 
     let sessionUuid: string | undefined;
     try {
@@ -514,6 +563,44 @@ export class CampaignOrchestrator extends EventEmitter {
         );
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
+      }
+    }
+
+    // 4c. Run abbreviated hunts on additional discovered subdomains (concurrency limit 2)
+    const additionalTargets = expandedTargets.filter(t => t !== params.targetUrl).slice(0, 5);
+    if (additionalTargets.length > 0) {
+      this.audit(4, "subdomain_hunt_start", { count: additionalTargets.length });
+      const CONCURRENCY = 2;
+      for (let i = 0; i < additionalTargets.length; i += CONCURRENCY) {
+        const batch = additionalTargets.slice(i, i + CONCURRENCY);
+        await Promise.allSettled(batch.map(async (subUrl) => {
+          try {
+            const subEngine = new HunterEngine();
+            subEngine.on("hunt:finding_confirmed", (d) => {
+              rawFindings.push(d);
+              this.state.findingsCount++;
+              this.emit("l4:finding_raw", d);
+            });
+            subEngine.on("hunt:cve_seeded", d => this.emit("hunt:cve_seeded", d));
+            subEngine.on("hunt:graphql_schema", d => this.emit("hunt:graphql_schema", d));
+            const subUuid = await subEngine.startHunt({
+              targetUrl: subUrl,
+              programId: params.programId,
+              campaignId: this.state.campaignId!,
+              maxIterations: Math.min(params.maxIterations || 10, 5),
+              budget: { maxRequests: 500, maxTime: 600 },
+            });
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, 660_000);
+              subEngine.once("hunt:complete", () => { clearTimeout(t); resolve(); });
+              subEngine.once("hunt:error", () => { clearTimeout(t); resolve(); });
+              subEngine.once("hunt:hard_banned", () => { clearTimeout(t); resolve(); });
+            });
+            logger.info("[Orchestrator] Subdomain hunt complete", { subUrl, subUuid });
+          } catch (err) {
+            logger.warn("[Orchestrator] Subdomain hunt failed (non-critical)", { subUrl, err: String(err) });
+          }
+        }));
       }
     }
 

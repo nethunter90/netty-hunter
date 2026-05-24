@@ -30,6 +30,16 @@ export const programs = pgTable("programs", {
   active: boolean("active").notNull().default(true),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
+  authConfig: jsonb("auth_config").$type<{
+    loginUrl?: string;
+    username?: string;
+    password?: string;
+    authType?: "form" | "basic" | "bearer";
+    tokenHeaderName?: string;
+    usernameField?: string;
+    passwordField?: string;
+    sessionCookieNames?: string[];
+  } | null>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
@@ -114,6 +124,9 @@ export const findings = pgTable("findings", {
   disclosureCheckStatus: varchar("disclosure_check_status", { length: 32 }).notNull().default("pending"),
   publicDisclosureUrl: text("public_disclosure_url"),
   publicDisclosureNote: text("public_disclosure_note"),
+  oobBeaconId: text("oob_beacon_id"),
+  oobHitReceived: boolean("oob_hit_received").notNull().default(false),
+  oobHitAt: timestamp("oob_hit_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

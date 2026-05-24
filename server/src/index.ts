@@ -26,6 +26,7 @@ import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
 import { initializeAutonomousBrain } from "./lib/intelligence";
+import { callbackServer } from "./lib/oob/callback-server";
 
 const PgSession = connectPg(session);
 
@@ -132,6 +133,14 @@ app.use("/api/intelligence", requireAuth, intelligenceRoutes);
 app.use("/api/juiceshop", requireAuth, juiceshopRoutes);
 app.use("/api/xbow", requireAuth, xbowRoutes);
 
+// OOB callback receiver — no auth required (external targets call this)
+app.all("/api/callback/:beaconId", (req, res) => {
+  const { beaconId } = req.params;
+  callbackServer.recordHit(beaconId, req.ip || "", JSON.stringify(req.body || req.query || {}));
+  io.emit("oob:hit", { beaconId, ip: req.ip, ts: new Date().toISOString() });
+  res.status(200).send("ok");
+});
+
 // Health check
 app.get("/health", (_req, res) => res.json({
   status: "ok",
@@ -196,6 +205,7 @@ io.on("connection", (socket) => {
       "l4:solver_finding", "l4:error",
       "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate",
       "l6:report_generated", "l6:autonomy_updated",
+      "orchestration:targets_expanded", "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));
     });
@@ -230,6 +240,8 @@ io.on("connection", (socket) => {
     });
     engine.on("hunt:error", (data) => socket.emit("hunt:error", data));
     engine.on("hunt:cve_seeded", (data) => socket.emit("hunt:cve_seeded", data));
+    engine.on("hunt:graphql_schema", (data) => socket.emit("hunt:graphql_schema", data));
+    engine.on("hunt:oob_hit", (data) => socket.emit("hunt:oob_hit", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);
