@@ -28,6 +28,7 @@ import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
 import { initializeAutonomousBrain } from "./lib/intelligence";
 import { callbackServer } from "./lib/oob/callback-server";
+import { runtimeConfig } from "./lib/runtime-config";
 import { db } from "./db";
 import { programs } from "./db/schema";
 import { gt } from "drizzle-orm";
@@ -37,15 +38,13 @@ const PgSession = connectPg(session);
 // Ensure log dir exists
 try { mkdirSync("logs", { recursive: true }); } catch { /* already exists */ }
 
-// ─── Load persisted settings into process.env ─────────────────────────────────
+// ─── Load persisted settings via RuntimeConfig (validated, audited) ──────────
 import("./db").then(({ db: _db }) => {
   import("./db/schema").then(({ reinforcementStore: rs }) => {
     import("drizzle-orm").then(({ like }) => {
       _db.select().from(rs).where(like(rs.domain, "settings")).then(rows => {
-        for (const row of rows) {
-          if (row.key && row.value != null) process.env[row.key] = String(row.value);
-        }
-        logger.info(`Settings loaded from DB (${rows.length} keys)`);
+        runtimeConfig.loadAll(rows.filter(r => r.key != null));
+        logger.info(`Settings loaded from DB via RuntimeConfig (${rows.length} keys)`);
       }).catch(() => {});
     });
   });

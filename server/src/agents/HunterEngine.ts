@@ -1101,10 +1101,14 @@ export class HunterEngine extends EventEmitter {
     // Build a rich query text from actual observation signals for semantic retrieval
     // Compress old observations into a historical state vector so the prompt
     // doesn't grow unboundedly across many iterations (context window management).
+    // Yield before and after the synchronous compression work so concurrent
+    // socket events and sibling hunts aren't starved on a busy event loop.
+    await this.yieldToEventLoop();
     const { historicalSummary, recentObservations } = observationCompressor.compress(
       this.state.sessionId,
       this.state.observations,
     );
+    await this.yieldToEventLoop();
     const recentObs = recentObservations;
     const obsTags = [...new Set(recentObs.flatMap(o => o.tags))].join(', ');
     const confirmedClasses = [...new Set(this.state.confirmedFindings.map(f => f.hypothesis.vulnClass ?? ''))].join(', ');
@@ -1151,6 +1155,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     try {
       const response = await this.modelRouter.reason(prompt);
+      // Yield after model response so the event loop can process other callbacks
+      // before the synchronous JSON.parse (which can be slow for large responses).
+      await this.yieldToEventLoop();
       // Guard against prompt injection in LLM output before parsing
       try {
         const { promptInjectionDetector } = await import('../governance');
@@ -1159,7 +1166,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
           logger.warn('[HunterEngine] Prompt injection detected in model response', { score: injection.score, reasons: injection.reasons });
         }
       } catch { /* non-critical — governance unavailable */ }
-      const parsed = JSON.parse(response.match(/\[[\s\S]+\]/)?.[0] || "[]");
+      // Cap response slice to 64KB before parsing to prevent OOM from huge model outputs
+      const rawSlice = response.match(/\[[\s\S]+\]/)?.[0]?.slice(0, 65536) || "[]";
+      const parsed = JSON.parse(rawSlice);
 
       const newHypotheses: Hypothesis[] = parsed.map((h: Record<string, unknown>) => ({
         id: uuidv4(),

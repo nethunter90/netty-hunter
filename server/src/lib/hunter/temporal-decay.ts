@@ -208,8 +208,12 @@ export class DefenderDecayModel {
 export class TemporalDecayEngine {
   private static instance: TemporalDecayEngine;
   private readonly model = new DefenderDecayModel();
-  // keyed by `${sessionId}:${domain}`
+  // keyed by `${sessionId}:${domain}` — insertion-order Map acts as FIFO LRU
   private readonly history = new Map<string, EvasionAttempt[]>();
+  // Hard cap on total number of tracked session:domain pairs
+  private readonly MAX_KEYS = 500;
+  // Per-key array cap (prevents one noisy session from consuming all memory)
+  private readonly MAX_ENTRIES_PER_KEY = 500;
 
   private constructor() {}
 
@@ -227,13 +231,25 @@ export class TemporalDecayEngine {
   recordAttempt(sessionId: string, attempt: EvasionAttempt): void {
     const domain = attempt.category; // category field carries domain in evasion context
     const k = this.key(sessionId, domain);
-    if (!this.history.has(k)) this.history.set(k, []);
+    if (!this.history.has(k)) {
+      // LRU eviction: when at capacity, remove the oldest-inserted key before adding new one
+      if (this.history.size >= this.MAX_KEYS) {
+        const oldestKey = this.history.keys().next().value;
+        if (oldestKey !== undefined) this.history.delete(oldestKey);
+      }
+      this.history.set(k, []);
+    } else {
+      // Re-insert to move key to end (most-recently-used position)
+      const arr = this.history.get(k)!;
+      this.history.delete(k);
+      this.history.set(k, arr);
+    }
     const arr = this.history.get(k)!;
     arr.push(attempt);
-    // Cap per-key history to prevent unbounded growth for long-running sessions
-    if (arr.length > 500) arr.splice(0, arr.length - 500);
-    // Evict stale sessions lazily when the Map grows large
-    if (this.history.size > 200) this.evictStale();
+    // Cap per-key history to bound memory for long-running sessions
+    if (arr.length > this.MAX_ENTRIES_PER_KEY) {
+      arr.splice(0, arr.length - this.MAX_ENTRIES_PER_KEY);
+    }
     logger.debug('[TemporalDecay] recorded attempt', {
       sessionId, domain, succeeded: attempt.succeeded, technique: attempt.technique,
     });

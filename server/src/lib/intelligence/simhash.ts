@@ -8,7 +8,13 @@ export class SimHashDedup {
   private seenHashes: bigint[] = [];
   private readonly HASH_BITS = 64;
 
-  computeSimHash(text: string): bigint {
+  /**
+   * Compute a SimHash of `text`.
+   * Pass `anchor` (e.g. the URL path) to XOR-mix an endpoint-specific fingerprint
+   * into the final hash, preventing a hostile target from serving identical-structured
+   * responses across many endpoints to force hash collisions (dedup-bypass DoS).
+   */
+  computeSimHash(text: string, anchor?: string): bigint {
     const tokens = this.shingle(text.toLowerCase());
     const v = new Array<number>(this.HASH_BITS).fill(0);
     for (const token of tokens) {
@@ -20,6 +26,12 @@ export class SimHashDedup {
     let hash = 0n;
     for (let i = 0; i < this.HASH_BITS; i++) {
       if (v[i] > 0) hash |= (1n << BigInt(i));
+    }
+    // Anchor XOR: XOR in FNV64(path) so same-payload findings at different
+    // endpoints always diverge in Hamming space regardless of response content.
+    if (anchor) {
+      const pathOnly = anchor.split("?")[0];
+      hash ^= this.fnv64(pathOnly);
     }
     return hash;
   }

@@ -61,7 +61,15 @@ class Layer1Dedup {
 
   computeSimHash(result: SolverResult): bigint {
     const text = `${result.endpoint} ${result.vulnClass} ${result.payload.toLowerCase().slice(0, 200)}`;
-    return this.simHash.computeSimHash(text);
+    // Anchor to the endpoint path so identical payloads at different endpoints
+    // never produce near-duplicate hashes (prevents dedup-bypass DoS).
+    let anchor: string;
+    try {
+      anchor = new URL(result.endpoint).pathname;
+    } catch {
+      anchor = result.endpoint.split("?")[0];
+    }
+    return this.simHash.computeSimHash(text, anchor);
   }
 
   async check(hash: string, simhash: bigint): Promise<{ isDuplicate: boolean; existingHash?: string }> {

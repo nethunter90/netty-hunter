@@ -2,12 +2,33 @@
  * ScopeGuard Security Gate
  * Hard scope validation at every tool invocation – fail-closed design.
  * Prevents hunting outside declared program scope.
+ * DNS rebinding protection: resolves hostname to IP on every check and blocks
+ * RFC1918/loopback/link-local addresses to prevent TOCTOU scope bypass.
  */
+import dns from "dns";
+import { promisify } from "util";
 import { Request, Response, NextFunction } from "express";
 import { db } from "../db";
 import { programs, targets } from "../db/schema";
 import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
+
+const dnsLookupAsync = promisify(dns.lookup);
+
+function isPrivateIP(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length === 4) {
+    if (p[0] === 10) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 127) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 0) return true;
+  }
+  if (ip === "::1" || ip === "0:0:0:0:0:0:0:1") return true;
+  if (/^(fc|fd)/i.test(ip)) return true; // IPv6 ULA
+  return false;
+}
 
 export interface ScopeTarget {
   url: string;
@@ -28,6 +49,19 @@ export class ScopeGuard {
     try {
       const scope = await this.getScope(programId);
       const hostname = this.extractHostname(url);
+
+      // DNS rebinding protection: resolve to IP and block private/internal ranges.
+      // Done on every call (never cached) so a TOCTOU rebind can't slip through.
+      try {
+        const { address } = await dnsLookupAsync(hostname);
+        if (isPrivateIP(address)) {
+          logger.warn("ScopeGuard: DNS rebinding blocked", { hostname, address });
+          return { allowed: false, reason: `DNS rebinding protection: ${hostname} resolved to private IP ${address}` };
+        }
+      } catch {
+        // DNS resolution failure is non-fatal for scope pattern check but we log it.
+        logger.debug("ScopeGuard: DNS lookup failed (non-fatal)", { hostname });
+      }
 
       // Check out-of-scope first (fail-closed)
       for (const pattern of scope.outOfScope) {

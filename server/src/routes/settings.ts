@@ -2,16 +2,12 @@ import { Router, Request, Response } from "express";
 import { db } from "../db";
 import { reinforcementStore } from "../db/schema";
 import { like } from "drizzle-orm";
+import { runtimeConfig, RUNTIME_CONFIG_ALLOWED_KEYS } from "../lib/runtime-config";
 
 const router = Router();
 
 const SETTINGS_DOMAIN = "settings";
-const ALLOWED_KEYS = new Set([
-  "HACKERONE_USERNAME", "HACKERONE_TOKEN",
-  "BUGCROWD_TOKEN", "INTIGRITI_TOKEN", "YESWEHACK_TOKEN",
-  "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "NOTIFY_WEBHOOK_URL",
-  "NVD_API_KEY", "OOB_HOST", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-]);
+const ALLOWED_KEYS = RUNTIME_CONFIG_ALLOWED_KEYS;
 
 // GET /settings — return all saved settings (values masked for secrets)
 router.get("/", async (_req: Request, res: Response) => {
@@ -42,8 +38,8 @@ router.post("/", async (req: Request, res: Response) => {
       set: { value },
     });
 
-    // Inject into running process so services pick it up without restart
-    process.env[key] = value;
+    // Apply through RuntimeConfig (validates key, sanitizes value, audits the write)
+    runtimeConfig.set(key, value);
   }
   return res.json({ ok: true });
 });
