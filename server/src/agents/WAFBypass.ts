@@ -344,8 +344,8 @@ export class IntelligenceSynthesizer {
       results.push(result);
       await this.vendorProfiles.updateProfile(waf.vendor, domain, result);
 
-      // Record outcome in decay engine
-      stealthCoordinator.recordOutcome(sessionId, domain, waf.vendor, result.success, variant.technique);
+      // Record outcome in decay engine — use blockRate not success; a 404 is not a WAF block
+      stealthCoordinator.recordOutcome(sessionId, domain, waf.vendor, result.blockRate < 0.5, variant.technique);
     }
 
     // Use TemporalDecayEngine for accurate decay state (replaces manual 7-day calc)

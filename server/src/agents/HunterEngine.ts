@@ -1479,11 +1479,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
-      // Feed raw output to autonomous brain and close the RL feedback loop
-      try {
-        const { getAutonomousBrain } = await import('../lib/intelligence');
+      // Feed raw output to autonomous brain — fire-and-forget so AI latency never blocks probing
+      import('../lib/intelligence').then(({ getAutonomousBrain }) => {
         const brain = getAutonomousBrain();
-        await brain.processObservation({
+        brain.processObservation({
           id: `obs-${Date.now()}`,
           timestamp: new Date().toISOString(),
           source: 'tool',
@@ -1492,9 +1491,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
           missionId: this.state.sessionId,
           huntGoal: hypothesis?.vulnClass,
           target: url,
-        });
-        brain.recordActionResult(this.state.sessionId, toolName, true, `tool succeeded: ${parsed.found ? 'finding' : 'no finding'}`);
-      } catch { /* non-critical */ }
+        }).then(() => {
+          brain.recordActionResult(this.state.sessionId, toolName, true, `tool succeeded: ${parsed.found ? 'finding' : 'no finding'}`);
+        }).catch(() => {});
+      }).catch(() => {});
       return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
       const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
