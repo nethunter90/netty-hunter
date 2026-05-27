@@ -622,8 +622,9 @@ export class HunterEngine extends EventEmitter {
       await this.probeGraphQL().catch(err =>
         logger.warn("[HunterEngine] GraphQL probing failed (non-critical)", { err: String(err) })
       );
+      await Promise.allSettled([
       // Secret scanning — look for leaked credentials in response bodies
-      await (async () => {
+      (async () => {
         try {
           const secretResult = await secretScanner.scan(this.state.targetUrl, this.authHeaders);
           if (secretResult.matches.length > 0) {
@@ -648,10 +649,10 @@ export class HunterEngine extends EventEmitter {
         } catch (err) {
           logger.debug("[HunterEngine] Secret scan skipped (non-critical)", { err: String(err) });
         }
-      })();
+      })(),
 
       // Diff-based change detection — compare endpoint responses against last baseline
-      await (async () => {
+      (async () => {
         try {
           const changeReport = await changeDetector.detect(this.state.targetUrl, this.authHeaders);
           for (const hyp of changeReport.hypotheses) {
@@ -677,10 +678,10 @@ export class HunterEngine extends EventEmitter {
         } catch (err) {
           logger.debug("[HunterEngine] Change detection skipped (non-critical)", { err: String(err) });
         }
-      })();
+      })(),
 
       // WebSocket security probing
-      await (async () => {
+      (async () => {
         try {
           const wsResult = await webSocketProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of wsResult.hypotheses) {
@@ -694,10 +695,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:ws_vulns", { sessionId: this.state.sessionId, count: wsResult.vulns.length, endpoints: wsResult.endpointsFound, issues: wsResult.vulns.map(v => v.issue) });
           }
         } catch (err) { logger.debug("[HunterEngine] WS probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Cloud bucket exposure probing
-      await (async () => {
+      (async () => {
         try {
           const bucketResult = await cloudBucketProber.probe(this.state.targetUrl);
           for (const hyp of bucketResult.hypotheses) {
@@ -716,10 +717,10 @@ export class HunterEngine extends EventEmitter {
             }
           }
         } catch (err) { logger.debug("[HunterEngine] Bucket probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Prototype pollution probing
-      await (async () => {
+      (async () => {
         try {
           const ppResult = await prototypePollutionProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of ppResult.hypotheses) {
@@ -733,10 +734,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:proto_pollution", { sessionId: this.state.sessionId, count: ppResult.vulns.length, reflected: ppResult.vulns.some(v => v.reflected) });
           }
         } catch (err) { logger.debug("[HunterEngine] Prototype pollution probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Race condition probing
-      await (async () => {
+      (async () => {
         try {
           const raceResult = await raceConditionDetector.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of raceResult.hypotheses) {
@@ -750,10 +751,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:race_condition", { sessionId: this.state.sessionId, count: raceResult.vulns.length, endpoints: raceResult.vulns.map(v => v.endpoint) });
           }
         } catch (err) { logger.debug("[HunterEngine] Race condition probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Host header injection probing
-      await (async () => {
+      (async () => {
         try {
           const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of hhResult.hypotheses) {
@@ -761,10 +762,10 @@ export class HunterEngine extends EventEmitter {
           }
           if (hhResult.vulns.length > 0) this.emit("hunt:host_header", { sessionId: this.state.sessionId, count: hhResult.vulns.length, techniques: hhResult.vulns.map(v => v.technique) });
         } catch (err) { logger.debug("[HunterEngine] Host header probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // CRLF injection probing
-      await (async () => {
+      (async () => {
         try {
           const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of crlfResult.hypotheses) {
@@ -772,10 +773,10 @@ export class HunterEngine extends EventEmitter {
           }
           if (crlfResult.vulns.length > 0) this.emit("hunt:crlf", { sessionId: this.state.sessionId, count: crlfResult.vulns.length });
         } catch (err) { logger.debug("[HunterEngine] CRLF probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Cookie security flag checking
-      await (async () => {
+      (async () => {
         try {
           const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders);
           for (const hyp of cookieResult.hypotheses) {
@@ -783,10 +784,10 @@ export class HunterEngine extends EventEmitter {
           }
           if (cookieResult.issues.length > 0) this.emit("hunt:cookie_flags", { sessionId: this.state.sessionId, issues: cookieResult.issues.length, sessionCookies: cookieResult.issues.filter(i => i.isSessionCookie).length });
         } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // JS/SPA crawling — extract hidden API endpoints from JS bundles
-      await (async () => {
+      (async () => {
         try {
           const crawlResult = await jsSPACrawler.crawl(this.state.targetUrl, this.authHeaders);
           for (const hyp of crawlResult.hypotheses) {
@@ -794,10 +795,10 @@ export class HunterEngine extends EventEmitter {
           }
           if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url) });
         } catch (err) { logger.debug("[HunterEngine] JS/SPA crawl skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Backward planner — seed goal-directed attack path hypotheses
-      await (async () => {
+      (async () => {
         try {
           const plan = backwardPlanner.planHunt(
             this.state.sessionId,
@@ -819,10 +820,10 @@ export class HunterEngine extends EventEmitter {
           }
           this.emit("hunt:plan_seeded", { sessionId: this.state.sessionId, goal: plan.goal, phases: plan.phases.length });
         } catch (err) { logger.debug("[HunterEngine] Backward planner seeding skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Tech-payload selector — extract tech stack and inject tech-specific hypotheses
-      await (async () => {
+      (async () => {
         try {
           const techObs = this.state.observations.find(o => o.source === "whatweb");
           const techList: string[] = [];
@@ -847,10 +848,10 @@ export class HunterEngine extends EventEmitter {
             if (profile.payloads.length > 0) this.emit("hunt:tech_payloads", { sessionId: this.state.sessionId, techs: profile.detected, payloadCount: profile.payloads.length });
           }
         } catch (err) { logger.debug("[HunterEngine] Tech payload selector skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Parameter discovery — find injectable params via batch fuzzing
-      await (async () => {
+      (async () => {
         try {
           const paramResult = await parameterDiscovery.discover(this.state.targetUrl, this.authHeaders);
           for (const hyp of paramResult.hypotheses) {
@@ -864,10 +865,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:params_discovered", { sessionId: this.state.sessionId, count: paramResult.discovered.length, params: paramResult.discovered.slice(0, 10).map(p => p.name) });
           }
         } catch (err) { logger.debug("[HunterEngine] Parameter discovery skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // OAuth probe — detect OAuth/OIDC flows and test for misconfigurations
-      await (async () => {
+      (async () => {
         try {
           const oauthResult = await oauthProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of oauthResult.hypotheses) {
@@ -881,10 +882,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:oauth_vulns", { sessionId: this.state.sessionId, count: oauthResult.vulns.length, issues: oauthResult.vulns.map(v => v.issue) });
           }
         } catch (err) { logger.debug("[HunterEngine] OAuth probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Mass assignment probe — test for privileged field injection on update/register endpoints
-      await (async () => {
+      (async () => {
         try {
           const maResult = await massAssignmentProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of maResult.hypotheses) {
@@ -898,10 +899,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:mass_assignment", { sessionId: this.state.sessionId, count: maResult.vulns.length, endpoints: maResult.vulns.map(v => v.endpoint) });
           }
         } catch (err) { logger.debug("[HunterEngine] Mass assignment probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Business logic probe — test cart, coupon, pricing flows for logic flaws
-      await (async () => {
+      (async () => {
         try {
           const bizResult = await businessLogicProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of bizResult.hypotheses) {
@@ -915,10 +916,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:business_logic", { sessionId: this.state.sessionId, count: bizResult.vulns.length, types: [...new Set(bizResult.vulns.map(v => v.technique))] });
           }
         } catch (err) { logger.debug("[HunterEngine] Business logic probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // 2FA bypass probe — test for OTP skip, null code, step skip attacks
-      await (async () => {
+      (async () => {
         try {
           const tfaResult = await twoFactorBypassProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of tfaResult.hypotheses) {
@@ -932,10 +933,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:2fa_bypass", { sessionId: this.state.sessionId, count: tfaResult.vulns.length, techniques: tfaResult.vulns.map(v => v.technique) });
           }
         } catch (err) { logger.debug("[HunterEngine] 2FA bypass probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // JWT confusion probe — alg:none, weak secrets, kid injection
-      await (async () => {
+      (async () => {
         try {
           const jwtResult = await jwtConfusionProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of jwtResult.hypotheses) {
@@ -949,10 +950,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:jwt_vulns", { sessionId: this.state.sessionId, count: jwtResult.vulns.length, techniques: jwtResult.vulns.map(v => v.technique) });
           }
         } catch (err) { logger.debug("[HunterEngine] JWT confusion probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Open redirect chain probe — detect open redirects and chain to OAuth/XSS
-      await (async () => {
+      (async () => {
         try {
           const orResult = await openRedirectChainProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of orResult.hypotheses) {
@@ -966,10 +967,10 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:open_redirect", { sessionId: this.state.sessionId, count: orResult.vulns.length, chained: orResult.vulns.filter(v => v.chainable).length });
           }
         } catch (err) { logger.debug("[HunterEngine] Open redirect chain probe skipped", { err: String(err) }); }
-      })();
+      })(),
 
       // Blind XXE probe — OOB-based XML external entity detection
-      await (async () => {
+      (async () => {
         try {
           const xxeResult = await blindXXEProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of xxeResult.hypotheses) {
@@ -983,7 +984,8 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:xxe_found", { sessionId: this.state.sessionId, count: xxeResult.vulns.length, oobConfirmed: xxeResult.vulns.some(v => v.oobReceived) });
           }
         } catch (err) { logger.debug("[HunterEngine] Blind XXE probe skipped", { err: String(err) }); }
-      })();
+      }),
+      ]);
     }
   }
 
