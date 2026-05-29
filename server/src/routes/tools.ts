@@ -23,17 +23,22 @@ function getBinaryAvailability(binary: string): { available: boolean; path?: str
   }
 }
 
-// GET /api/tools — list all custom tools with binary availability
+// GET /api/tools — returns Kali catalog with install status + DB custom tools
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const tools = await db.select().from(customTools).orderBy(customTools.createdAt);
-    const enriched = tools.map(t => ({
+    const { KALI_CATALOG } = await import("../lib/hunter/kali-catalog");
+    const catalog = KALI_CATALOG.map(entry => ({
+      ...entry,
+      ...getBinaryAvailability(entry.binary),
+    }));
+    const custom = await db.select().from(customTools).orderBy(customTools.createdAt);
+    const enrichedCustom = custom.map(t => ({
       ...t,
       ...getBinaryAvailability(t.requiredBinary),
     }));
-    return res.json({ tools: enriched });
+    return res.json({ catalog, custom: enrichedCustom });
   } catch (err) {
-    logger.error("Failed to list custom tools", { err: String(err) });
+    logger.error("Failed to list tools", { err: String(err) });
     return res.status(500).json({ error: "Failed to list tools" });
   }
 });

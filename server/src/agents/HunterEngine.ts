@@ -350,6 +350,22 @@ const MAX_PROBES = 500;
 let customToolsCacheTs = 0;
 let customToolsCache: typeof TOOL_KNOWLEDGE = {};
 
+// Binary availability cache — populated lazily, valid for the process lifetime
+const binaryCache = new Map<string, string | null>();
+function checkBinarySync(binary: string): string | null {
+  if (binaryCache.has(binary)) return binaryCache.get(binary) ?? null;
+  try {
+    const { execSync } = require("child_process");
+    const path = execSync(`which ${binary} 2>/dev/null`, { encoding: "utf8", timeout: 2000 }).trim();
+    const result = path || null;
+    binaryCache.set(binary, result);
+    return result;
+  } catch {
+    binaryCache.set(binary, null);
+    return null;
+  }
+}
+
 function makeCustomParser(parserType: string): (output: string) => Record<string, unknown> {
   if (parserType === "json") {
     return (out) => { try { return JSON.parse(out) as Record<string, unknown>; } catch { return { output: out }; } };
@@ -386,27 +402,57 @@ export class HunterEngine extends EventEmitter {
       return;
     }
     try {
+      // Load DB-defined custom tools (user-defined, wins on collision)
       const rows = await db.select().from(customTools).where(
         (await import("drizzle-orm")).eq(customTools.enabled, true)
       );
-      const built: typeof TOOL_KNOWLEDGE = {};
+      const dbBuilt: typeof TOOL_KNOWLEDGE = {};
       for (const t of rows) {
         const template = t.commandTemplate;
-        built[t.name] = {
+        dbBuilt[t.name] = {
           description: t.description,
           vulnClasses: (t.vulnClasses as string[]) || [],
           command: (url: string) => {
-            const parts = template.replace("{url}", url).split(/\s+/).filter(Boolean);
+            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
             return { bin: parts[0], args: parts.slice(1) };
           },
           parser: makeCustomParser(t.parserType),
           rateLimit: t.rateLimit,
         };
       }
-      customToolsCache = built;
+
+      // Load Kali catalog tools that are installed on this machine
+      const { KALI_CATALOG } = await import("../lib/hunter/kali-catalog");
+      const catalogBuilt: typeof TOOL_KNOWLEDGE = {};
+      for (const entry of KALI_CATALOG) {
+        if (TOOL_KNOWLEDGE[entry.name] || dbBuilt[entry.name]) continue; // hardcoded or DB wins
+        const binaryPath = checkBinarySync(entry.binary);
+        if (!binaryPath) continue;
+        const template = entry.commandTemplate;
+        catalogBuilt[entry.name] = {
+          description: entry.description,
+          vulnClasses: entry.vulnClasses,
+          command: (url: string) => {
+            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
+            return { bin: parts[0], args: parts.slice(1) };
+          },
+          parser: makeCustomParser(entry.parserType),
+          rateLimit: entry.rateLimit,
+        };
+      }
+
+      const combined = { ...catalogBuilt, ...dbBuilt };
+      customToolsCache = combined;
       customToolsCacheTs = now;
-      this.mergedTools = { ...TOOL_KNOWLEDGE, ...built };
-      if (rows.length > 0) logger.info(`[HunterEngine] Loaded ${rows.length} custom tools`);
+      this.mergedTools = { ...TOOL_KNOWLEDGE, ...combined };
+
+      const catalogCount = Object.keys(catalogBuilt).length;
+      const dbCount = Object.keys(dbBuilt).length;
+      if (catalogCount > 0 || dbCount > 0) {
+        logger.info(`[HunterEngine] Tool registry: ${catalogCount} catalog + ${dbCount} custom + ${Object.keys(TOOL_KNOWLEDGE).length} built-in`);
+      }
     } catch (err) {
       logger.warn("[HunterEngine] Failed to load custom tools, using defaults", { err: String(err) });
       this.mergedTools = TOOL_KNOWLEDGE;
