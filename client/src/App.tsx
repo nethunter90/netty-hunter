@@ -16,6 +16,7 @@ import { SocketProvider } from './context/SocketContext';
 import Bounty from './pages/Bounty';
 import Missions from './pages/Missions';
 import SettingsPage from './pages/Settings';
+import FloatingChat from './components/FloatingChat';
 
 interface User {
   id: number;
@@ -116,6 +117,7 @@ export default function App() {
         success: { iconTheme: { primary: "#00ff88", secondary: "#0a0a0f" } },
         error: { iconTheme: { primary: "#ff3355", secondary: "#0a0a0f" } },
       }} />
+      <FloatingChat />
     </BrowserRouter>
     </SocketProvider>
   );
