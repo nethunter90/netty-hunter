@@ -110,25 +110,33 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-// Rate limiting
+// Rate limiting — skip for loopback so local dev is never blocked
+const isLocalhost = (req: Request): boolean => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+};
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
   max: 500,
   message: "Too many requests from this IP",
   standardHeaders: true,
   legacyHeaders: false,
+  skip: isLocalhost,
 });
 
 const huntLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 20, // 20 hunts per 5 min
   message: "Hunt rate limit exceeded",
+  skip: isLocalhost,
 });
 
 const orchestrationLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 min
   max: 5, // 5 orchestrations per 10 min
   message: "Orchestration rate limit exceeded",
+  skip: isLocalhost,
 });
 
 app.use("/api", apiLimiter);
