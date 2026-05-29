@@ -4,6 +4,7 @@
  */
 import axios from "axios";
 import logger from "../utils/logger";
+import { runtimeConfig } from "../lib/runtime-config";
 
 type TaskType = "reason" | "code" | "analyze" | "classify" | "chat" | "summarize";
 
@@ -22,10 +23,14 @@ interface OllamaResponse {
 
 export class ModelRouter {
   private static instance: ModelRouter;
-  private readonly baseUrl: string;
+  private readonly defaultBaseUrl: string;
   private availableModels: string[] = [];
   private lastModelCheck = 0;
   private readonly MODEL_CHECK_TTL = 60000; // 1 minute
+
+  private get baseUrl(): string {
+    return runtimeConfig.get("OLLAMA_BASE_URL") || this.defaultBaseUrl;
+  }
 
   private readonly PREFERRED_MODELS: ModelConfig[] = [
     { name: "deepseek-r1:7b", taskTypes: ["reason", "analyze"], contextWindow: 32768, speed: "slow" },
@@ -39,7 +44,7 @@ export class ModelRouter {
   ];
 
   constructor() {
-    this.baseUrl = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+    this.defaultBaseUrl = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
   }
 
   static getInstance(): ModelRouter {
@@ -47,13 +52,21 @@ export class ModelRouter {
     return ModelRouter.instance;
   }
 
+  private activeBaseUrl = "";
+
   private async getAvailableModels(): Promise<string[]> {
+    const currentBaseUrl = this.baseUrl;
+    // Invalidate cache if the backend URL changed
+    if (currentBaseUrl !== this.activeBaseUrl) {
+      this.lastModelCheck = 0;
+      this.activeBaseUrl = currentBaseUrl;
+    }
     if (Date.now() - this.lastModelCheck < this.MODEL_CHECK_TTL && this.availableModels.length > 0) {
       return this.availableModels;
     }
 
     try {
-      const resp = await axios.get(`${this.baseUrl}/api/tags`, { timeout: 5000 });
+      const resp = await axios.get(`${currentBaseUrl}/api/tags`, { timeout: 5000 });
       this.availableModels = (resp.data.models || []).map((m: { name: string }) => m.name);
       this.lastModelCheck = Date.now();
       logger.info("ModelRouter: Available models", { models: this.availableModels });
@@ -93,7 +106,7 @@ export class ModelRouter {
     if (available.length > 0) return available[0];
 
     // Last resort default
-    return process.env.OLLAMA_DEFAULT_MODEL || "llama3.2";
+    return runtimeConfig.get("OLLAMA_DEFAULT_MODEL") || process.env.OLLAMA_DEFAULT_MODEL || "llama3.2";
   }
 
   async generate(prompt: string, taskType: TaskType = "chat", options: {

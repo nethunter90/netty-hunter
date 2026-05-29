@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2, Cpu, RefreshCw, CheckCircle } from "lucide-react";
 import api from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -31,11 +31,27 @@ const FIELDS: SettingField[] = [
 
 const GROUPS = [...new Set(FIELDS.map(f => f.group))];
 
+interface LocalRuntime {
+  name: string;
+  label: string;
+  url: string;
+  models: string[];
+}
+
+interface LocalModelsResponse {
+  runtimes: LocalRuntime[];
+  active: { url: string; model: string };
+}
+
 export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+
+  const [scanning, setScanning] = useState(false);
+  const [localModels, setLocalModels] = useState<LocalModelsResponse | null>(null);
+  const [selectedModel, setSelectedModel] = useState<{ url: string; model: string } | null>(null);
 
   useEffect(() => {
     api.get("/settings").then((r: { data: Record<string, string> }) => {
@@ -61,6 +77,31 @@ export default function SettingsPage() {
       toast.error("Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleScanLocalModels = async () => {
+    setScanning(true);
+    try {
+      const r = await api.get<LocalModelsResponse>("/settings/local-models");
+      setLocalModels(r.data);
+      setSelectedModel(r.data.active);
+      if (r.data.runtimes.length === 0) toast.error("No local LLM runtimes detected");
+      else toast.success(`Found ${r.data.runtimes.length} runtime(s)`);
+    } catch {
+      toast.error("Scan failed");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleActivateModel = async (url: string, model: string) => {
+    try {
+      await api.post("/settings", { OLLAMA_BASE_URL: url, OLLAMA_DEFAULT_MODEL: model });
+      setSelectedModel({ url, model });
+      toast.success(`Active model set to ${model}`);
+    } catch {
+      toast.error("Failed to set active model");
     }
   };
 
@@ -119,6 +160,72 @@ export default function SettingsPage() {
             </div>
           </div>
         ))}
+
+        {/* ── Local AI Auto-Detector ─────────────────────────────────── */}
+        <div>
+          <div className="text-[10px] font-mono text-hack-dim uppercase tracking-widest mb-3">Local AI</div>
+
+          <div className="hack-panel p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-3.5 h-3.5 text-hack-accent" />
+                <span className="text-xs font-mono text-hack-text">Local Model Detector</span>
+              </div>
+              <button onClick={handleScanLocalModels} disabled={scanning} className="hack-btn-primary flex items-center gap-1 text-[10px]">
+                <RefreshCw className={`w-3 h-3 ${scanning ? "animate-spin" : ""}`} />
+                {scanning ? "SCANNING…" : "SCAN"}
+              </button>
+            </div>
+
+            <div className="text-[10px] font-mono text-hack-dim">
+              Probes Ollama · LM Studio · Jan · LocalAI · vLLM on localhost
+            </div>
+
+            {selectedModel && (
+              <div className="flex items-center gap-2 text-[10px] font-mono">
+                <span className="text-hack-dim">Active:</span>
+                <span className="text-hack-accent">{selectedModel.model}</span>
+                <span className="text-hack-dim">@ {selectedModel.url}</span>
+              </div>
+            )}
+
+            {localModels && localModels.runtimes.length === 0 && (
+              <div className="text-[10px] font-mono text-hack-yellow">No local LLM runtimes found. Start Ollama or LM Studio first.</div>
+            )}
+
+            {localModels && localModels.runtimes.map(runtime => (
+              <div key={runtime.name} className="border border-hack-border rounded p-2 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-hack-accent font-bold">{runtime.label}</span>
+                  <span className="text-[9px] font-mono text-hack-dim">{runtime.url}</span>
+                  <span className="text-[9px] font-mono text-hack-green ml-auto">{runtime.models.length} model(s)</span>
+                </div>
+                <div className="space-y-1 max-h-40 overflow-y-auto terminal-scroll">
+                  {runtime.models.map(model => {
+                    const isActive = selectedModel?.url === runtime.url && selectedModel?.model === model;
+                    return (
+                      <div key={model} className="flex items-center justify-between">
+                        <span className={`text-[10px] font-mono ${isActive ? "text-hack-accent" : "text-hack-text"}`}>
+                          {model}
+                        </span>
+                        <button
+                          onClick={() => handleActivateModel(runtime.url, model)}
+                          className={`text-[9px] font-mono px-2 py-0.5 rounded border transition-all ${
+                            isActive
+                              ? "border-hack-accent text-hack-accent bg-hack-accent/10"
+                              : "border-hack-border text-hack-dim hover:border-hack-accent hover:text-hack-accent"
+                          }`}
+                        >
+                          {isActive ? <CheckCircle className="w-3 h-3 inline" /> : "USE"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
