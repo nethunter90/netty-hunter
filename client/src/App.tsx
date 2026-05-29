@@ -17,6 +17,7 @@ import Bounty from './pages/Bounty';
 import Missions from './pages/Missions';
 import SettingsPage from './pages/Settings';
 import FloatingChat from './components/FloatingChat';
+import ToolsPage from './pages/Tools';
 
 interface User {
   id: number;
@@ -99,6 +100,7 @@ export default function App() {
               <Route path="/hunter" element={<Hunter />} />
               <Route path="/bounty" element={<Bounty />} />
               <Route path="/missions" element={<Missions />} />
+              <Route path="/tools" element={<ToolsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

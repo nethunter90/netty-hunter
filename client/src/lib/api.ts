@@ -193,3 +193,11 @@ export const hunterCalibration = {
   getMetrics: () => api.get(`${H}/calibration/metrics`),
   autoTune:   () => api.post(`${H}/calibration/auto-tune`),
 };
+
+export const toolsAPI = {
+  list: () => api.get("/tools"),
+  create: (data: Record<string, unknown>) => api.post("/tools", data),
+  update: (id: number, data: Record<string, unknown>) => api.put(`/tools/${id}`, data),
+  remove: (id: number) => api.delete(`/tools/${id}`),
+  test: (id: number, url: string) => api.post(`/tools/${id}/test`, { url }),
+};

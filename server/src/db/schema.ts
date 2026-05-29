@@ -254,6 +254,27 @@ export const findingsRelations = relations(findings, ({ one }) => ({
   target: one(targets, { fields: [findings.targetId], references: [targets.id] }),
 }));
 
+// ─── Custom Tools Registry ────────────────────────────────────────────────────
+export const customTools = pgTable("custom_tools", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 64 }).notNull().unique(),
+  displayName: text("display_name").notNull(),
+  description: text("description").notNull().default(""),
+  commandTemplate: text("command_template").notNull(),
+  requiredBinary: varchar("required_binary", { length: 64 }).notNull(),
+  category: varchar("category", { length: 32 }).notNull().default("scanning"),
+  vulnClasses: jsonb("vuln_classes").$type<string[]>().notNull().default([]),
+  rateLimit: integer("rate_limit").notNull().default(30),
+  riskLevel: varchar("risk_level", { length: 16 }).notNull().default("medium"),
+  stealthRating: integer("stealth_rating").notNull().default(5),
+  parserType: varchar("parser_type", { length: 16 }).notNull().default("lines"),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  nameIdx: uniqueIndex("custom_tools_name_idx").on(t.name),
+}));
+
 // ─── Mission Memory Snapshots ─────────────────────────────────────────────────
 // Durable write-through store for MissionMemoryStore, keyed by the hunt/session UUID.
 // Replaces /tmp filesystem snapshots — survives container restarts and redeploys.

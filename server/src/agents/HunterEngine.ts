@@ -10,7 +10,7 @@ import { promisify } from "util";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
-import { huntSessions, findings, exploitChains } from "../db/schema";
+import { huntSessions, findings, exploitChains, customTools } from "../db/schema";
 import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
 import IntelligenceSynthesizer from "./WAFBypass";
@@ -346,6 +346,21 @@ const MAX_HYPOTHESES = 50;
 const MAX_PROBES = 500;
 
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
+// 5-minute TTL for custom tool cache (shared across all engine instances in a process)
+let customToolsCacheTs = 0;
+let customToolsCache: typeof TOOL_KNOWLEDGE = {};
+
+function makeCustomParser(parserType: string): (output: string) => Record<string, unknown> {
+  if (parserType === "json") {
+    return (out) => { try { return JSON.parse(out) as Record<string, unknown>; } catch { return { output: out }; } };
+  }
+  if (parserType === "plain") {
+    return (out) => ({ output: out, found: out.trim().length > 0 });
+  }
+  // lines (default)
+  return (out) => ({ findings: out.split("\n").filter(Boolean), found: true });
+}
+
 export class HunterEngine extends EventEmitter {
   private state!: HuntState;
   private wafSynthesizer = new IntelligenceSynthesizer();
@@ -362,6 +377,41 @@ export class HunterEngine extends EventEmitter {
   private banCheckDone = false;
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
+  private mergedTools: typeof TOOL_KNOWLEDGE = TOOL_KNOWLEDGE;
+
+  private async loadCustomTools(): Promise<void> {
+    const now = Date.now();
+    if (now - customToolsCacheTs < 5 * 60 * 1000) {
+      this.mergedTools = { ...TOOL_KNOWLEDGE, ...customToolsCache };
+      return;
+    }
+    try {
+      const rows = await db.select().from(customTools).where(
+        (await import("drizzle-orm")).eq(customTools.enabled, true)
+      );
+      const built: typeof TOOL_KNOWLEDGE = {};
+      for (const t of rows) {
+        const template = t.commandTemplate;
+        built[t.name] = {
+          description: t.description,
+          vulnClasses: (t.vulnClasses as string[]) || [],
+          command: (url: string) => {
+            const parts = template.replace("{url}", url).split(/\s+/).filter(Boolean);
+            return { bin: parts[0], args: parts.slice(1) };
+          },
+          parser: makeCustomParser(t.parserType),
+          rateLimit: t.rateLimit,
+        };
+      }
+      customToolsCache = built;
+      customToolsCacheTs = now;
+      this.mergedTools = { ...TOOL_KNOWLEDGE, ...built };
+      if (rows.length > 0) logger.info(`[HunterEngine] Loaded ${rows.length} custom tools`);
+    } catch (err) {
+      logger.warn("[HunterEngine] Failed to load custom tools, using defaults", { err: String(err) });
+      this.mergedTools = TOOL_KNOWLEDGE;
+    }
+  }
 
   async startHunt(params: {
     targetUrl: string;
@@ -373,6 +423,8 @@ export class HunterEngine extends EventEmitter {
     budget?: Partial<HuntState["budget"]>;
     focusVulnClasses?: string[];
   }): Promise<string> {
+    await this.loadCustomTools();
+
     const sessionUuid = params.sessionId || uuidv4();
     this.campaignId = params.campaignId;
     this.targetId = params.targetId ?? 0;
@@ -1421,7 +1473,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     url: string,
     hypothesis?: Hypothesis
   ): Promise<Record<string, unknown>> {
-    const tool = TOOL_KNOWLEDGE[toolName];
+    const tool = this.mergedTools[toolName];
     if (!tool) return { error: "Unknown tool" };
 
     // Rate limiting

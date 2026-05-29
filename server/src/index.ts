@@ -24,6 +24,7 @@ import juiceshopRoutes from "./routes/juiceshop";
 import xbowRoutes from "./routes/xbow";
 import settingsRoutes from "./routes/settings";
 import chatRoutes from "./routes/chat";
+import toolsRoutes from "./routes/tools";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -160,6 +161,7 @@ app.use("/api/juiceshop", requireAuth, juiceshopRoutes);
 app.use("/api/xbow", requireAuth, xbowRoutes);
 app.use("/api/settings", requireAuth, settingsRoutes);
 app.use("/api/chat", requireAuth, chatRoutes);
+app.use("/api/tools", requireAuth, toolsRoutes);
 
 // OOB callback receiver — no auth required (external targets call this)
 app.all("/api/callback/:beaconId", (req, res) => {
