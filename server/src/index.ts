@@ -318,7 +318,7 @@ io.on("connection", (socket) => {
     programId: number;
     observations?: Record<string, unknown>;
   }) => {
-    const pool = new SolverPool(3);
+    const pool = new SolverPool(8);
     pool.on("solvers:spawned", (data) => socket.emit("solvers:spawned", data));
     pool.on("solver:started", (data) => socket.emit("solver:started", data));
     pool.on("solver:complete", (data) => socket.emit("solver:complete", data));

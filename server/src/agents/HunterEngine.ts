@@ -341,9 +341,9 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
 };
 
-const MAX_OBSERVATIONS = 200;
-const MAX_HYPOTHESES = 50;
-const MAX_PROBES = 500;
+const MAX_OBSERVATIONS = 500;
+const MAX_HYPOTHESES = 150;
+const MAX_PROBES = 1500;
 
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
 // 5-minute TTL for custom tool cache (shared across all engine instances in a process)
@@ -487,9 +487,9 @@ export class HunterEngine extends EventEmitter {
       iteration: 0,
       maxIterations: params.maxIterations || 10,
       budget: {
-        maxRequests: params.budget?.maxRequests || 2000,
+        maxRequests: params.budget?.maxRequests || 5000,
         requestsMade: 0,
-        maxTime: params.budget?.maxTime || 3600,
+        maxTime: params.budget?.maxTime || 7200,
         elapsed: 0,
       },
     };
@@ -1574,7 +1574,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const start = Date.now();
 
     try {
-      const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 });
+      const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 60000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
       // Feed raw output to autonomous brain — fire-and-forget so AI latency never blocks probing

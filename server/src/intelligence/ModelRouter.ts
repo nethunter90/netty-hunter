@@ -140,6 +140,9 @@ export class ModelRouter {
           options: {
             temperature: options.temperature ?? 0.1,
             num_predict: options.maxTokens ?? 2048,
+            num_ctx: 8192,
+            num_gpu: 999,
+            num_thread: 8,
           },
         },
         { timeout: 120000 }
