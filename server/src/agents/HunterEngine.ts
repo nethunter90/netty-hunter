@@ -917,6 +917,12 @@ export class HunterEngine extends EventEmitter {
             }
           }
           this.emit("hunt:plan_seeded", { sessionId: this.state.sessionId, goal: plan.goal, phases: plan.phases.length });
+          this.emit("hunt:ai_reasoning", {
+            sessionId: this.state.sessionId,
+            task: "Strategic Planning",
+            phase: "decision",
+            summary: `Backward planner set goal: "${plan.goal}". ${plan.phases.length} attack phase(s) seeded.`,
+          });
         } catch (err) { logger.debug("[HunterEngine] Backward planner seeding skipped", { err: String(err) }); }
       })(),
 
@@ -1253,8 +1259,22 @@ Each hypothesis must have:
 
 Return ONLY valid JSON array of hypothesis objects.`;
 
+    this.emit("hunt:ai_reasoning", {
+      sessionId: this.state.sessionId,
+      task: "Hypothesis Generation",
+      phase: "thinking",
+      context: {
+        observations: this.state.observations.length,
+        hypotheses: this.state.hypotheses.length,
+        iteration: this.state.iteration,
+      },
+      promptPreview: prompt.slice(0, 600),
+    });
+
+    const _aiReasoningStart = Date.now();
     try {
       const response = await this.modelRouter.reason(prompt);
+      const _aiReasoningMs = Date.now() - _aiReasoningStart;
       // Yield after model response so the event loop can process other callbacks
       // before the synchronous JSON.parse (which can be slow for large responses).
       await this.yieldToEventLoop();
@@ -1290,6 +1310,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
         this.state.hypotheses.splice(MAX_HYPOTHESES);
       }
 
+      this.emit("hunt:ai_reasoning", {
+        sessionId: this.state.sessionId,
+        task: "Hypothesis Generation",
+        phase: "complete",
+        rawResponse: response.slice(0, 3000),
+        durationMs: _aiReasoningMs,
+        generatedCount: newHypotheses.length,
+      });
       this.emit("hunt:hypotheses", { count: newHypotheses.length, hypotheses: newHypotheses });
       logger.info("Generated hypotheses", { count: newHypotheses.length });
     } catch (err) {
@@ -1507,9 +1535,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
     }
 
+    const pending = this.state.hypotheses.filter(h => h.status === "pending").length;
+    const rejected = this.state.hypotheses.filter(h => h.status === "rejected").length;
     this.emit("hunt:update", {
       confirmed: this.state.confirmedFindings.length,
-      pendingHypotheses: this.state.hypotheses.filter(h => h.status === "pending").length,
+      pendingHypotheses: pending,
+    });
+    this.emit("hunt:ai_reasoning", {
+      sessionId: this.state.sessionId,
+      task: "Strategy Update",
+      phase: "decision",
+      summary: `Iteration ${this.state.iteration} complete. Confirmed: ${this.state.confirmedFindings.length}, Pending: ${pending}, Rejected: ${rejected}.`,
     });
   }
 

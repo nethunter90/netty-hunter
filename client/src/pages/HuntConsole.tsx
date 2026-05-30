@@ -285,6 +285,21 @@ export default function HuntConsole() {
       push({ type: "xxe_found", ts: ts(), count: Number(data.count || 0), oobConfirmed: Boolean(data.oobConfirmed) });
     });
 
+    socket.on("hunt:ai_reasoning", (data: any) => {
+      push({
+        type: "ai_reasoning",
+        ts: ts(),
+        task: String(data.task ?? "AI"),
+        phase: data.phase as "thinking" | "complete" | "decision",
+        context: data.context,
+        promptPreview: String(data.promptPreview ?? ""),
+        rawResponse: String(data.rawResponse ?? ""),
+        summary: String(data.summary ?? ""),
+        durationMs: Number(data.durationMs ?? 0),
+        generatedCount: Number(data.generatedCount ?? 0),
+      });
+    });
+
     return () => {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
@@ -298,6 +313,7 @@ export default function HuntConsole() {
         "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
         "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
         "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
+        "hunt:ai_reasoning",
       ].forEach(e => socket.off(e));
     };
   }, []);

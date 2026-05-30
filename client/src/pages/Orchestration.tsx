@@ -242,6 +242,21 @@ export default function Orchestration() {
       // no visual needed — kept for completeness
     });
 
+    socket.on("hunt:ai_reasoning", (data: any) => {
+      pushEvent({
+        type: "ai_reasoning",
+        ts: now(),
+        task: String(data.task ?? "AI"),
+        phase: data.phase as "thinking" | "complete" | "decision",
+        context: data.context,
+        promptPreview: String(data.promptPreview ?? ""),
+        rawResponse: String(data.rawResponse ?? ""),
+        summary: String(data.summary ?? ""),
+        durationMs: Number(data.durationMs ?? 0),
+        generatedCount: Number(data.generatedCount ?? 0),
+      });
+    });
+
     return () => {
       [
         "orchestration:created", "orchestration:started", "orchestration:layer_start",
@@ -251,6 +266,7 @@ export default function Orchestration() {
         "l4:finding_raw", "l4:solver_finding", "l4:error",
         "l5:verified", "l5:rejected", "l5:public_duplicate",
         "l6:report_generated", "l6:autonomy_updated",
+        "hunt:ai_reasoning",
       ].forEach(evt => socket.off(evt));
     };
   }, [socket]);

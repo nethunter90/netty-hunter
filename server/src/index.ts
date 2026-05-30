@@ -243,7 +243,7 @@ io.on("connection", (socket) => {
       "hunt:plan_seeded", "hunt:tech_payloads", "hunt:params_discovered",
       "hunt:oauth_vulns", "hunt:mass_assignment", "hunt:business_logic",
       "hunt:2fa_bypass", "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
-      "hunt:chain_seeded", "hunt:pivot",
+      "hunt:chain_seeded", "hunt:pivot", "hunt:ai_reasoning",
     ].forEach(evt => {
       orchestrator.on(evt, (d) => socket.emit(evt, d));
     });
@@ -303,6 +303,7 @@ io.on("connection", (socket) => {
     engine.on("hunt:xxe_found", (data) => socket.emit("hunt:xxe_found", data));
     engine.on("hunt:chain_seeded", (data) => socket.emit("hunt:chain_seeded", data));
     engine.on("hunt:pivot", (data) => socket.emit("hunt:pivot", data));
+    engine.on("hunt:ai_reasoning", (data) => socket.emit("hunt:ai_reasoning", data));
 
     try {
       const sessionUuid = await engine.startHunt(params);

@@ -43,7 +43,11 @@ export type ActivityEvent =
   | { type: "two_fa_bypass"; ts: string; count: number; techniques: string[] }
   | { type: "jwt_vulns"; ts: string; count: number; techniques: string[] }
   | { type: "open_redirect"; ts: string; count: number; chained: number }
-  | { type: "xxe_found"; ts: string; count: number; oobConfirmed: boolean };
+  | { type: "xxe_found"; ts: string; count: number; oobConfirmed: boolean }
+  | { type: "ai_reasoning"; ts: string; task: string; phase: "thinking" | "complete" | "decision";
+      context?: { observations: number; hypotheses: number; iteration: number };
+      promptPreview?: string; rawResponse?: string; summary?: string;
+      durationMs?: number; generatedCount?: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -153,6 +157,97 @@ function HypothesisRow({ ev }: { ev: ActivityEvent & { type: "hypothesis" } }) {
           <ConfidenceBar value={ev.confidence} />
         </div>
       </button>
+    </div>
+  );
+}
+
+function parseDeepSeekThinking(raw: string): { thinking: string; answer: string } | null {
+  const match = raw.match(/<think>([\s\S]*?)<\/think>([\s\S]*)/i);
+  if (!match) return null;
+  return { thinking: match[1].trim(), answer: match[2].trim() };
+}
+
+function AIReasoningRow({ ev }: { ev: ActivityEvent & { type: "ai_reasoning" } }) {
+  const [expanded, setExpanded] = useState(false);
+  const isDecision = ev.phase === "decision";
+  const phaseLabel = ev.phase === "thinking" ? "THINKING" : ev.phase === "complete" ? "COMPLETE" : "DECISION";
+  const phaseCls = ev.phase === "thinking"
+    ? "text-hack-yellow border-hack-yellow/40 bg-hack-yellow/10"
+    : ev.phase === "complete"
+    ? "text-hack-accent border-hack-accent/40 bg-hack-accent/10"
+    : "text-hack-cyan border-hack-cyan/40 bg-hack-cyan/10";
+
+  const parsed = ev.rawResponse ? parseDeepSeekThinking(ev.rawResponse) : null;
+
+  return (
+    <div className="ml-3 border-l-2 border-hack-purple/40 pl-2 py-1 my-0.5 bg-hack-purple/5 rounded-r">
+      <button
+        onClick={() => !isDecision && setExpanded(x => !x)}
+        className={`flex items-start gap-1.5 w-full text-left ${!isDecision ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <Brain className="w-3 h-3 text-hack-purple mt-0.5 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono text-hack-purple font-bold">{ev.task}</span>
+            <span className={`text-[9px] px-1 py-0.5 rounded border font-mono ${phaseCls}`}>{phaseLabel}</span>
+            {ev.durationMs && ev.durationMs > 0 && (
+              <span className="text-[9px] text-hack-dim font-mono ml-auto">
+                {ev.durationMs < 1000 ? `${ev.durationMs}ms` : `${(ev.durationMs / 1000).toFixed(1)}s`}
+              </span>
+            )}
+            {!isDecision && (expanded
+              ? <ChevronDown className="w-3 h-3 text-hack-dim" />
+              : <ChevronRight className="w-3 h-3 text-hack-dim" />)}
+          </div>
+
+          {isDecision && ev.summary && (
+            <div className="text-[10px] text-hack-dim mt-0.5 leading-relaxed">{ev.summary}</div>
+          )}
+
+          {ev.phase === "thinking" && ev.context && !expanded && (
+            <div className="text-[9px] text-hack-dim mt-0.5">
+              {ev.context.observations} obs · {ev.context.hypotheses} hyp · iter {ev.context.iteration}
+            </div>
+          )}
+
+          {ev.phase === "complete" && !expanded && ev.generatedCount !== undefined && (
+            <div className="text-[9px] text-hack-dim mt-0.5">{ev.generatedCount} hypotheses generated</div>
+          )}
+        </div>
+      </button>
+
+      {expanded && ev.phase === "thinking" && ev.promptPreview && (
+        <div className="mt-1.5 space-y-1">
+          <div className="text-[9px] text-hack-dim font-mono uppercase tracking-wide px-1">Context sent to model</div>
+          <pre className="text-[9px] text-hack-dim bg-hack-muted rounded p-1.5 overflow-x-auto max-h-32 font-mono leading-tight whitespace-pre-wrap">
+            {ev.promptPreview}
+          </pre>
+        </div>
+      )}
+
+      {expanded && ev.phase === "complete" && ev.rawResponse && (
+        <div className="mt-1.5 space-y-1.5">
+          {parsed ? (
+            <>
+              <div className="text-[9px] text-hack-dim font-mono uppercase tracking-wide px-1">Chain of thought</div>
+              <pre className="text-[9px] text-hack-dim italic bg-hack-muted rounded p-1.5 overflow-x-auto max-h-40 font-mono leading-tight whitespace-pre-wrap">
+                {parsed.thinking.slice(0, 1200)}
+              </pre>
+              <div className="text-[9px] text-hack-accent font-mono uppercase tracking-wide px-1">Decision</div>
+              <pre className="text-[9px] text-hack-text bg-hack-muted rounded p-1.5 overflow-x-auto max-h-32 font-mono leading-tight whitespace-pre-wrap">
+                {parsed.answer.slice(0, 1000)}
+              </pre>
+            </>
+          ) : (
+            <>
+              <div className="text-[9px] text-hack-dim font-mono uppercase tracking-wide px-1">Model response</div>
+              <pre className="text-[9px] text-hack-text bg-hack-muted rounded p-1.5 overflow-x-auto max-h-48 font-mono leading-tight whitespace-pre-wrap">
+                {ev.rawResponse.slice(0, 2000)}
+              </pre>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -962,6 +1057,8 @@ export function LiveActivityFeed({
               return <OpenRedirectRow key={key} ev={ev} />;
             case "xxe_found":
               return <XXEFoundRow key={key} ev={ev} />;
+            case "ai_reasoning":
+              return <AIReasoningRow key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:
