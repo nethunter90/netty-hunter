@@ -414,6 +414,128 @@ async function regexFallbackCrawl(
 }
 
 // ---------------------------------------------------------------------------
+// Deep multi-page BFS crawl
+// ---------------------------------------------------------------------------
+
+export interface DeepCrawlResult extends SPACrawlResult {
+  pagesVisited: number;
+  siteMap: Array<{ url: string; depth: number; linksFound: number }>;
+  formsFound: Array<{ url: string; method: string; action: string; fields: string[] }>;
+}
+
+async function crawlSinglePage(
+  url: string,
+  authHeaders: Record<string, string>
+): Promise<{ endpoints: DiscoveredEndpoint[]; jsFilesScanned: number }> {
+  let playwrightAvailable = false;
+  try {
+    require.resolve("playwright");
+    playwrightAvailable = true;
+  } catch { /* */ }
+
+  if (playwrightAvailable) {
+    try {
+      return await playwrightCrawl(url, authHeaders);
+    } catch { /* fall through */ }
+  }
+  return regexFallbackCrawl(url, authHeaders);
+}
+
+function normalizeForDedup(urlStr: string): string {
+  try {
+    const u = new URL(urlStr);
+    return `${u.origin}${u.pathname}`.replace(/\/$/, "");
+  } catch { return urlStr; }
+}
+
+function isSameOriginNav(href: string, origin: string): boolean {
+  try {
+    const u = new URL(href);
+    return u.origin === origin && !isAssetPath(u.pathname);
+  } catch { return false; }
+}
+
+export async function deepCrawl(
+  targetUrl: string,
+  options: {
+    maxDepth?: number;
+    maxPages?: number;
+    authHeaders?: Record<string, string>;
+  } = {}
+): Promise<DeepCrawlResult> {
+  const maxDepth = options.maxDepth ?? 2;
+  const maxPages = options.maxPages ?? 20;
+  const authHeaders = options.authHeaders ?? {};
+
+  let origin: string;
+  try {
+    origin = new URL(targetUrl).origin;
+  } catch {
+    return { endpointsFound: [], jsFilesScanned: 0, hypotheses: [], pagesVisited: 0, siteMap: [], formsFound: [] };
+  }
+
+  const visited = new Set<string>();
+  const queue: Array<{ url: string; depth: number }> = [{ url: targetUrl, depth: 0 }];
+  const allEndpoints: DiscoveredEndpoint[] = [];
+  let totalJsScanned = 0;
+  const siteMap: DeepCrawlResult["siteMap"] = [];
+  const formsFound: DeepCrawlResult["formsFound"] = [];
+  const deadline = Date.now() + Math.min(maxPages * 15_000, 120_000);
+
+  while (queue.length > 0 && visited.size < maxPages && Date.now() < deadline) {
+    const entry = queue.shift();
+    if (!entry) break;
+    const { url, depth } = entry;
+    const norm = normalizeForDedup(url);
+    if (visited.has(norm)) continue;
+    visited.add(norm);
+
+    logger.debug("[DeepCrawl] Crawling page", { url, depth });
+
+    let pageEndpoints: DiscoveredEndpoint[] = [];
+    let jsScanned = 0;
+    try {
+      const result = await crawlSinglePage(url, authHeaders);
+      pageEndpoints = result.endpoints;
+      jsScanned = result.jsFilesScanned;
+    } catch (err) {
+      logger.debug("[DeepCrawl] Page crawl failed", { url, err: String(err) });
+    }
+
+    allEndpoints.push(...pageEndpoints);
+    totalJsScanned += jsScanned;
+
+    const navLinks = pageEndpoints
+      .filter(e => e.source === "dom" && e.method === "GET")
+      .map(e => e.url)
+      .filter(href => isSameOriginNav(href, origin));
+
+    siteMap.push({ url, depth, linksFound: navLinks.length });
+
+    if (depth < maxDepth) {
+      for (const link of navLinks) {
+        const normLink = normalizeForDedup(link);
+        if (!visited.has(normLink)) {
+          queue.push({ url: link, depth: depth + 1 });
+        }
+      }
+    }
+  }
+
+  const endpointsFound = deduplicateEndpoints(allEndpoints);
+  const hypotheses = generateHypotheses(endpointsFound, targetUrl);
+
+  logger.info("[DeepCrawl] Complete", {
+    targetUrl,
+    pagesVisited: visited.size,
+    endpointsFound: endpointsFound.length,
+    jsFilesScanned: totalJsScanned,
+  });
+
+  return { endpointsFound, jsFilesScanned: totalJsScanned, hypotheses, pagesVisited: visited.size, siteMap, formsFound };
+}
+
+// ---------------------------------------------------------------------------
 // Main crawler class
 // ---------------------------------------------------------------------------
 

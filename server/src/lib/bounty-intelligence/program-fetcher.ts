@@ -386,6 +386,10 @@ export class ProgramFetcher extends EventEmitter {
     return since ? allChanges.filter(c => c.timestamp >= since) : allChanges;
   }
 
+  getRecentChanges(limit = 50): ChangeRecord[] {
+    return this.getChanges().slice(0, limit);
+  }
+
   // === Change Detection ===
 
   private detectChanges(

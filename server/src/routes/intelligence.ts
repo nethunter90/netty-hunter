@@ -7,6 +7,10 @@ import {
   ATTACK_PATHS,
   MITRE_TECHNIQUES,
 } from "../lib/intelligence/seed-knowledge";
+import { writeupScraper } from "../lib/intelligence/writeup-scraper";
+import { db } from "../db";
+import { scrapedIntelligence } from "../db/schema";
+import { count } from "drizzle-orm";
 
 const router = Router();
 
@@ -113,6 +117,27 @@ router.post("/pivot", (req: Request, res: Response) => {
 
 router.get("/campaigns", (_req: Request, res: Response) => {
   res.json({ campaigns: [], message: "use /api/hunt/campaigns" });
+});
+
+// ─── Writeup Intelligence ─────────────────────────────────────────────────────
+
+router.post("/scrape-writeups", async (_req: Request, res: Response) => {
+  try {
+    const result = await writeupScraper.scrapeAll();
+    res.json({ scraped: result.hackerone + result.nvd, breakdown: result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/scraped-count", async (_req: Request, res: Response) => {
+  try {
+    const [row] = await db.select({ count: count() }).from(scrapedIntelligence);
+    const status = writeupScraper.getStatus();
+    res.json({ count: Number(row?.count ?? 0), lastScrape: status.lastScrape });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

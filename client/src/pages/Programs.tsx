@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Target, Plus, Star, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, CalendarClock } from "lucide-react";
+import { Target, Plus, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, CalendarClock, Bell, PlusCircle, MinusCircle, AlertTriangle } from "lucide-react";
 import { bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -30,16 +30,44 @@ interface Program {
   scheduleInterval?: number;
 }
 
+interface ChangeRecord {
+  timestamp: number;
+  field: string;
+  description: string;
+  previousValue?: string;
+  newValue?: string;
+}
+
 const PLATFORMS = ["hackerone", "bugcrowd", "intigriti", "synack", "yeswehack", "other"];
 const PLATFORM_COLORS: Record<string, string> = {
   hackerone: "text-green-400", bugcrowd: "text-orange-400", intigriti: "text-purple-400",
   synack: "text-cyan-400", yeswehack: "text-yellow-400", other: "text-hack-dim",
 };
 
+type TabType = "programs" | "changes";
+
+function changeIcon(field: string) {
+  if (field.includes("inScope") && !field.includes("out")) return <PlusCircle className="w-3 h-3 text-hack-green" />;
+  if (field.includes("outScope") || field.includes("removed")) return <MinusCircle className="w-3 h-3 text-hack-red" />;
+  if (field.includes("bounty") || field.includes("payout")) return <DollarSign className="w-3 h-3 text-hack-yellow" />;
+  return <AlertTriangle className="w-3 h-3 text-hack-dim" />;
+}
+
+function changeColor(desc: string): string {
+  const lower = desc.toLowerCase();
+  if (lower.includes("added") || lower.includes("increased")) return "text-hack-green";
+  if (lower.includes("removed") || lower.includes("decreased")) return "text-hack-red";
+  if (lower.includes("changed") || lower.includes("policy")) return "text-hack-yellow";
+  return "text-hack-dim";
+}
+
 export default function Programs() {
+  const [activeTab, setActiveTab] = useState<TabType>("programs");
   const [programs, setPrograms] = useState<Program[]>([]);
   const [rankings, setRankings] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
+  const [changes, setChanges] = useState<ChangeRecord[]>([]);
+  const [changesLoading, setChangesLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [authModalId, setAuthModalId] = useState<number | null>(null);
   const [authForm, setAuthForm] = useState<AuthConfig>({ authType: "form" });
@@ -63,7 +91,19 @@ export default function Programs() {
       .finally(() => setLoading(false));
   };
 
+  const loadChanges = () => {
+    setChangesLoading(true);
+    bountyAPI.getRecentChanges(100)
+      .then(r => setChanges((r.data?.changes as ChangeRecord[]) || []))
+      .catch(() => setChanges([]))
+      .finally(() => setChangesLoading(false));
+  };
+
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (activeTab === "changes") loadChanges();
+  }, [activeTab]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,21 +172,80 @@ export default function Programs() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-hack-border flex-shrink-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Target className="w-4 h-4 text-hack-accent" />
           <span className="text-sm font-mono font-bold text-hack-accent">BUG BOUNTY PROGRAMS</span>
-          <span className="text-[10px] text-hack-dim font-mono ml-2">({programs.length} programs)</span>
+          <div className="flex gap-1 ml-2">
+            {(["programs", "changes"] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-3 py-1 text-[10px] font-mono uppercase rounded border transition-all ${
+                  activeTab === tab
+                    ? "bg-hack-accent/10 text-hack-accent border-hack-accent/30"
+                    : "text-hack-dim border-hack-border hover:text-hack-text"
+                }`}
+              >
+                {tab === "programs" ? `Programs (${programs.length})` : "Changes"}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={load} className="hack-btn flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" /> REFRESH
-          </button>
-          <button onClick={() => setShowForm(!showForm)} className="hack-btn-primary flex items-center gap-1">
-            <Plus className="w-3 h-3" /> ADD PROGRAM
-          </button>
+          {activeTab === "programs" ? (
+            <>
+              <button onClick={load} className="hack-btn flex items-center gap-1">
+                <RefreshCw className="w-3 h-3" /> REFRESH
+              </button>
+              <button onClick={() => setShowForm(!showForm)} className="hack-btn-primary flex items-center gap-1">
+                <Plus className="w-3 h-3" /> ADD PROGRAM
+              </button>
+            </>
+          ) : (
+            <button onClick={loadChanges} className="hack-btn flex items-center gap-1">
+              <RefreshCw className="w-3 h-3" /> REFRESH
+            </button>
+          )}
         </div>
       </div>
 
+      {/* Changes Tab */}
+      {activeTab === "changes" && (
+        <div className="flex-1 overflow-y-auto terminal-scroll p-4 space-y-2">
+          {changesLoading ? (
+            <div className="text-[10px] text-hack-dim animate-pulse font-mono">Loading change feed...</div>
+          ) : changes.length === 0 ? (
+            <div className="hack-panel p-8 text-center">
+              <Bell className="w-8 h-8 text-hack-dim mx-auto mb-2" strokeWidth={1} />
+              <div className="text-xs text-hack-dim font-mono">No scope changes recorded yet</div>
+              <div className="text-[10px] text-hack-dim font-mono mt-1">Changes appear after programs are fetched and compared</div>
+            </div>
+          ) : (
+            changes.map((c, i) => (
+              <div key={i} className="hack-panel p-3 border-l-2 border-hack-border hover:border-hack-muted transition-colors">
+                <div className="flex items-start gap-2">
+                  <div className="flex-shrink-0 mt-0.5">{changeIcon(c.field)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-[11px] font-mono ${changeColor(c.description)}`}>{c.description}</div>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className="text-[9px] font-mono text-hack-dim">{c.field}</span>
+                      <span className="text-[9px] font-mono text-hack-dim">{new Date(c.timestamp).toLocaleString()}</span>
+                    </div>
+                    {(c.previousValue || c.newValue) && (
+                      <div className="flex gap-2 mt-1">
+                        {c.previousValue && <span className="text-[9px] font-mono text-hack-red bg-hack-red/5 px-1.5 py-0.5 rounded">- {c.previousValue}</span>}
+                        {c.newValue && <span className="text-[9px] font-mono text-hack-green bg-hack-green/5 px-1.5 py-0.5 rounded">+ {c.newValue}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {activeTab === "programs" && (
       <div className="flex-1 overflow-y-auto terminal-scroll p-4 space-y-4">
         {/* Add Program Form */}
         {showForm && (
@@ -294,6 +393,7 @@ export default function Programs() {
           </div>
         )}
       </div>
+      )}
 
       {/* Auth Config Modal */}
       {authModalId !== null && (

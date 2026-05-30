@@ -196,10 +196,11 @@ router.get("/programs/status", (_req: Request, res: Response) => {
   }
 });
 
-router.get("/programs/changes/recent", (_req: Request, res: Response) => {
+router.get("/programs/changes/recent", (req: Request, res: Response) => {
   try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 500);
     if (typeof (service.programFetcher as any).getRecentChanges === "function") {
-      const result = (service.programFetcher as any).getRecentChanges(20);
+      const result = (service.programFetcher as any).getRecentChanges(limit);
       res.json({ changes: result });
     } else {
       res.json({ changes: [], message: "not yet available" });

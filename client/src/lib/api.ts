@@ -43,6 +43,7 @@ export const bountyAPI = {
   updateProgram: (id: number, data: Record<string, unknown>) => api.patch(`/bounty/programs/${id}`, data),
   deleteProgram: (id: number) => api.delete(`/bounty/programs/${id}`),
   rankPrograms: () => api.get("/bounty/rank-programs"),
+  getRecentChanges: (limit = 50) => api.get("/bounty-intelligence/programs/changes/recent", { params: { limit } }),
   recommendTarget: (exclude?: number[]) => api.get("/bounty/recommend-target", { params: exclude ? { exclude: exclude.join(",") } : undefined }),
   getRoiRanking: (maxPayout?: number) => api.get("/bounty/roi-ranking", { params: maxPayout ? { maxPayout } : undefined }),
   getRlStats: () => api.get("/bounty/rl-stats"),

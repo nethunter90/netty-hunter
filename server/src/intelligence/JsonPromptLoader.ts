@@ -13,6 +13,9 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import axios from 'axios';
 import logger from '../utils/logger';
+import { db } from '../db';
+import { scrapedIntelligence } from '../db/schema';
+import { desc } from 'drizzle-orm';
 
 export interface JsonPrompt {
   id: number | string;
@@ -111,6 +114,33 @@ export class JsonPromptLoader {
 
     this.loaded = true;
     logger.info('[JsonPromptLoader] Loaded prompts', { count: this.prompts.length, files: files.length });
+
+    // Asynchronously load scraped intelligence from DB — fire-and-forget so startup isn't blocked
+    this.loadFromDatabase().catch(() => {});
+  }
+
+  private async loadFromDatabase(): Promise<void> {
+    try {
+      const rows = await db.select().from(scrapedIntelligence)
+        .orderBy(desc(scrapedIntelligence.createdAt))
+        .limit(500);
+      if (rows.length === 0) return;
+      const dbPrompts: JsonPrompt[] = rows.map(r => ({
+        id: `scraped_${r.id}`,
+        category: "scraped",
+        scenario: r.title ?? r.vulnType ?? "security finding",
+        vulnerability_type: r.vulnType ?? undefined,
+        severity: r.severity ?? undefined,
+        prompt: r.content,
+        expected_answer: `Vulnerability type: ${r.vulnType ?? "unknown"}, severity: ${r.severity ?? "unknown"}`,
+        evaluation_criteria: `Source: ${r.source}. Vuln type: ${r.vulnType ?? "unknown"}. Severity: ${r.severity ?? "unknown"}.`,
+        source: r.source,
+      }));
+      this.prompts.push(...dbPrompts);
+      logger.info('[JsonPromptLoader] Loaded scraped intelligence from DB', { count: dbPrompts.length });
+    } catch (err) {
+      logger.debug('[JsonPromptLoader] DB load skipped (DB may not be ready)', { err: String(err) });
+    }
   }
 
   // ─── Semantic retrieval ───────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
 import { initializeAutonomousBrain } from "./lib/intelligence";
 import { callbackServer } from "./lib/oob/callback-server";
 import { runtimeConfig } from "./lib/runtime-config";
+import { writeupScraper } from "./lib/intelligence/writeup-scraper";
 import { db } from "./db";
 import { programs } from "./db/schema";
 import { gt } from "drizzle-orm";
@@ -372,6 +373,11 @@ setInterval(async () => {
     logger.debug("[Scheduler] tick error (non-critical)", { err: String(err) });
   }
 }, 15 * 60 * 1000); // every 15 min
+
+// ─── Daily Writeup Intelligence Scrape ───────────────────────────────────────
+// Runs once at startup (after a short delay) then every 24h.
+setTimeout(() => writeupScraper.scrapeAll().catch(() => {}), 30_000);
+setInterval(() => writeupScraper.scrapeAll().catch(() => {}), 24 * 60 * 60 * 1000);
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 httpServer.listen(PORT, () => {

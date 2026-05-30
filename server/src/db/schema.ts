@@ -275,6 +275,26 @@ export const customTools = pgTable("custom_tools", {
   nameIdx: uniqueIndex("custom_tools_name_idx").on(t.name),
 }));
 
+// ─── Scraped Intelligence ─────────────────────────────────────────────────────
+// Stores content scraped from public bug bounty writeups, CVE advisories, etc.
+// Loaded by JsonPromptLoader as additional domain knowledge for hypothesis generation.
+export const scrapedIntelligence = pgTable("scraped_intelligence", {
+  id: serial("id").primaryKey(),
+  source: varchar("source", { length: 64 }).notNull(), // "hackerone", "nvd"
+  sourceUrl: text("source_url"),
+  title: text("title"),
+  content: text("content").notNull(),
+  vulnType: varchar("vuln_type", { length: 64 }),
+  severity: varchar("severity", { length: 16 }),
+  affectedTech: jsonb("affected_tech").$type<string[]>().default([]),
+  toolsUsed: jsonb("tools_used").$type<string[]>().default([]),
+  payout: integer("payout"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => ({
+  sourceIdx: index("scraped_source_idx").on(t.source),
+  vulnTypeIdx: index("scraped_vuln_type_idx").on(t.vulnType),
+}));
+
 // ─── Mission Memory Snapshots ─────────────────────────────────────────────────
 // Durable write-through store for MissionMemoryStore, keyed by the hunt/session UUID.
 // Replaces /tmp filesystem snapshots — survives container restarts and redeploys.

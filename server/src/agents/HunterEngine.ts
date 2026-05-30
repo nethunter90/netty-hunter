@@ -43,7 +43,7 @@ import { raceConditionDetector } from "../lib/tools/race-condition-detector";
 import { hostHeaderProber } from "../lib/tools/host-header-probe";
 import { crlfProber } from "../lib/tools/crlf-probe";
 import { cookieFlagChecker } from "../lib/tools/cookie-flag-checker";
-import { jsSPACrawler } from "../lib/tools/js-spa-crawler";
+import { jsSPACrawler, deepCrawl } from "../lib/tools/js-spa-crawler";
 import { ATTACK_TREES } from "../intelligence/ExploitChain";
 import { writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -887,11 +887,11 @@ export class HunterEngine extends EventEmitter {
       // JS/SPA crawling — extract hidden API endpoints from JS bundles
       (async () => {
         try {
-          const crawlResult = await jsSPACrawler.crawl(this.state.targetUrl, this.authHeaders);
+          const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders });
           for (const hyp of crawlResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
           }
-          if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url) });
+          if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
         } catch (err) { logger.debug("[HunterEngine] JS/SPA crawl skipped", { err: String(err) }); }
       })(),
 
