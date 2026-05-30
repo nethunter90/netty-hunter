@@ -80,14 +80,20 @@ export class ModelRouter {
   private async selectModel(taskType: TaskType): Promise<string> {
     const available = await this.getAvailableModels();
 
-    // Filter preferred models by task type and availability
+    // User's explicit model choice always wins (set via Settings → Local AI)
+    const userChosen = runtimeConfig.get("OLLAMA_DEFAULT_MODEL") || process.env.OLLAMA_DEFAULT_MODEL;
+    if (userChosen && available.includes(userChosen)) {
+      return userChosen;
+    }
+
+    // Match preferred profiles against actually-installed model names
+    // Return the full installed name (e.g. "llama3.2:3b"), not the profile stub
     const candidates = this.PREFERRED_MODELS.filter(m =>
       m.taskTypes.includes(taskType) &&
       available.some(a => a.startsWith(m.name.split(":")[0]))
     );
 
     if (candidates.length > 0) {
-      // Prefer slower/better models for reasoning tasks
       if (taskType === "reason" || taskType === "analyze") {
         candidates.sort((a, b) => {
           const speedOrder = { slow: 0, medium: 1, fast: 2 };
@@ -99,14 +105,16 @@ export class ModelRouter {
           return speedOrder[a.speed] - speedOrder[b.speed];
         });
       }
-      return candidates[0].name;
+      // Return the actual installed model name rather than the profile stub
+      const profilePrefix = candidates[0].name.split(":")[0];
+      return available.find(a => a.startsWith(profilePrefix)) ?? candidates[0].name;
     }
 
     // Fall back to any available model
     if (available.length > 0) return available[0];
 
-    // Last resort default
-    return runtimeConfig.get("OLLAMA_DEFAULT_MODEL") || process.env.OLLAMA_DEFAULT_MODEL || "llama3.2";
+    // Nothing available — return configured default so the error from Ollama is clear
+    return userChosen || "llama3.2";
   }
 
   async generate(prompt: string, taskType: TaskType = "chat", options: {

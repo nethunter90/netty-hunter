@@ -40,9 +40,13 @@ router.post("/", async (req: Request, res: Response) => {
 
     return res.json({ response, model: models[0] ?? "unknown" });
   } catch (err) {
-    logger.warn("[Chat] model unavailable", { err: String(err) });
+    const msg = String(err);
+    logger.warn("[Chat] model error", { err: msg });
+    const isConnRefused = msg.includes("ECONNREFUSED") || msg.includes("connect");
     return res.status(503).json({
-      error: "No local LLM available. Start Ollama and pull a model, or configure LM Studio.",
+      error: isConnRefused
+        ? "Cannot reach Ollama. Make sure `ollama serve` is running."
+        : `Model error: ${msg.replace("Error: Model generation failed: ", "").slice(0, 200)}`,
     });
   }
 });
