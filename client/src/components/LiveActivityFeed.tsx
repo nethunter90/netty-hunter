@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Eye, Brain, Target, RefreshCw, Zap, AlertTriangle, CheckCircle2,
   XCircle, ChevronRight, ChevronDown, Layers, Shield, Server, Globe, Code, Wifi,
@@ -177,7 +177,10 @@ function AIReasoningRow({ ev }: { ev: ActivityEvent & { type: "ai_reasoning" } }
     ? "text-hack-accent border-hack-accent/40 bg-hack-accent/10"
     : "text-hack-cyan border-hack-cyan/40 bg-hack-cyan/10";
 
-  const parsed = ev.rawResponse ? parseDeepSeekThinking(ev.rawResponse) : null;
+  const parsed = useMemo(
+    () => (ev.rawResponse ? parseDeepSeekThinking(ev.rawResponse) : null),
+    [ev.rawResponse]
+  );
 
   return (
     <div className="ml-3 border-l-2 border-hack-purple/40 pl-2 py-1 my-0.5 bg-hack-purple/5 rounded-r">
@@ -905,6 +908,13 @@ function ErrorRow({ ev }: { ev: ActivityEvent & { type: "error" } }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
+// Memoized variants of the heaviest rows so they don't re-render when unrelated
+// feed state (e.g. the scanning indicator) changes. Each row's `ev` prop is a
+// stable object reference, so memo skips re-render across parent updates.
+const HypothesisRowMemo = memo(HypothesisRow);
+const ProbeResultRowMemo = memo(ProbeResultRow);
+const AIReasoningRowMemo = memo(AIReasoningRow);
+
 export function LiveActivityFeed({
   events,
   isRunning,
@@ -912,10 +922,10 @@ export function LiveActivityFeed({
   title = "EXECUTION STREAM",
 }: LiveActivityFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [lastEventTs, setLastEventTs] = useState<number>(0);
+  const lastEventTsRef = useRef<number>(0);
   const [showScanning, setShowScanning] = useState(false);
 
-  const visible = events.slice(-maxEvents);
+  const visible = useMemo(() => events.slice(-maxEvents), [events, maxEvents]);
   const truncated = events.length > maxEvents;
 
   // Auto-scroll
@@ -925,25 +935,30 @@ export function LiveActivityFeed({
     }
   }, [events.length]);
 
-  // Show scanning indicator when running but no new events for 3s
+  // Record the time of the most recent event in a ref (no re-render / no interval churn)
   useEffect(() => {
     if (events.length > 0) {
-      setLastEventTs(Date.now());
+      lastEventTsRef.current = Date.now();
       setShowScanning(false);
     }
   }, [events.length]);
 
+  // Show scanning indicator when running but no new events for 3s.
+  // Interval is created once per run (reads the ref) so it isn't recreated per event.
   useEffect(() => {
     if (!isRunning) { setShowScanning(false); return; }
     const t = setInterval(() => {
-      setShowScanning(Date.now() - lastEventTs > 3000);
+      setShowScanning(Date.now() - lastEventTsRef.current > 3000);
     }, 1000);
     return () => clearInterval(t);
-  }, [isRunning, lastEventTs]);
+  }, [isRunning]);
 
   // Track resolved probe IDs for fading the probe_start row
-  const resolvedProbes = new Set(
-    visible.filter(e => e.type === "probe_result").map(e => (e as any).hypothesisId as string)
+  const resolvedProbes = useMemo(
+    () => new Set(
+      visible.filter(e => e.type === "probe_result").map(e => (e as any).hypothesisId as string)
+    ),
+    [visible]
   );
 
   return (
@@ -994,11 +1009,11 @@ export function LiveActivityFeed({
             case "phase":
               return <PhaseRow key={key} ev={ev} />;
             case "hypothesis":
-              return <HypothesisRow key={key} ev={ev} />;
+              return <HypothesisRowMemo key={key} ev={ev} />;
             case "probe_start":
               return <ProbeStartRow key={key} ev={ev} resolved={resolvedProbes.has(ev.hypothesisId)} />;
             case "probe_result":
-              return <ProbeResultRow key={key} ev={ev} />;
+              return <ProbeResultRowMemo key={key} ev={ev} />;
             case "finding":
             case "solver_finding":
               return <FindingRow key={key} ev={ev as any} />;
@@ -1058,7 +1073,7 @@ export function LiveActivityFeed({
             case "xxe_found":
               return <XXEFoundRow key={key} ev={ev} />;
             case "ai_reasoning":
-              return <AIReasoningRow key={key} ev={ev} />;
+              return <AIReasoningRowMemo key={key} ev={ev} />;
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

@@ -11,7 +11,7 @@ import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
 import { huntSessions, findings, exploitChains, customTools } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
@@ -647,6 +647,10 @@ export class HunterEngine extends EventEmitter {
 
     this.state.phase = "complete";
     observationCompressor.clearSession(this.state.sessionId);
+    // Release the authenticated session so credentials/cookies aren't held after the hunt.
+    if (this.authConfig) {
+      sessionManager.invalidate(this.state.programId);
+    }
     this.rlWiring.onHuntComplete({
       sessionId: this.state.sessionId,
       programId: this.state.programId,
@@ -1608,7 +1612,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         const domain = new URL(url).hostname;
         const saved = await db.select({ nucleiTemplate: findings.nucleiTemplate })
           .from(findings)
-          .where(eq(findings.nucleiTemplate, findings.nucleiTemplate))
+          .where(isNotNull(findings.nucleiTemplate))
+          .orderBy(desc(findings.createdAt))
           .limit(10);
         const templates = saved.map(r => r.nucleiTemplate).filter(Boolean) as string[];
         if (templates.length > 0) {

@@ -582,7 +582,13 @@ export class CampaignOrchestrator extends EventEmitter {
         await pool.spawnSolvers(
           params.targetUrl,
           { priorityVulns: [] },
-          { programId: params.programId, sessionId: 0 }
+          {
+            programId: params.programId,
+            sessionId: 0,
+            // Bound the supplement to the campaign request budget so it can't
+            // run unbounded and overrun the quota (was previously omitted).
+            budget: { maxRequests: params.budget?.maxRequests ?? 2000, requestsMade: 0 },
+          }
         );
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
@@ -769,18 +775,8 @@ export class CampaignOrchestrator extends EventEmitter {
               : verification.layer3_playwright,
           };
 
-          // CWE/CVE enrichment — tag confirmed findings with standard identifiers
+          // CWE tag is a synchronous map lookup — apply it immediately.
           const cweId = VULN_TYPE_TO_CWE[dbFinding.vulnType] ?? null;
-          let cveId: string | null = null;
-          if (cweId !== null) {
-            try {
-              const cveMatches = await nvdClient.lookupByCWE(`CWE-${cweId}`);
-              const best = cveMatches
-                .filter(c => c.cvssScore >= 6.0)
-                .sort((a, b) => b.cvssScore - a.cvssScore)[0];
-              if (best) cveId = best.id;
-            } catch { /* non-critical */ }
-          }
 
           // Update finding record
           await db.update(findings).set({
@@ -789,9 +785,27 @@ export class CampaignOrchestrator extends EventEmitter {
             confidence: verification.finalConfidence,
             dedupHash: verification.dedupHash,
             ...(cweId !== null ? { cweId } : {}),
-            ...(cveId !== null ? { cveId } : {}),
             updatedAt: new Date(),
           }).where(eq(findings.id, dbFinding.id));
+
+          // CVE enrichment hits the external NVD API — do it fire-and-forget so a
+          // slow lookup can't stall the verification gate. The cveId is written
+          // in a follow-up update when (if) it resolves.
+          if (cweId !== null) {
+            const findingId = dbFinding.id;
+            void (async () => {
+              try {
+                const cveMatches = await nvdClient.lookupByCWE(`CWE-${cweId}`);
+                const best = cveMatches
+                  .filter(c => c.cvssScore >= 6.0)
+                  .sort((a, b) => b.cvssScore - a.cvssScore)[0];
+                if (best) {
+                  await db.update(findings).set({ cveId: best.id, updatedAt: new Date() })
+                    .where(eq(findings.id, findingId));
+                }
+              } catch { /* non-critical */ }
+            })();
+          }
 
           this.emit("l5:verified", { findingId: dbFinding.id, verdict: verification.finalVerdict });
 

@@ -91,6 +91,8 @@ export class WriteupScraper {
         const severity = node.severity_rating ?? undefined;
         const payout = node.total_awarded_amount ? Math.round(Number(node.total_awarded_amount)) : undefined;
         const url = node.url ? `https://hackerone.com${node.url}` : undefined;
+        // sourceUrl is the dedup key (unique index) — skip rows we can't dedup
+        if (!url) continue;
 
         const content = [
           `Program: ${node.team?.name ?? "Unknown"}`,
@@ -111,7 +113,7 @@ export class WriteupScraper {
             affectedTech: [],
             toolsUsed: [],
             payout,
-          }).onConflictDoNothing();
+          }).onConflictDoNothing({ target: scrapedIntelligence.sourceUrl });
           inserted++;
         } catch {
           // individual row conflict is non-fatal
@@ -153,7 +155,7 @@ export class WriteupScraper {
               affectedTech: [],
               toolsUsed: [],
               payout: undefined,
-            }).onConflictDoNothing();
+            }).onConflictDoNothing({ target: scrapedIntelligence.sourceUrl });
             inserted++;
           } catch {
             // individual row conflict is non-fatal

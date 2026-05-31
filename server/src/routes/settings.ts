@@ -10,15 +10,27 @@ const router = Router();
 const SETTINGS_DOMAIN = "settings";
 const ALLOWED_KEYS = RUNTIME_CONFIG_ALLOWED_KEYS;
 
-// GET /settings — return all saved settings (values masked for secrets)
+// Non-secret config keys are returned verbatim; everything else is a secret
+// and is masked so tokens never leave the server in plaintext.
+const NON_SECRET_KEYS = new Set([
+  "OLLAMA_BASE_URL", "OLLAMA_DEFAULT_MODEL", "EMBED_MODEL", "OOB_HOST",
+]);
+
+function maskSecret(value: string): string {
+  if (value.length <= 4) return "••••";
+  return "••••" + value.slice(-4);
+}
+
+// GET /settings — non-secret values returned as-is; secrets masked to last 4 chars
 router.get("/", async (_req: Request, res: Response) => {
   const rows = await db.select().from(reinforcementStore)
     .where(like(reinforcementStore.domain, SETTINGS_DOMAIN));
   const result: Record<string, string> = {};
   for (const row of rows) {
-    if (ALLOWED_KEYS.has(row.key)) {
-      result[row.key] = row.value != null ? String(row.value) : "";
-    }
+    if (!ALLOWED_KEYS.has(row.key)) continue;
+    const value = row.value != null ? String(row.value) : "";
+    if (!value) { result[row.key] = ""; continue; }
+    result[row.key] = NON_SECRET_KEYS.has(row.key) ? value : maskSecret(value);
   }
   return res.json(result);
 });

@@ -44,7 +44,9 @@ export default function HuntConsole() {
   const socket = getSocket();
 
   function push(ev: ActivityEvent) {
-    setActivityEvents(prev => [...prev, ev]);
+    // Cap retained events (~300) so long hunts don't grow state unbounded;
+    // the feed only displays the last 150 anyway.
+    setActivityEvents(prev => [...prev.slice(-299), ev]);
   }
 
   useEffect(() => {
@@ -316,7 +318,7 @@ export default function HuntConsole() {
         "hunt:ai_reasoning",
       ].forEach(e => socket.off(e));
     };
-  }, []);
+  }, [socket]);
 
   const startHunt = async () => {
     if (!selectedProgram) return toast.error("Select a program first");

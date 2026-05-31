@@ -146,6 +146,8 @@ class Layer2Reprobe {
 // blocks the main event loop during concurrent verifications.
 class Layer3BrowserReplay {
   private worker: Worker | null = null;
+  // Explicit flag so callers/logs can tell Layer 3 was unavailable (vs. just unconfirmed)
+  layer3Available = false;
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private static readonly REPLAY_TIMEOUT_MS = 35_000;
 
@@ -168,8 +170,10 @@ class Layer3BrowserReplay {
 
   async initialize(): Promise<void> {
     if (this.worker) return;
+    let spawned: Worker | null = null;
     try {
       const w = this.spawnWorker();
+      spawned = w;
       w.on('message', (msg: any) => {
         if (msg.type === 'result' || msg.type === 'error') {
           const pending = this.pending.get(msg.id);
@@ -195,9 +199,14 @@ class Layer3BrowserReplay {
       });
 
       this.worker = w;
+      this.layer3Available = true;
       logger.info('[VerifierAgent] Browser worker initialised with fingerprint hardening');
     } catch (err) {
-      logger.warn('Playwright worker launch failed – Layer 3 will be skipped', { err });
+      this.layer3Available = false;
+      // Terminate a half-spawned worker so a failed init doesn't leak a thread.
+      if (spawned) { try { await spawned.terminate(); } catch { /* ignore */ } }
+      this.worker = null;
+      logger.warn('Playwright worker launch failed – Layer 3 will be skipped (verdicts degrade to L2/L4)', { err });
     }
   }
 

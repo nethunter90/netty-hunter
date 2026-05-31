@@ -87,6 +87,15 @@ app.use(cors({
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Session secret must be explicitly configured in production — never ship the
+// hardcoded default, which would give every deployment predictable cookies.
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET must be set in production");
+}
+if (!process.env.SESSION_SECRET) {
+  logger.warn("SESSION_SECRET not set — using insecure development default");
+}
+
 // Session – PostgreSQL-backed (survives restarts)
 app.use(session({
   store: new PgSession({
@@ -164,8 +173,16 @@ app.use("/api/settings", requireAuth, settingsRoutes);
 app.use("/api/chat", requireAuth, chatRoutes);
 app.use("/api/tools", requireAuth, toolsRoutes);
 
-// OOB callback receiver — no auth required (external targets call this)
-app.all("/api/callback/:beaconId", (req, res) => {
+// OOB callback receiver — no auth required (external targets call this).
+// Per-IP rate limit caps beacon-flooding abuse on this public endpoint.
+const callbackLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 min
+  max: 60,             // 60 hits/min/IP
+  message: "Callback rate limit exceeded",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.all("/api/callback/:beaconId", callbackLimiter, (req, res) => {
   const { beaconId } = req.params;
   callbackServer.recordHit(beaconId, req.ip || "", JSON.stringify(req.body || req.query || {}));
   io.emit("oob:hit", { beaconId, ip: req.ip, ts: new Date().toISOString() });

@@ -12,8 +12,15 @@ interface BeaconRecord {
 class CallbackServer {
   private beacons = new Map<string, BeaconRecord>();
   private serverHost = process.env.OOB_HOST || `http://localhost:${process.env.PORT || "3001"}`;
+  // Hard cap so a burst can't OOM the process before the 10-min pruner runs.
+  private static readonly MAX_BEACONS = 50_000;
 
   generateBeacon(): { beaconId: string; callbackUrl: string } {
+    // FIFO-evict the oldest entry (insertion-ordered Map) when at capacity.
+    if (this.beacons.size >= CallbackServer.MAX_BEACONS) {
+      const oldest = this.beacons.keys().next().value;
+      if (oldest !== undefined) this.beacons.delete(oldest);
+    }
     const beaconId = uuidv4();
     this.beacons.set(beaconId, { createdAt: Date.now(), received: false });
     logger.debug("[OOB] Beacon generated", { beaconId });

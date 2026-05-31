@@ -81,7 +81,8 @@ export default function Orchestration() {
   const socket = getSocket();
 
   function pushEvent(ev: ActivityEvent) {
-    setActivityEvents(prev => [...prev, ev]);
+    // Cap retained events (~300) so long orchestrations don't grow state unbounded.
+    setActivityEvents(prev => [...prev.slice(-299), ev]);
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────

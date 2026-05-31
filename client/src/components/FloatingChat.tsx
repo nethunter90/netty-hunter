@@ -39,7 +39,8 @@ export default function FloatingChat() {
     if (!text || loading) return;
 
     const userMsg: Message = { role: "user", content: text };
-    setMessages(prev => [...prev, userMsg]);
+    // Cap conversation history (~50 messages) to bound memory on long chats.
+    setMessages(prev => [...prev.slice(-49), userMsg]);
     setInput("");
     setLoading(true);
 
@@ -48,13 +49,13 @@ export default function FloatingChat() {
         message: text,
         history: messages.slice(-6),
       });
-      setMessages(prev => [...prev, { role: "assistant", content: r.data.response }]);
+      setMessages(prev => [...prev.slice(-49), { role: "assistant", content: r.data.response }]);
       if (r.data.model && r.data.model !== "unknown") setActiveModel(r.data.model);
       setModelAvailable(true);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } } };
       const errMsg = e.response?.data?.error || "Model unavailable";
-      setMessages(prev => [...prev, { role: "assistant", content: `⚠ ${errMsg}` }]);
+      setMessages(prev => [...prev.slice(-49), { role: "assistant", content: `⚠ ${errMsg}` }]);
       setModelAvailable(false);
     } finally {
       setLoading(false);

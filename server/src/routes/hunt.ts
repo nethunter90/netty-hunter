@@ -192,16 +192,23 @@ router.get("/campaigns/:id", async (req: Request, res: Response) => {
   return res.json({ campaign, sessions: sessionList, findings: findingList });
 });
 
-// Get all findings with filters
+// Get all findings with filters — applied in SQL (indexed) rather than in JS
 router.get("/findings", async (req: Request, res: Response) => {
   const { campaignId, severity, vulnType, status } = req.query;
-  let results = await db.select().from(findings).orderBy(desc(findings.createdAt));
 
-  // Apply filters
-  if (campaignId) results = results.filter(f => f.campaignId === parseInt(String(campaignId)));
-  if (severity) results = results.filter(f => f.severity === String(severity));
-  if (vulnType) results = results.filter(f => f.vulnType === String(vulnType));
-  if (status) results = results.filter(f => f.status === String(status));
+  const conditions = [];
+  if (campaignId) {
+    const cid = parseInt(String(campaignId), 10);
+    if (!Number.isNaN(cid)) conditions.push(eq(findings.campaignId, cid));
+  }
+  if (severity) conditions.push(eq(findings.severity, String(severity)));
+  if (vulnType) conditions.push(eq(findings.vulnType, String(vulnType)));
+  if (status) conditions.push(eq(findings.status, String(status)));
+
+  const results = await db.select().from(findings)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(desc(findings.createdAt))
+    .limit(500);
 
   return res.json(results);
 });

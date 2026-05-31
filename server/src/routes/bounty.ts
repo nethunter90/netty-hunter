@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
-import { execSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { db } from "../db";
@@ -17,6 +18,7 @@ import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
 
 const router = Router();
+const execFileAsync = promisify(execFile);
 
 // ── File-backed workspace stores ─────────────────────────────────────────────
 const WS = path.join(process.cwd(), "workspace");
@@ -46,18 +48,31 @@ async function wsReadAll(store: string): Promise<any[]> {
   return items.filter(Boolean);
 }
 
+// Reject any id that could escape the store directory (path traversal guard).
+// Only flat alphanumeric/underscore/hyphen ids are valid record names.
+function assertSafeId(id: string): void {
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error("Invalid id");
+  }
+}
+
 async function wsWrite(store: string, id: string, data: any) {
+  assertSafeId(id);
   const dir = STORE_DIRS[store];
   await wsEnsure(dir);
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(data, null, 2));
 }
 
 async function wsDelete(store: string, id: string) {
+  // Guard without throwing — an invalid id has nothing to delete anyway,
+  // and this runs in async route handlers with no try/catch (Express 4).
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) return;
   await fs.unlink(path.join(STORE_DIRS[store], `${id}.json`)).catch(() => {});
 }
 
 async function wsFind(store: string, id: string): Promise<any | null> {
   try {
+    assertSafeId(id);
     return JSON.parse(await fs.readFile(path.join(STORE_DIRS[store], `${id}.json`), "utf8"));
   } catch { return null; }
 }
@@ -394,16 +409,35 @@ router.get("/nuclei/templates", async (req: Request, res: Response) => {
 });
 
 router.post("/nuclei/run", async (req: Request, res: Response) => {
-  const { templateId, target } = req.body;
+  const { templateId, target } = req.body as { templateId?: string; target?: string };
+
+  // Validate inputs — these flow into a subprocess, so reject anything that
+  // isn't a plain template path / a well-formed http(s) URL.
+  if (typeof templateId !== "string" || !/^[\w./-]+$/.test(templateId)) {
+    return res.status(400).json({ error: "Invalid templateId" });
+  }
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(String(target));
+    if (!["http:", "https:"].includes(targetUrl.protocol)) throw new Error("bad protocol");
+  } catch {
+    return res.status(400).json({ error: "Invalid target — must be an http(s) URL" });
+  }
+
   if (process.env.REAL_TOOLS) {
     try {
-      const result = execSync(`nuclei -t ${templateId} -u ${target} -json 2>/dev/null`, { encoding: "utf8", timeout: 30000 });
-      return res.json({ result, executed: true });
+      // execFile with an args array — no shell, so metacharacters can't inject.
+      const { stdout } = await execFileAsync(
+        "nuclei",
+        ["-t", templateId, "-u", targetUrl.toString(), "-json"],
+        { encoding: "utf8", timeout: 30000 }
+      );
+      return res.json({ result: stdout, executed: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   }
-  return res.json({ executed: true, mock: true, templateId, target, findings: [] });
+  return res.json({ executed: true, mock: true, templateId, target: targetUrl.toString(), findings: [] });
 });
 
 router.delete("/nuclei/templates/:id", (_req: Request, res: Response) => {
@@ -556,24 +590,35 @@ router.delete("/tasks/:id", async (req: Request, res: Response) => {
 });
 
 // ── Tool Readiness ────────────────────────────────────────────────────────────
-router.get("/tools/readiness", (_req: Request, res: Response) => {
-  const toolList = [
-    "nmap", "nuclei", "sqlmap", "ffuf", "gobuster", "nikto",
-    "whatweb", "amass", "subfinder", "httpx", "dalfox", "commix",
-    "feroxbuster", "dirsearch",
-  ];
-  const tools = toolList.map((name) => {
+const TOOL_READINESS_LIST = [
+  "nmap", "nuclei", "sqlmap", "ffuf", "gobuster", "nikto",
+  "whatweb", "amass", "subfinder", "httpx", "dalfox", "commix",
+  "feroxbuster", "dirsearch",
+];
+let toolReadinessCache: { at: number; tools: unknown[] } | null = null;
+const TOOL_READINESS_TTL = 5 * 60 * 1000; // 5 min
+
+router.get("/tools/readiness", async (_req: Request, res: Response) => {
+  if (toolReadinessCache && Date.now() - toolReadinessCache.at < TOOL_READINESS_TTL) {
+    return res.json({ tools: toolReadinessCache.tools });
+  }
+  // Async + parallel so the 14 lookups don't block the event loop. Tool names
+  // are a fixed allowlist (not user input), and execFile uses an args array.
+  const tools = await Promise.all(TOOL_READINESS_LIST.map(async (name) => {
     try {
-      const path = execSync(`which ${name} 2>/dev/null`, { encoding: "utf8" }).trim();
+      const { stdout } = await execFileAsync("which", [name]);
+      const toolPath = stdout.trim();
       let version: string | undefined;
       try {
-        version = execSync(`${name} --version 2>&1 | head -1`, { encoding: "utf8", timeout: 3000 }).trim();
+        const v = await execFileAsync(name, ["--version"], { timeout: 3000 });
+        version = (v.stdout || "").split("\n")[0].trim() || undefined;
       } catch { /* version not available */ }
-      return { name, available: !!path, path: path || undefined, version };
+      return { name, available: !!toolPath, path: toolPath || undefined, version };
     } catch {
       return { name, available: false };
     }
-  });
+  }));
+  toolReadinessCache = { at: Date.now(), tools };
   return res.json({ tools });
 });
 

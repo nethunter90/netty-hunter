@@ -134,6 +134,7 @@ export const findings = pgTable("findings", {
   vulnTypeIdx: index("findings_vuln_type_idx").on(t.vulnType),
   severityIdx: index("findings_severity_idx").on(t.severity),
   statusIdx: index("findings_status_idx").on(t.status),
+  campaignIdx: index("findings_campaign_idx").on(t.campaignId),
 }));
 
 // ─── WAF Profiles ─────────────────────────────────────────────────────────────
@@ -293,6 +294,7 @@ export const scrapedIntelligence = pgTable("scraped_intelligence", {
 }, (t) => ({
   sourceIdx: index("scraped_source_idx").on(t.source),
   vulnTypeIdx: index("scraped_vuln_type_idx").on(t.vulnType),
+  sourceUrlIdx: uniqueIndex("scraped_source_url_idx").on(t.sourceUrl),
 }));
 
 // ─── Mission Memory Snapshots ─────────────────────────────────────────────────
