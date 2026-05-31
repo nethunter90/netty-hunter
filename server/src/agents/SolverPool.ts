@@ -878,8 +878,19 @@ export class SolverPool extends EventEmitter {
   async spawnSolvers(
     endpoint: string,
     observations: Record<string, unknown>,
-    options: { programId: number; sessionId: number } = { programId: 0, sessionId: 0 }
+    options: {
+      programId: number;
+      sessionId: number;
+      /** Shared budget object — requestsMade is mutated in place so callers see live totals */
+      budget?: { maxRequests: number; requestsMade: number };
+    } = { programId: 0, sessionId: 0 }
   ): Promise<SolverResult[]> {
+    // Guard: bail out immediately if budget already blown before spawning
+    if (options.budget && options.budget.requestsMade >= options.budget.maxRequests) {
+      logger.info("SolverPool: Budget exhausted before spawn — skipping", options.budget);
+      return [];
+    }
+
     logger.info("SolverPool: Spawning solvers", { endpoint });
 
     // Strategy Coordinator decides what to test
@@ -894,6 +905,17 @@ export class SolverPool extends EventEmitter {
       this.emit("solver:started", { taskId: task.id, vulnClass: task.vulnClass });
 
       return this.queue.add(async () => {
+        // Per-solver budget check: abort before executing if limit already reached
+        if (options.budget && options.budget.requestsMade >= options.budget.maxRequests) {
+          this.activeJobs.delete(task.id);
+          logger.info("SolverPool: Budget exhausted — skipping solver", {
+            taskId: task.id,
+            vulnClass: task.vulnClass,
+            requestsMade: options.budget.requestsMade,
+          });
+          return null;
+        }
+
         const SolverClass = SOLVER_REGISTRY[task.vulnClass];
         if (!SolverClass) {
           logger.warn(`No solver for ${task.vulnClass}, using generic HTTP probe`);
@@ -902,6 +924,8 @@ export class SolverPool extends EventEmitter {
 
         const solver = new SolverClass();
         try {
+          // Count this as one request before running
+          if (options.budget) options.budget.requestsMade++;
           const result = await solver.solve(task);
           this.activeJobs.delete(task.id);
           this.emit("solver:complete", { taskId: task.id, found: result.found, confidence: result.confidence });

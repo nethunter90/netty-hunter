@@ -18,6 +18,8 @@ import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
 
 const execFileAsync = promisify(execFile);
+import { mkdirSync, promises as fsp } from "fs";
+import path from "path";
 import { db } from "../db";
 import {
   programs, campaigns, targets, findings,
@@ -744,6 +746,29 @@ export class CampaignOrchestrator extends EventEmitter {
           verified.push({ finding: dbFinding, verification });
           this.state.verifiedCount++;
 
+          // Persist Playwright screenshot to disk (avoid bloating DB with base64)
+          let screenshotPath: string | undefined;
+          const l3 = verification.layer3_playwright as { screenshot?: string; confirmed: boolean; consoleAlerts: string[]; networkRequests: string[] } | undefined;
+          if (l3?.screenshot) {
+            try {
+              const evidenceDir = path.join(process.cwd(), "evidence", String(dbFinding.id));
+              mkdirSync(evidenceDir, { recursive: true });
+              screenshotPath = path.join(evidenceDir, "playwright_screenshot.png");
+              await fsp.writeFile(screenshotPath, Buffer.from(l3.screenshot, "base64"));
+              logger.info("Layer 5: Screenshot archived", { findingId: dbFinding.id, path: screenshotPath });
+            } catch (fsErr) {
+              logger.warn("Layer 5: Failed to write screenshot file", { err: String(fsErr) });
+            }
+          }
+
+          // Build sanitised verification log — strip raw base64, store file path instead
+          const sanitisedVerification = {
+            ...verification,
+            layer3_playwright: l3
+              ? { ...l3, screenshot: screenshotPath || null }
+              : verification.layer3_playwright,
+          };
+
           // CWE/CVE enrichment — tag confirmed findings with standard identifiers
           const cweId = VULN_TYPE_TO_CWE[dbFinding.vulnType] ?? null;
           let cveId: string | null = null;
@@ -760,7 +785,7 @@ export class CampaignOrchestrator extends EventEmitter {
           // Update finding record
           await db.update(findings).set({
             verificationStatus: verification.finalVerdict,
-            verificationLog: [verification] as unknown as Record<string, unknown>[],
+            verificationLog: [sanitisedVerification] as unknown as Record<string, unknown>[],
             confidence: verification.finalConfidence,
             dedupHash: verification.dedupHash,
             ...(cweId !== null ? { cweId } : {}),
