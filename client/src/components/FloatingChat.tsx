@@ -1,10 +1,25 @@
 import React, { useState, useRef, useEffect } from "react";
-import { MessageSquare, X, Send, Minimize2, Bot, AlertCircle } from "lucide-react";
+import { MessageSquare, X, Send, Minimize2, Bot, AlertCircle, Terminal } from "lucide-react";
 import api from "../lib/api";
+
+interface StepOutput {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  error?: string;
+}
+
+interface ExecutionResult {
+  plan: { steps: { bin: string; args?: string[] }[]; detached: boolean; description: string };
+  outputs: StepOutput[];
+  pid?: number;
+}
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  executed?: ExecutionResult | null;
 }
 
 export default function FloatingChat() {
@@ -45,11 +60,14 @@ export default function FloatingChat() {
     setLoading(true);
 
     try {
-      const r = await api.post<{ response: string; model: string }>("/chat", {
+      const r = await api.post<{ response: string; model: string; executed?: ExecutionResult | null }>("/chat", {
         message: text,
         history: messages.slice(-6),
       });
-      setMessages(prev => [...prev.slice(-49), { role: "assistant", content: r.data.response }]);
+      setMessages(prev => [
+        ...prev.slice(-49),
+        { role: "assistant", content: r.data.response, executed: r.data.executed ?? null },
+      ]);
       if (r.data.model && r.data.model !== "unknown") setActiveModel(r.data.model);
       setModelAvailable(true);
     } catch (err: unknown) {
@@ -106,12 +124,12 @@ export default function FloatingChat() {
               <div className="text-hack-dim text-center mt-8 space-y-1">
                 <Bot className="w-6 h-6 mx-auto text-hack-accent/40" />
                 <div>Ask me anything about</div>
-                <div className="text-hack-accent/60">recon · payloads · exploits · reports</div>
+                <div className="text-hack-accent/60">recon · payloads · exploits · commands</div>
               </div>
             )}
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] rounded px-2.5 py-1.5 whitespace-pre-wrap break-words ${
+                <div className={`max-w-[85%] rounded px-2.5 py-1.5 break-words ${
                   m.role === "user"
                     ? "bg-hack-accent/10 border border-hack-accent/20 text-hack-text"
                     : "bg-hack-surface border border-hack-border text-hack-text"
@@ -119,7 +137,31 @@ export default function FloatingChat() {
                   {m.role === "assistant" && (
                     <span className="text-hack-accent text-[9px] block mb-0.5">AI</span>
                   )}
-                  {m.content}
+                  <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                  {m.executed && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="text-[9px] font-mono text-hack-dim flex items-center gap-1">
+                        <Terminal className="w-3 h-3" />
+                        {m.executed.plan.detached
+                          ? `Launched${m.executed.pid ? ` (PID ${m.executed.pid})` : ""}: ${m.executed.plan.description}`
+                          : m.executed.plan.description}
+                      </div>
+                      {m.executed.outputs.map((out, oi) => (
+                        <div key={oi} className="bg-black/50 border border-hack-border/60 rounded p-2 text-[10px] font-mono">
+                          <div className="text-hack-accent mb-1">$ {out.command}</div>
+                          {out.stdout && (
+                            <pre className="text-hack-text whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{out.stdout}</pre>
+                          )}
+                          {out.stderr && (
+                            <pre className="text-hack-red whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{out.stderr}</pre>
+                          )}
+                          {(out.exitCode !== 0 || out.error) && (
+                            <div className="text-hack-yellow mt-0.5">{out.error ?? `exit ${out.exitCode}`}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
