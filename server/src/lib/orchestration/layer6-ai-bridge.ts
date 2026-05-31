@@ -1,6 +1,7 @@
 import { AgentType } from './types';
 import { CompleteAgentType, MetaAgent, getAgentById } from './layer5-complete-agents';
 import { promptManager } from './prompt-loader';
+import { runtimeConfig } from '../runtime-config';
 
 export class AIBridge {
   private ollamaUrl: string;
@@ -104,11 +105,12 @@ export class AIBridge {
   }
 
   private async callOllama(systemPrompt: string, userPrompt: string, context: any): Promise<any> {
-    const response = await fetch(`${this.ollamaUrl}/api/generate`, {
+    const activeUrl = runtimeConfig.get("OLLAMA_BASE_URL") || this.ollamaUrl;
+    const response = await fetch(`${activeUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: process.env.OLLAMA_MODEL || 'llama3',
+        model: runtimeConfig.get("OLLAMA_DEFAULT_MODEL") || process.env.OLLAMA_MODEL || 'llama3',
         prompt: `${systemPrompt}\n\nContext: ${JSON.stringify(context)}\n\nTask: ${userPrompt}`,
         stream: false,
         format: 'json'

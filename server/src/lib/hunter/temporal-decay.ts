@@ -213,7 +213,7 @@ export class TemporalDecayEngine {
   // Hard cap on total number of tracked session:domain pairs
   private readonly MAX_KEYS = 500;
   // Per-key array cap (prevents one noisy session from consuming all memory)
-  private readonly MAX_ENTRIES_PER_KEY = 500;
+  private readonly MAX_ENTRIES_PER_KEY = 100;
 
   private constructor() {}
 

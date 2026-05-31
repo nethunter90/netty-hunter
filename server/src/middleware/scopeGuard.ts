@@ -38,7 +38,7 @@ export interface ScopeTarget {
 export class ScopeGuard {
   private static instance: ScopeGuard;
   private scopeCache = new Map<number, { inScope: string[]; outOfScope: string[]; cachedAt: number }>();
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_TTL = 30 * 1000; // 30 seconds — short TTL so scope changes take effect quickly
 
   static getInstance(): ScopeGuard {
     if (!ScopeGuard.instance) ScopeGuard.instance = new ScopeGuard();

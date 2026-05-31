@@ -4,6 +4,7 @@
  * All methods fail open — return [] on any error or timeout.
  */
 import logger from '../../utils/logger';
+import { runtimeConfig } from '../runtime-config';
 
 export interface CVERecord {
   id: string;
@@ -16,7 +17,7 @@ export interface CVERecord {
 }
 
 class NVDClient {
-  private readonly apiKey = process.env.NVD_API_KEY;
+  private get apiKey(): string | undefined { return runtimeConfig.get("NVD_API_KEY") || process.env.NVD_API_KEY; }
   private readonly cache = new Map<string, { records: CVERecord[]; fetchedAt: number }>();
   private readonly CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
   private readonly WINDOW_MS = 30_000;

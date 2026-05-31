@@ -13,6 +13,7 @@ import AutonomyMaturityTracker from "../intelligence/AutonomyTracker";
 import ExploitChainIntelligence from "../intelligence/ExploitChain";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { HuntStrategyBuilder } from "./huntStrategy";
+import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -125,6 +126,8 @@ router.patch("/programs/:id", async (req: Request, res: Response) => {
     .set({ ...parsed.data, updatedAt: new Date() })
     .where(eq(programs.id, id)).returning();
   if (!updated) return res.status(404).json({ error: "Not found" });
+  // Invalidate scope cache so updated scope patterns take effect immediately
+  ScopeGuard.getInstance().invalidateCache(id);
   return res.json(updated);
 });
 

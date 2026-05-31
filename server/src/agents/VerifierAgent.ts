@@ -65,7 +65,9 @@ class Layer1Dedup {
     // never produce near-duplicate hashes (prevents dedup-bypass DoS).
     let anchor: string;
     try {
-      anchor = new URL(result.endpoint).pathname;
+      const u = new URL(result.endpoint);
+      const paramKeys = [...u.searchParams.keys()].sort().join(",");
+      anchor = u.pathname + (paramKeys ? `?[${paramKeys}]` : "");
     } catch {
       anchor = result.endpoint.split("?")[0];
     }

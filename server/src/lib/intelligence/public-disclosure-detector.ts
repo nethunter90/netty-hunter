@@ -8,6 +8,7 @@
  * so the finding is never blocked by an unavailable check.
  */
 import logger from '../../utils/logger';
+import { runtimeConfig } from '../runtime-config';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -149,8 +150,8 @@ export class PublicDisclosureDetector {
   // ── HackerOne ─────────────────────────────────────────────────────────────
 
   private async fetchHackerOne(handle: string): Promise<PublicReport[]> {
-    const username = process.env.HACKERONE_USERNAME;
-    const token = process.env.HACKERONE_API_TOKEN;
+    const username = runtimeConfig.get("HACKERONE_USERNAME") || process.env.HACKERONE_USERNAME;
+    const token = runtimeConfig.get("HACKERONE_TOKEN") || process.env.HACKERONE_API_TOKEN;
     if (!username || !token) return [];
 
     try {

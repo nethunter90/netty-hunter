@@ -5,6 +5,7 @@
  */
 import axios from "axios";
 import logger from "../../utils/logger";
+import { runtimeConfig } from '../runtime-config';
 
 export interface SubmissionPayload {
   title: string;
@@ -54,8 +55,8 @@ class ReportSubmitter {
   }
 
   private async submitHackerOne(payload: SubmissionPayload): Promise<SubmissionResult> {
-    const username = process.env.HACKERONE_USERNAME;
-    const token = process.env.HACKERONE_API_TOKEN;
+    const username = runtimeConfig.get("HACKERONE_USERNAME") || process.env.HACKERONE_USERNAME;
+    const token = runtimeConfig.get("HACKERONE_TOKEN") || process.env.HACKERONE_API_TOKEN;
     if (!username || !token) {
       logger.warn("[ReportSubmitter] HackerOne credentials missing — report saved as draft only");
       return { success: false, platform: "hackerone", draftOnly: true, error: "Missing HACKERONE_USERNAME or HACKERONE_API_TOKEN" };
