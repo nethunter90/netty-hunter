@@ -187,6 +187,31 @@ export class MetaReasoner extends EventEmitter {
         }
       }
     });
+
+    // CNAME chain routes through a CDN edge node — shift to passive fingerprinting
+    // before running any aggressive payload templates against this host.
+    huntCortex.subscribe(SignalType.SHARED_INFRA_DETECTED, (signal: CortexSignal) => {
+      const { warning, url } = signal.payload as { warning?: string; url?: string };
+      if (signal.huntId) {
+        const state = this.huntStates.get(signal.huntId);
+        if (state && ['directory_fuzz', 'parameter_fuzz', 'sqli_test', 'xss_test'].includes(state.currentStrategy)) {
+          state.currentStrategy = 'tech_fingerprint'; // passive — fingerprint before exploiting CDN edge
+          this.emit('strategy:cdn_pivot', { huntId: signal.huntId, warning, url });
+        }
+      }
+    });
+
+    // Target is showing signs of fragility (high 5xx rate, latency spike) — shift
+    // from aggressive fuzzing to low-impact logic-flaw templates.
+    huntCortex.subscribe(SignalType.TARGET_FRAGILITY_HIGH, (signal: CortexSignal) => {
+      if (signal.huntId) {
+        const state = this.huntStates.get(signal.huntId);
+        if (state && ['directory_fuzz', 'parameter_fuzz', 'sqli_test'].includes(state.currentStrategy)) {
+          state.currentStrategy = 'api_enum'; // lower-impact, more precise
+          this.emit('strategy:fragility_pivot', { huntId: signal.huntId, payload: signal.payload });
+        }
+      }
+    });
   }
 
   private initializeStrategyGraph(): void {

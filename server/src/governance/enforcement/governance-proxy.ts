@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { AgentContract, NetworkRequest, GovernancePillar } from '../types';
 import { CoreGovernance } from '../core-governance';
+import { huntCortex, SignalType } from '../../lib/intelligence/hunt-cortex';
 
 /** TTL for scope-verification cache entries (ms). Keeps the 8-pillar check off
  *  the hot path for repeated requests to already-verified endpoints. */
@@ -10,6 +11,7 @@ interface ScopeCacheEntry {
   inScope: boolean;
   reason: string;
   expiresAt: number;
+  sharedInfraWarning?: string;
 }
 
 class ScopeVerifyCache {
@@ -23,9 +25,9 @@ class ScopeVerifyCache {
     return entry;
   }
 
-  set(hostname: string, huntId: string | undefined, inScope: boolean, reason: string, ttlMs = SCOPE_CACHE_TTL_MS): void {
+  set(hostname: string, huntId: string | undefined, inScope: boolean, reason: string, ttlMs = SCOPE_CACHE_TTL_MS, sharedInfraWarning?: string): void {
     const key = `${hostname}:${huntId ?? ''}`;
-    this.cache.set(key, { inScope, reason, expiresAt: Date.now() + ttlMs });
+    this.cache.set(key, { inScope, reason, expiresAt: Date.now() + ttlMs, sharedInfraWarning });
     // Evict stale entries lazily to bound memory growth
     if (this.cache.size > 2000) {
       const now = Date.now();
@@ -188,13 +190,25 @@ export class GovernanceProxy {
     const scopeCheck = cached ?? await this.governance.verifyScope(hostname, huntId);
     if (!cached && !isAlwaysAllowed) {
       // Cache the result so subsequent requests to this host skip the 8-pillar check
-      this.scopeCache.set(hostname, huntId, scopeCheck.inScope, scopeCheck.reason ?? '');
+      this.scopeCache.set(hostname, huntId, scopeCheck.inScope, scopeCheck.reason ?? '', SCOPE_CACHE_TTL_MS, scopeCheck.sharedInfraWarning);
     }
     if (!scopeCheck.inScope) {
       request.status = 'blocked';
       request.blockReason = 'Out of scope';
       this.logRequest(request);
       return { allowed: false, reason: `Out of scope: ${scopeCheck.reason}`, stealthDelay: 0, request };
+    }
+
+    // Emit a Cortex signal when the CNAME chain passes through a CDN edge node
+    // so the strategy layer can avoid firing aggressive payloads at shared infrastructure.
+    if (scopeCheck.sharedInfraWarning) {
+      void huntCortex.broadcast({
+        signalType: SignalType.SHARED_INFRA_DETECTED,
+        sourceSystem: 'GovernanceProxy',
+        huntId: huntId ?? null,
+        payload: { warning: scopeCheck.sharedInfraWarning, url },
+        confidence: 0.9,
+      });
     }
 
     let stealthDelay = 0;

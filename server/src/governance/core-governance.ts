@@ -142,6 +142,7 @@ export class CoreGovernance {
     inScope: boolean;
     reason: string;
     matchedRule?: string;
+    sharedInfraWarning?: string;
   }> {
     for (const allowed of ALWAYS_ALLOWED) {
       if (target.includes(allowed)) {
@@ -154,7 +155,7 @@ export class CoreGovernance {
 
     if (programId !== null) {
       const result = await scopeGuard.isInScope(target, programId);
-      return { inScope: result.allowed, reason: result.reason };
+      return { inScope: result.allowed, reason: result.reason, sharedInfraWarning: result.sharedInfraWarning };
     }
 
     return { inScope: true, reason: 'No program scope defined — open scope' };
