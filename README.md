@@ -36,7 +36,7 @@ All probers fire on the first observe pass in parallel, feeding hypotheses direc
 - **Host Header Probe** (`lib/tools/host-header-probe.ts`): Tests host reflection, password reset poisoning, X-Forwarded-Host cache poison, routing bypass via `localhost`; unique marker `hhi-${Date.now()}`; emits `hunt:host_header`
 - **CRLF Probe** (`lib/tools/crlf-probe.ts`): 5 CRLF payloads including `%0d%0a`, `%0a`, `%E5%98%8D%E5%98%8A`, `%23%0d`; detects `X-Injected: crlf-netty` header in response; header reflection = high, body reflection = medium; emits `hunt:crlf`
 - **Cookie Flag Checker** (`lib/tools/cookie-flag-checker.ts`): Probes GET base + POST login endpoints; parses `Set-Cookie` for HttpOnly/Secure/SameSite flags; session cookie detection by name heuristic (session/token/auth/jwt/sid/csrf); emits `hunt:cookie_flags`
-- **JS/SPA Crawler** (`lib/tools/js-spa-crawler.ts`): Playwright headless crawl with 30s timeout + regex fallback; extracts script srcs, applies 4 regex patterns to find API endpoints; generates misconfig/idor/hidden_endpoints hypotheses; emits `hunt:endpoints_discovered`
+- **JS/SPA Crawler** (`lib/tools/js-spa-crawler.ts`): Deep BFS multi-page Playwright crawl (maxDepth:2, maxPages:20) with same-origin link harvesting; regex fallback when Playwright unavailable; extracts script srcs, applies 4 regex patterns to find API endpoints across all visited pages; generates misconfig/idor/hidden_endpoints hypotheses; emits `hunt:endpoints_discovered` with `pagesVisited` count
 - **Backward Planner**: `planHunt()` called with goal `account_compromise`; first 2 phases × top 3 actions injected as hypotheses; emits `hunt:plan_seeded`
 - **Tech Payload Selector** (`lib/tools/tech-payload-selector.ts`): Normalizes WhatWeb output; covers Rails, Django, Laravel, Spring, Express, WordPress, GraphQL; injects tech-specific payloads as hypotheses; emits `hunt:tech_payloads`
 - **Parameter Discovery** (`lib/tools/parameter-discovery.ts`): 80-word embedded wordlist; batch GET (20 params/request) + batch POST JSON; binary search isolation; max 5 concurrent batches; emits `hunt:params_discovered`
@@ -168,7 +168,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 - **TimingEngine**: Decay-aware probe timing with anomaly score tracking
 - **SessionWarmup**: Pre-hunt session establishment to build baseline traffic profile; automatically triggered via `stealthCoordinator.runWarmup()` at the start of every `HunterEngine.startHunt()` call so WAF/CDN fingerprinting is pre-loaded before the first probe
 - **TrafficNormalizer**: URL and request normalization toward expected baseline
-- **Temporal Decay Engine**: Models how WAF/bot-management systems decay their anomaly memory over time; vendor profiles for Cloudflare, Akamai, AWS WAF, Imperva, F5 BIG-IP, and generic; per-session-domain history is capped at 500 entries per key and evicted after a 2-hour TTL when the Map exceeds 200 entries, preventing unbounded memory growth in long-running hunts
+- **Temporal Decay Engine**: Models how WAF/bot-management systems decay their anomaly memory over time; vendor profiles for Cloudflare, Akamai, AWS WAF, Imperva, F5 BIG-IP, and generic; per-session-domain history is capped at 100 entries per key (MAX_KEYS=500, MAX_ENTRIES_PER_KEY=100) using insertion-order LRU eviction, bounding peak memory to ~50K EvasionAttempt objects
 - **Payload Mutator** (`lib/tools/payload-mutator.ts`): WAF-bypass payload variants injected on gray-zone retries (retryCount > 0); injectable params detected from URL query string; mutated payload replaces the first injectable param
 
 **New operational stealth modules:**
@@ -194,12 +194,12 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 - **VerifierAgent**: 4-layer anti-hallucination pipeline — Dedup → HTTP Reprobe → Playwright Browser Replay → AI Confirmation; Layer 1 dedup preloads the 500 most-recent `dedupHash` values from DB on startup so the in-memory cache is warm after a process restart; runs exact SHA-256 hash first, then a SimHash near-duplicate pass — findings with Hamming distance ≤ 3 bits (same vuln class, similar endpoint/payload) are collapsed to one; Layer 4 AI response is scanned by PromptInjectionDetector before the parsed verdict is trusted
 - **Playwright Worker Thread** (`workers/playwright-worker.ts`): Layer 3 browser replay runs in a dedicated `worker_threads` Worker so Playwright's page lifecycle never blocks the main event loop during concurrent verifications
-- **SimHash Near-Duplicate Engine** (`lib/intelligence/simhash.ts`): 64-bit FNV-1a-based weighted shingle fingerprinting; catches near-duplicates the exact hash misses; Hamming-distance comparison across a bounded 5,000-entry ring buffer keeps memory flat across long hunts
+- **SimHash Near-Duplicate Engine** (`lib/intelligence/simhash.ts`): 64-bit FNV-1a-based weighted shingle fingerprinting; catches near-duplicates the exact hash misses; Hamming-distance comparison across a bounded 5,000-entry ring buffer keeps memory flat across long hunts; anchor includes sorted query parameter names so identical payloads on different parameters (e.g. `?q=` vs `?query=`) always produce distinct hashes
 - **ObservationCompressor** (`lib/intelligence/observation-compressor.ts`): historical state vector for context window management; once a session accumulates more than 20 observations the compressor retains the 8 most-recent observations verbatim and condenses older ones into a compact state vector; injected into `hypothesize()` above the raw observation block, keeping prompt length bounded across arbitrarily long hunts
 - **Public Disclosure Detector** (`lib/intelligence/public-disclosure-detector.ts`): Before a confirmed finding is submitted, checks whether the same vulnerability has already been publicly disclosed on the same program — calls HackerOne, Bugcrowd, and Intigriti APIs; `confirmed_duplicate` drops the finding; `likely_duplicate` passes through with warning; `skipped` when no API token configured
 - **Verification Lifecycle**: TTL-based finding staleness tracking; findings degrade over time if not re-verified, triggering automatic re-probe queues and cortex signals
 - **Hypothesis Conflict Detector**: Detects semantic conflicts between template intelligence overrides and empirical data
-- **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 5-minute cache
+- **ScopeGuard**: Fail-closed scope validation at every tool invocation — DB-backed, wildcard support, 30-second pattern cache (reduced from 5 minutes); cache is immediately invalidated via `invalidateCache()` on every program scope update so changes take effect on the next tool invocation
 
 ---
 
@@ -207,7 +207,7 @@ Two complementary stealth systems merged into one module — the existing WAF/be
 
 Pre-hunt and cross-hunt analytics for program selection, payout maximization, and duplicate avoidance. All data persisted to `server/workspace/bounty-intelligence/`.
 
-- **Program Fetcher**: Monitors bug bounty programs for scope changes, new targets, and rule updates
+- **Program Fetcher**: Monitors bug bounty programs for scope changes, new targets, and rule updates; `getRecentChanges(limit)` returns the most recent change records sorted by timestamp; surfaced in the Programs page "Changes" tab
 - **Cross-Campaign Learning**: Learns attack patterns across multiple campaigns — technique similarity detection, technology-specific playbook recommendations, and campaign outcome indexing
 - **Tool Synergy Engine**: Maps which tool combinations produce the highest finding rates for specific vulnerability types and target tech stacks
 - **Failure Prediction Engine**: ML-based prediction of tool and technique failure modes based on historical execution data
@@ -222,6 +222,7 @@ Pre-hunt and cross-hunt analytics for program selection, payout maximization, an
 - **Persisted API Keys**: `GET /api/settings` returns all saved keys from `reinforcementStore` where `domain = 'settings'`; `POST /api/settings` upserts key/value pairs AND immediately injects into `process.env` so running services pick up changes without restart
 - **Allowed Keys**: `HACKERONE_USERNAME`, `HACKERONE_TOKEN`, `BUGCROWD_TOKEN`, `INTIGRITI_TOKEN`, `YESWEHACK_TOKEN`, `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`, `NOTIFY_WEBHOOK_URL`, `NVD_API_KEY`, `OOB_HOST`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
 - **Startup Loading**: All settings are loaded from DB into `process.env` at server startup before any route handlers run
+- **Runtime Config Isolation**: `runtimeConfig.get(key)` is the canonical read path for all config consumers — `nvd-client`, `report-submitter`, `public-disclosure-detector`, and `layer6-ai-bridge` all use `runtimeConfig.get()` with `process.env` as startup fallback, preventing settings UI changes from racing with in-flight hunts via shared global state
 - **Settings UI**: `client/src/pages/Settings.tsx` — three groups (Platforms, Notifications, Intelligence); password fields with Eye/EyeOff reveal toggle; saved checkmark indicator per field; linked to `/settings` route in ActivityBar
 
 ---
@@ -286,7 +287,8 @@ workspace/
 
 #### AI Reasoning Knowledge Base
 
-- **JsonPromptLoader**: Singleton prompt knowledge base with semantic retrieval via `nomic-embed-text` embeddings — pre-computes 768-dim embeddings for all 1,785 prompt entries at startup, caches to disk, and retrieves the 7 most contextually relevant examples per hypothesis cycle via cosine similarity
+- **JsonPromptLoader**: Singleton prompt knowledge base with semantic retrieval via `nomic-embed-text` embeddings — pre-computes 768-dim embeddings for all 1,785 static prompt entries at startup, caches to disk, and retrieves the 7 most contextually relevant examples per hypothesis cycle via cosine similarity; additionally loads up to 500 most-recent rows from the `scraped_intelligence` DB table at startup so real-world writeup context automatically enriches every hypothesis call
+- **WriteupScraper** (`lib/intelligence/writeup-scraper.ts`): Pulls public bug bounty intelligence into the `scraped_intelligence` DB table — HackerOne disclosed reports via the public GraphQL API (no auth required), NIST NVD CVE records via `nvdClient.lookupByKeyword()` across 10 web-security keyword categories; scheduled automatically 30 seconds after server start then every 24 hours; manual trigger via `POST /api/intelligence/scrape-writeups`; status via `GET /api/intelligence/scraped-count`
 - **18 Prompt Datasets (1,785 total entries)**:
   - kali-tool-reasoning — tool selection and execution reasoning (100)
   - kali-tool-interpretation — tool output interpretation (100)
@@ -311,8 +313,9 @@ workspace/
 
 #### Observability
 
+- **AI Reasoning Visibility** (`hunt:ai_reasoning` events): Real-time window into the AI's decision-making at every LLM call during a hunt — three phases per call: `thinking` (emitted before the model call, includes truncated prompt preview and context stats), `complete` (emitted after, includes raw model response with DeepSeek `<think>...</think>` chain-of-thought parsed separately), and `decision` (non-LLM strategic moments such as backward planner seeding and strategy updates); forwarded from HunterEngine through Socket.IO to the frontend activity feed
 - **Live Reasoning Observability**: Real-time window into the Hunter Engine's thinking — hypothesis rankings, active probe status, conflict annotations, temporal decay status, active intelligence sources, and mental model state
-- **Real-time Socket.IO Events**: All agent events streamed to subscribed frontend rooms — hunt phases, observations, hypotheses, probes, findings, orchestration layer transitions, meta-reasoner decisions, OOB hits, secret discoveries, GraphQL schema maps, exploit chain seeding, strategy pivots
+- **Real-time Socket.IO Events**: All agent events streamed to subscribed frontend rooms — hunt phases, observations, hypotheses, probes, findings, orchestration layer transitions, meta-reasoner decisions, OOB hits, secret discoveries, GraphQL schema maps, exploit chain seeding, strategy pivots, AI reasoning phases
 
 ---
 
@@ -372,13 +375,14 @@ Real-time typed event stream with distinct visual treatment per event type — r
 | `jwt_vulns` | Purple code, technique chips |
 | `open_redirect` | Yellow globe, chained count badge |
 | `xxe_found` | Red target, OOB CONFIRMED pulsing badge |
+| `ai_reasoning` | Purple Brain icon; phase badges: THINKING (yellow) / COMPLETE (green) / DECISION (cyan); collapsible — THINKING shows truncated prompt preview, COMPLETE shows raw model response with DeepSeek `<think>` chain-of-thought parsed separately in dim italic |
 
 Auto-scrolls to bottom on new events; `▸ scanning…` pulse when hunt is running but idle for >3s.
 
 #### Pages & Features
 
 - **Dashboard**: ROI charts, autonomy metrics, recent findings
-- **Programs**: Scope configuration; per-program auth config modal (form/basic/bearer login credentials stored as JSONB); schedule interval dropdown (disabled / 4h / 8h / 12h / daily / 2d / weekly) — triggers automatic re-scans via the 15-minute scheduler loop
+- **Programs**: Tab layout — "Programs" (scope config, per-program auth modal, schedule dropdown) and "Changes" (color-coded scope/bounty change feed from ProgramFetcher history; green = scope added, red = removed, yellow = policy/bounty change); schedule interval dropdown (disabled / 4h / 8h / 12h / daily / 2d / weekly) triggers automatic re-scans via the 15-minute scheduler loop
 - **Hunt Console**: Session manager with Attack Path Visualizer, WAF Intel tab, Reports tab; socket listeners for all 30+ real-time hunt events
 - **Findings**: 4-layer verification workflow; inline editing of title/severity/description/impact; bulk selection with verify-all and export-selected; CSV/JSON export via `GET /api/hunt/findings/export`
 - **Intelligence**: Autonomy radar charts, RL stats, WAF profiles, exploit chains
@@ -407,7 +411,8 @@ Auto-scrolls to bottom on new events; `▸ scanning…` pulse when hunt is runni
 | `GET/POST /api/juiceshop/*` | Juice Shop Docker lifecycle (spawn/stop/status), challenge list, benchmark run (hardcoded/adaptive/hybrid), abort, run history |
 | `GET/POST /api/xbow/*` | XBOW CTF Docker lifecycle (status, clone-repo), challenge list, benchmark run/abort, run history |
 | `GET/POST /api/graph/*` | Offensive graph nodes/edges, shortest path, per-hunt summaries |
-| `GET/POST /api/intelligence/*` | Playbooks, tool selection, strategy planning, attack paths, MITRE techniques, pivot evaluation |
+| `GET/POST /api/intelligence/*` | Playbooks, tool selection, strategy planning, attack paths, MITRE techniques, pivot evaluation, `POST /scrape-writeups` (trigger HackerOne+NVD scrape), `GET /scraped-count` (DB row count + last scrape time) |
+| `GET /api/bounty-intelligence/programs/changes/recent` | Recent program scope/bounty/policy change records from ProgramFetcher; `?limit=N` param |
 | `GET/POST /api/settings` | Read/write API keys and integration secrets; live `process.env` injection on write |
 | `GET /api/governance/stats` | Governance decision counts by pillar/verdict/risk |
 | `GET /api/governance/pillars` | All 8 pillar definitions |
@@ -508,20 +513,20 @@ All optional keys can also be set via the **Settings UI** (`/settings`) without 
 
 ## Security Tools Integration
 
-The platform integrates with 39 Kali Linux security tools across 8 categories:
+The platform auto-discovers all installed Kali Linux tools via a static catalog of 100+ tools (`server/src/lib/hunter/kali-catalog.ts`) — install a tool and it becomes available on the next hunt start without any configuration. HunterEngine's `loadCustomTools()` runs `which <binary>` at hunt start time and loads only installed tools into the active tool set alongside the 12 hardcoded `TOOL_KNOWLEDGE` entries. The catalog covers:
 
-| Category | Tools |
+| Category | Representative Tools |
 |---|---|
-| Recon | nmap, amass, subfinder, assetfinder, httpx |
-| Fuzzing | ffuf, gobuster, feroxbuster, dirsearch, wfuzz |
-| Vulnerability | nuclei, nikto, whatweb, wapiti |
-| Injection | sqlmap, commix, xsstrike, dalfox |
-| Auth | hydra, medusa, patator |
-| Network | masscan, zmap, netcat |
-| Exploitation | metasploit, searchsploit |
-| Misc | curl, wget, jq, git |
+| Recon | subfinder, amass, dnsx, assetfinder, findomain, gau, waybackurls, hakrawler, gospider, katana, wafw00f, dnsrecon, fierce, theHarvester, masscan |
+| Scanning | nuclei, nikto, wapiti, skipfish, wpscan, joomscan, testssl, sslscan, sslyze, zaproxy |
+| Fuzzing | ffuf, gobuster, feroxbuster, dirsearch, wfuzz, dirb, arjun, crlfuzz, gf |
+| Exploitation | sqlmap, dalfox, commix, xsstrike, tplmap, corsy, nosqlmap, xsser, ssrfmap, jwt_tool, smuggler |
+| Web | httpx, httprobe, whatweb, linkfinder, secretfinder, trufflehog, cewl, shodan, whatwaf, nomore403, 403bypass |
+| Credential | hydra, medusa, ncrack, patator, john, hashcat, brutespray |
+| Network | nmap, nc, socat, enum4linux, smbclient, arp-scan, tcpdump |
+| Reporting | reconftw, metabigor, searchsploit, gitrob, gitleaks |
 
-All tools are executed through the **Tool Runner** stealth layer — each invocation gets per-tool stealth flags, timing profile delays, and optional proxy routing based on the active stealth mode. Tool availability is queryable live via `GET /api/bounty/tools/readiness`.
+The **Tools page** is a catalog browser — grouped by category, install badge (green ✓ / red ✗), binary name, stealth chip, risk level, description, and command template preview. Uninstalled tools show `apt install <binary>` hint text. All tools are executed through the **Tool Runner** stealth layer — each invocation gets per-tool stealth flags, timing profile delays, and optional proxy routing based on the active stealth mode.
 
 In addition to CLI tools, the following **in-process probers** run on the first observe pass of every hunt (no CLI binary required):
 
