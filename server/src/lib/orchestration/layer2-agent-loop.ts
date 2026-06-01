@@ -870,6 +870,13 @@ export class AgentLoop {
   private liftFragilityClamp(huntId: string): void {
     this.huntFragilityClamp.delete(huntId);
     console.log(`[AgentLoop] Fragility clamp LIFTED for ${huntId} — target latency normalized`);
+    huntCortex.broadcast({
+      signalType: SignalType.TARGET_FRAGILITY_CLEARED,
+      sourceSystem: 'layer2-agent-loop',
+      huntId,
+      payload: { clearedAt: Date.now() },
+      confidence: 1.0,
+    }).catch(() => {});
   }
 
   private subscribeToEvents(agent: Agent): void {

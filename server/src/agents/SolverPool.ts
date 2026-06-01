@@ -18,6 +18,7 @@ import { solverResults } from "../db/schema";
 import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
 import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
 import { dynamicRateLimiter } from "../lib/stealth";
+import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
 
 const execAsync = promisify(exec);
 
@@ -808,10 +809,55 @@ function summariseObservations(raw: Record<string, unknown>, maxChars = 1200): s
   return JSON.stringify(condensed, null, 2).slice(0, maxChars);
 }
 
+// ─── Fragility-aware dispatch ─────────────────────────────────────────────────
+
+const AGGRESSIVE_VULN_CLASSES = new Set<VulnClass>([
+  'sqli', 'rce', 'lfi', 'rfi', 'xss', 'xxe', 'ssrf',
+  'auth_bypass', 'rate_limit_bypass', 'idor',
+]);
+
+const PASSIVE_PLAYBOOK: Array<{ vulnClass: VulnClass; priority: number; reasoning: string }> = [
+  { vulnClass: 'misconfig',        priority: 7, reasoning: 'Change-detection sweep against historical baselines — no active payload fuzzing required' },
+  { vulnClass: 'info_disclosure',  priority: 6, reasoning: 'Passive JS/SPA endpoint harvest from already-fetched scripts' },
+  { vulnClass: 'cors',             priority: 5, reasoning: 'Single-request CORS header check — minimal target load' },
+  { vulnClass: 'security_headers', priority: 5, reasoning: 'Response-header audit from a single benign GET — zero additional load' },
+];
+
+// Module-level set shared across all SolverPool instances; subscriptions registered once.
+const fragileHuntIds = new Set<string>();
+
+huntCortex.subscribe(SignalType.TARGET_FRAGILITY_HIGH, (signal) => {
+  if (signal.huntId) {
+    fragileHuntIds.add(signal.huntId);
+    logger.info('[SolverPool] Fragility clamp received — passive-only mode active', { huntId: signal.huntId });
+  }
+});
+
+huntCortex.subscribe(SignalType.TARGET_FRAGILITY_CLEARED, (signal) => {
+  if (signal.huntId) {
+    fragileHuntIds.delete(signal.huntId);
+    logger.info('[SolverPool] Fragility clamp cleared — full dispatch restored', { huntId: signal.huntId });
+  }
+});
+
 class StrategyCoordinator {
   private modelRouter = ModelRouter.getInstance();
 
-  async dispatch(endpoint: string, observations: Record<string, unknown>): Promise<SolverTask[]> {
+  async dispatch(endpoint: string, observations: Record<string, unknown>, huntId?: string): Promise<SolverTask[]> {
+    if (huntId && fragileHuntIds.has(huntId)) {
+      logger.info('[StrategyCoordinator] Hunt fragile — passive playbook active', { huntId, endpoint });
+      return PASSIVE_PLAYBOOK.map(p => ({
+        id: uuidv4(),
+        endpoint,
+        vulnClass: p.vulnClass,
+        programId: 0,
+        sessionId: 0,
+        priority: p.priority,
+        confidence: 0.55,
+        context: { reasoning: p.reasoning, observations, fragile: true },
+      }));
+    }
+
     const prompt = `You are a bug bounty strategy coordinator analyzing an endpoint.
 
 Endpoint: ${endpoint}
@@ -881,6 +927,7 @@ export class SolverPool extends EventEmitter {
     options: {
       programId: number;
       sessionId: number;
+      huntId?: string;
       /** Shared budget object — requestsMade is mutated in place so callers see live totals */
       budget?: { maxRequests: number; requestsMade: number };
     } = { programId: 0, sessionId: 0 }
@@ -894,7 +941,7 @@ export class SolverPool extends EventEmitter {
     logger.info("SolverPool: Spawning solvers", { endpoint });
 
     // Strategy Coordinator decides what to test
-    const tasks = await this.coordinator.dispatch(endpoint, observations);
+    const tasks = await this.coordinator.dispatch(endpoint, observations, options.huntId);
     tasks.forEach(t => { t.programId = options.programId; t.sessionId = options.sessionId; });
 
     this.emit("solvers:spawned", { count: tasks.length, endpoint });
@@ -912,6 +959,19 @@ export class SolverPool extends EventEmitter {
             taskId: task.id,
             vulnClass: task.vulnClass,
             requestsMade: options.budget.requestsMade,
+          });
+          return null;
+        }
+
+        // Fragility dequeue gate: skip aggressive tasks queued before the clamp activated.
+        // Mirrors the budget-guard pattern above — abort cleanly rather than fire probes that
+        // Layer 2 will throttle or drop.
+        if (options.huntId && fragileHuntIds.has(options.huntId) && AGGRESSIVE_VULN_CLASSES.has(task.vulnClass)) {
+          this.activeJobs.delete(task.id);
+          logger.info('[SolverPool] Fragility clamp — skipping aggressive solver at dequeue', {
+            huntId: options.huntId,
+            vulnClass: task.vulnClass,
+            taskId: task.id,
           });
           return null;
         }
