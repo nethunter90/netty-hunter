@@ -6,6 +6,7 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import type { Finding, Severity } from './types';
+import { offensiveGraphDB } from '../intelligence/offensive-graph-db';
 
 export interface BugReport {
   id:         string;
@@ -65,9 +66,11 @@ class ReportGeneratorStore {
     return this.reports.get(sessionId)!;
   }
 
-  generateReport(finding: Finding, platform: string): BugReport {
+  async generateReport(finding: Finding, platform: string, huntId?: string): Promise<BugReport> {
     const description = VULN_DESCRIPTIONS[finding.vulnClass] ?? `${finding.vulnClass} vulnerability found.`;
     const title = `${SEVERITY_TITLE[finding.severity]} ${finding.vulnClass.toUpperCase()} at ${finding.endpoint}`;
+
+    const chainSection = huntId ? await this.buildExploitChainSection(huntId, finding) : '';
 
     const markdown = `# ${title}
 
@@ -84,7 +87,7 @@ A ${finding.severity} severity ${finding.vulnClass} vulnerability was identified
 
 ## Impact
 ${this.buildImpact(finding)}
-
+${chainSection}
 ## Evidence
 \`\`\`
 ${JSON.stringify(finding.evidence, null, 2).slice(0, 500)}
@@ -117,10 +120,59 @@ ${this.buildRemediation(finding.vulnClass)}
     return report;
   }
 
-  generateBatchReports(findings: Finding[], platform: string): BugReport[] {
-    return findings
-      .filter(f => f.verificationStatus === 'confirmed')
-      .map(f => this.generateReport(f, platform));
+  async generateBatchReports(findings: Finding[], platform: string, huntId?: string): Promise<BugReport[]> {
+    const confirmed = findings.filter(f => f.verificationStatus === 'confirmed');
+    return Promise.all(confirmed.map(f => this.generateReport(f, platform, huntId)));
+  }
+
+  private async buildExploitChainSection(huntId: string, finding: Finding): Promise<string> {
+    try {
+      const vulnNode = offensiveGraphDB.findNode(huntId, 'vulnerability', finding.vulnClass);
+      if (!vulnNode) return '';
+
+      // BFS along chains_to edges up to depth 4
+      const huntEdges = offensiveGraphDB.getHuntEdges(huntId);
+      const chainEdges = huntEdges.filter(e => e.relationship === 'chains_to');
+      if (chainEdges.length === 0) return '';
+
+      const edgesBySource = new Map<string, typeof chainEdges>();
+      for (const e of chainEdges) {
+        if (!edgesBySource.has(e.sourceId)) edgesBySource.set(e.sourceId, []);
+        edgesBySource.get(e.sourceId)!.push(e);
+      }
+
+      interface ChainStep { label: string; nodeType: string; reasoning: string }
+      const steps: ChainStep[] = [{ label: finding.vulnClass, nodeType: 'vulnerability', reasoning: 'Initial foothold' }];
+      let currentId = vulnNode.id;
+      const visited = new Set<string>([currentId]);
+
+      for (let depth = 0; depth < 4; depth++) {
+        const nexts = edgesBySource.get(currentId);
+        if (!nexts || nexts.length === 0) break;
+        const next = nexts[0];
+        if (visited.has(next.targetId)) break;
+        visited.add(next.targetId);
+        const targetNode = offensiveGraphDB.getNode(next.targetId);
+        if (!targetNode) break;
+        steps.push({
+          label:     targetNode.label,
+          nodeType:  targetNode.nodeType,
+          reasoning: (next.properties?.reasoning as string) || '',
+        });
+        currentId = next.targetId;
+      }
+
+      if (steps.length < 2) return '';
+
+      const stepLines = steps.map((step, i) => {
+        const arrow = i < steps.length - 1 ? '\n   ↓ *chains to*' : '';
+        return `${i + 1}. **\`${step.label}\`** *(${step.nodeType})*${step.reasoning ? ' — ' + step.reasoning : ''}${arrow}`;
+      }).join('\n');
+
+      return `\n## Exploit Chain\n\nThis vulnerability is the entry point to a **${steps.length}-hop attack chain** identified during the hunt:\n\n${stepLines}\n\n> Triage note: steps 2+ represent implied next-hop surfaces based on graph-mapped pivot relationships. Verify independently before escalating.\n`;
+    } catch {
+      return '';
+    }
   }
 
   getReports(sessionId: string): BugReport[] {

@@ -435,14 +435,14 @@ router.get('/sessions/:id/reports/:reportId', (req, res) => {
   res.json({ report });
 });
 
-router.post('/sessions/:id/reports/generate', (req, res) => {
+router.post('/sessions/:id/reports/generate', async (req, res) => {
   const id = req.params.id as string;
   const platform = req.body.platform || 'generic';
   const session = hunterEngine.getSessionStats(id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
   const findings = hunterEngine.getSessionFindings(id);
   if (!findings || findings.length === 0) return res.json({ reports: [], message: 'No findings to report' });
-  const reports = reportGenerator.generateBatchReports(findings, platform);
+  const reports = await reportGenerator.generateBatchReports(findings, platform, id);
   res.json({ reports: reports.map(r => ({ id: r.id, title: r.title, severity: r.severity, platform: r.platform, wordCount: r.wordCount })), count: reports.length });
 });
 
