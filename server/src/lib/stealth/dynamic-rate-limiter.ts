@@ -67,6 +67,7 @@ class DynamicRateLimiter {
   private buckets: Map<string, RateBucket> = new Map();
   private targetBuckets: Map<string, RateBucket> = new Map();
   private burstHistory: Map<string, number[]> = new Map();
+  private hardBanCallbacks: Array<(target: string, durationMs: number) => void> = [];
   private stats = {
     totalChecks: 0,
     totalThrottles: 0,
@@ -548,6 +549,8 @@ class DynamicRateLimiter {
           consecutive403s: targetBucket.backoff.consecutive403s,
           until: new Date(targetBucket.hardBan.until).toISOString(),
         });
+
+        this.hardBanCallbacks.forEach(cb => { try { cb(target, banMs); } catch {} });
       }
     } else if (statusCode >= 200 && statusCode < 400) {
       if (bucket.backoff.consecutive429s > 0) {
@@ -597,6 +600,10 @@ class DynamicRateLimiter {
   isHardBanned(target: string): boolean {
     const b = this.targetBuckets.get(target);
     return !!b && b.hardBan.active && b.hardBan.until > Date.now();
+  }
+
+  onHardBan(cb: (target: string, durationMs: number) => void): void {
+    this.hardBanCallbacks.push(cb);
   }
 
   // ─── Utility ───

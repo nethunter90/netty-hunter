@@ -297,6 +297,56 @@ export const scrapedIntelligence = pgTable("scraped_intelligence", {
   sourceUrlIdx: uniqueIndex("scraped_source_url_idx").on(t.sourceUrl),
 }));
 
+// ─── Governance Baselines ─────────────────────────────────────────────────────
+// Immutable frozen policy baseline used by GovernanceImmunizer for drift enforcement.
+// Created once on first startup; never overwritten by runtime operations.
+export const governanceBaselines = pgTable('governance_baselines', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  hash: text('hash').notNull(),
+  baseline: jsonb('baseline').notNull(),
+  active: boolean('active').default(true).notNull(),
+});
+
+// ─── Governance Snapshots ─────────────────────────────────────────────────────
+// DB-persisted governance state snapshots for watchdog continuity across restarts.
+export const governanceSnapshots = pgTable('governance_snapshots', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  snapshotType: varchar('snapshot_type', { length: 20 }).notNull(), // auto|manual|rollback
+  snapshot: jsonb('snapshot').notNull(),
+}, (t) => ({
+  createdAtIdx: index('gov_snapshots_created_at_idx').on(t.createdAt),
+}));
+
+// ─── Immunization Events ──────────────────────────────────────────────────────
+// Audit trail for every governance immunization check and enforcement action.
+export const immunizationEvents = pgTable('immunization_events', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  timestamp: timestamp('timestamp').defaultNow().notNull(),
+  triggeredBy: text('triggered_by').notNull(),
+  action: varchar('action', { length: 20 }).notNull(), // none|warn|clamp|full_reset
+  baselineId: varchar('baseline_id', { length: 64 }).notNull(),
+  driftSummary: jsonb('drift_summary').notNull(),
+  remediationApplied: jsonb('remediation_applied'),
+});
+
+// ─── Egress Route Metrics ─────────────────────────────────────────────────────
+// Per-proxy-per-target health and burn state for dynamic egress route allocation.
+export const egressRouteMetrics = pgTable('egress_route_metrics', {
+  id: varchar('id', { length: 64 }).primaryKey(),
+  proxyId: varchar('proxy_id', { length: 64 }).notNull(),
+  target: text('target').notNull(),
+  successCount: integer('success_count').default(0).notNull(),
+  failureCount: integer('failure_count').default(0).notNull(),
+  avgLatencyMs: real('avg_latency_ms').default(0).notNull(),
+  lastUsedAt: timestamp('last_used_at'),
+  burned: boolean('burned').default(false).notNull(),
+  bannedUntil: timestamp('banned_until'),
+}, (t) => ({
+  proxyTargetIdx: uniqueIndex('egress_proxy_target_idx').on(t.proxyId, t.target),
+}));
+
 // ─── Mission Memory Snapshots ─────────────────────────────────────────────────
 // Durable write-through store for MissionMemoryStore, keyed by the hunt/session UUID.
 // Replaces /tmp filesystem snapshots — survives container restarts and redeploys.

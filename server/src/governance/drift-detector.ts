@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import type { Pool } from 'pg';
 import {
   GovernanceSnapshot,
   DriftAnalysis,
@@ -13,6 +14,7 @@ export class DriftDetector {
   private configChanges: Array<{ timestamp: Date; change: string; severity: 'low' | 'medium' | 'high' | 'critical' }> = [];
   private snapshotInterval: ReturnType<typeof setInterval> | null = null;
   private snapshotProvider: (() => GovernanceSnapshot) | null = null;
+  private postSnapshotCallback?: (snap: GovernanceSnapshot) => void;
 
   constructor() {}
 
@@ -34,6 +36,29 @@ export class DriftDetector {
     }
   }
 
+  setPostSnapshotCallback(cb: (snap: GovernanceSnapshot) => void): void {
+    this.postSnapshotCallback = cb;
+  }
+
+  async loadSnapshotsFromDB(dbPool: Pool): Promise<void> {
+    try {
+      const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+      const { rows } = await dbPool.query(
+        `SELECT snapshot FROM governance_snapshots
+         WHERE created_at > $1 ORDER BY created_at ASC`,
+        [cutoff]
+      );
+      for (const row of rows) {
+        this.snapshots.push(row.snapshot as GovernanceSnapshot);
+      }
+      if (this.snapshots.length > 1000) {
+        this.snapshots = this.snapshots.slice(-500);
+      }
+    } catch {
+      // DB may not be ready yet — non-critical
+    }
+  }
+
   takeSnapshot(): GovernanceSnapshot {
     if (this.snapshotProvider) {
       const snapshot = this.snapshotProvider();
@@ -41,6 +66,7 @@ export class DriftDetector {
       if (this.snapshots.length > 1000) {
         this.snapshots = this.snapshots.slice(-500);
       }
+      this.postSnapshotCallback?.(snapshot);
       return snapshot;
     }
 
@@ -66,6 +92,7 @@ export class DriftDetector {
     }
 
     this.snapshots.push(snapshot);
+    this.postSnapshotCallback?.(snapshot);
     return snapshot;
   }
 

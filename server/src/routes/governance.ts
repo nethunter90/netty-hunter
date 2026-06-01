@@ -8,6 +8,9 @@ import {
   selfAttestationService
 } from '../governance';
 import { getAllPillars } from '../governance/pillars';
+import { governanceImmunizer } from '../lib/governance/governance-immunizer';
+import { egressAllocator } from '../lib/stealth/egress-route-allocator';
+import { pool } from '../db';
 import type {
   GovernanceVerdict,
   GovernancePillar,
@@ -134,6 +137,64 @@ router.get('/attestations', (req, res) => {
 
 router.get('/attestations/agent/:agentId', (req, res) => {
   res.json(selfAttestationService.getAgentAttestationSummary(req.params.agentId));
+});
+
+// ─── Governance Immunizer ─────────────────────────────────────────────────────
+
+router.get('/immunizer/status', (_req, res) => {
+  res.json(governanceImmunizer.getStatus());
+});
+
+router.post('/immunizer/check', async (_req, res) => {
+  try {
+    const analysis = driftDetector.analyze(3_600_000, 86_400_000);
+    const result = await governanceImmunizer.runImmunizationCheck(analysis);
+    res.json({ analysis, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/immunizer/events', async (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+  try {
+    const result = await pool.query(
+      `SELECT * FROM immunization_events ORDER BY timestamp DESC LIMIT $1`,
+      [limit]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Governance Snapshots ─────────────────────────────────────────────────────
+
+router.post('/snapshots/manual', async (_req, res) => {
+  try {
+    const snapshot = driftDetector.takeSnapshot();
+    const id = await governanceImmunizer.persistSnapshot(snapshot, 'manual');
+    res.json({ id, snapshot });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/snapshots/persisted', async (req, res) => {
+  try {
+    const type = req.query.type as string | undefined;
+    const snapshot = await governanceImmunizer.loadLatestSnapshot(type);
+    if (!snapshot) return res.status(404).json({ error: 'No snapshot found' });
+    return res.json(snapshot);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Egress Route Pool ────────────────────────────────────────────────────────
+
+router.get('/egress/status', (_req, res) => {
+  res.json(egressAllocator.getPoolStatus());
 });
 
 export default router;

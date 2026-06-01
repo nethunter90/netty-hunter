@@ -22,6 +22,41 @@ pool.connect().then(client => {
     CREATE UNIQUE INDEX IF NOT EXISTS mission_memory_hunt_id_idx
       ON mission_memory_snapshots (hunt_id);
     ALTER TABLE programs ADD COLUMN IF NOT EXISTS schedule_interval INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS governance_baselines (
+      id VARCHAR(64) PRIMARY KEY,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      hash TEXT NOT NULL,
+      baseline JSONB NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE
+    );
+    CREATE TABLE IF NOT EXISTS governance_snapshots (
+      id VARCHAR(64) PRIMARY KEY,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      snapshot_type VARCHAR(20) NOT NULL,
+      snapshot JSONB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS gov_snapshots_created_at_idx ON governance_snapshots (created_at);
+    CREATE TABLE IF NOT EXISTS immunization_events (
+      id VARCHAR(64) PRIMARY KEY,
+      timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+      triggered_by TEXT NOT NULL,
+      action VARCHAR(20) NOT NULL,
+      baseline_id VARCHAR(64) NOT NULL,
+      drift_summary JSONB NOT NULL,
+      remediation_applied JSONB
+    );
+    CREATE TABLE IF NOT EXISTS egress_route_metrics (
+      id VARCHAR(64) PRIMARY KEY,
+      proxy_id VARCHAR(64) NOT NULL,
+      target TEXT NOT NULL,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      avg_latency_ms REAL NOT NULL DEFAULT 0,
+      last_used_at TIMESTAMP,
+      burned BOOLEAN NOT NULL DEFAULT FALSE,
+      banned_until TIMESTAMP,
+      CONSTRAINT egress_proxy_target_uniq UNIQUE (proxy_id, target)
+    );
   `).catch(() => { /* non-critical: table may already exist */ })
     .finally(() => client.release());
 }).catch(() => { /* DB not yet available; pool will retry on first real query */ });

@@ -1,4 +1,5 @@
 import { stealthLogger } from './stealth-logger';
+import { egressAllocator } from './egress-route-allocator';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -155,7 +156,18 @@ class ToolRunner {
     return modified;
   }
 
-  generatePlan(tool: string, target: string, mode: string, proxyUrl?: string): ExecutionPlan {
+  generatePlan(tool: string, target: string, mode: string, proxyUrlOrHuntId?: string): ExecutionPlan {
+    // proxyUrlOrHuntId: if it looks like a URL, use it directly (backwards compat);
+    // if it looks like a hunt/session ID, allocate a route via the egress allocator
+    let proxyUrl: string | undefined;
+    if (proxyUrlOrHuntId) {
+      if (proxyUrlOrHuntId.startsWith('http') || proxyUrlOrHuntId.startsWith('socks')) {
+        proxyUrl = proxyUrlOrHuntId;
+      } else {
+        const allocated = egressAllocator.allocate(target, tool, proxyUrlOrHuntId);
+        proxyUrl = allocated.proxyUrl ?? undefined;
+      }
+    }
     const normalized = tool.toLowerCase();
     let effectiveMode = mode;
     if (effectiveMode === 'balanced' && this.activeProgramId) {

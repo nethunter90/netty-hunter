@@ -6,6 +6,8 @@ import { DriftDetector } from './drift-detector';
 import { DesktopAgentGovernance } from './enforcement/desktop-agent-governance';
 import { PromptInjectionDetector } from './enforcement/prompt-injection-detector';
 import { GovernanceProxy } from './enforcement/governance-proxy';
+import { governanceImmunizer } from '../lib/governance/governance-immunizer';
+import { pool } from '../db';
 
 export const coreGovernance = new CoreGovernance();
 export const decisionLogger = new DecisionLogger();
@@ -40,6 +42,19 @@ driftDetector.setSnapshotProvider(() => {
 });
 
 driftDetector.startAutoSnapshot(300000);
+
+// Persist every auto-snapshot to DB for watchdog continuity across restarts
+driftDetector.setPostSnapshotCallback((snap) => {
+  governanceImmunizer.persistSnapshot(snap, 'auto').catch(() => {});
+});
+
+// Initialize frozen baseline, start 90s watchdog, and warm snapshot buffer from DB
+governanceImmunizer.initialize().then(() => {
+  governanceImmunizer.startWatchdog(driftDetector);
+  driftDetector.loadSnapshotsFromDB(pool).catch(() => {});
+}).catch((err: unknown) => {
+  console.error('[GovernanceImmunizer] initialization failed:', err);
+});
 
 export {
   CoreGovernance,
