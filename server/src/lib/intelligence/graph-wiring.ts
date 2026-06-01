@@ -109,6 +109,20 @@ class GraphWiring {
         });
       }
     }
+
+    // Create chains_to edges: each confirmed vuln implies a next-hop attack surface.
+    // addNode() is idempotent (nodesByLabel O(1) lookup) — safe to call unconditionally.
+    const pivots = mapVulnToPivots(vuln.type || '');
+    for (const pivot of pivots) {
+      const pivotNode = await offensiveGraphDB.addNode(huntId, 'technique', pivot.label, {
+        confidence: pivot.confidence,
+        properties: { impliedBy: vuln.type, pivot: true },
+      });
+      await offensiveGraphDB.addEdge(huntId, vulnNode.id, pivotNode.id, 'chains_to', {
+        weight: SEVERITY_WEIGHT[vuln.severity] || 2,
+        properties: { vulnClass: vuln.type, reasoning: pivot.reasoning },
+      });
+    }
   }
 
   private async onToolCompleted(event: AgentEvent): Promise<void> {
@@ -300,6 +314,20 @@ class GraphWiring {
 const SEVERITY_WEIGHT: Record<string, number> = {
   critical: 5, high: 4, medium: 3, low: 2, info: 1,
 };
+
+interface PivotHint { label: string; confidence: number; reasoning: string }
+
+function mapVulnToPivots(vulnType: string): PivotHint[] {
+  const lc = vulnType.toLowerCase();
+  if (lc.includes('ssrf'))          return [{ label: 'internal_network', confidence: 0.8, reasoning: 'SSRF opens internal attack surface for further enumeration' }];
+  if (lc.includes('sql') || lc.includes('sqli')) return [{ label: 'credential_dump', confidence: 0.75, reasoning: 'DB access enables credential harvest for lateral movement' }];
+  if (lc.includes('lfi') || lc.includes('path traversal')) return [{ label: 'credential_dump', confidence: 0.7, reasoning: 'Config/passwd file read may expose credentials' }];
+  if (lc.includes('rce') || lc.includes('remote code')) return [{ label: 'privilege_escalation', confidence: 0.85, reasoning: 'Shell access enables privilege escalation attempts' }];
+  if (lc.includes('idor') || lc.includes('insecure direct')) return [{ label: 'account_takeover', confidence: 0.75, reasoning: 'IDOR over user ID can chain to full account takeover' }];
+  if (lc.includes('auth') && lc.includes('bypass')) return [{ label: 'account_takeover', confidence: 0.85, reasoning: 'Auth bypass leads directly to account takeover chain' }];
+  if (lc.includes('info') && lc.includes('disclosure')) return [{ label: 'recon_pivot', confidence: 0.65, reasoning: 'Leaked keys or internal endpoints expand the attack surface' }];
+  return [];
+}
 
 function mapVulnToTechnique(vulnType: string): string | null {
   const lc = vulnType.toLowerCase();

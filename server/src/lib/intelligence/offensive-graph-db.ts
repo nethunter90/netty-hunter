@@ -86,6 +86,11 @@ class OffensiveGraphDB extends EventEmitter {
   private nodesByLabel: Map<string, Set<string>> = new Map();
   private initialized = false;
 
+  // Write-through analytics cache — invalidated on every node/edge mutation.
+  // Prevents re-running O(N²) path-ranking and PageRank on every tool-selection tick.
+  private huntCentralityCache: Map<string, CentralityResult[]> = new Map();
+  private huntPathsCache: Map<string, AttackPathResult[]> = new Map();
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     try {
@@ -216,6 +221,8 @@ class OffensiveGraphDB extends EventEmitter {
     };
 
     this.indexNode(node);
+    this.huntCentralityCache.delete(node.huntId);
+    this.huntPathsCache.delete(node.huntId);
 
     try {
       await pool.query(
@@ -255,6 +262,8 @@ class OffensiveGraphDB extends EventEmitter {
     };
 
     this.indexEdge(edge);
+    this.huntCentralityCache.delete(edge.huntId);
+    this.huntPathsCache.delete(edge.huntId);
 
     try {
       await pool.query(
@@ -441,6 +450,10 @@ class OffensiveGraphDB extends EventEmitter {
   }
 
   rankAttackPaths(huntId: string, targetType: NodeType = 'vulnerability'): AttackPathResult[] {
+    const cacheKey = `${huntId}:${targetType}`;
+    const cached = this.huntPathsCache.get(cacheKey);
+    if (cached) return cached;
+
     const endpoints = this.getHuntNodes(huntId).filter(n => n.nodeType === 'endpoint');
     const targets = this.getHuntNodes(huntId).filter(n => n.nodeType === targetType);
 
@@ -452,16 +465,24 @@ class OffensiveGraphDB extends EventEmitter {
       }
     }
 
-    return allPaths.sort((a, b) => {
+    const result = allPaths.sort((a, b) => {
       const sevDiff = (SEVERITY_WEIGHT[b.maxSeverity] || 0) - (SEVERITY_WEIGHT[a.maxSeverity] || 0);
       if (sevDiff !== 0) return sevDiff;
       const confDiff = b.confidence - a.confidence;
       if (Math.abs(confDiff) > 0.1) return confDiff;
       return a.totalWeight - b.totalWeight;
     }).slice(0, 50);
+
+    this.huntPathsCache.set(cacheKey, result);
+    return result;
   }
 
   computeCentrality(huntId?: string): CentralityResult[] {
+    if (huntId) {
+      const cached = this.huntCentralityCache.get(huntId);
+      if (cached) return cached;
+    }
+
     const nodeIds = huntId
       ? Array.from(this.nodesByHunt.get(huntId) || [])
       : Array.from(this.nodes.keys());
@@ -513,7 +534,9 @@ class OffensiveGraphDB extends EventEmitter {
       });
     }
 
-    return results.sort((a, b) => b.compositeScore - a.compositeScore);
+    const sorted = results.sort((a, b) => b.compositeScore - a.compositeScore);
+    if (huntId) this.huntCentralityCache.set(huntId, sorted);
+    return sorted;
   }
 
   private computePageRank(nodeSet: Set<string>, iterations: number, dampingFactor: number): Map<string, number> {

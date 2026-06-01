@@ -41,7 +41,7 @@ router.get("/tools", (_req: Request, res: Response) => {
   }
 });
 
-router.post("/tools/select", (req: Request, res: Response) => {
+router.post("/tools/select", async (req: Request, res: Response) => {
   try {
     const { context } = req.body;
     const { huntId, availableTools } = context || {};
@@ -50,7 +50,7 @@ router.post("/tools/select", (req: Request, res: Response) => {
         .status(400)
         .json({ error: "context.huntId and context.availableTools are required" });
     }
-    const ranked = contextualToolSelector.select(huntId, availableTools);
+    const ranked = await contextualToolSelector.selectWithGraphBoost(huntId, availableTools);
     res.json({ tools: ranked });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

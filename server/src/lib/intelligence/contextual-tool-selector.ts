@@ -1,6 +1,7 @@
 import { reasoningEngine, MissionMemory } from './reasoning-engine';
 import { huntCortex, SignalType } from './hunt-cortex';
 import { circuitBreaker } from './circuit-breaker';
+import { offensiveGraphDB } from './offensive-graph-db';
 
 export interface Implication {
   condition: string;
@@ -859,6 +860,50 @@ export class ContextualToolSelector {
     }
 
     return circuitFiltered;
+  }
+
+  async selectWithGraphBoost(huntId: string, availableTools: string[]): Promise<RankedTool[]> {
+    const base = this.select(huntId, availableTools);
+    if (base.length === 0) return base;
+
+    let paths: ReturnType<typeof offensiveGraphDB.rankAttackPaths> = [];
+    let centrality: ReturnType<typeof offensiveGraphDB.computeCentrality> = [];
+
+    try {
+      [paths, centrality] = await Promise.all([
+        Promise.resolve(offensiveGraphDB.rankAttackPaths(huntId)),
+        Promise.resolve(offensiveGraphDB.computeCentrality(huntId)),
+      ]);
+    } catch {
+      return base;
+    }
+
+    if (paths.length === 0 && centrality.length === 0) return base;
+
+    // Collect endpoint URLs that appear on the top-3 ranked attack paths.
+    const topPathEndpoints = new Set<string>();
+    for (const p of paths.slice(0, 3)) {
+      for (const node of p.path) {
+        if (node.nodeType === 'endpoint') topPathEndpoints.add(node.label);
+      }
+    }
+
+    // Collect labels of nodes with composite centrality score > 0.6.
+    const highCentralityLabels = new Set<string>();
+    for (const c of centrality) {
+      if (c.compositeScore > 0.6) highCentralityLabels.add(c.label);
+    }
+
+    const boosted = base.map(tool => {
+      let boost = 0;
+      if (topPathEndpoints.has(tool.target))      boost += 0.25;
+      if (highCentralityLabels.has(tool.target))  boost += 0.15;
+      if (boost === 0) return tool;
+      return { ...tool, score: Math.min(0.95, tool.score + boost) };
+    });
+
+    boosted.sort((a, b) => b.score - a.score);
+    return boosted;
   }
 
   recordResult(
