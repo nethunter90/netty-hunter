@@ -11,6 +11,30 @@ import { timingObfuscation } from '../stealth/timing-obfuscation';
 import { passKEvaluator } from './pass-k-evaluator';
 import { huntCortex, SignalType } from '../intelligence/hunt-cortex';
 
+const FRAGILITY = {
+  LATENCY_WINDOW_SIZE:    10,
+  LATENCY_BASELINE_MIN:    5,
+  LATENCY_SPIKE_FACTOR:    3.0,
+  RECOVERY_TOLERANCE:      1.15,
+  ERROR_WINDOW_MS:   120_000,
+  ERROR_CASCADE_THRESHOLD: 3,
+  CONSEC_FAIL_THRESHOLD:   3,
+  JITTER_PHASE1: [2_000, 4_000] as [number, number],
+  JITTER_PHASE2: [500,   1_500] as [number, number],
+  HEAVY_TOOLS: new Set([
+    'nikto', 'nuclei', 'sqlmap', 'hydra', 'masscan', 'ffuf', 'gobuster', 'amass',
+  ]),
+  PASSIVE_TOOLS: new Set([
+    'cookie_flag_checker', 'change_detector', 'whatweb', 'wappalyzer',
+  ]),
+} as const;
+
+function geoMean(values: number[]): number {
+  if (values.length === 0) return 0;
+  const logSum = values.reduce((sum, v) => sum + Math.log(Math.max(v, 1)), 0);
+  return Math.exp(logSum / values.length);
+}
+
 interface HuntConfig {
   stealthMode: StealthLevel;
   resourceClass: ResourceClass;
@@ -31,6 +55,13 @@ export class AgentLoop {
   private activeTools: Map<string, ActiveToolEntry> = new Map();
   private toolCounter = 0;
   private cycleRunning: Set<string> = new Set();
+
+  // Fragility telemetry state
+  private huntLatencyWindow:   Map<string, number[]> = new Map();
+  private huntLatencyBaseline: Map<string, number>   = new Map();
+  private hunt5xxState: Map<string, { count: number; events: number[] }> = new Map();
+  private huntConsecFailures:  Map<string, number>   = new Map();
+  private huntFragilityClamp:  Map<string, { phase: 1 | 2 | 3; normalCycles: number }> = new Map();
 
   private configs: Record<string, {
     maxConcurrent: number;
@@ -374,6 +405,14 @@ export class AgentLoop {
         continue;
       }
 
+      // Fragility clamp check — skip heavy tools and apply mandatory jitter when target is fragile
+      const fc = this.getFragilityConstraints(agent.huntId, tool);
+      if (fc.skip) {
+        const clamp = this.huntFragilityClamp.get(agent.huntId);
+        console.log(`[AgentLoop] Fragility Phase ${clamp?.phase}: skipping heavy tool ${tool} on ${target}`);
+        continue;
+      }
+
       if (huntConfig.stealthMode !== 'aggressive') {
         const risk = toolRunner.getToolRisk(tool);
         const delay = timingObfuscation.getDelay(phaseType as any, huntConfig.stealthMode, risk, target);
@@ -384,6 +423,16 @@ export class AgentLoop {
           if (!a || a.status === 'stopped') return didWork;
         }
         timingObfuscation.recordAction(target);
+      }
+
+      // Mandatory fragility jitter (on top of stealth delay)
+      if (fc.jitterRange) {
+        const [jMin, jMax] = fc.jitterRange;
+        const jitter = jMin + Math.floor(Math.random() * (jMax - jMin));
+        console.log(`[AgentLoop] Fragility jitter: ${jitter}ms before ${tool}`);
+        await new Promise(r => setTimeout(r, jitter));
+        const a = agentRegistry.get(agent.id);
+        if (!a || a.status === 'stopped') return didWork;
       }
 
       let toolId = this.tryAcquireTool(agent.huntId, tool, target);
@@ -462,6 +511,8 @@ export class AgentLoop {
             bestConfidence = retryConf;
           }
         }
+
+        this.updateFragilityTelemetry(agent.huntId, result, result.result || {});
 
         didWork = true;
 
@@ -715,6 +766,112 @@ export class AgentLoop {
     }
   }
 
+  private updateFragilityTelemetry(huntId: string, result: { success: boolean; durationMs: number; error?: string }, rawResult: any): void {
+    // Update rolling latency window
+    const window = this.huntLatencyWindow.get(huntId) || [];
+    window.push(result.durationMs);
+    if (window.length > FRAGILITY.LATENCY_WINDOW_SIZE) window.shift();
+    this.huntLatencyWindow.set(huntId, window);
+
+    // Lock baseline once enough samples are collected
+    if (!this.huntLatencyBaseline.has(huntId) && window.length >= FRAGILITY.LATENCY_BASELINE_MIN) {
+      this.huntLatencyBaseline.set(huntId, geoMean(window));
+    }
+
+    // Count 5xx signals from raw result
+    let errorCount = 0;
+    if (!result.success) {
+      const err = result.error || '';
+      if (!err.includes('401') && !err.includes('403')) errorCount++;
+    }
+    if (rawResult) {
+      if (Array.isArray(rawResult.endpoints)) {
+        errorCount += rawResult.endpoints.filter((e: any) => (e.status_code || e.statusCode || 0) >= 500).length;
+      }
+      const sc = rawResult.statusCode ?? rawResult.status;
+      if (typeof sc === 'number' && sc >= 500) errorCount++;
+    }
+
+    // Update 5xx sliding-window counter
+    const now = Date.now();
+    const state5xx = this.hunt5xxState.get(huntId) || { count: 0, events: [] };
+    if (errorCount > 0) {
+      for (let i = 0; i < errorCount; i++) state5xx.events.push(now);
+    }
+    state5xx.events = state5xx.events.filter(t => now - t <= FRAGILITY.ERROR_WINDOW_MS);
+    state5xx.count = state5xx.events.length;
+    this.hunt5xxState.set(huntId, state5xx);
+
+    // Update consecutive failure counter
+    const consecFails = this.huntConsecFailures.get(huntId) || 0;
+    this.huntConsecFailures.set(huntId, result.success ? 0 : consecFails + 1);
+
+    const clamp = this.huntFragilityClamp.get(huntId);
+    const baseline = this.huntLatencyBaseline.get(huntId);
+
+    if (!clamp) {
+      // Evaluate triggers
+      const latencySpike = baseline !== undefined && result.durationMs > FRAGILITY.LATENCY_SPIKE_FACTOR * baseline;
+      const cascade5xx   = state5xx.count >= FRAGILITY.ERROR_CASCADE_THRESHOLD;
+      const consecFail   = (this.huntConsecFailures.get(huntId) || 0) >= FRAGILITY.CONSEC_FAIL_THRESHOLD;
+
+      if (latencySpike) this.activateFragilityClamp(huntId, `latency_spike(${result.durationMs}ms > ${FRAGILITY.LATENCY_SPIKE_FACTOR}x${Math.round(baseline!)}ms)`);
+      else if (cascade5xx) this.activateFragilityClamp(huntId, `5xx_cascade(${state5xx.count} in ${FRAGILITY.ERROR_WINDOW_MS / 1000}s)`);
+      else if (consecFail) this.activateFragilityClamp(huntId, `consec_failures(${this.huntConsecFailures.get(huntId)})`);
+    } else {
+      // Evaluate recovery
+      const currentMean = geoMean(window);
+      const isNormalCycle = result.success && baseline !== undefined && currentMean <= baseline * FRAGILITY.RECOVERY_TOLERANCE;
+
+      if (isNormalCycle) {
+        clamp.normalCycles++;
+        if      (clamp.phase === 1 && clamp.normalCycles >= 1) { clamp.phase = 2; console.log(`[AgentLoop] Fragility Phase 1→2 for ${huntId}`); }
+        else if (clamp.phase === 2 && clamp.normalCycles >= 2) { clamp.phase = 3; console.log(`[AgentLoop] Fragility Phase 2→3 for ${huntId}`); }
+        else if (clamp.phase === 3 && clamp.normalCycles >= 3) { this.liftFragilityClamp(huntId); }
+      } else {
+        clamp.normalCycles = 0;
+      }
+    }
+  }
+
+  private activateFragilityClamp(huntId: string, trigger: string): void {
+    if (this.huntFragilityClamp.has(huntId)) return;
+    this.huntFragilityClamp.set(huntId, { phase: 1, normalCycles: 0 });
+    console.log(`[AgentLoop] Fragility clamp ACTIVATED for ${huntId} — trigger: ${trigger}`);
+    huntCortex.broadcast({
+      signalType: SignalType.TARGET_FRAGILITY_HIGH,
+      sourceSystem: 'layer2-agent-loop',
+      huntId,
+      payload: { trigger, timestamp: Date.now() },
+      confidence: 0.9,
+    }).catch(() => {});
+  }
+
+  private getFragilityConstraints(huntId: string, tool: string): { skip: boolean; jitterRange: [number, number] | null } {
+    const clamp = this.huntFragilityClamp.get(huntId);
+    if (!clamp) return { skip: false, jitterRange: null };
+
+    const isHeavy   = (FRAGILITY.HEAVY_TOOLS as ReadonlySet<string>).has(tool);
+    const isPassive = (FRAGILITY.PASSIVE_TOOLS as ReadonlySet<string>).has(tool);
+
+    if (clamp.phase === 1) {
+      return isHeavy
+        ? { skip: true, jitterRange: null }
+        : { skip: false, jitterRange: FRAGILITY.JITTER_PHASE1 };
+    }
+    if (clamp.phase === 2) {
+      if (isHeavy) return { skip: true, jitterRange: null };
+      return { skip: false, jitterRange: isPassive ? null : FRAGILITY.JITTER_PHASE2 };
+    }
+    // Phase 3 — monitor: all tools re-enabled, no extra jitter
+    return { skip: false, jitterRange: null };
+  }
+
+  private liftFragilityClamp(huntId: string): void {
+    this.huntFragilityClamp.delete(huntId);
+    console.log(`[AgentLoop] Fragility clamp LIFTED for ${huntId} — target latency normalized`);
+  }
+
   private subscribeToEvents(agent: Agent): void {
     const subscriptions: Record<string, string[]> = {
       recon: ['mission_phase_complete', 'defense_detected'],
@@ -803,6 +960,12 @@ export class AgentLoop {
     if (toDelete.length > 0 || toolsToRemove.length > 0) {
       console.log(`[AgentLoop] clearHuntScans: cleared ${toDelete.length} completed scans, ${toolsToRemove.length} active tool entries for ${huntId}`);
     }
+
+    this.huntLatencyWindow.delete(huntId);
+    this.huntLatencyBaseline.delete(huntId);
+    this.hunt5xxState.delete(huntId);
+    this.huntConsecFailures.delete(huntId);
+    this.huntFragilityClamp.delete(huntId);
   }
 
   getActiveToolsInfo(huntId: string): { tool: string; target: string; runningFor: number }[] {
