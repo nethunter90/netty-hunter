@@ -126,6 +126,9 @@ export class ModelRouter {
       const resp = await axios.get(`${currentBaseUrl}/api/tags`, { timeout: 5000 });
       this.availableModels = (resp.data.models || []).map((m: { name: string }) => m.name);
       this.lastModelCheck = Date.now();
+      // Successful health check should also close any open circuit so chat
+      // works immediately after the user starts Ollama and clicks Scan.
+      this.recordSuccess();
       logger.info("ModelRouter: Available models", { models: this.availableModels });
       return this.availableModels;
     } catch {

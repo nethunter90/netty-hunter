@@ -27,19 +27,26 @@ export default function FloatingChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingMs, setLoadingMs] = useState(0);
   const [modelAvailable, setModelAvailable] = useState<boolean | null>(null);
   const [activeModel, setActiveModel] = useState<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  const checkStatus = () => {
     api.get<{ available: boolean; models: string[] }>("/chat/status")
       .then(r => {
         setModelAvailable(r.data.available);
         if (r.data.models[0]) setActiveModel(r.data.models[0]);
       })
       .catch(() => setModelAvailable(false));
-  }, []);
+  };
+
+  // Check on mount
+  useEffect(() => { checkStatus(); }, []);
+
+  // Re-check when the panel opens so model changes from Settings are reflected
+  useEffect(() => { if (open) checkStatus(); }, [open]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -58,12 +65,15 @@ export default function FloatingChat() {
     setMessages(prev => [...prev.slice(-49), userMsg]);
     setInput("");
     setLoading(true);
+    setLoadingMs(0);
+    const loadStart = Date.now();
+    const loadTimer = setInterval(() => setLoadingMs(Date.now() - loadStart), 1000);
 
     try {
       const r = await api.post<{ response: string; model: string; executed?: ExecutionResult | null }>("/chat", {
         message: text,
         history: messages.slice(-6),
-      });
+      }, { timeout: 120000 }); // 2 min — models can take >30s to load on first request
       setMessages(prev => [
         ...prev.slice(-49),
         { role: "assistant", content: r.data.response, executed: r.data.executed ?? null },
@@ -76,7 +86,9 @@ export default function FloatingChat() {
       setMessages(prev => [...prev.slice(-49), { role: "assistant", content: `⚠ ${errMsg}` }]);
       setModelAvailable(false);
     } finally {
+      clearInterval(loadTimer);
       setLoading(false);
+      setLoadingMs(0);
     }
   };
 
@@ -169,7 +181,10 @@ export default function FloatingChat() {
               <div className="flex justify-start">
                 <div className="bg-hack-surface border border-hack-border rounded px-2.5 py-1.5">
                   <span className="text-hack-accent text-[9px] block mb-0.5">AI</span>
-                  <span className="text-hack-dim animate-pulse">thinking…</span>
+                  {loadingMs < 15000
+                    ? <span className="text-hack-dim animate-pulse">thinking…</span>
+                    : <span className="text-hack-yellow animate-pulse">warming up model… ({Math.round(loadingMs / 1000)}s)</span>
+                  }
                 </div>
               </div>
             )}
