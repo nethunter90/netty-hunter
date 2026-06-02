@@ -9,6 +9,7 @@ import { decisionJournal } from './decision-journal';
 import { adaptiveThresholdTuner } from './adaptive-threshold-tuner';
 import { backwardPlanner } from './backward-planner';
 import { decisionTraceLogger } from './decision-trace';
+import { strategyWeightLearner } from '../learning/strategy-weight-learner';
 
 export interface Evidence {
   type: 'technology' | 'vulnerability' | 'endpoint' | 'credential' | 'defense' | 'error';
@@ -154,12 +155,17 @@ export class MetaReasoner extends EventEmitter {
   private monitors: Map<string, NodeJS.Timeout> = new Map();
   private strategyGraph: StrategyGraph = new Map();
   private transitionSuccessHistory: Map<string, { successes: number; attempts: number }> = new Map();
+  private learnedWeights: Map<string, number> = new Map();
 
   constructor() {
     super();
     this.setMaxListeners(50);
     this.initializeStrategyGraph();
     this.subscribeToCortex();
+  }
+
+  async loadLearnedWeights(): Promise<void> {
+    this.learnedWeights = await strategyWeightLearner.loadWeights();
   }
 
   private subscribeToCortex(): void {
@@ -289,9 +295,12 @@ export class MetaReasoner extends EventEmitter {
     }
 
     const scored = edges.map(edge => {
-      let adjustedWeight = edge.weight;
-
       const historyKey = `${edge.from}->${edge.to}`;
+
+      // Start from persisted cross-hunt weight if available, else hardcoded base
+      let adjustedWeight = this.learnedWeights.get(historyKey) ?? edge.weight;
+
+      // Blend with within-session history (60/40 toward base)
       const history = this.transitionSuccessHistory.get(historyKey);
       if (history && history.attempts > 0) {
         const successRate = history.successes / history.attempts;
@@ -1064,10 +1073,14 @@ export class MetaReasoner extends EventEmitter {
 
   async completeHunt(huntId: string, finalScore: number): Promise<void> {
     await decisionJournal.backfillOutcomes(huntId, finalScore);
-    
+
     const hunt = huntOrchestrator.getHunt(huntId);
     const targetType = hunt?.goal || 'General';
     await adaptiveThresholdTuner.learnFromHunt(huntId, targetType, finalScore);
+
+    // Recompute strategy weights from the now-scored journal entries and refresh in-memory map
+    await strategyWeightLearner.learn();
+    this.learnedWeights = await strategyWeightLearner.loadWeights();
     
     huntCortex.broadcast({
       signalType: SignalType.FINDING_CONFIRMED,
@@ -1112,3 +1125,6 @@ export class MetaReasoner extends EventEmitter {
 }
 
 export const metaReasoner = new MetaReasoner();
+
+// Eagerly load persisted strategy weights so the first hunt benefits from past learning
+metaReasoner.loadLearnedWeights().catch(() => {});

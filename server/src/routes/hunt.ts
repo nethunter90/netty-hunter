@@ -11,6 +11,7 @@ import { BackwardHuntEngine } from "../intelligence/BackwardHunt";
 import { HuntStrategyBuilder } from "./huntStrategy";
 import { wireHuntEngineToSocket } from "../lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "../lib/state/hunt-sessions";
+import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -102,7 +103,10 @@ router.post("/start", async (req: Request, res: Response) => {
       // Replay hunt:started since it fired before wiring was in place
       io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
       activeHuntSessions.set(sessionUuid, engine);
-      engine.on("hunt:complete", () => {
+      engine.on("hunt:complete", (data: unknown) => {
+        const d = data as Record<string, unknown> | null;
+        const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
+        metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
         setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
 
@@ -136,8 +140,11 @@ router.post("/start", async (req: Request, res: Response) => {
     io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
     activeHuntSessions.set(sessionUuid, engine);
 
-    // Auto-cleanup after hunt completes
-    engine.on("hunt:complete", () => {
+    // Auto-cleanup after hunt completes; trigger cross-hunt learning
+    engine.on("hunt:complete", (data: unknown) => {
+      const d = data as Record<string, unknown> | null;
+      const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
+      metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
       setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
 

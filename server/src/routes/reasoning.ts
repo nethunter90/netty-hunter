@@ -5,6 +5,7 @@ import { huntLabRunner } from "../lib/intelligence/hunt-lab-runner";
 import { huntCortex } from "../lib/intelligence/hunt-cortex";
 import { adaptiveThresholdTuner } from "../lib/intelligence/adaptive-threshold-tuner";
 import { labScorer } from "../lib/intelligence/lab-profiles";
+import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 
 const router = Router();
 
@@ -94,6 +95,17 @@ router.get("/thresholds/:goalType", async (req: Request, res: Response) => {
   try {
     const thresholds = await adaptiveThresholdTuner.getThresholds(req.params.goalType);
     res.json({ goalType: req.params.goalType, thresholds });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Strategy Weights ─────────────────────────────────────────────────────────
+
+router.post("/recompute-weights", async (_req: Request, res: Response) => {
+  try {
+    await strategyWeightLearner.learn();
+    res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
