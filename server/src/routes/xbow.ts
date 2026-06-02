@@ -67,12 +67,10 @@ async function probeForFlag(
 ): Promise<{ flagFound: string | null; evidence: string; executionTimeMs: number }> {
   const start = Date.now();
 
-  // Merge default paths with challenge-specific ones; replace {PORT} placeholder
   const defaultPaths = ['/', '/flag', '/secret', '/api/flag', '/.env', '/admin', '/debug', '/robots.txt', '/api/status'];
   const extraPaths = (challengeProbePaths ?? []).map(p =>
     port ? p.replace(/\{PORT\}/g, String(port)) : p
   );
-  // Challenge-specific paths first so targeted attacks run before generic ones
   const paths = [...new Set([...extraPaths, ...defaultPaths])];
 
   for (const p of paths) {
@@ -84,9 +82,12 @@ async function probeForFlag(
     if (!r) continue;
 
     const body = await (r as any).text().catch(() => '');
-    const match = body.match(/flag\{[^}]+\}/);
-    if (match) {
-      return { flagFound: match[0], evidence: `Found in ${p}`, executionTimeMs: Date.now() - start };
+    // Real XBOW flags are 32-char hex strings; stub flags use flag{...} format
+    const hexFlagMatch = body.match(/\b[0-9a-f]{32}\b/);
+    const ctfFlagMatch = body.match(/flag\{[^}]+\}/);
+    const candidate = hexFlagMatch?.[0] ?? ctfFlagMatch?.[0];
+    if (candidate) {
+      return { flagFound: candidate, evidence: `Found in ${p}`, executionTimeMs: Date.now() - start };
     }
     if (winCondition && body.includes(winCondition)) {
       return { flagFound: winCondition, evidence: `Win condition matched in ${p}`, executionTimeMs: Date.now() - start };
@@ -98,7 +99,6 @@ async function probeForFlag(
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-// GET /status
 router.get('/status', async (_req: Request, res: Response) => {
   try {
     const [dockerAvailable, repoAvailable, ollamaAvailable] = await Promise.all([
@@ -113,13 +113,13 @@ router.get('/status', async (_req: Request, res: Response) => {
       repoAvailable,
       repoPath: repoAvailable ? xbowDocker.getRepoPath() : null,
       ollamaAvailable,
+      repoUrl: 'https://github.com/xbow-engineering/validation-benchmarks',
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// GET /challenges
 router.get('/challenges', async (_req: Request, res: Response) => {
   try {
     const challenges = await xbowDocker.loadChallenges();
@@ -129,7 +129,6 @@ router.get('/challenges', async (_req: Request, res: Response) => {
   }
 });
 
-// GET /benchmark/history
 router.get('/benchmark/history', async (_req: Request, res: Response) => {
   try {
     const history = await loadHistory();
@@ -139,7 +138,6 @@ router.get('/benchmark/history', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /clone-repo
 router.post('/clone-repo', async (_req: Request, res: Response) => {
   try {
     const result = await xbowDocker.cloneRepo();
@@ -150,7 +148,6 @@ router.post('/clone-repo', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /benchmark/run
 router.post('/benchmark/run', async (req: Request, res: Response) => {
   const { levels, tags, maxChallenges } = req.body as {
     levels?: number[];
@@ -187,17 +184,17 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
       if (abortFlags.get(runId)) break;
 
       const ch = challenges[i];
-      const port = XBOW_PORT_BASE + i;
+      const hintPort = XBOW_PORT_BASE + i;
       const challengeStart = Date.now();
 
       const containerInfo: {
-        imagePulled: boolean;
+        spawned: boolean;
         containerStarted: boolean;
         healthCheckPassed: boolean;
         port: number | null;
         containerId: string | null;
       } = {
-        imagePulled: false,
+        spawned: false,
         containerStarted: false,
         healthCheckPassed: false,
         port: null,
@@ -209,69 +206,80 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
       let status: 'passed' | 'failed' | 'error' | 'skipped' | 'docker_unavailable' = 'failed';
       let error: string | undefined;
 
-      if (!dockerAvailable && ch.image && !ch.localScript) {
-        // Docker-only challenge and Docker is down
+      const needsDocker = !!(ch.challengeDir || ch.image) && !ch.localScript;
+
+      if (!dockerAvailable && needsDocker) {
         status = 'docker_unavailable';
         error = 'Docker daemon not available';
-      } else if (!ch.image && !ch.localScript) {
-        // No image and no local script — pattern probe only (nothing is running)
+      } else if (!ch.image && !ch.localScript && !ch.challengeDir) {
+        // No runnable target
         const probeResult = await probeForFlag(
-          `http://localhost:${port}`,
+          `http://localhost:${hintPort}`,
           ch.winCondition,
           () => !!abortFlags.get(runId),
           ch.probePaths,
-          port,
+          hintPort,
         );
         flagFound = probeResult.flagFound;
         scanResult = { detected: !!flagFound, evidence: probeResult.evidence, executionTimeMs: probeResult.executionTimeMs, technique: 'pattern-probe' };
         status = flagFound ? 'passed' : 'skipped';
-        error = 'Challenge has no Docker image; pattern probe attempted against local port';
+        error = 'Challenge has no runnable target; pattern probe attempted';
       } else {
-        containerInfo.imagePulled = true;
-        const spawnResult = await xbowDocker.spawnChallenge(ch, port);
+        containerInfo.spawned = true;
+        const spawnResult = await xbowDocker.spawnChallenge(ch, hintPort);
         containerInfo.containerStarted = spawnResult.ok;
         containerInfo.containerId = spawnResult.containerId ?? null;
-        containerInfo.port = spawnResult.ok ? port : null;
+
+        // Use the port the challenge actually bound to
+        const activePort = spawnResult.port ?? hintPort;
+        containerInfo.port = spawnResult.ok ? activePort : null;
+
+        // Real XBOW: flag injected at build time; stubs: winCondition is the literal flag
+        const expectedFlag = spawnResult.generatedFlag || ch.winCondition;
 
         if (!spawnResult.ok) {
           status = 'error';
           error = spawnResult.error;
         } else {
           try {
-            const ready = await xbowDocker.waitForReady(port, 30000);
+            const readyTimeout = ch.challengeDir ? 60_000 : 30_000;
+            const ready = await xbowDocker.waitForReady(activePort, readyTimeout);
             containerInfo.healthCheckPassed = ready;
 
             if (!ready) {
               status = 'error';
-              error = 'Container did not become ready within 30s';
+              error = `Challenge not ready within ${readyTimeout / 1000}s on port ${activePort}`;
             } else {
-              const baseUrl = `http://localhost:${port}`;
+              const baseUrl = `http://localhost:${activePort}`;
 
               if (ollamaAvailable) {
                 try {
                   const labResult = await huntLabRunner.runHunt(
                     `xbow-${ch.id}`,
-                    `${ch.description}. Find the flag: ${ch.winCondition}`,
+                    `${ch.description}. Find the flag.`,
                     { stealthMode: 'aggressive', resourceClass: 'standard' }
                   );
                   const findings = labResult.metrics?.findings || [];
                   for (const f of findings) {
                     const body = (f.description || '') + (f.evidence || '');
-                    const match = body.match(/flag\{[^}]+\}/);
-                    if (match) { flagFound = match[0]; break; }
-                    if (ch.winCondition && body.includes(ch.winCondition)) { flagFound = ch.winCondition; break; }
+                    const hexMatch = body.match(/\b[0-9a-f]{32}\b/);
+                    const ctfMatch = body.match(/flag\{[^}]+\}/);
+                    const candidate = hexMatch?.[0] ?? ctfMatch?.[0];
+                    if (candidate && candidate === expectedFlag) { flagFound = candidate; break; }
+                    if (candidate) { flagFound = candidate; break; }
+                    if (expectedFlag && body.includes(expectedFlag)) { flagFound = expectedFlag; break; }
                   }
                   scanResult = {
                     detected: !!flagFound,
                     technique: 'ai-hunt',
-                    evidence: flagFound ? `AI hunt found flag` : 'AI hunt did not find flag',
+                    evidence: flagFound ? 'AI hunt found flag' : 'AI hunt did not find flag',
                     executionTimeMs: Date.now() - challengeStart,
                   };
-                } catch { /* fall through to hardcoded */ }
+                } catch { /* fall through to pattern probe */ }
               }
 
               if (!flagFound) {
-                const probeResult = await probeForFlag(baseUrl, ch.winCondition, () => !!abortFlags.get(runId), ch.probePaths, port);
+                const probeResult = await probeForFlag(baseUrl, expectedFlag, () => !!abortFlags.get(runId), ch.probePaths, activePort);
                 flagFound = probeResult.flagFound;
                 if (!scanResult) {
                   scanResult = {
@@ -302,7 +310,7 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
         score: status === 'passed' ? ch.points : 0,
         maxScore: ch.points,
         flagFound,
-        expectedFlag: ch.winCondition,
+        expectedFlag: ch.challengeDir ? '[generated-at-build-time]' : ch.winCondition,
         executionTimeMs: Date.now() - challengeStart,
         scanResult,
         containerInfo,
@@ -356,7 +364,6 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
   }
 });
 
-// POST /benchmark/abort
 router.post('/benchmark/abort', (req: Request, res: Response) => {
   const { runId } = req.body as { runId?: string };
   if (runId) {
