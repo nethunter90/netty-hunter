@@ -10,7 +10,9 @@ api.interceptors.response.use(
   (r) => r,
   (error) => {
     if (error.response?.status === 401 && !window.location.pathname.includes("/login")) {
-      window.location.href = "/login";
+      // Notify the React app via a custom event rather than doing a hard page
+      // reload — hard reloads cause the login screen to flicker on first visit.
+      window.dispatchEvent(new CustomEvent('auth:expired'));
     }
     return Promise.reject(error);
   }

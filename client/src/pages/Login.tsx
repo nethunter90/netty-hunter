@@ -40,12 +40,7 @@ export default function Login({ onLogin }: LoginProps) {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center mb-4">
-            <div className="relative">
-              <Shield className="w-12 h-12 text-hack-accent" strokeWidth={1} />
-              <div className="absolute inset-0 animate-ping opacity-20">
-                <Shield className="w-12 h-12 text-hack-accent" strokeWidth={1} />
-              </div>
-            </div>
+            <Shield className="w-12 h-12 text-hack-accent animate-pulse" strokeWidth={1} />
           </div>
           <h1 className="text-lg font-mono font-bold text-hack-accent glow-green tracking-widest">
             SENTINEL PRIMORDIAL

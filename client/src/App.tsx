@@ -37,6 +37,14 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Handle mid-session 401s (session expired while using the app).
+  // Clears user state so React Router soft-navigates to login — no hard reload.
+  useEffect(() => {
+    const handler = () => setUser(null);
+    window.addEventListener('auth:expired', handler);
+    return () => window.removeEventListener('auth:expired', handler);
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-hack-bg">
