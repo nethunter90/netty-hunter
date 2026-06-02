@@ -281,7 +281,8 @@ interface XBOWChallengeResult {
   executionTimeMs: number;
   scanResult: any | null;
   containerInfo: {
-    imagePulled: boolean;
+    spawned?: boolean;
+    imagePulled?: boolean;  // legacy field name — use spawned
     containerStarted: boolean;
     healthCheckPassed: boolean;
     port: number | null;
@@ -714,10 +715,10 @@ export function CTFBenchmark() {
                 />
                 <button
                   onClick={startXBOWBenchmark}
-                  disabled={!xbowStatus?.dockerAvailable || !xbowStatus?.repoAvailable}
+                  disabled={false}
                   data-testid="button-run-xbow"
                   className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded font-medium"
-                  title={!xbowStatus?.dockerAvailable ? 'Docker not available' : !xbowStatus?.repoAvailable ? 'Clone XBOW repo first' : 'Run XBOW benchmark'}
+                  title={!xbowStatus?.dockerAvailable ? 'Docker unavailable — will use built-in stubs' : !xbowStatus?.repoAvailable ? 'Repo not cloned — will use 5 built-in challenges' : 'Run XBOW benchmark (104 challenges)'}
                 >
                   Run XBOW
                 </button>
@@ -1293,7 +1294,7 @@ export function CTFBenchmark() {
                           </div>
                           <div className="flex items-center gap-3 text-[10px]">
                             <span className="text-gray-500">Container:</span>
-                            <span className={r.containerInfo.imagePulled ? 'text-green-400' : 'text-red-400'}>Build: {r.containerInfo.imagePulled ? 'OK' : 'FAIL'}</span>
+                            <span className={r.containerInfo.spawned ?? r.containerInfo.imagePulled ? 'text-green-400' : 'text-red-400'}>Build: {r.containerInfo.spawned ?? r.containerInfo.imagePulled ? 'OK' : 'FAIL'}</span>
                             <span className={r.containerInfo.containerStarted ? 'text-green-400' : 'text-red-400'}>Start: {r.containerInfo.containerStarted ? 'OK' : 'FAIL'}</span>
                             <span className={r.containerInfo.healthCheckPassed ? 'text-green-400' : 'text-red-400'}>Health: {r.containerInfo.healthCheckPassed ? 'OK' : 'FAIL'}</span>
                             {r.containerInfo.port && <span className="text-cyan-400">Port: {r.containerInfo.port}</span>}
