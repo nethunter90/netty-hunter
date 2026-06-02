@@ -61,10 +61,19 @@ function buildStats(challenges: XBOWChallenge[]) {
 async function probeForFlag(
   baseUrl: string,
   winCondition: string,
-  abortCheck: () => boolean
+  abortCheck: () => boolean,
+  challengeProbePaths?: string[],
+  port?: number,
 ): Promise<{ flagFound: string | null; evidence: string; executionTimeMs: number }> {
   const start = Date.now();
-  const paths = ['/', '/flag', '/secret', '/api/flag', '/.env', '/admin', '/debug'];
+
+  // Merge default paths with challenge-specific ones; replace {PORT} placeholder
+  const defaultPaths = ['/', '/flag', '/secret', '/api/flag', '/.env', '/admin', '/debug', '/robots.txt', '/api/status'];
+  const extraPaths = (challengeProbePaths ?? []).map(p =>
+    port ? p.replace(/\{PORT\}/g, String(port)) : p
+  );
+  // Challenge-specific paths first so targeted attacks run before generic ones
+  const paths = [...new Set([...extraPaths, ...defaultPaths])];
 
   for (const p of paths) {
     if (abortCheck()) break;
@@ -200,15 +209,18 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
       let status: 'passed' | 'failed' | 'error' | 'skipped' | 'docker_unavailable' = 'failed';
       let error: string | undefined;
 
-      if (!dockerAvailable) {
+      if (!dockerAvailable && ch.image && !ch.localScript) {
+        // Docker-only challenge and Docker is down
         status = 'docker_unavailable';
         error = 'Docker daemon not available';
-      } else if (!ch.image) {
-        // No image — run hardcoded pattern probes against stub (no container)
+      } else if (!ch.image && !ch.localScript) {
+        // No image and no local script — pattern probe only (nothing is running)
         const probeResult = await probeForFlag(
           `http://localhost:${port}`,
           ch.winCondition,
-          () => !!abortFlags.get(runId)
+          () => !!abortFlags.get(runId),
+          ch.probePaths,
+          port,
         );
         flagFound = probeResult.flagFound;
         scanResult = { detected: !!flagFound, evidence: probeResult.evidence, executionTimeMs: probeResult.executionTimeMs, technique: 'pattern-probe' };
@@ -259,7 +271,7 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
               }
 
               if (!flagFound) {
-                const probeResult = await probeForFlag(baseUrl, ch.winCondition, () => !!abortFlags.get(runId));
+                const probeResult = await probeForFlag(baseUrl, ch.winCondition, () => !!abortFlags.get(runId), ch.probePaths, port);
                 flagFound = probeResult.flagFound;
                 if (!scanResult) {
                   scanResult = {
