@@ -676,10 +676,31 @@ export class HunterEngine extends EventEmitter {
   private async observe(): Promise<void> {
     logger.info("OBSERVE phase", { session: this.state.sessionId, iteration: this.state.iteration });
 
-    // Initial observation: fingerprint the target
+    // Initial observation: fingerprint the target — emit probing/result per tool
+    // so the activity feed shows immediate activity rather than a blank wait.
+    const t0 = Date.now();
+    this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "whatweb" });
     const techObs = await this.runTool("whatweb", this.state.targetUrl);
+    this.emit("hunt:probe_result", {
+      hypothesisId: this.state.sessionId,
+      result: { tool: "whatweb", success: true, output: JSON.stringify(techObs).slice(0, 300), duration: Date.now() - t0 },
+    });
+
+    const t1 = Date.now();
+    this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "curl_probe" });
     const headerObs = await this.runTool("curl_probe", this.state.targetUrl);
+    this.emit("hunt:probe_result", {
+      hypothesisId: this.state.sessionId,
+      result: { tool: "curl_probe", success: true, output: JSON.stringify(headerObs).slice(0, 300), duration: Date.now() - t1 },
+    });
+
+    const t2 = Date.now();
+    this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "waf_intel" });
     const wafIntel = await this.wafSynthesizer.synthesize(this.state.targetUrl, "<script>alert(1)</script>");
+    this.emit("hunt:probe_result", {
+      hypothesisId: this.state.sessionId,
+      result: { tool: "waf_intel", success: true, output: `waf=${(wafIntel as unknown as Record<string, unknown>).detectedWAF ?? "none"} confidence=${wafIntel.detectionConfidence?.toFixed(2)}`, duration: Date.now() - t2 },
+    });
 
     // Anomaly-first: compute anomaly scores
     const obs: Observation[] = [

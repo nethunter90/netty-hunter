@@ -3,15 +3,17 @@ import { db } from "../db";
 import { campaigns, huntSessions, findings, targets, programs } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { z } from "zod";
+import { Server as SocketServer } from "socket.io";
 import { HunterEngine } from "../agents/HunterEngine";
 import { SolverPool } from "../agents/SolverPool";
 import { VerifierAgent } from "../agents/VerifierAgent";
 import { BackwardHuntEngine } from "../intelligence/BackwardHunt";
 import { HuntStrategyBuilder } from "./huntStrategy";
+import { wireHuntEngineToSocket } from "../lib/utils/wire-hunt-engine";
+import { activeHuntSessions } from "../lib/state/hunt-sessions";
 import logger from "../utils/logger";
 
 const router = Router();
-const activeSessions = new Map<string, HunterEngine>();
 const verifierAgent = new VerifierAgent();
 const backwardHunt = new BackwardHuntEngine();
 
@@ -95,9 +97,13 @@ router.post("/start", async (req: Request, res: Response) => {
         focusVulnClasses: approaches.map(a => a.vulnClass).slice(0, 6),
       });
 
-      activeSessions.set(sessionUuid, engine);
+      const io = req.app.get("io") as SocketServer;
+      wireHuntEngineToSocket(engine, sessionUuid, io);
+      // Replay hunt:started since it fired before wiring was in place
+      io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
+      activeHuntSessions.set(sessionUuid, engine);
       engine.on("hunt:complete", () => {
-        setTimeout(() => activeSessions.delete(sessionUuid), 60000);
+        setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
 
       logger.info("Backward hunt started", { campaignId: campaign.id, planId: plan.planId, sessionUuid });
@@ -124,11 +130,15 @@ router.post("/start", async (req: Request, res: Response) => {
       focusVulnClasses,
     });
 
-    activeSessions.set(sessionUuid, engine);
+    const io = req.app.get("io") as SocketServer;
+    wireHuntEngineToSocket(engine, sessionUuid, io);
+    // Replay hunt:started since it fired before wiring was in place
+    io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
+    activeHuntSessions.set(sessionUuid, engine);
 
     // Auto-cleanup after hunt completes
     engine.on("hunt:complete", () => {
-      setTimeout(() => activeSessions.delete(sessionUuid), 60000);
+      setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
 
     logger.info("Hunt started", { campaignId: campaign.id, sessionUuid, targetUrl });
@@ -146,16 +156,16 @@ router.post("/start", async (req: Request, res: Response) => {
 
 // Stop an active hunt
 router.post("/stop/:sessionUuid", (req: Request, res: Response) => {
-  const engine = activeSessions.get(req.params.sessionUuid);
+  const engine = activeHuntSessions.get(req.params.sessionUuid);
   if (!engine) return res.status(404).json({ error: "Session not found" });
   engine.emit("hunt:stop");
-  activeSessions.delete(req.params.sessionUuid);
+  activeHuntSessions.delete(req.params.sessionUuid);
   return res.json({ ok: true });
 });
 
 // Get hunt session state
 router.get("/session/:sessionUuid", async (req: Request, res: Response) => {
-  const engine = activeSessions.get(req.params.sessionUuid);
+  const engine = activeHuntSessions.get(req.params.sessionUuid);
   if (engine) {
     return res.json({ live: true, state: engine.getState() });
   }

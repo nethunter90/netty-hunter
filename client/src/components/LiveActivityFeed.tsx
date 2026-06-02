@@ -1003,7 +1003,7 @@ export function LiveActivityFeed({
         )}
 
         {visible.map((ev, i) => {
-          const key = `${ev.type}-${i}`;
+          const key = `${ev.type}-${ev.ts}-${i}`;
           switch (ev.type) {
             case "layer_start":
             case "layer_done":

@@ -33,6 +33,8 @@ import { callbackServer } from "./lib/oob/callback-server";
 import { runtimeConfig } from "./lib/runtime-config";
 import { writeupScraper } from "./lib/intelligence/writeup-scraper";
 import { egressAllocator } from "./lib/stealth/egress-route-allocator";
+import { wireHuntEngineToSocket } from "./lib/utils/wire-hunt-engine";
+import { activeHuntSessions } from "./lib/state/hunt-sessions";
 import { db } from "./db";
 import { programs } from "./db/schema";
 import { gt } from "drizzle-orm";
@@ -210,7 +212,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // ─── Socket.IO Events ─────────────────────────────────────────────────────────
-const activeSessions = new Map<string, HunterEngine>();
 
 io.on("connection", (socket) => {
   logger.info("Socket connected", { id: socket.id });
@@ -220,10 +221,12 @@ io.on("connection", (socket) => {
     socket.join(`hunt:${sessionUuid}`);
     logger.info("Socket subscribed to hunt", { id: socket.id, sessionUuid });
 
-    // Find active engine
-    const engine = activeSessions.get(sessionUuid);
+    // Find active engine (includes REST-started engines via shared map)
+    const engine = activeHuntSessions.get(sessionUuid);
     if (engine) {
-      socket.emit("hunt:state", engine.getState());
+      // Replay current phase so late-joining clients aren't left blank
+      const state = engine.getState();
+      socket.emit("hunt:state", state);
     }
   });
 
@@ -286,50 +289,15 @@ io.on("connection", (socket) => {
   }) => {
     const engine = new HunterEngine();
 
-    engine.on("hunt:started", (data) => io.to(`hunt:${data.sessionUuid}`).emit("hunt:started", data));
-    engine.on("hunt:phase", (data) => io.to(`hunt:${data.sessionUuid || params.campaignId}`).emit("hunt:phase", data));
-    engine.on("hunt:observations", (data) => socket.emit("hunt:observations", data));
-    engine.on("hunt:hypotheses", (data) => socket.emit("hunt:hypotheses", data));
-    engine.on("hunt:probing", (data) => socket.emit("hunt:probing", data));
-    engine.on("hunt:probe_result", (data) => socket.emit("hunt:probe_result", data));
-    engine.on("hunt:finding_confirmed", (data) => socket.emit("hunt:finding_confirmed", data));
-    engine.on("hunt:update", (data) => socket.emit("hunt:update", data));
-    engine.on("hunt:complete", (data) => {
-      socket.emit("hunt:complete", data);
-      activeSessions.delete(data.sessionId);
-    });
-    engine.on("hunt:error", (data) => socket.emit("hunt:error", data));
-    engine.on("hunt:cve_seeded", (data) => socket.emit("hunt:cve_seeded", data));
-    engine.on("hunt:graphql_schema", (data) => socket.emit("hunt:graphql_schema", data));
-    engine.on("hunt:ssrf_pivot", (data) => socket.emit("hunt:ssrf_pivot", data));
-    engine.on("hunt:changes_detected", (data) => socket.emit("hunt:changes_detected", data));
-    engine.on("hunt:oob_hit", (data) => socket.emit("hunt:oob_hit", data));
-    engine.on("hunt:secrets_found", (data) => socket.emit("hunt:secrets_found", data));
-    engine.on("hunt:ws_vulns", (data) => socket.emit("hunt:ws_vulns", data));
-    engine.on("hunt:bucket_exposed", (data) => socket.emit("hunt:bucket_exposed", data));
-    engine.on("hunt:proto_pollution", (data) => socket.emit("hunt:proto_pollution", data));
-    engine.on("hunt:race_condition", (data) => socket.emit("hunt:race_condition", data));
-    engine.on("hunt:host_header", (data) => socket.emit("hunt:host_header", data));
-    engine.on("hunt:crlf", (data) => socket.emit("hunt:crlf", data));
-    engine.on("hunt:cookie_flags", (data) => socket.emit("hunt:cookie_flags", data));
-    engine.on("hunt:endpoints_discovered", (data) => socket.emit("hunt:endpoints_discovered", data));
-    engine.on("hunt:plan_seeded", (data) => socket.emit("hunt:plan_seeded", data));
-    engine.on("hunt:tech_payloads", (data) => socket.emit("hunt:tech_payloads", data));
-    engine.on("hunt:params_discovered", (data) => socket.emit("hunt:params_discovered", data));
-    engine.on("hunt:oauth_vulns", (data) => socket.emit("hunt:oauth_vulns", data));
-    engine.on("hunt:mass_assignment", (data) => socket.emit("hunt:mass_assignment", data));
-    engine.on("hunt:business_logic", (data) => socket.emit("hunt:business_logic", data));
-    engine.on("hunt:2fa_bypass", (data) => socket.emit("hunt:2fa_bypass", data));
-    engine.on("hunt:jwt_vulns", (data) => socket.emit("hunt:jwt_vulns", data));
-    engine.on("hunt:open_redirect", (data) => socket.emit("hunt:open_redirect", data));
-    engine.on("hunt:xxe_found", (data) => socket.emit("hunt:xxe_found", data));
-    engine.on("hunt:chain_seeded", (data) => socket.emit("hunt:chain_seeded", data));
-    engine.on("hunt:pivot", (data) => socket.emit("hunt:pivot", data));
-    engine.on("hunt:ai_reasoning", (data) => socket.emit("hunt:ai_reasoning", data));
-
     try {
       const sessionUuid = await engine.startHunt(params);
-      activeSessions.set(sessionUuid, engine);
+      wireHuntEngineToSocket(engine, sessionUuid, io);
+      // Replay hunt:started since it fired before wiring
+      io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
+      activeHuntSessions.set(sessionUuid, engine);
+      engine.on("hunt:complete", (data: Record<string, unknown>) => {
+        setTimeout(() => activeHuntSessions.delete(String(data.sessionId ?? sessionUuid)), 60_000);
+      });
       socket.emit("hunt:session_created", { sessionUuid });
     } catch (err) {
       socket.emit("hunt:error", { error: String(err) });

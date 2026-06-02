@@ -56,8 +56,16 @@ export default function HuntConsole() {
   }, []);
 
   useEffect(() => {
-    socket.on("hunt:started", (data: any) => {
+    socket.on("hunt:started", (_data: any) => {
       push({ type: "phase", ts: ts(), phase: "observe", iteration: 0 });
+    });
+
+    // Replayed when subscribing to an already-running hunt
+    socket.on("hunt:state", (data: any) => {
+      const state = data.state ?? data;
+      if (state?.phase) {
+        push({ type: "phase", ts: ts(), phase: String(state.phase), iteration: Number(state.iteration ?? 0) });
+      }
     });
 
     socket.on("hunt:phase", (data: any) => {
@@ -317,7 +325,7 @@ export default function HuntConsole() {
         "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
         "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
         "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
-        "hunt:ai_reasoning", "egress:route_changed",
+        "hunt:ai_reasoning", "egress:route_changed", "hunt:state",
       ].forEach(e => socket.off(e));
     };
   }, [socket]);
