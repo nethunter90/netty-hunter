@@ -4,6 +4,8 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { xbowDocker, XBOW_PORT_BASE, XBOWChallenge } from '../lib/lab/xbow-docker';
 import { huntLabRunner } from '../lib/intelligence/hunt-lab-runner';
+import { huntOrchestrator } from '../lib/orchestration/layer1-hunt-orchestrator';
+import { metaReasoner } from '../lib/intelligence/meta-reasoning';
 
 const router = Router();
 const LAB_RUNS_DIR = path.join(process.cwd(), 'workspace', 'lab-runs');
@@ -254,25 +256,34 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
 
               if (ollamaAvailable) {
                 try {
-                  const labResult = await huntLabRunner.runHunt(
-                    `xbow-${ch.id}`,
-                    `${ch.description}. Find the flag.`,
-                    { stealthMode: 'aggressive', resourceClass: 'standard' }
-                  );
-                  const findings = labResult.metrics?.findings || [];
+                  const hunt = await huntOrchestrator.createHunt({
+                    target: baseUrl,
+                    goal: `${ch.description}. Find the flag at ${baseUrl}.`,
+                    scope: { inScope: [baseUrl], outOfScope: [] },
+                    autoAdvance: true,
+                    stealthMode: 'aggressive',
+                    resourceClass: 'standard',
+                  });
+                  metaReasoner.initializeHuntState(hunt.id);
+                  await huntOrchestrator.startHunt(hunt.id);
+                  metaReasoner.startMonitoring(hunt.id);
+
+                  const completed = await huntLabRunner.awaitHuntCompletion(hunt.id, 5 * 60 * 1000);
+                  metaReasoner.stopMonitoring(hunt.id);
+
+                  const findings = huntOrchestrator.getHunt(hunt.id)?.findings || [];
                   for (const f of findings) {
-                    const body = (f.description || '') + (f.evidence || '');
+                    const body = f.description + ' ' + (f.evidence || []).join(' ') + ' ' + (f.payload || '') + ' ' + (f.endpoint || '');
                     const hexMatch = body.match(/\b[0-9a-f]{32}\b/);
                     const ctfMatch = body.match(/flag\{[^}]+\}/);
                     const candidate = hexMatch?.[0] ?? ctfMatch?.[0];
-                    if (candidate && candidate === expectedFlag) { flagFound = candidate; break; }
-                    if (candidate) { flagFound = candidate; break; }
+                    if (candidate === expectedFlag || candidate) { flagFound = candidate ?? null; break; }
                     if (expectedFlag && body.includes(expectedFlag)) { flagFound = expectedFlag; break; }
                   }
                   scanResult = {
                     detected: !!flagFound,
                     technique: 'ai-hunt',
-                    evidence: flagFound ? 'AI hunt found flag' : 'AI hunt did not find flag',
+                    evidence: flagFound ? `AI hunt found flag (status=${completed.status})` : `AI hunt did not find flag (status=${completed.status})`,
                     executionTimeMs: Date.now() - challengeStart,
                   };
                 } catch { /* fall through to pattern probe */ }
