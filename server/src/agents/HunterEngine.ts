@@ -22,6 +22,7 @@ import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
 import { stealthCoordinator, dynamicRateLimiter } from "../lib/stealth";
+import { egressAllocator } from "../lib/stealth/egress-route-allocator";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { huntCortex } from "../lib/intelligence/hunt-cortex";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
@@ -1414,7 +1415,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
       this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
-      this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result });
+      const proxyId = egressAllocator.getCurrentAssignment(hypothesis.targetUrl) ?? 'direct';
+      this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId });
 
       // Track consecutive failures; after 5+, do a canary HTTP check to confirm hard ban
       if (result.success || probeResult.hardBanned) {

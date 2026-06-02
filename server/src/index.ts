@@ -32,6 +32,7 @@ import { initializeAutonomousBrain } from "./lib/intelligence";
 import { callbackServer } from "./lib/oob/callback-server";
 import { runtimeConfig } from "./lib/runtime-config";
 import { writeupScraper } from "./lib/intelligence/writeup-scraper";
+import { egressAllocator } from "./lib/stealth/egress-route-allocator";
 import { db } from "./db";
 import { programs } from "./db/schema";
 import { gt } from "drizzle-orm";
@@ -73,6 +74,9 @@ const io = new SocketServer(httpServer, {
 
 // Make io available to routes
 app.set("io", io);
+
+// Forward egress route-change events to all connected sockets
+egressAllocator.setSocketEmitter((event, data) => io.emit(event, data));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet({

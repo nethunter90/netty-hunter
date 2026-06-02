@@ -6,6 +6,7 @@ import { hunterAPI, bountyAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
+import { EgressPoolPanel } from "../components/hunt/EgressPoolPanel";
 
 interface ActiveSession {
   sessionUuid: string;
@@ -107,6 +108,7 @@ export default function HuntConsole() {
         success: !!r.success,
         output: String(r.output ?? r.parsed?.raw ?? ""),
         durationMs: Number(r.duration ?? 0),
+        proxyId: data.proxyId ? String(data.proxyId) : undefined,
       });
     });
 
@@ -315,7 +317,7 @@ export default function HuntConsole() {
         "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
         "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
         "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
-        "hunt:ai_reasoning",
+        "hunt:ai_reasoning", "egress:route_changed",
       ].forEach(e => socket.off(e));
     };
   }, [socket]);
@@ -496,6 +498,8 @@ export default function HuntConsole() {
               ))}
             </div>
           )}
+
+          <EgressPoolPanel socket={socket} />
         </div>
 
         {/* Right: Live Activity Feed */}

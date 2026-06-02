@@ -3,6 +3,7 @@ import {
   Eye, Brain, Target, RefreshCw, Zap, AlertTriangle, CheckCircle2,
   XCircle, ChevronRight, ChevronDown, Layers, Shield, Server, Globe, Code, Wifi,
 } from "lucide-react";
+import { ProxyRouteChip } from "./hunt/ProxyRouteChip";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -12,7 +13,7 @@ export type ActivityEvent =
   | { type: "phase";          ts: string; phase: string; iteration: number }
   | { type: "hypothesis";     ts: string; id: string; vulnClass: string; reasoning: string; confidence: number }
   | { type: "probe_start";    ts: string; hypothesisId: string; vulnClass: string }
-  | { type: "probe_result";   ts: string; hypothesisId: string; tool: string; success: boolean; output: string; durationMs: number }
+  | { type: "probe_result";   ts: string; hypothesisId: string; tool: string; success: boolean; output: string; durationMs: number; proxyId?: string }
   | { type: "finding";        ts: string; vulnClass: string; severity: string; confidence: number; payload?: string }
   | { type: "solver_finding"; ts: string; vulnClass: string }
   | { type: "verified";       ts: string; findingId: number; verdict: string }
@@ -285,6 +286,7 @@ function ProbeResultRow({ ev }: { ev: ActivityEvent & { type: "probe_result" } }
           {ev.success ? "✓" : "✗"}
         </span>
         <span className="text-hack-dim">{ev.tool}</span>
+        {ev.proxyId && <ProxyRouteChip proxyId={ev.proxyId} />}
         <span className="text-hack-dim">
           {ev.durationMs < 1000 ? `${ev.durationMs}ms` : `${(ev.durationMs / 1000).toFixed(1)}s`}
         </span>

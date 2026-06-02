@@ -42,6 +42,7 @@ class EgressRouteAllocator {
   private health: Map<string /* proxyId:target */, RouteHealth> = new Map();
   private currentAssignments: Map<string /* target */, string /* proxyId */> = new Map();
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private socketEmitter: ((event: string, data: unknown) => void) | null = null;
 
   constructor() {
     this.parseEnvPool();
@@ -56,6 +57,14 @@ class EgressRouteAllocator {
   }
 
   // ─── Pool Management ────────────────────────────────────────────────────────
+
+  setSocketEmitter(emit: (event: string, data: unknown) => void): void {
+    this.socketEmitter = emit;
+  }
+
+  getCurrentAssignment(target: string): string | undefined {
+    return this.currentAssignments.get(this.extractHostname(target));
+  }
 
   register(route: ProxyRoute): void {
     if (!this.routes.find(r => r.id === route.id)) {
@@ -134,13 +143,15 @@ class EgressRouteAllocator {
     const prevId = this.currentAssignments.get(hostname);
 
     if (prevId && prevId !== best.id) {
+      const changePayload = { target: hostname, tool, from: prevId, to: best.id, huntId };
       huntCortex.broadcast({
         signalType: SignalType.EGRESS_ROUTE_CHANGED,
         sourceSystem: 'egress-route-allocator',
         huntId,
-        payload: { target: hostname, tool, from: prevId, to: best.id },
+        payload: changePayload,
         confidence: 0.9,
       }).catch(() => {});
+      this.socketEmitter?.('egress:route_changed', changePayload);
     }
 
     this.currentAssignments.set(hostname, best.id);
