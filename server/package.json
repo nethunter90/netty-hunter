@@ -40,6 +40,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/cors": "^2.8.17",
