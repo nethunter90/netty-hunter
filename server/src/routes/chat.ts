@@ -38,7 +38,14 @@ Examples:
   You: "Running ip addr.\\n[CMD: {\\"bin\\":\\"ip\\",\\"args\\":[\\"addr\\"],\\"description\\":\\"List network interfaces\\"}]"
 
   User: "what is SSRF?"
-  You: "SSRF (Server-Side Request Forgery) is when an attacker tricks a server into making HTTP requests to attacker-chosen URLs… (no command emitted)"`;
+  You: "SSRF (Server-Side Request Forgery) is when an attacker tricks a server into making HTTP requests to attacker-chosen URLs… (no command emitted)"
+
+RESPONSE FORMAT — always follow these rules:
+- Use markdown. Bullet lists over run-on sentences. \`inline code\` for tool names, flags, payloads. Fenced code blocks (\`\`\`bash) for multi-line commands or output examples.
+- Be concise. Lead with the key point. No preamble like "Sure!" or "Of course!".
+- If the answer has multiple steps or items, use a numbered list.
+- Max 3–4 short paragraphs for pure text answers. Never write an essay.`;
+
 
 interface ChatMessage {
   role: "user" | "assistant";

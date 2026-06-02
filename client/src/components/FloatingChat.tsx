@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { MessageSquare, X, Send, Minimize2, Bot, AlertCircle, Terminal } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import api from "../lib/api";
 
 interface StepOutput {
@@ -149,7 +152,42 @@ export default function FloatingChat() {
                   {m.role === "assistant" && (
                     <span className="text-hack-accent text-[9px] block mb-0.5">AI</span>
                   )}
-                  <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                  <div className="break-words min-w-0">
+                    <ReactMarkdown
+                      components={{
+                        p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc ml-3 mb-1.5 space-y-0.5">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal ml-3 mb-1.5 space-y-0.5">{children}</ol>,
+                        li: ({ children }) => <li className="text-[11px] leading-snug">{children}</li>,
+                        h1: ({ children }) => <div className="text-[11px] font-bold text-hack-accent mb-1 mt-1.5">{children}</div>,
+                        h2: ({ children }) => <div className="text-[11px] font-bold text-hack-accent mb-1 mt-1.5">{children}</div>,
+                        h3: ({ children }) => <div className="text-[10px] font-bold text-hack-dim mb-0.5 mt-1">{children}</div>,
+                        strong: ({ children }) => <strong className="font-bold text-hack-text">{children}</strong>,
+                        em: ({ children }) => <em className="italic text-hack-dim">{children}</em>,
+                        blockquote: ({ children }) => <div className="border-l-2 border-hack-accent/40 pl-2 text-hack-dim italic my-1">{children}</div>,
+                        hr: () => <div className="border-t border-hack-border my-1.5" />,
+                        code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
+                          const match = /language-(\w+)/.exec(className || "");
+                          return match ? (
+                            <SyntaxHighlighter
+                              style={vscDarkPlus as Record<string, React.CSSProperties>}
+                              language={match[1]}
+                              PreTag="div"
+                              customStyle={{ fontSize: "10px", borderRadius: "4px", margin: "4px 0", padding: "8px" }}
+                            >
+                              {String(children).replace(/\n$/, "")}
+                            </SyntaxHighlighter>
+                          ) : (
+                            <code className="bg-black/40 rounded px-1 text-hack-accent font-mono text-[10px]">
+                              {children}
+                            </code>
+                          );
+                        },
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  </div>
                   {m.executed && (
                     <div className="mt-2 space-y-1.5">
                       <div className="text-[9px] font-mono text-hack-dim flex items-center gap-1">
