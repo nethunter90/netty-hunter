@@ -275,7 +275,7 @@ export default function Orchestration() {
   // ── Actions ────────────────────────────────────────────────────────────────
 
   const handleRun = () => {
-    if (!selectedProgram) return toast.error("Select a program");
+    if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
 
     setLayers(prev => prev.map(l => ({ ...l, phase: "pending", startedAt: undefined, completedAt: undefined, durationMs: undefined, error: undefined })));
@@ -395,6 +395,7 @@ export default function Orchestration() {
               disabled={isRunning}
             >
               <option value={0}>-- Select Program --</option>
+              <option value={-1}>★ Custom / Local Lab</option>
               {programs.map((p) => (
                 <option key={String(p.id)} value={String(p.id)}>
                   {String(p.name)} ({String(p.platform)})
@@ -467,7 +468,7 @@ export default function Orchestration() {
             {!isRunning ? (
               <button
                 onClick={handleRun}
-                disabled={!selectedProgram || !targetUrl}
+                disabled={(!selectedProgram && selectedProgram !== -1) || !targetUrl}
                 className="hack-btn-primary w-full flex items-center justify-center gap-2 py-2 text-xs rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Play className="w-3 h-3" />

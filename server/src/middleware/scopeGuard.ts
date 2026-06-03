@@ -165,18 +165,21 @@ export class ScopeGuard {
       }
 
       // Check ALL resolved A records on the terminal for private IPs.
-      // Using resolve4 (all addresses) rather than lookup (first address only).
-      try {
-        const ips = await dns.promises.resolve4(terminal);
-        for (const ip of ips) {
-          if (isPrivateIP(ip)) {
-            logger.warn("ScopeGuard: DNS rebinding blocked", { terminal, ip });
-            return { allowed: false, reason: `DNS rebinding protection: ${terminal} resolved to private IP ${ip}` };
+      // Skip for local-lab programs (scope contains "*") — intentionally targeting localhost.
+      const isLocalLabScope = scope.inScope.includes("*");
+      if (!isLocalLabScope) {
+        try {
+          const ips = await dns.promises.resolve4(terminal);
+          for (const ip of ips) {
+            if (isPrivateIP(ip)) {
+              logger.warn("ScopeGuard: DNS rebinding blocked", { terminal, ip });
+              return { allowed: false, reason: `DNS rebinding protection: ${terminal} resolved to private IP ${ip}` };
+            }
           }
+        } catch {
+          // Resolution failure is non-fatal — hostname may lack A records (IPv6-only, etc.)
+          logger.debug("ScopeGuard: resolve4 failed for terminal (non-fatal)", { terminal });
         }
-      } catch {
-        // Resolution failure is non-fatal — hostname may lack A records (IPv6-only, etc.)
-        logger.debug("ScopeGuard: resolve4 failed for terminal (non-fatal)", { terminal });
       }
 
       const sharedInfraWarning = termClass === "warn"
@@ -219,6 +222,8 @@ export class ScopeGuard {
   }
 
   private matchesPattern(hostname: string, pattern: string): boolean {
+    // Bare "*" means match everything (used by local-lab / custom programs).
+    if (pattern === "*") return true;
     // Support wildcards: *.example.com — matches at any subdomain depth.
     const normalized = pattern.replace(/^\*\./, "");
     return hostname === normalized || hostname.endsWith(`.${normalized}`);

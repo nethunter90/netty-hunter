@@ -182,7 +182,7 @@ function NewSessionForm({ programs, onCreated }: {
 
   const handleCreate = async () => {
     if (!target) return toast.error("Enter a target URL");
-    if (!programId) return toast.error("Select a program");
+    if (!programId && programId !== -1) return toast.error("Select a program");
     setLoading(true);
     try {
       await sessionAPI.create({
@@ -208,6 +208,7 @@ function NewSessionForm({ programs, onCreated }: {
       <label className="hack-label">Program</label>
       <select className="hack-input w-full" value={programId} onChange={e => setProgramId(Number(e.target.value))}>
         <option value={0}>-- Select --</option>
+        <option value={-1}>★ Custom / Local Lab</option>
         {programs.map(p => (
           <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>
         ))}

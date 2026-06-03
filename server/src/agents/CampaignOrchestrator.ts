@@ -256,7 +256,24 @@ export class CampaignOrchestrator extends EventEmitter {
   ): Promise<{ passed: boolean; data: Record<string, unknown> }> {
     this.audit(1, "scope_check_start", { url: params.targetUrl, programId: params.programId });
 
-    // 1a. Verify program exists
+    // 1a. Verify program exists — for custom/local-lab hunts (programId -1) find-or-create
+    //     a synthetic program so FK constraints and scope checks still work.
+    if (params.programId === -1) {
+      const [existing] = await db.select().from(programs)
+        .where(eq(programs.platform, "local")).limit(1);
+      if (existing) {
+        params.programId = existing.id;
+      } else {
+        const [created] = await db.insert(programs).values({
+          name: "Custom / Local Lab",
+          platform: "local",
+          scope: ["*"],
+          outOfScope: [],
+        }).returning();
+        params.programId = created.id;
+      }
+    }
+
     const [program] = await db.select().from(programs)
       .where(eq(programs.id, params.programId)).limit(1);
     if (!program) {

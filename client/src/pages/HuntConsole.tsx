@@ -331,7 +331,7 @@ export default function HuntConsole() {
   }, [socket]);
 
   const startHunt = async () => {
-    if (!selectedProgram) return toast.error("Select a program first");
+    if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program first");
     if (!targetUrl) return toast.error("Enter target URL");
     if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
 
@@ -403,10 +403,16 @@ export default function HuntConsole() {
                 onChange={e => setSelectedProgram(parseInt(e.target.value))}
               >
                 <option value={0}>-- Select Program --</option>
+                <option value={-1}>★ Custom / Local Lab</option>
                 {programs.map((p: any) => (
                   <option key={Number(p.id)} value={Number(p.id)}>{String(p.name)}</option>
                 ))}
               </select>
+              {selectedProgram === -1 && (
+                <div className="text-[9px] text-hack-yellow font-mono mt-1">
+                  Custom target — scope validation bypassed. For local labs, CTF, Juice Shop, etc.
+                </div>
+              )}
             </div>
 
             <div>
@@ -468,7 +474,7 @@ export default function HuntConsole() {
 
             <button
               onClick={startHunt}
-              disabled={loading || !selectedProgram || !targetUrl}
+              disabled={loading || (!selectedProgram && selectedProgram !== -1) || !targetUrl}
               className="hack-btn-primary w-full flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading

@@ -23,7 +23,8 @@ verifierAgent.initialize().catch(err => logger.warn("Verifier init failed", { er
 
 // ── Schema Validation ─────────────────────────────────────────────────────────
 const StartHuntSchema = z.object({
-  programId: z.number().int().positive(),
+  // -1 signals a custom/local-lab target — no bug-bounty platform required.
+  programId: z.number().int().min(-1),
   targetUrl: z.string().url(),
   mode: z.enum(["forward", "backward"]).default("forward"),
   goal: z.string().min(5).max(500).optional(),
@@ -42,11 +43,31 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId, targetUrl, mode, goal, maxIterations, budget, templateId } = parsed.data;
+  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId } = parsed.data;
 
-  // Verify program exists
-  const [program] = await db.select().from(programs).where(eq(programs.id, programId)).limit(1);
-  if (!program) return res.status(404).json({ error: "Program not found" });
+  // Resolve effective program — for custom/local-lab hunts (programId === -1) we
+  // find-or-create a synthetic "Custom Lab" program so FK constraints are satisfied.
+  let programId = rawProgramId;
+  if (rawProgramId === -1) {
+    const [existing] = await db.select().from(programs)
+      .where(eq(programs.platform, "local"))
+      .limit(1);
+    if (existing) {
+      programId = existing.id;
+    } else {
+      const [created] = await db.insert(programs).values({
+        name: "Custom / Local Lab",
+        platform: "local",
+        scope: ["*"],
+        outOfScope: [],
+      }).returning();
+      programId = created.id;
+    }
+  } else {
+    // Verify real program exists
+    const [program] = await db.select().from(programs).where(eq(programs.id, rawProgramId)).limit(1);
+    if (!program) return res.status(404).json({ error: "Program not found" });
+  }
 
   // Create campaign
   const [campaign] = await db.insert(campaigns).values({
