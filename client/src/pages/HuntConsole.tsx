@@ -38,6 +38,7 @@ export default function HuntConsole() {
   const [maxIterations, setMaxIterations] = useState(10);
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  const [hypStats, setHypStats] = useState({ pending: 0, probing: 0, confirmed: 0, rejected: 0 });
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
@@ -93,8 +94,10 @@ export default function HuntConsole() {
           vulnClass: h.vulnClass ?? "unknown",
           reasoning: h.reasoning ?? h.evidence?.join("; ") ?? "",
           confidence: h.confidence ?? 0,
+          modelSource: h.modelSource,
         });
       });
+      setHypStats(s => ({ ...s, pending: s.pending + hyps.length }));
     });
 
     socket.on("hunt:probing", (data: any) => {
@@ -104,6 +107,7 @@ export default function HuntConsole() {
         hypothesisId: String(data.hypothesisId || ""),
         vulnClass: String(data.vulnClass || ""),
       });
+      setHypStats(s => ({ ...s, pending: Math.max(0, s.pending - 1), probing: s.probing + 1 }));
     });
 
     socket.on("hunt:probe_result", (data: any) => {
@@ -132,10 +136,16 @@ export default function HuntConsole() {
         payload: f.exploitPayload ?? h.evidence?.join("; "),
       });
       setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
+      setHypStats(s => ({ ...s, probing: Math.max(0, s.probing - 1), confirmed: s.confirmed + 1 }));
       toast.success(`Finding: ${h.vulnClass ?? "unknown"}`);
     });
 
-    socket.on("hunt:update", (_data: any) => {});
+    socket.on("hunt:update", (data: any) => {
+      // Sync counts from server at the end of each update phase
+      const pending = Number(data.pendingHypotheses ?? 0);
+      const rejected = Number(data.rejectedHypotheses ?? 0);
+      setHypStats(s => ({ ...s, pending, rejected }));
+    });
 
     socket.on("hunt:complete", (data: any) => {
       push({
@@ -337,6 +347,7 @@ export default function HuntConsole() {
 
     setLoading(true);
     setActivityEvents([]);
+    setHypStats({ pending: 0, probing: 0, confirmed: 0, rejected: 0 });
 
     try {
       const res = await hunterAPI.startHunt({
@@ -516,13 +527,40 @@ export default function HuntConsole() {
           <EgressPoolPanel socket={socket} />
         </div>
 
-        {/* Right: Live Activity Feed */}
-        <div className="flex-1 overflow-hidden">
-          <LiveActivityFeed
-            events={activityEvents}
-            isRunning={isRunning}
-            title="hunt-engine — /bin/hunter"
-          />
+        {/* Right: Hypothesis Board + Live Activity Feed */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Hypothesis stats bar — always visible during/after a hunt */}
+          {(isRunning || hypStats.confirmed > 0 || hypStats.rejected > 0) && (
+            <div className="flex items-center gap-4 px-3 py-1.5 border-b border-hack-border bg-hack-surface flex-shrink-0 text-[9px] font-mono">
+              <Brain className="w-3 h-3 text-hack-purple flex-shrink-0" />
+              <span className="text-hack-dim tracking-widest uppercase">hypotheses</span>
+              <div className="flex items-center gap-3 ml-2">
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-hack-dim inline-block" />
+                  <span className="text-hack-dim">{hypStats.pending} pending</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-hack-orange inline-block animate-pulse" />
+                  <span className="text-hack-orange">{hypStats.probing} probing</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-hack-accent inline-block" />
+                  <span className="text-hack-accent">{hypStats.confirmed} confirmed</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-hack-red inline-block" />
+                  <span className="text-hack-red">{hypStats.rejected} rejected</span>
+                </span>
+              </div>
+            </div>
+          )}
+          <div className="flex-1 overflow-hidden">
+            <LiveActivityFeed
+              events={activityEvents}
+              isRunning={isRunning}
+              title="hunt-engine — /bin/hunter"
+            />
+          </div>
         </div>
       </div>
     </div>

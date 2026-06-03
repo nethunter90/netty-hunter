@@ -11,7 +11,7 @@ export type ActivityEvent =
   | { type: "layer_start";    ts: string; layer: number; name: string }
   | { type: "layer_done";     ts: string; layer: number; name: string; passed: boolean; durationMs: number }
   | { type: "phase";          ts: string; phase: string; iteration: number }
-  | { type: "hypothesis";     ts: string; id: string; vulnClass: string; reasoning: string; confidence: number }
+  | { type: "hypothesis";     ts: string; id: string; vulnClass: string; reasoning: string; confidence: number; modelSource?: "claude" | "ollama" | "default" }
   | { type: "probe_start";    ts: string; hypothesisId: string; vulnClass: string }
   | { type: "probe_result";   ts: string; hypothesisId: string; tool: string; success: boolean; output: string; durationMs: number; proxyId?: string }
   | { type: "finding";        ts: string; vulnClass: string; severity: string; confidence: number; payload?: string }
@@ -148,6 +148,12 @@ function HypothesisRow({ ev }: { ev: ActivityEvent & { type: "hypothesis" } }) {
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-hack-purple/40 bg-hack-purple/10 text-hack-purple font-mono uppercase">
               {ev.vulnClass}
             </span>
+            {ev.modelSource === "claude" && (
+              <span className="text-[9px] px-1 py-0.5 rounded border border-hack-cyan/40 bg-hack-cyan/10 text-hack-cyan font-mono">CLAUDE</span>
+            )}
+            {ev.modelSource === "ollama" && (
+              <span className="text-[9px] px-1 py-0.5 rounded border border-hack-orange/40 bg-hack-orange/10 text-hack-orange font-mono">OLLAMA</span>
+            )}
             {expanded
               ? <ChevronDown className="w-3 h-3 text-hack-dim" />
               : <ChevronRight className="w-3 h-3 text-hack-dim" />}

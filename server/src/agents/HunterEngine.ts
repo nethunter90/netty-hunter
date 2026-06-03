@@ -1263,6 +1263,37 @@ export class HunterEngine extends EventEmitter {
 
     const domainKnowledge = await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7);
 
+    // ── RAG: RL framework priorities ──────────────────────────────────────────
+    // If observations contain recognized framework tags, pull historically
+    // successful vuln classes from the reinforcement store.
+    const allObsTags = recentObs.flatMap(o => o.tags);
+    const detectedFrameworks = [...new Set(
+      allObsTags.filter(t => /express|spring|django|rails|laravel|wordpress|flask|next|nuxt|strapi/i.test(t))
+    )];
+    let rlPriorityHint = '';
+    for (const fw of detectedFrameworks.slice(0, 2)) {
+      const priorities = await this.rlWiring.getFrameworkPriorities(fw);
+      if (priorities.length > 0) {
+        rlPriorityHint += `RL history: ${fw} targets have yielded ${priorities.slice(0, 5).join(', ')}. `;
+      }
+    }
+
+    // ── RAG: promptKB methodology hints ──────────────────────────────────────
+    // Inject structured attack objectives from the KB for observed candidate
+    // vuln classes so the model knows the expected exploitation approach.
+    const KNOWN_VULN_TAGS = new Set(['sqli','xss','ssrf','idor','rce','lfi','xxe','csrf','cors','open_redirect']);
+    const candidateVulns = [...new Set(allObsTags.filter(t => KNOWN_VULN_TAGS.has(t)))].slice(0, 3);
+    let methodologyHints = '';
+    for (const vc of candidateVulns) {
+      const templates = promptKB.getForVulnClass(vc);
+      if (templates.length > 0) {
+        const objMatch = templates[0].template.match(/Objective:\n((?:- .+\n?)+)/);
+        if (objMatch) {
+          methodologyHints += `${vc.toUpperCase()} — ${objMatch[1].trim().slice(0, 220)}\n`;
+        }
+      }
+    }
+
     const prompt = `You are an expert security researcher performing bug bounty hunting. \
 Think step by step before generating hypotheses.
 
@@ -1284,7 +1315,7 @@ Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 ${toolKnowledge.getSummaryBlock()}
-${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}
+${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
@@ -1608,6 +1639,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     this.emit("hunt:update", {
       confirmed: this.state.confirmedFindings.length,
       pendingHypotheses: pending,
+      rejectedHypotheses: rejected,
     });
     this.emit("hunt:ai_reasoning", {
       sessionId: this.state.sessionId,

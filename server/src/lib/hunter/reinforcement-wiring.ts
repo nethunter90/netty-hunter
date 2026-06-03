@@ -41,6 +41,10 @@ export class ReinforcementWiring {
     logger.debug('[RL] Model outcome recorded', { model, vulnClass, confirmed });
   }
 
+  getFrameworkPriorities(framework: string): Promise<string[]> {
+    return this.rl.getVulnsForFramework(framework).then(vulns => vulns.map(v => v.vulnClass));
+  }
+
   onHuntComplete(config: WiringConfig & {
     confirmedFindings: number;
     totalProbes: number;
