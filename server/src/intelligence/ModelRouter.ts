@@ -5,6 +5,7 @@
 import axios from "axios";
 import logger from "../utils/logger";
 import { runtimeConfig } from "../lib/runtime-config";
+import { ClaudeBridge } from "../lib/claude-bridge";
 
 type TaskType = "reason" | "code" | "analyze" | "classify" | "chat" | "summarize";
 
@@ -182,6 +183,23 @@ export class ModelRouter {
     temperature?: number;
     maxTokens?: number;
   } = {}): Promise<string> {
+    // Tier 0: Claude Code CLI — used for hard reasoning when available.
+    // Falls through to Ollama for chat/classify/summarize or when CLI not found.
+    if (taskType === "reason" || taskType === "analyze") {
+      const claudeAvailable = await ClaudeBridge.isAvailable();
+      if (claudeAvailable) {
+        logger.info("ModelRouter: routing to Claude Code CLI", { taskType });
+        try {
+          const fullPrompt = options.systemPrompt
+            ? `${options.systemPrompt}\n\n${prompt}`
+            : prompt;
+          return await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+        } catch (err) {
+          logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
+        }
+      }
+    }
+
     if (!this.isHealthy()) {
       throw new Error("ModelRouter: Circuit OPEN — Ollama is unavailable (will retry after recovery timeout)");
     }

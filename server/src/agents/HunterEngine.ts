@@ -13,6 +13,7 @@ import { db } from "../db";
 import { huntSessions, findings, exploitChains, customTools } from "../db/schema";
 import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
+import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter } from "../intelligence/ModelRouter";
@@ -541,6 +542,7 @@ export class HunterEngine extends EventEmitter {
       programId: params.programId,
       programType: "web_app",
     });
+    contextWriter.reset(sessionUuid, params.targetUrl, "ollama");
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
 
@@ -581,6 +583,12 @@ export class HunterEngine extends EventEmitter {
       await this.yieldToEventLoop();
 
       this.emit("hunt:phase", { phase: this.state.phase, iteration: this.state.iteration });
+      contextWriter.updateState({
+        phase: this.state.phase,
+        iteration: this.state.iteration,
+        hypothesesCount: this.state.hypotheses.length,
+        findingsCount: this.state.confirmedFindings.length,
+      });
 
       try {
         switch (this.state.phase) {
@@ -1495,6 +1503,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
+          contextWriter.addFinding({
+            id: confirmed.hypothesis.id,
+            vulnClass: confirmed.hypothesis.vulnClass,
+            severity: confirmed.severity,
+            confidence: confirmed.hypothesis.confidence,
+            endpoint: confirmed.hypothesis.targetUrl,
+            payload: confirmed.exploitPayload,
+            description: confirmed.hypothesis.reasoning.slice(0, 300),
+            confirmedAt: new Date().toISOString(),
+          });
           await this.persistFinding(confirmed);
           notificationService.notifyIfWorthy({
             type: "finding_confirmed",
