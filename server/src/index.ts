@@ -8,6 +8,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { mkdirSync } from "fs";
+import * as pty from "node-pty";
 import logger from "./utils/logger";
 import authRoutes from "./routes/auth";
 import huntRoutes from "./routes/hunt";
@@ -326,8 +327,52 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ── Embedded Terminal (PTY) ────────────────────────────────────────────────
+  const socketPtys = new Map<string, pty.IPty>();
+
+  socket.on("terminal:create", (data: { cols?: number; rows?: number; cwd?: string }) => {
+    const termId = `${socket.id}-${Date.now()}`;
+    const shell = process.env.SHELL || "/bin/bash";
+    const ptyProcess = pty.spawn(shell, [], {
+      name: "xterm-256color",
+      cols: data.cols || 80,
+      rows: data.rows || 24,
+      cwd: data.cwd || process.cwd(),
+      env: process.env as Record<string, string>,
+    });
+
+    socketPtys.set(termId, ptyProcess);
+
+    ptyProcess.onData(output => socket.emit("terminal:output", { termId, data: output }));
+    ptyProcess.onExit(() => {
+      socketPtys.delete(termId);
+      socket.emit("terminal:exit", { termId });
+    });
+
+    socket.emit("terminal:created", { termId });
+    logger.debug("Terminal PTY created", { termId, shell });
+  });
+
+  socket.on("terminal:input", ({ termId, data }: { termId: string; data: string }) => {
+    socketPtys.get(termId)?.write(data);
+  });
+
+  socket.on("terminal:resize", ({ termId, cols, rows }: { termId: string; cols: number; rows: number }) => {
+    socketPtys.get(termId)?.resize(cols, rows);
+  });
+
+  socket.on("terminal:destroy", ({ termId }: { termId: string }) => {
+    const p = socketPtys.get(termId);
+    if (p) { try { p.kill(); } catch {} socketPtys.delete(termId); }
+  });
+
   socket.on("disconnect", () => {
     logger.info("Socket disconnected", { id: socket.id });
+    // Kill all PTYs owned by this socket
+    socketPtys.forEach((p, termId) => {
+      try { p.kill(); } catch {}
+      socketPtys.delete(termId);
+    });
   });
 });
 

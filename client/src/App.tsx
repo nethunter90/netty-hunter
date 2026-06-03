@@ -18,6 +18,7 @@ import Missions from './pages/Missions';
 import SettingsPage from './pages/Settings';
 import FloatingChat from './components/FloatingChat';
 import ToolsPage from './pages/Tools';
+import TerminalPage from './pages/TerminalPage';
 
 interface User {
   id: number;
@@ -110,6 +111,7 @@ export default function App() {
               <Route path="/missions" element={<Missions />} />
               <Route path="/tools" element={<ToolsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/terminal" element={<TerminalPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>

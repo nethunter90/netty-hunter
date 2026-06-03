@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Target, Terminal, ShieldAlert,
   Brain, FileText, LogOut, User, Shield, Layers, Crosshair,
-  DollarSign, Swords, Settings, Wrench
+  DollarSign, Swords, Settings, Wrench, TerminalSquare
 } from "lucide-react";
 import { authAPI } from "../../lib/api";
 import toast from "react-hot-toast";
@@ -27,6 +27,7 @@ const NAV_ITEMS = [
   { id: "bounty", icon: DollarSign, label: "Bounty", path: "/bounty" },
   { id: "missions", icon: Swords, label: "Missions", path: "/missions" },
   { id: "tools", icon: Wrench, label: "Tools", path: "/tools" },
+  { id: "terminal", icon: TerminalSquare, label: "Terminal", path: "/terminal" },
   { id: "settings", icon: Settings, label: "Settings", path: "/settings" },
 ];
 
