@@ -108,8 +108,10 @@ export interface Hypothesis {
   evidence: Observation[];
   status: "pending" | "probing" | "confirmed" | "rejected" | "inconclusive";
   createdAt: number;
-  retryCount?: number;   // tracks how many times this hypothesis has been re-queued from gray zone
-  toolHint?: string;     // preferred tool override for next probe attempt (set on retry)
+  retryCount?: number;
+  toolHint?: string;
+  /** Which model generated this hypothesis — used to score model performance in RL store. */
+  modelSource?: "claude" | "ollama" | "default";
 }
 
 export interface ProbeResult {
@@ -1334,6 +1336,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         evidence: this.state.observations.filter(o => o.anomalyScore > 0.3),
         status: "pending" as const,
         createdAt: Date.now(),
+        modelSource: this.modelRouter.lastProvider,
       }));
 
       // Sort by priority * confidence
@@ -1500,6 +1503,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         if (newConfidence > 0.7) {
           hypothesis.status = "confirmed";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
+          this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
@@ -1568,6 +1572,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         } else if (newConfidence < 0.2) {
           hypothesis.status = "rejected";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
+          this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
         } else {
           // Gray zone (0.2–0.7): re-queue with a different tool, up to 2 retries
           hypothesis.retryCount = (hypothesis.retryCount || 0) + 1;
@@ -1589,6 +1594,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         if (relatedProbes.length > 0) {
           hypothesis.status = "rejected";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
+          this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
           // Record miss in ROI model so success rates decay appropriately
           this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
         } else {

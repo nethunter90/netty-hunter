@@ -36,6 +36,11 @@ export class ReinforcementWiring {
     logger.debug('[RL] Hypothesis calibration recorded', { vulnClass, predictedConfidence, actuallyFound });
   }
 
+  recordModelOutcome(model: string, vulnClass: string, confirmed: boolean): void {
+    this.rl.recordModelOutcome(model, vulnClass, confirmed).catch(() => {});
+    logger.debug('[RL] Model outcome recorded', { model, vulnClass, confirmed });
+  }
+
   onHuntComplete(config: WiringConfig & {
     confirmedFindings: number;
     totalProbes: number;

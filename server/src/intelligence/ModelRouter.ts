@@ -6,6 +6,7 @@ import axios from "axios";
 import logger from "../utils/logger";
 import { runtimeConfig } from "../lib/runtime-config";
 import { ClaudeBridge } from "../lib/claude-bridge";
+import { UnifiedReinforcementStore } from "./ReinforcementStore";
 
 type TaskType = "reason" | "code" | "analyze" | "classify" | "chat" | "summarize";
 
@@ -66,6 +67,8 @@ export class ModelRouter {
   }
 
   private activeBaseUrl = "";
+  /** Which provider handled the last generate() call — readable by callers for tagging. */
+  lastProvider: "claude" | "ollama" | "default" = "default";
 
   // ── Circuit breaker helpers ────────────────────────────────────────────────
   private recordSuccess(): void {
@@ -184,18 +187,34 @@ export class ModelRouter {
     maxTokens?: number;
   } = {}): Promise<string> {
     // Tier 0: Claude Code CLI — used for hard reasoning when available.
-    // Falls through to Ollama for chat/classify/summarize or when CLI not found.
+    // Consults the reinforcement store to make a data-driven routing decision
+    // once enough samples exist; defaults to Claude when data is sparse.
     if (taskType === "reason" || taskType === "analyze") {
       const claudeAvailable = await ClaudeBridge.isAvailable();
       if (claudeAvailable) {
-        logger.info("ModelRouter: routing to Claude Code CLI", { taskType });
+        // Check if reinforcement data suggests Ollama is better for this specific task
+        let preferClaude = true;
         try {
-          const fullPrompt = options.systemPrompt
-            ? `${options.systemPrompt}\n\n${prompt}`
-            : prompt;
-          return await ClaudeBridge.reasonWithHuntContext(fullPrompt);
-        } catch (err) {
-          logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
+          const rl = UnifiedReinforcementStore.getInstance();
+          const better = await rl.getBetterModel(taskType);
+          if (better === "ollama") {
+            preferClaude = false;
+            logger.info("ModelRouter: RL data suggests Ollama for this task", { taskType });
+          }
+        } catch { /* non-fatal — default to Claude */ }
+
+        if (preferClaude) {
+          logger.info("ModelRouter: routing to Claude Code CLI", { taskType });
+          try {
+            const fullPrompt = options.systemPrompt
+              ? `${options.systemPrompt}\n\n${prompt}`
+              : prompt;
+            const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+            this.lastProvider = "claude";
+            return result;
+          } catch (err) {
+            logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
+          }
         }
       }
     }
@@ -242,6 +261,7 @@ export class ModelRouter {
 
         const content = (resp.data as unknown as { message: { content: string } }).message?.content || resp.data.response || "";
         this.recordSuccess();
+        this.lastProvider = "ollama";
         return content;
       } catch (err) {
         lastErr = err;

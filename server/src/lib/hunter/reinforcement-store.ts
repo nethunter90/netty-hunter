@@ -295,6 +295,12 @@ class ReinforcementStoreAdapter {
   recordConfidenceCalibration(vulnClass: string, confidence: number, found: boolean) {
     return this.rl.recordConfidenceCalibration(vulnClass, confidence, found);
   }
+  recordModelOutcome(model: string, vulnClass: string, confirmed: boolean) {
+    return this.rl.recordModelOutcome(model, vulnClass, confirmed);
+  }
+  getBetterModel(vulnClass: string) {
+    return this.rl.getBetterModel(vulnClass);
+  }
   computeBrierScore() {
     return this.rl.computeBrierScore();
   }

@@ -17,7 +17,8 @@ export type RLDomain =
   | "framework_vuln"
   | "program_type"
   | "confidence_calibration"
-  | "exploration";
+  | "exploration"
+  | "model_selection";
 
 export interface RLEntry {
   domain: RLDomain;
@@ -147,6 +148,38 @@ export class UnifiedReinforcementStore {
   // ── Generic Record (for external callers) ─────────────────────────────────
   async record(domain: RLDomain, key: string, success: boolean): Promise<void> {
     await this.upsert(domain, key, {}, success);
+  }
+
+  // ── Domain 6: Model Selection ─────────────────────────────────────────────
+  // Tracks confirmation rates per model per vuln class.
+  // Key format: "${model}:${vulnClass}" e.g. "claude:sqli", "ollama:xss"
+  async recordModelOutcome(model: string, vulnClass: string, confirmed: boolean): Promise<void> {
+    await this.upsert("model_selection", `${model}:${vulnClass}`, { model, vulnClass }, confirmed);
+  }
+
+  async getModelSuccessRate(model: string, vulnClass: string): Promise<number> {
+    const entry = await this.get("model_selection", `${model}:${vulnClass}`);
+    if (!entry || entry.totalCount === 0) return -1; // -1 = no data
+    return entry.successCount / entry.totalCount;
+  }
+
+  /** Returns the model with better confirmed hypothesis rate for a given vuln class.
+   *  Returns null when there's insufficient data to make a call (< 3 samples each). */
+  async getBetterModel(
+    vulnClass: string,
+    candidates: string[] = ["claude", "ollama"]
+  ): Promise<string | null> {
+    const MIN_SAMPLES = 3;
+    let best: string | null = null;
+    let bestRate = -1;
+
+    for (const model of candidates) {
+      const entry = await this.get("model_selection", `${model}:${vulnClass}`);
+      if (!entry || entry.totalCount < MIN_SAMPLES) continue;
+      const rate = entry.successCount / entry.totalCount;
+      if (rate > bestRate) { bestRate = rate; best = model; }
+    }
+    return best;
   }
 
   // ── Temporal Decay ────────────────────────────────────────────────────────
