@@ -10,6 +10,8 @@
  *   context/hunt-live.json      — current hunt state (overwritten each update)
  *   context/hunt-findings.json  — all confirmed findings so far
  *   context/errors.jsonl        — append-only error log
+ *   context/hunt-digest.txt     — single-line compact status (token-efficient)
+ *   context/alerts.jsonl        — key events only: findings, errors, phase changes
  */
 import { promises as fs } from "fs";
 import path from "path";
@@ -114,13 +116,33 @@ class ContextWriter {
     }, 500);
   }
 
+  /** Emit a notable event to alerts.jsonl (findings, phase changes, critical errors). */
+  alert(type: string, detail: Record<string, unknown>): void {
+    append("alerts.jsonl", { ts: new Date().toISOString(), type, ...detail }).catch(() => {});
+  }
+
   private flush(): void {
     if (this.state) {
       write("hunt-live.json", this.state).catch(() => {});
+      this.writeDigest();
     }
     if (this.findings.length > 0) {
       write("hunt-findings.json", this.findings).catch(() => {});
     }
+  }
+
+  private writeDigest(): void {
+    if (!this.state) return;
+    const s = this.state;
+    const ts = new Date().toISOString().slice(11, 19); // HH:MM:SS
+    const errFlag = this.recentErrors.length > 0 ? ` ERR=${this.recentErrors.length}` : "";
+    const line =
+      `[${ts}] ${s.phase.toUpperCase().padEnd(9)} | iter=${String(s.iteration).padStart(2)} | ` +
+      `hyps=${s.hypothesesCount} found=${s.findingsCount}${errFlag} | ` +
+      `model=${s.activeModel} | ${s.targetUrl}\n`;
+    fs.mkdir(CONTEXT_DIR, { recursive: true })
+      .then(() => fs.writeFile(path.join(CONTEXT_DIR, "hunt-digest.txt"), line))
+      .catch(() => {});
   }
 }
 

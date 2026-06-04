@@ -591,6 +591,7 @@ export class HunterEngine extends EventEmitter {
         hypothesesCount: this.state.hypotheses.length,
         findingsCount: this.state.confirmedFindings.length,
       });
+      contextWriter.alert("phase", { phase: this.state.phase, iteration: this.state.iteration });
 
       try {
         switch (this.state.phase) {
@@ -620,7 +621,9 @@ export class HunterEngine extends EventEmitter {
             break;
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         logger.error("Hunt phase error", { phase: this.state.phase, err });
+        contextWriter.alert("error", { phase: this.state.phase, iteration: this.state.iteration, msg: msg.slice(0, 200) });
       }
 
       // Every 3 iterations check hunt health and trigger meta-reasoner pivot if degraded
@@ -657,6 +660,12 @@ export class HunterEngine extends EventEmitter {
     }
 
     this.state.phase = "complete";
+    contextWriter.updateState({ phase: "complete", findingsCount: this.state.confirmedFindings.length });
+    contextWriter.alert("complete", {
+      findings: this.state.confirmedFindings.length,
+      iterations: this.state.iteration,
+      probes: this.state.probes.length,
+    });
     observationCompressor.clearSession(this.state.sessionId);
     // Release the authenticated session so credentials/cookies aren't held after the hunt.
     if (this.authConfig) {
@@ -1547,6 +1556,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
             payload: confirmed.exploitPayload,
             description: confirmed.hypothesis.reasoning.slice(0, 300),
             confirmedAt: new Date().toISOString(),
+          });
+          contextWriter.alert("finding", {
+            vulnClass: confirmed.hypothesis.vulnClass,
+            severity: confirmed.severity,
+            endpoint: confirmed.hypothesis.targetUrl,
+            confidence: confirmed.hypothesis.confidence,
           });
           await this.persistFinding(confirmed);
           notificationService.notifyIfWorthy({
