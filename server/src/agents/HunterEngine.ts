@@ -10,7 +10,7 @@ import { promisify } from "util";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
-import { huntSessions, findings, exploitChains, customTools } from "../db/schema";
+import { huntSessions, findings, exploitChains, customTools, campaigns } from "../db/schema";
 import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
@@ -284,7 +284,9 @@ export const TOOL_KNOWLEDGE: Record<string, {
       const missing: string[] = [];
       const secHeaders = ["content-security-policy", "x-frame-options", "x-content-type-options", "strict-transport-security"];
       secHeaders.forEach(h => { if (!headers[h]) missing.push(h); });
-      return { headers, missingSecurityHeaders: missing };
+      const corsWild = headers["access-control-allow-origin"] === "*";
+      const found = missing.length >= 2 || corsWild;
+      return { headers, missingSecurityHeaders: missing, corsWildcard: corsWild, found, count: missing.length, rawOutput: output.slice(0, 500) };
     },
     rateLimit: 1,
   },
@@ -303,29 +305,36 @@ export const TOOL_KNOWLEDGE: Record<string, {
     rateLimit: 30,
   },
   dalfox: {
-    description: "Fast XSS parameter analysis tool with blind XSS support",
+    description: "XSS detection via nuclei (dalfox fallback)",
     vulnClasses: ["xss"],
     command: (url) => ({
-      bin: "dalfox",
-      args: ["url", url, "--silence", "--output", "/dev/stdout", "--format", "plain"],
+      bin: "nuclei",
+      args: ["-u", url, "-tags", "xss", "-severity", "medium,high,critical", "-json", "-silent", "-timeout", "10"],
     }),
     parser: (output) => {
-      const findings = output.match(/\[POC\].+/g) || [];
+      const findings: unknown[] = [];
+      output.split("\n").filter(l => l.trim()).forEach(line => {
+        try { findings.push(JSON.parse(line)); } catch { /* skip */ }
+      });
       return { found: findings.length > 0, findings, count: findings.length, rawOutput: output.slice(0, 800) };
     },
     rateLimit: 15,
   },
   jwt_tool: {
-    description: "JWT algorithm confusion, none algorithm, and claim manipulation testing",
+    description: "JWT/auth vulnerability detection via nuclei",
     vulnClasses: ["auth_bypass"],
     command: (url) => ({
-      bin: "python3",
-      args: ["/usr/local/bin/jwt_tool.py", url, "-t", url, "-M", "at", "-cv"],
+      bin: "nuclei",
+      args: ["-u", url, "-tags", "jwt,auth", "-severity", "medium,high,critical", "-json", "-silent", "-timeout", "15"],
     }),
     parser: (output) => {
-      const vulnerable = /Exploit possible|none algorithm|algorithm confusion/i.test(output);
-      const technique = output.match(/\[\+\] (.+)/)?.[1] ?? "";
-      return { vulnerable, technique, rawOutput: output.slice(0, 600) };
+      const findings: unknown[] = [];
+      output.split("\n").filter(l => l.trim()).forEach(line => {
+        try { findings.push(JSON.parse(line)); } catch { /* skip */ }
+      });
+      const vulnerable = findings.length > 0;
+      const technique = findings.length > 0 ? JSON.stringify(findings[0]).slice(0, 100) : "";
+      return { vulnerable, found: vulnerable, technique, count: findings.length, rawOutput: output.slice(0, 600) };
     },
     rateLimit: 20,
   },
@@ -1413,7 +1422,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     const pending = this.state.hypotheses
       .filter(h => h.status === "pending")
-      .slice(0, 3); // probe top 3 per iteration
+      .sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence))
+      .slice(0, 8);
 
     for (const hypothesis of pending) {
       // Pre-flight budget check — stop probing if we've hit the request cap
@@ -1470,7 +1480,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         command: String(probeResult.command || ""),
         output: oobHit ? `OOB callback received — ${hypothesis.vulnClass} confirmed` : String(probeResult.rawOutput || ""),
         parsed: probeResult,
-        success: Boolean(probeResult.found || probeResult.injectable || probeResult.count || oobHit),
+        success: Boolean(probeResult.found || probeResult.injectable || probeResult.count || probeResult.vulnerable || oobHit),
         duration: Number(probeResult.duration || 0),
       };
 
@@ -1641,6 +1651,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
       pendingHypotheses: pending,
       rejectedHypotheses: rejected,
     });
+
+    if (this.campaignId) {
+      db.update(campaigns).set({
+        progress: {
+          requestsMade: this.state.budget.requestsMade,
+          elapsed: Math.round(this.state.budget.elapsed),
+        },
+      }).where(eq(campaigns.id, this.campaignId)).catch(() => {});
+    }
     this.emit("hunt:ai_reasoning", {
       sessionId: this.state.sessionId,
       task: "Strategy Update",
@@ -1768,18 +1787,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
       csrf: "curl_probe",
       info_disclosure: "curl_probe",
       xxe: "nuclei",
-      race_condition: "curl_probe",
-      prototype_pollution: "curl_probe",
-      cloud_storage_exposure: "curl_probe",
+      race_condition: "nuclei",
+      prototype_pollution: "nuclei",
+      cloud_storage_exposure: "nuclei",
       broken_auth: "jwt_tool",
-      websocket: "curl_probe",
+      websocket: "nuclei",
       host_header_injection: "curl_probe",
       crlf_injection: "curl_probe",
       cookie_flags: "curl_probe",
-      oauth_misconfiguration: "curl_probe",
-      mass_assignment: "curl_probe",
-      business_logic: "curl_probe",
-      two_factor_bypass: "curl_probe",
+      oauth_misconfiguration: "nuclei",
+      mass_assignment: "nuclei",
+      business_logic: "nuclei",
+      two_factor_bypass: "nuclei",
       jwt_confusion: "jwt_tool",
       parameter_injection: "nuclei",
       hidden_params: "ffuf",
