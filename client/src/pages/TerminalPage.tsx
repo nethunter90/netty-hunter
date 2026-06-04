@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
@@ -61,6 +62,7 @@ export default function TerminalPage() {
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const tabsRef = useRef<Tab[]>([]);
   const socket = getSocket();
+  const location = useLocation();
 
   tabsRef.current = tabs;
 
@@ -73,8 +75,9 @@ export default function TerminalPage() {
       tab.term.open(el);
       setTimeout(() => {
         tab.fitAddon.fit();
+        tab.term.focus();
         const { cols, rows } = tab.term;
-        socket.emit("terminal:create", { cols, rows, cwd: "/home/user/netty-hunter" });
+        socket.emit("terminal:create", { cols, rows });
         socket.once("terminal:created", ({ termId }: { termId: string }) => {
           setTabs(prev => prev.map(t => t.id === tabId ? { ...t, termId } : t));
 
@@ -82,6 +85,7 @@ export default function TerminalPage() {
             "\r\n\x1b[1;32m  ╔══ SENTINEL PRIMORDIAL — TERMINAL ══╗\x1b[0m\r\n" +
             "\x1b[2m  Type \x1b[0m\x1b[1;36mclaude\x1b[0m\x1b[2m to launch Claude Code\x1b[0m\r\n\r\n"
           );
+          tab.term.focus();
         });
       }, 50);
     } else {
@@ -180,6 +184,21 @@ export default function TerminalPage() {
     };
   }, [socket]);
 
+  // Refit + refocus the active terminal whenever this page becomes visible
+  useEffect(() => {
+    if (location.pathname !== "/terminal") return;
+    const tab = tabsRef.current.find(t => t.id === activeTabId);
+    if (!tab) return;
+    // Use rAF so the parent display:flex has taken effect before we measure
+    requestAnimationFrame(() => {
+      tab.fitAddon.fit();
+      if (tab.termId) {
+        socket.emit("terminal:resize", { termId: tab.termId, cols: tab.term.cols, rows: tab.term.rows });
+      }
+      tab.term.focus();
+    });
+  }, [location.pathname, activeTabId, socket]);
+
   return (
     <div className="h-full flex flex-col bg-hack-bg overflow-hidden">
       {/* Header */}
@@ -190,7 +209,7 @@ export default function TerminalPage() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTabId(tab.id)}
+              onClick={() => { setActiveTabId(tab.id); tab.term.focus(); }}
               className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono rounded-t border transition-all flex-shrink-0 ${
                 activeTabId === tab.id
                   ? "bg-hack-bg text-hack-text border-hack-accent/30 border-b-hack-bg"
@@ -225,6 +244,7 @@ export default function TerminalPage() {
             ref={(el) => attachTerminal(tab.id, el)}
             className="absolute inset-0 p-1"
             style={{ display: activeTabId === tab.id ? "block" : "none" }}
+            onClick={() => tabs.find(t => t.id === tab.id)?.term.focus()}
           />
         ))}
       </div>

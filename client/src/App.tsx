@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import ActivityBar from "./components/layout/ActivityBar";
 import Dashboard from "./pages/Dashboard";
@@ -26,10 +26,73 @@ interface User {
   role: string;
 }
 
+// Separate component so useLocation works inside BrowserRouter
+function AppLayout({ user, setUser }: { user: User; setUser: (u: User | null) => void }) {
+  const location = useLocation();
+  const [activeView, setActiveView] = useState<string>("dashboard");
+  const isTerminal = location.pathname === "/terminal";
+
+  return (
+    <div className="flex h-screen bg-hack-bg overflow-hidden">
+      <ActivityBar activeView={activeView} onViewChange={setActiveView} user={user} onLogout={() => setUser(null)} />
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="h-6 bg-hack-surface border-b border-hack-border flex items-center px-4 text-[10px] text-hack-dim font-mono flex-shrink-0">
+          <span className="text-hack-accent glow-green">SENTINEL PRIMORDIAL</span>
+          <span className="mx-2">|</span>
+          <span>v1.0.0</span>
+          <span className="mx-2">|</span>
+          <span className="text-hack-green">{user.username}@hunter</span>
+          <span className="mx-2">|</span>
+          <span>BUG BOUNTY INTELLIGENCE PLATFORM</span>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <span className="status-dot status-running"></span>
+              LIVE
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-hidden relative">
+          {/* Terminal always mounted — PTY survives panel switches */}
+          <div style={{ display: isTerminal ? "flex" : "none", position: "absolute", inset: 0, flexDirection: "column" }}>
+            <TerminalPage />
+          </div>
+
+          {/* All other pages via normal routing */}
+          {!isTerminal && (
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/programs" element={<Programs />} />
+              <Route path="/hunt" element={<HuntConsole />} />
+              <Route path="/findings" element={<Findings />} />
+              <Route path="/intelligence" element={<Intelligence />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/orchestration" element={<Orchestration />} />
+              <Route path="/hunter" element={<Hunter />} />
+              <Route path="/bounty" element={<Bounty />} />
+              <Route path="/missions" element={<Missions />} />
+              <Route path="/tools" element={<ToolsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          )}
+        </div>
+      </div>
+
+      <Toaster position="bottom-right" toastOptions={{
+        style: { background: "#141420", color: "#c8c8e8", border: "1px solid #1e1e3f", fontFamily: "monospace", fontSize: "12px" },
+        success: { iconTheme: { primary: "#00ff88", secondary: "#0a0a0f" } },
+        error: { iconTheme: { primary: "#ff3355", secondary: "#0a0a0f" } },
+      }} />
+      <FloatingChat />
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeView, setActiveView] = useState<string>("dashboard");
 
   useEffect(() => {
     authAPI.me()
@@ -38,8 +101,6 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Handle mid-session 401s (session expired while using the app).
-  // Clears user state so React Router soft-navigates to login — no hard reload.
   useEffect(() => {
     const handler = () => setUser(null);
     window.addEventListener('auth:expired', handler);
@@ -72,65 +133,9 @@ export default function App() {
 
   return (
     <SocketProvider>
-    <BrowserRouter>
-      <div className="flex h-screen bg-hack-bg overflow-hidden">
-        {/* Activity Bar */}
-        <ActivityBar activeView={activeView} onViewChange={setActiveView} user={user} onLogout={() => setUser(null)} />
-
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Top status bar */}
-          <div className="h-6 bg-hack-surface border-b border-hack-border flex items-center px-4 text-[10px] text-hack-dim font-mono flex-shrink-0">
-            <span className="text-hack-accent glow-green">SENTINEL PRIMORDIAL</span>
-            <span className="mx-2">|</span>
-            <span>v1.0.0</span>
-            <span className="mx-2">|</span>
-            <span className="text-hack-green">{user.username}@hunter</span>
-            <span className="mx-2">|</span>
-            <span>BUG BOUNTY INTELLIGENCE PLATFORM</span>
-            <div className="ml-auto flex items-center gap-3">
-              <span className="flex items-center gap-1">
-                <span className="status-dot status-running"></span>
-                LIVE
-              </span>
-            </div>
-          </div>
-
-          {/* Page Content */}
-          <div className="flex-1 overflow-hidden">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/programs" element={<Programs />} />
-              <Route path="/hunt" element={<HuntConsole />} />
-              <Route path="/findings" element={<Findings />} />
-              <Route path="/intelligence" element={<Intelligence />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/orchestration" element={<Orchestration />} />
-              <Route path="/hunter" element={<Hunter />} />
-              <Route path="/bounty" element={<Bounty />} />
-              <Route path="/missions" element={<Missions />} />
-              <Route path="/tools" element={<ToolsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/terminal" element={<TerminalPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </div>
-        </div>
-      </div>
-
-      <Toaster position="bottom-right" toastOptions={{
-        style: {
-          background: "#141420",
-          color: "#c8c8e8",
-          border: "1px solid #1e1e3f",
-          fontFamily: "monospace",
-          fontSize: "12px",
-        },
-        success: { iconTheme: { primary: "#00ff88", secondary: "#0a0a0f" } },
-        error: { iconTheme: { primary: "#ff3355", secondary: "#0a0a0f" } },
-      }} />
-      <FloatingChat />
-    </BrowserRouter>
+      <BrowserRouter>
+        <AppLayout user={user} setUser={setUser} />
+      </BrowserRouter>
     </SocketProvider>
   );
 }
