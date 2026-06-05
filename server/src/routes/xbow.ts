@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import FormData from 'form-data';
 import { xbowDocker, XBOW_PORT_BASE, XBOWChallenge } from '../lib/lab/xbow-docker';
 import { huntLabRunner } from '../lib/intelligence/hunt-lab-runner';
 import { huntOrchestrator } from '../lib/orchestration/layer1-hunt-orchestrator';
