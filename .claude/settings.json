@@ -1,13 +1,25 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pkill -STOP -f 'tsx watch' 2>/dev/null; pkill -STOP -f 'nodemon' 2>/dev/null; true",
+            "statusMessage": "Pausing watcher..."
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "git add -u 2>/dev/null || true",
-            "statusMessage": "Staging changes..."
+            "command": "pkill -CONT -f 'tsx watch' 2>/dev/null; pkill -CONT -f 'nodemon' 2>/dev/null; git add -u 2>/dev/null; true",
+            "statusMessage": "Resuming watcher and staging..."
           }
         ]
       }
