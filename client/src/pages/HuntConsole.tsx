@@ -306,6 +306,9 @@ export default function HuntConsole() {
     socket.on("hunt:xxe_found", (data: any) => {
       push({ type: "xxe_found", ts: ts(), count: Number(data.count || 0), oobConfirmed: Boolean(data.oobConfirmed) });
     });
+    socket.on("hunt:zap_scan", (data: any) => {
+      push({ type: "zap_scan", ts: ts(), alertCount: Number(data.alertCount || 0), hypothesesSeeded: Number(data.hypothesesSeeded || 0), endpointsDiscovered: Number(data.endpointsDiscovered || 0), duration: Number(data.duration || 0) });
+    });
 
     socket.on("hunt:ai_reasoning", (data: any) => {
       push({
@@ -334,7 +337,7 @@ export default function HuntConsole() {
         "hunt:proto_pollution", "hunt:race_condition",
         "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
         "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
-        "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found",
+        "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found", "hunt:zap_scan",
         "hunt:ai_reasoning", "egress:route_changed", "hunt:state",
       ].forEach(e => socket.off(e));
     };

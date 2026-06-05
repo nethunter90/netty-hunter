@@ -63,6 +63,7 @@ import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
 import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
+import { zapScanner } from "../lib/tools/zap-scanner";
 
 const execFileAsync = promisify(execFile);
 
@@ -1166,7 +1167,51 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:xxe_found", { sessionId: this.state.sessionId, count: xxeResult.vulns.length, oobConfirmed: xxeResult.vulns.some(v => v.oobReceived) });
           }
         } catch (err) { logger.debug("[HunterEngine] Blind XXE probe skipped", { err: String(err) }); }
-      }),
+      })(),
+
+      // ZAP passive scanner — spider the target and surface passive-scan findings
+      (async () => {
+        try {
+          const zapResult = await zapScanner.scan(this.state.targetUrl, this.authHeaders);
+          if (!zapResult.available) return;
+
+          for (const hyp of zapResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(),
+              vulnClass: hyp.vulnClass,
+              targetUrl: hyp.targetUrl,
+              reasoning: hyp.reasoning,
+              confidence: hyp.confidence,
+              priority: hyp.priority,
+              evidence: hyp.evidence ? [{ id: uuidv4(), source: "zap", data: { raw: hyp.evidence, parameter: hyp.parameter, cweId: hyp.cweId }, tags: [hyp.vulnClass, "zap"], anomalyScore: hyp.confidence, timestamp: Date.now() }] : [],
+              status: "pending",
+              createdAt: Date.now(),
+            });
+          }
+
+          // Surface newly discovered endpoints as observations
+          if (zapResult.endpointsDiscovered.length > 0) {
+            this.state.observations.push({
+              id: uuidv4(),
+              source: "zap_spider",
+              data: { endpoints: zapResult.endpointsDiscovered, count: zapResult.endpointsDiscovered.length },
+              tags: ["endpoints", "zap"],
+              anomalyScore: 0.3,
+              timestamp: Date.now(),
+            });
+          }
+
+          if (zapResult.hypotheses.length > 0 || zapResult.endpointsDiscovered.length > 0) {
+            this.emit("hunt:zap_scan", {
+              sessionId: this.state.sessionId,
+              alertCount: zapResult.alertCount,
+              hypothesesSeeded: zapResult.hypotheses.length,
+              endpointsDiscovered: zapResult.endpointsDiscovered.length,
+              duration: zapResult.duration,
+            });
+          }
+        } catch (err) { logger.debug("[HunterEngine] ZAP scan skipped (non-critical)", { err: String(err) }); }
+      })(),
       ]);
     }
   }
