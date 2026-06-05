@@ -46,15 +46,25 @@ export class ModelRouter {
   private readonly FAILURE_THRESHOLD = 3;    // trips circuit after 3 consecutive failures
   private readonly RECOVERY_TIMEOUT = 30_000; // 30 s before allowing a recovery probe
 
+  // Models that cannot generate text and must never be used for inference
+  private readonly EMBEDDING_MODEL_PATTERNS = ["embedding", "embed", "rerank"];
+
   private readonly PREFERRED_MODELS: ModelConfig[] = [
+    // Installed reasoning models
+    { name: "deepseek-r1:8b", taskTypes: ["reason", "analyze"], contextWindow: 32768, speed: "slow" },
     { name: "deepseek-r1:7b", taskTypes: ["reason", "analyze"], contextWindow: 32768, speed: "slow" },
     { name: "deepseek-r1:1.5b", taskTypes: ["reason", "analyze"], contextWindow: 8192, speed: "medium" },
-    { name: "llama3.2:3b", taskTypes: ["chat", "classify", "summarize", "code"], contextWindow: 8192, speed: "fast" },
+    // Installed general models
+    { name: "gpt-oss:20b", taskTypes: ["reason", "analyze", "chat", "code"], contextWindow: 32768, speed: "medium" },
+    { name: "devstral-small-2", taskTypes: ["code", "reason", "analyze"], contextWindow: 32768, speed: "medium" },
+    { name: "qwen2.5-coder:7b", taskTypes: ["code", "chat"], contextWindow: 32768, speed: "medium" },
+    // Security-focused models
+    { name: "hf.co/mav23/Pentest_AI-GGUF:Q4_K_S", taskTypes: ["reason", "analyze", "chat"], contextWindow: 8192, speed: "medium" },
+    { name: "jimscard/whiterabbit-neo:13b", taskTypes: ["reason", "analyze"], contextWindow: 8192, speed: "slow" },
+    // General fallbacks
     { name: "llama3.2", taskTypes: ["chat", "classify", "summarize", "code", "reason"], contextWindow: 8192, speed: "medium" },
     { name: "llama3.1:8b", taskTypes: ["reason", "code", "analyze"], contextWindow: 16384, speed: "medium" },
     { name: "mistral:7b", taskTypes: ["reason", "code", "chat"], contextWindow: 8192, speed: "medium" },
-    { name: "codellama:7b", taskTypes: ["code"], contextWindow: 4096, speed: "medium" },
-    { name: "phi3:mini", taskTypes: ["chat", "classify"], contextWindow: 4096, speed: "fast" },
   ];
 
   constructor() {
@@ -143,8 +153,14 @@ export class ModelRouter {
     }
   }
 
+  private isEmbeddingModel(name: string): boolean {
+    const lower = name.toLowerCase();
+    return this.EMBEDDING_MODEL_PATTERNS.some(p => lower.includes(p));
+  }
+
   private async selectModel(taskType: TaskType): Promise<string> {
-    const available = await this.getAvailableModels();
+    const allAvailable = await this.getAvailableModels();
+    const available = allAvailable.filter(m => !this.isEmbeddingModel(m));
 
     // User's explicit model choice always wins (set via Settings → Local AI)
     const userChosen = runtimeConfig.get("OLLAMA_DEFAULT_MODEL") || process.env.OLLAMA_DEFAULT_MODEL;
