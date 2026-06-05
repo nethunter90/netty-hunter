@@ -69,6 +69,8 @@ export class ModelRouter {
   private activeBaseUrl = "";
   /** Which provider handled the last generate() call — readable by callers for tagging. */
   lastProvider: "claude" | "ollama" | "default" = "default";
+  /** Exact model name used in the last generate() call. */
+  lastUsedModel = "";
 
   // ── Circuit breaker helpers ────────────────────────────────────────────────
   private recordSuccess(): void {
@@ -211,6 +213,7 @@ export class ModelRouter {
               : prompt;
             const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
             this.lastProvider = "claude";
+            this.lastUsedModel = "claude";
             return result;
           } catch (err) {
             logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
@@ -224,6 +227,7 @@ export class ModelRouter {
     }
 
     const model = await this.selectModel(taskType);
+    this.lastUsedModel = model;
     const messages: { role: string; content: string }[] = [];
 
     if (options.systemPrompt) {
@@ -252,7 +256,6 @@ export class ModelRouter {
               temperature: options.temperature ?? 0.1,
               num_predict: options.maxTokens ?? 2048,
               num_ctx: 8192,
-              num_gpu: 999,
               num_thread: 8,
             },
           },
@@ -294,6 +297,11 @@ export class ModelRouter {
 
   async getModels(): Promise<string[]> {
     return this.getAvailableModels();
+  }
+
+  /** Returns the model name that would be selected for the given task type. */
+  async getActiveModelName(taskType: TaskType = "chat"): Promise<string> {
+    return this.selectModel(taskType);
   }
 }
 

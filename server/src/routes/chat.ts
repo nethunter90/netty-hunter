@@ -60,15 +60,18 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    // Build a context-aware prompt prefixed with the system rules so the model
-    // knows about the CMD sentinel.
+    // Resolve the model that will be used so we can tell it its own name
+    const activeModel = await modelRouter.getActiveModelName("chat");
+
     const historyContext = (history as ChatMessage[])
-      .slice(-6) // last 3 exchanges
+      .slice(-6)
       .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
       .join("\n");
 
+    const systemWithIdentity = `${SYSTEM_PROMPT}\n\nYou are currently running as the local model "${activeModel}" on the operator's Kali Linux machine.`;
+
     const prompt = [
-      SYSTEM_PROMPT,
+      systemWithIdentity,
       historyContext,
       `User: ${message.trim()}`,
       `Assistant:`,
@@ -95,17 +98,16 @@ router.post("/", async (req: Request, res: Response) => {
       ? `${cleanResponse}\n\n⚠ Command blocked: ${executionError}`.trim()
       : cleanResponse;
 
-    // Return which model answered
-    const models = await modelRouter.getModels();
+    const usedModel = modelRouter.lastUsedModel || activeModel;
     logger.debug("[Chat] response generated", {
-      models: models.length,
+      model: usedModel,
       executed: executed ? executed.outputs.length : 0,
       blocked: Boolean(executionError),
     });
 
     return res.json({
       response: display,
-      model: models[0] ?? "unknown",
+      model: usedModel,
       executed,
     });
   } catch (err) {
@@ -124,7 +126,10 @@ router.post("/", async (req: Request, res: Response) => {
 router.get("/status", async (_req: Request, res: Response) => {
   try {
     const models = await modelRouter.getModels();
-    return res.json({ available: models.length > 0, models });
+    const active = await modelRouter.getActiveModelName("chat");
+    // Put the actually-selected model first so the UI badge reflects reality
+    const ordered = [active, ...models.filter(m => m !== active)];
+    return res.json({ available: models.length > 0, models: ordered });
   } catch {
     return res.json({ available: false, models: [] });
   }
