@@ -72,13 +72,28 @@ export class JsonPromptLoader {
   private embeddingsReady = false;
   private embeddingInitPromise: Promise<void> | null = null;
   private readonly ollamaBase: string;
-  private readonly embedModel: string;
   private readonly cacheFile: string;
+  private _resolvedEmbedModel: string | null = null;
 
   private constructor() {
     this.ollamaBase = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-    this.embedModel = process.env.EMBED_MODEL || 'nomic-embed-text';
     this.cacheFile = path.resolve(__dirname, '../../../data/prompt-embeddings-cache.json');
+  }
+
+  /** Auto-detects the best installed embed model via ModelRouter. Falls back to env var or nomic-embed-text. */
+  private async resolveEmbedModel(): Promise<string> {
+    if (this._resolvedEmbedModel) return this._resolvedEmbedModel;
+    try {
+      const { ModelRouter } = await import('./ModelRouter');
+      const best = await ModelRouter.getInstance().getBestEmbedModel();
+      if (best) {
+        this._resolvedEmbedModel = best;
+        logger.info('[JsonPromptLoader] Auto-detected embed model', { model: best });
+        return best;
+      }
+    } catch { /* fall through */ }
+    this._resolvedEmbedModel = process.env.EMBED_MODEL || 'nomic-embed-text';
+    return this._resolvedEmbedModel;
   }
 
   static getInstance(): JsonPromptLoader {
@@ -173,8 +188,9 @@ export class JsonPromptLoader {
       return;
     }
 
+    const embedModel = await this.resolveEmbedModel();
     logger.info('[JsonPromptLoader] Computing embeddings for all prompts (first run — please wait)', {
-      count: this.prompts.length, model: this.embedModel,
+      count: this.prompts.length, model: embedModel,
     });
 
     const entries: { key: string; embedding: number[] }[] = [];
@@ -198,7 +214,7 @@ export class JsonPromptLoader {
       }
     }
 
-    this.saveEmbeddingCache({ hash, model: this.embedModel, entries });
+    this.saveEmbeddingCache({ hash, model: embedModel, entries });
     this.embeddingsReady = true;
     logger.info('[JsonPromptLoader] Embeddings ready', { count: this.embeddings.size });
   }
@@ -264,9 +280,10 @@ export class JsonPromptLoader {
   }
 
   private async embedText(text: string): Promise<number[]> {
+    const model = await this.resolveEmbedModel();
     const resp = await axios.post(
       `${this.ollamaBase}/api/embeddings`,
-      { model: this.embedModel, prompt: text },
+      { model, prompt: text },
       { timeout: 15000 }
     );
     return resp.data.embedding as number[];
@@ -298,7 +315,7 @@ export class JsonPromptLoader {
     try {
       if (!fs.existsSync(this.cacheFile)) return null;
       const cache = JSON.parse(fs.readFileSync(this.cacheFile, 'utf-8')) as EmbeddingCache;
-      if (cache.hash !== hash || cache.model !== this.embedModel) return null;
+      if (cache.hash !== hash || (this._resolvedEmbedModel && cache.model !== this._resolvedEmbedModel)) return null;
       return cache;
     } catch {
       return null;

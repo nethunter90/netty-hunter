@@ -288,6 +288,69 @@ export class ModelRouter {
     return this.generate(prompt, "code", { temperature: 0.1 });
   }
 
+  // ── Model type classification ──────────────────────────────────────────────
+  private static readonly EMBED_PATTERNS   = /embed|minilm|bge-|e5-|sentence/i;
+  private static readonly VISION_PATTERNS  = /vision|llava|bakllava|moondream|minicpm-v|cogvlm|internvl|qwen.*vl|llama.*vision/i;
+
+  /** LLM-only models — excludes embed and vision models. */
+  async getLLMModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m =>
+      !ModelRouter.EMBED_PATTERNS.test(m) &&
+      !ModelRouter.VISION_PATTERNS.test(m)
+    );
+  }
+
+  /** Embedding models only. */
+  async getEmbedModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m => ModelRouter.EMBED_PATTERNS.test(m));
+  }
+
+  /** Vision/multimodal models only. */
+  async getVisionModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m => ModelRouter.VISION_PATTERNS.test(m));
+  }
+
+  /** Returns the best available embed model, or null if none installed. */
+  async getBestEmbedModel(): Promise<string | null> {
+    const embeds = await this.getEmbedModels();
+    if (embeds.length === 0) return null;
+    // Prefer well-known high-quality embed models
+    const preferred = ['nomic-embed-text', 'mxbai-embed-large', 'bge-large', 'all-minilm', 'e5-'];
+    for (const p of preferred) {
+      const match = embeds.find(m => m.toLowerCase().startsWith(p));
+      if (match) return match;
+    }
+    return embeds[0];
+  }
+
+  /**
+   * Describe a screenshot using the best available vision model.
+   * Returns null if no vision model is installed or the call fails.
+   * @param base64Image - PNG/JPEG image encoded as base64 string
+   * @param prompt      - Instruction for the vision model
+   */
+  async describeScreenshot(base64Image: string, prompt: string): Promise<string | null> {
+    const visionModels = await this.getVisionModels();
+    if (visionModels.length === 0) return null;
+    if (!this.isHealthy()) return null;
+
+    try {
+      const resp = await axios.post(
+        `${this.baseUrl}/api/generate`,
+        { model: visionModels[0], prompt, images: [base64Image], stream: false },
+        { timeout: 30_000 }
+      );
+      this.recordSuccess();
+      return (resp.data as OllamaResponse).response ?? null;
+    } catch (err) {
+      logger.debug("ModelRouter: Vision model call failed", { model: visionModels[0], err: String(err) });
+      return null;
+    }
+  }
+
   async chat(prompt: string): Promise<string> {
     return this.generate(prompt, "chat", { temperature: 0.7 });
   }

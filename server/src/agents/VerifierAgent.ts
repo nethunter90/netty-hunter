@@ -268,7 +268,30 @@ class Layer4AIConfirmation {
   async confirm(result: SolverResult, previousLayers: {
     layer2: { confirmed: boolean; statusCode: number; responseSnippet: string };
     layer3: { confirmed: boolean; consoleAlerts: string[] };
-  }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number }> {
+    screenshot?: string;
+  }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean }> {
+
+    // Vision analysis — fire in parallel with text prompt construction if screenshot available
+    let visionDescription = '';
+    let visionUsed = false;
+    if (previousLayers.screenshot) {
+      try {
+        const visionPrompt =
+          `Security vulnerability verification screenshot. ` +
+          `Payload sent: "${result.payload}" to ${result.endpoint} testing for ${result.vulnClass}. ` +
+          `Does the screenshot show evidence of a successful exploit? ` +
+          `Look for: JavaScript alerts, injected content, error messages revealing internals, ` +
+          `unexpected redirects, or any sign the payload executed. ` +
+          `Reply in 2-3 sentences only.`;
+        const desc = await this.modelRouter.describeScreenshot(previousLayers.screenshot, visionPrompt);
+        if (desc) {
+          visionDescription = desc.trim();
+          visionUsed = true;
+          logger.info('VerifierAgent: Vision analysis complete', { vulnClass: result.vulnClass, desc: visionDescription.slice(0, 100) });
+        }
+      } catch { /* non-critical — degrade silently */ }
+    }
+
     const prompt = `You are a senior security researcher reviewing a potential vulnerability finding.
 
 Endpoint: ${result.endpoint}
@@ -284,7 +307,7 @@ Layer 2 (HTTP Reprobe):
 Layer 3 (Browser Replay):
 - Confirmed: ${previousLayers.layer3.confirmed}
 - Console/Dialog alerts: ${JSON.stringify(previousLayers.layer3.consoleAlerts)}
-
+${visionDescription ? `\nVision Model Analysis:\n${visionDescription}\n` : ''}
 Based on ALL the evidence above, determine:
 1. Is this a genuine vulnerability (not a false positive)?
 2. What is the confidence adjustment (-0.5 to +0.3)?
@@ -294,7 +317,6 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
 
     try {
       const response = await this.modelRouter.reason(prompt);
-      // Scan L4 AI output for prompt injection before trusting the parsed result
       try {
         const { promptInjectionDetector } = await import('../governance');
         const check = promptInjectionDetector.detect(response, 'verifier-l4', 'Layer4AIConfirmation');
@@ -307,19 +329,18 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
         confirmed: Boolean(parsed.confirmed),
         reasoning: String(parsed.reasoning || "AI analysis complete"),
         confidenceAdjustment: Math.min(0.3, Math.max(-0.5, Number(parsed.confidenceAdjustment) || 0)),
+        visionUsed,
       };
     } catch (err) {
-      // Non-critical: AI confirmation failure degrades to L2/L3 consensus rather than killing the pipeline
       logger.warn("VerifierAgent: Layer 4 AI confirmation failed — degrading to L2/L3 consensus", {
-        err: String(err),
-        endpoint: result.endpoint,
-        vulnClass: result.vulnClass,
+        err: String(err), endpoint: result.endpoint, vulnClass: result.vulnClass,
       });
       const aiConfirmed = previousLayers.layer2.confirmed && previousLayers.layer3.confirmed;
       return {
         confirmed: aiConfirmed,
         reasoning: "AI analysis unavailable – verdict based on L2 HTTP re-probe + L3 browser replay",
         confidenceAdjustment: aiConfirmed ? 0 : -0.2,
+        visionUsed: false,
       };
     }
   }
@@ -374,9 +395,9 @@ export class VerifierAgent {
     const l3 = await this.layer3.replay(result);
     logger.info("VerifierAgent: L3 browser replay complete", { confirmed: l3.confirmed });
 
-    // Layer 4: AI Confirmation
-    const l4 = await this.layer4.confirm(result, { layer2: l2, layer3: l3 });
-    logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed });
+    // Layer 4: AI Confirmation (includes vision analysis if screenshot available)
+    const l4 = await this.layer4.confirm(result, { layer2: l2, layer3: l3, screenshot: l3.screenshot });
+    logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed, visionUsed: l4.visionUsed });
 
     // Final Verdict Logic
     const l2l3Consensus = l2.confirmed && l3.confirmed;
