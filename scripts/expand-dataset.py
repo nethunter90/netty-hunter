@@ -333,6 +333,23 @@ def expand_file(filename, cfg, progress):
     return generated
 
 
+# ─── Git helpers ─────────────────────────────────────────────────────────────
+
+def git_commit_file(filename, total_count):
+    """Commit + push a single expanded file so the stop hook stays happy."""
+    rel = f"server/data/prompts/{filename}"
+    try:
+        subprocess.run(["git", "add", rel], check=True, capture_output=True, cwd=ROOT)
+        msg = (f"data: expand {filename} to {total_count} entries\n\n"
+               f"https://claude.ai/code/session_01DDxkjPHWqWRBqhtMz93W7L")
+        subprocess.run(["git", "commit", "-m", msg], check=True, capture_output=True, cwd=ROOT)
+        subprocess.run(["git", "push", "-u", "origin", "HEAD"],
+                       check=True, capture_output=True, cwd=ROOT)
+        log(f"  ✓ committed + pushed {filename} ({total_count} entries)")
+    except subprocess.CalledProcessError as e:
+        log(f"  git error (non-fatal): {e.stderr.decode()[:120] if e.stderr else e}")
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -344,7 +361,10 @@ def main():
     total_added = 0
 
     for filename, cfg in FILE_CONFIGS.items():
-        total_added += expand_file(filename, cfg, progress)
+        added = expand_file(filename, cfg, progress)
+        total_added += added
+        if added > 0:
+            git_commit_file(filename, len(load_json(PROMPTS_DIR / filename)))
 
     # Final tally
     grand_total = sum(
