@@ -963,14 +963,28 @@ export class HunterEngine extends EventEmitter {
         } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
       })(),
 
-      // JS/SPA crawling — extract hidden API endpoints from JS bundles
+      // JS/SPA crawling — extract hidden API endpoints + visual event tags
       (async () => {
         try {
           const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders });
           for (const hyp of crawlResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
           }
-          if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
+          if (crawlResult.endpointsFound.length > 0) {
+            this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
+          }
+          if (crawlResult.visualTags.length > 0) {
+            // Inject visual tags as an observation so the model can reason over them
+            this.state.observations.push({
+              id: uuidv4(),
+              source: "visual_observer",
+              data: { tags: crawlResult.visualTags, count: crawlResult.visualTags.length },
+              tags: ["visual", "dom", "browser"],
+              anomalyScore: crawlResult.visualTags.some(t => t.startsWith("[DIALOG") || /SQL|stack.trace|JS_ERR/i.test(t)) ? 0.8 : 0.3,
+              timestamp: Date.now(),
+            });
+            this.emit("hunt:visual_tags", { sessionId: this.state.sessionId, count: crawlResult.visualTags.length, tags: crawlResult.visualTags.slice(0, 20) });
+          }
         } catch (err) { logger.debug("[HunterEngine] JS/SPA crawl skipped", { err: String(err) }); }
       })(),
 
