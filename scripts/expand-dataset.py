@@ -323,6 +323,7 @@ def expand_file(filename, cfg, progress):
         save_json(path, data)
         progress[filename] = batch_num
         save_progress(progress)
+        git_commit_batch(filename, len(data), batch_num)
 
         generated += added
         log(f"  → added {added}, total now {len(data)}")
@@ -335,17 +336,24 @@ def expand_file(filename, cfg, progress):
 
 # ─── Git helpers ─────────────────────────────────────────────────────────────
 
-def git_commit_file(filename, total_count):
-    """Commit + push a single expanded file so the stop hook stays happy."""
-    rel = f"server/data/prompts/{filename}"
+def git_commit_batch(filename, total_count, batch_num):
+    """Commit + push after every batch so the stop hook never sees dirty state."""
     try:
-        subprocess.run(["git", "add", rel], check=True, capture_output=True, cwd=ROOT)
-        msg = (f"data: expand {filename} to {total_count} entries\n\n"
+        subprocess.run(["git", "add",
+                        f"server/data/prompts/{filename}",
+                        ".expand-progress.json"],
+                       check=True, capture_output=True, cwd=ROOT)
+        # Only commit if there's actually something staged
+        result = subprocess.run(["git", "diff", "--cached", "--quiet"],
+                                capture_output=True, cwd=ROOT)
+        if result.returncode == 0:
+            return  # nothing staged, skip
+        msg = (f"data: {filename} batch {batch_num} → {total_count} entries\n\n"
                f"https://claude.ai/code/session_01DDxkjPHWqWRBqhtMz93W7L")
         subprocess.run(["git", "commit", "-m", msg], check=True, capture_output=True, cwd=ROOT)
         subprocess.run(["git", "push", "-u", "origin", "HEAD"],
                        check=True, capture_output=True, cwd=ROOT)
-        log(f"  ✓ committed + pushed {filename} ({total_count} entries)")
+        log(f"  ✓ committed + pushed (batch {batch_num}, {total_count} total)")
     except subprocess.CalledProcessError as e:
         log(f"  git error (non-fatal): {e.stderr.decode()[:120] if e.stderr else e}")
 
@@ -361,10 +369,7 @@ def main():
     total_added = 0
 
     for filename, cfg in FILE_CONFIGS.items():
-        added = expand_file(filename, cfg, progress)
-        total_added += added
-        if added > 0:
-            git_commit_file(filename, len(load_json(PROMPTS_DIR / filename)))
+        total_added += expand_file(filename, cfg, progress)
 
     # Final tally
     grand_total = sum(
