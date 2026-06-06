@@ -157,8 +157,8 @@ SYSTEM_PROMPT = (
     "evaluation_criteria must list 2-3 specific, checkable criteria."
 )
 
-BATCH_SIZE   = 30   # entries per API call
-CALL_DELAY   = 5    # seconds between calls (conservative for shared rate limits)
+BATCH_SIZE   = 15   # entries per API call (smaller = faster, less timeout risk)
+CALL_DELAY   = 8    # seconds between calls
 MAX_RETRIES  = 3
 
 
@@ -199,12 +199,11 @@ def max_prompt_id_num(data, prefix):
     return m
 
 def call_claude(user_prompt):
-    # SENTINEL_DATAGEN=1 tells the stop hook to skip all git checks for subprocesses
     env = {**os.environ, "SENTINEL_DATAGEN": "1"}
     proc = subprocess.run(
         [CLAUDE_BIN, "--model", "haiku", "-p", SYSTEM_PROMPT],
         input=user_prompt,
-        capture_output=True, text=True, timeout=240,
+        capture_output=True, text=True, timeout=360,
         env=env,
     )
     if proc.returncode != 0:
@@ -232,9 +231,16 @@ def validate(entry, required):
 # ─── Per-file expansion ───────────────────────────────────────────────────────
 
 def build_prompt(filename, cfg, data, batch_size):
-    samples = random.sample(data, min(5, len(data)))
-    schema_ex = json.dumps(samples[0], indent=2)
-    examples   = json.dumps(samples, indent=2)
+    samples = random.sample(data, min(3, len(data)))
+    # Trim expected_answer in examples to keep prompt size manageable
+    trimmed = []
+    for s in samples:
+        e = dict(s)
+        if isinstance(e.get("expected_answer"), str) and len(e["expected_answer"]) > 120:
+            e["expected_answer"] = e["expected_answer"][:120] + "…"
+        trimmed.append(e)
+    schema_ex = json.dumps(trimmed[0], indent=2)
+    examples   = json.dumps(trimmed, indent=2)
 
     return f"""Generate {batch_size} NEW training entries for the "{filename}" dataset.
 
