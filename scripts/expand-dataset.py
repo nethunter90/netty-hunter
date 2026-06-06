@@ -157,9 +157,9 @@ SYSTEM_PROMPT = (
     "evaluation_criteria must list 2-3 specific, checkable criteria."
 )
 
-BATCH_SIZE   = 15   # entries per API call (smaller = faster, less timeout risk)
-CALL_DELAY   = 8    # seconds between calls
-MAX_RETRIES  = 3
+BATCH_SIZE   = 10   # smaller batches = shorter generation time = fewer timeouts
+CALL_DELAY   = 3    # seconds between calls
+MAX_RETRIES  = 5    # more retries, each halving batch size on failure
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -288,20 +288,23 @@ def expand_file(filename, cfg, progress):
         log(f"  batch {batch_num}  ({batch_size} entries)…", )
 
         success = False
+        effective_batch = batch_size
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                prompt   = build_prompt(filename, cfg, data, batch_size)
-                raw      = call_claude(prompt)
-                entries  = extract_json_array(raw)
-                success  = True
+                prompt  = build_prompt(filename, cfg, data, effective_batch)
+                raw     = call_claude(prompt)
+                entries = extract_json_array(raw)
+                success = True
                 break
             except Exception as exc:
-                wait = 15 * attempt
-                log(f"  attempt {attempt} failed ({exc}) — wait {wait}s")
+                # Shrink batch size on each timeout so we always eventually succeed
+                effective_batch = max(3, effective_batch // 2)
+                wait = 10 * attempt
+                log(f"  attempt {attempt} failed — retry with {effective_batch} entries in {wait}s")
                 time.sleep(wait)
 
         if not success:
-            log(f"  {filename}: giving up on batch {batch_num}")
+            log(f"  {filename}: giving up on batch {batch_num}, moving on")
             break
 
         # Assign IDs and append valid entries
