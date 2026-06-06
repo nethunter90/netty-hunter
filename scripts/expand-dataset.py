@@ -199,10 +199,13 @@ def max_prompt_id_num(data, prefix):
     return m
 
 def call_claude(user_prompt):
+    # SENTINEL_DATAGEN=1 tells the stop hook to skip all git checks for subprocesses
+    env = {**os.environ, "SENTINEL_DATAGEN": "1"}
     proc = subprocess.run(
-        [CLAUDE_BIN, "-p", SYSTEM_PROMPT],
+        [CLAUDE_BIN, "--model", "haiku", "-p", SYSTEM_PROMPT],
         input=user_prompt,
-        capture_output=True, text=True, timeout=150,
+        capture_output=True, text=True, timeout=240,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"exit {proc.returncode}: {proc.stderr[:300]}")
