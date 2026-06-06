@@ -147,6 +147,13 @@ FILE_CONFIGS = {
         "id_prefix": None, "id_field": None,
         "required": ["id", "complexity", "vulnerability_type", "scenario", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria"],
     },
+    "visual-tag-reasoning.json": {
+        "target": 300,
+        "domain": "browser visual event tag interpretation for bug bounty vulnerability detection",
+        "diversity": "tag types: [DIALOG:alert/confirm/prompt], [XHR:METHOD:/path:status:type], [+tag:class:text], [-tag], [COOKIE:name:flag], [FORM:method:action], [INPUT:name:type], [CONSOLE:error:msg], [JS_ERR:msg:file:line], [PROMISE_ERR:msg]; vulnerabilities: XSS (DOM/reflected/stored), SQLi (error-based/time-based), CSRF (missing token/static), IDOR, open redirect, info disclosure (stack trace/debug/env), broken auth (session flags), SSRF, SSTI, RCE, prototype pollution, race condition, mass assignment, command injection; contexts: login forms, API calls, admin panels, search, checkout, file upload, WebSockets",
+        "id_prefix": "VT", "id_field": "prompt_id",
+        "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
+    },
 }
 
 SYSTEM_PROMPT = (

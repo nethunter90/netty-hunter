@@ -61,6 +61,9 @@ def make_human_turn(entry: dict) -> str:
     if entry.get("scenario"):
         parts.append(f"\nScenario:\n{entry['scenario']}")
 
+    if entry.get("visual_tags"):
+        parts.append(f"\nBrowser Visual Tags:\n{entry['visual_tags']}")
+
     parts.append(f"\n{entry['prompt']}")
 
     return "\n".join(parts)
