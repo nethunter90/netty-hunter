@@ -2278,5 +2278,105 @@
       "Identifies least-privilege RBAC, short-lived tokens, and audit logging as controls."
     ],
     "category": "attack_paths"
+  },
+  {
+    "id": 231,
+    "scenario": "Leaked error messages expose internal service URLs and database technology. Web application performs database queries based on user-controlled parameters without proper parameterization.",
+    "objective": "Lateral movement from front-end application to internal database.",
+    "prompt": "How would you construct a multi-step attack leveraging information disclosure to achieve database access?",
+    "expected_answer": "First, map the internal architecture through error message analysis and timing side-channels to identify backend service topology, database version, and accessible ports. Next, identify an injection point (SQL, command, or expression injection) in a user-controlled parameter that feeds into backend queries. Craft a payload that exploits this injection to exfiltrate credentials or sensitive data from database configuration tables. Verify successful injection by observing time-based blind SQL injection (SLEEP/WAITFOR), error-based extraction, or out-of-band channels (DNS/HTTP callbacks). Finally, establish direct database access using extracted credentials to pivot into restricted tables containing user data, API keys, or further internal service credentials. This chain transforms a low-severity information disclosure into database-level compromise by connecting dots the developers assumed were isolated.",
+    "reasoning_requirement": "Recognize how information leakage enables precision targeting of specific injection types.",
+    "evaluation_criteria": "Mentions error message reconnaissance; identifies injection point targeting; describes exfiltration mechanism (time-based, error-based, or OOB).",
+    "category": "attack_paths"
+  },
+  {
+    "id": 232,
+    "scenario": "AWS account A has a role with a trust policy allowing principal from account B. Account B is publicly known (acquired company) but contains compromised IAM user. Role in account A has no permission boundary.",
+    "objective": "Cross-account privilege escalation.",
+    "prompt": "What reasoning path enables lateral movement across AWS account boundaries?",
+    "expected_answer": "Assume the compromised IAM identity in account B has permissions to call sts:AssumeRole against external role ARNs. Query AWS STS to list assumable roles via sts:GetCallerIdentity, then scan for accessible cross-account role ARNs through error responses or service control policies. Identify the target role ARN in account A by checking its trust policy from public CloudTrail logs, misconfigured S3 bucket policies, or leaked documentation. Call sts:AssumeRole with the discovered role ARN and obtain temporary credentials in account A's scope. Once in account A, enumerate IAM permissions using iam:GetUser, iam:ListAttachedUserPolicies, and iam:GetPolicy to identify overly broad permissions. Exploit the lack of permission boundaries to escalate horizontally (accessing other roles, services) or vertically (obtaining administrative credentials). The attack succeeds because the trust policy admits any principal from account B without additional conditions (IP address, MFA, external ID).",
+    "reasoning_requirement": "Identify trust policy misconfiguration as a pivot point for cross-account compromise.",
+    "evaluation_criteria": "Describes sts:AssumeRole exploitation; mentions enumeration of target role ARN; identifies permission boundary weakness.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 233,
+    "scenario": "Active Directory environment with Kerberos enabled. Service principal names (SPNs) are registered for MSSQL and HTTP services. No account lockout policy enforced; password complexity is minimal (8 characters, no history).",
+    "objective": "Achieve domain admin compromise via credential cracking.",
+    "prompt": "What is the reasoning for extracting and cracking Kerberos tickets?",
+    "expected_answer": "Query LDAP (port 389) or use LDAP enumeration tools to extract all service principal names (SPNs) from Active Directory by requesting servicePrincipalName attributes on user and computer objects. Once SPNs are identified (e.g., MSSQL/dbserver.corp.local, HTTP/webserver.corp.local), request Kerberos tickets for these services using protocol tools like Impacket or standard Kerberos clients. The Kerberos response includes a TGS (Ticket Granting Service ticket) encrypted with the service account's key. Since the service account password is often weak or reused, crack the TGS offline using hashcat with common wordlists and rules. Successful crack yields the service account plaintext password. If the service account has domain admin group membership or can delegate tickets (unconstrained or constrained delegation), use the credential to obtain a domain admin TGT (Ticket Granting Ticket) or perform DCSync to replicate the domain database. The lack of lockout policy ensures no audit trail; minimal password complexity ensures fast cracking.",
+    "reasoning_requirement": "Connect SPN enumeration to offline ticket cracking to domain compromise.",
+    "evaluation_criteria": "Mentions LDAP SPN extraction; describes TGS cracking with hashcat; identifies path to domain admin.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 234,
+    "scenario": "Internal package management system used for private dependencies. Public package repositories contain typosquatted package names matching internal naming conventions. Developers have not pinned specific versions in package-lock.json or requirements.txt.",
+    "objective": "Code execution via supply chain poisoning.",
+    "prompt": "How would an attacker leverage naming conventions to achieve RCE?",
+    "expected_answer": "Enumerate internal package naming patterns by analyzing job postings, leaked repositories, or disclosed company tech stacks. Identify likely package names used internally (e.g., @company-name/common-utils, @company-name/auth-sdk). Create malicious packages with names closely matching internal conventions but differing subtly (typosquatting) on public repositories. Publish the same package name on public repository with a higher version number than the internal package (dependency confusion variant). When a developer runs 'npm install' without fully qualified scoped paths or when the private registry is misconfigured, the package manager resolves dependencies from the public repository first. The malicious package gets installed. Embed reconnaissance code (exfiltrate environment variables, SSH keys, AWS credentials) or persistence mechanisms (backdoor NPM scripts) in the package's installation hooks or require() execution. When developers update dependencies or during CI/CD pipeline runs, the malicious code executes with the privileges of the build environment. This attack scales across the entire organization affecting all services consuming the poisoned dependency.",
+    "reasoning_requirement": "Identify dependency resolution order misconfiguration as an exploit vector.",
+    "evaluation_criteria": "Describes typosquatting or version confusion mechanism; mentions installation hook exploitation; identifies lateral spread via shared dependencies.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 235,
+    "scenario": "Docker container running with --privileged flag and mounted /proc filesystem. Container escape has been identified as viable via kernel module loading or cgroup breakout.",
+    "objective": "Escape container and compromise host.",
+    "prompt": "What reasoning chain leads to host compromise from inside a privileged container?",
+    "expected_answer": "Within a --privileged container, process isolation is significantly weakened; CAP_SYS_ADMIN and access to /dev/mem, /proc/sysrq-trigger, and cgroup hierarchies are available. Enumerate the container's capabilities using 'capsh --print' and confirm /proc filesystem is writable. Identify kernel version using 'uname -r' and check for known privilege escalation CVEs (e.g., CVE-2021-22555 in netfilter, CVE-2022-34918 in Netfilter nf_tables). For cgroup-based escapes, write to cgroup.subtree_control in /proc/sys/kernel/cgroup to enable CPU or memory controllers, then create nested cgroups with notification_on_release triggers. When cgroups release, execute arbitrary binaries with host privileges. Alternatively, exploit /proc/sysrq-trigger to invoke host-level commands (reboot, flush cache, kill processes), or load a custom kernel module via insmod that elevates privileges or executes arbitrary code in kernel space. Once inside the host kernel context or with CAP_SYS_ADMIN, use access to /proc/[pid]/ns to enter host namespaces, mount the host root filesystem via nsenter, and execute shell with full host access.",
+    "reasoning_requirement": "Connect container privilege level to viable kernel exploitation paths.",
+    "evaluation_criteria": "Describes capsh enumeration and capability identification; mentions cgroup or kernel module exploitation technique; identifies namespace breakout method.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 236,
+    "scenario": "Web application accepts a URL parameter for image resizing (e.g., ?image_url=...). Backend fetches the URL without proper validation. Internal metadata service is accessible at http://169.254.169.254/.",
+    "objective": "Steal cloud metadata tokens.",
+    "prompt": "How would you chain SSRF to cloud metadata exfiltration?",
+    "expected_answer": "Identify the SSRF vulnerability by testing URL parameters with common internal IP addresses (127.0.0.1, localhost, 169.254.169.254, 10.0.0.0/8). Confirm the vulnerability by requesting data:// URIs or http://127.0.0.1:8080 and observing error messages or response timing differences. Once SSRF is confirmed, query the metadata service at http://169.254.169.254/latest/meta-data/ (AWS), http://metadata.google.internal/computeMetadata/ (GCP), or http://169.254.169.254/metadata/identity/oauth2/token (Azure). Use SSRF to fetch metadata without the Host header restrictions or authentication checks that would apply from the attacker's direct IP. Extract instance metadata (IAM role, region, instance ID) and request the service role's temporary credentials token at the appropriate metadata endpoint. The application's requests originate from the internal network where metadata service access is implicitly trusted. Exfiltrate the token by encoding it in DNS queries, HTTPS outbound connections to attacker-controlled servers, or error messages reflected back to the attacker. Use the stolen token to assume the service's IAM role, enumerate permissions, and pivot to databases, storage buckets, or other cloud resources.",
+    "reasoning_requirement": "Recognize metadata service accessibility from within-network contexts as a privilege escalation opportunity.",
+    "evaluation_criteria": "Describes SSRF detection methodology; identifies metadata endpoint paths for specific cloud provider; explains token extraction and exfiltration mechanism.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 237,
+    "scenario": "Enterprise uses OAuth 2.0 for single sign-on. Attacker creates a fake authentication application and sends phishing emails with a redirect_uri pointing to attacker-controlled domain. No post-login verification is implemented.",
+    "objective": "Steal OAuth authorization codes and user session tokens.",
+    "prompt": "What reasoning chain enables OAuth credential theft via consent phishing?",
+    "expected_answer": "Register a legitimate-looking application in the OAuth provider's app marketplace with a name similar to an internal tool (e.g., 'SSO Dashboard Tools'). Request OAuth scopes for email, profile, and refresh_token. Craft a phishing email with a link to the real OAuth provider's authorization endpoint with your application's client_id and a redirect_uri pointing to attacker infrastructure (e.g., attacker.com/oauth-callback). The email body mimics legitimate company communication (password reset, account verification, security update). When users click the link, they are redirected to the legitimate OAuth provider, which requests permission. Many users grant permission without scrutiny because it appears legitimate. Upon granting permission, the OAuth provider redirects to attacker's redirect_uri with the authorization code. Your redirect_uri handler captures the authorization code, exchanges it for an access_token and refresh_token using your application's client_secret, and stores these. Immediately redirect the user to a real page (company portal) to avoid suspicion. Use the access token to perform API requests on behalf of the user or exchange the refresh token for long-lived access to the user's email, files, or other resources. This attack succeeds because users trust the OAuth provider's UI and providers don't verify application legitimacy post-registration.",
+    "reasoning_requirement": "Identify user trust in OAuth provider UI as exploit vector for credential theft.",
+    "evaluation_criteria": "Describes crafting legitimate-appearing OAuth app and authorization link; mentions consent phishing via email; identifies token capture and exfiltration.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 238,
+    "scenario": "Company subdomain (api.company.com) was moved to a CDN but DNS records were not cleaned up. A dangling CNAME record points to the CDN's shared hosting. Attacker registers an account on the CDN and claims the subdomain.",
+    "objective": "Session hijacking via malicious subdomain.",
+    "prompt": "How would subdomain takeover enable session hijacking?",
+    "expected_answer": "Enumerate subdomains of the target domain using passive DNS databases, certificate transparency logs, or subdomain enumeration tools. For each subdomain, perform DNS lookups and identify CNAME records pointing to third-party services (CDNs, cloud platforms, email services). Check if the CNAME target is still valid by attempting HTTP requests and analyzing error responses. Look for 'resource not found' or 'unclaimed' messages from the CDN provider indicating the subdomain can be claimed. Register an account with the CDN provider and claim the subdomain. Once control is obtained, host a page serving malicious content (phishing login form, malware) or set a Set-Cookie header with the same domain as the parent domain (e.g., api.company.com sets cookie for .company.com). Browsers will include this cookie in all requests to company.com subdomains due to cookie domain matching rules. If the original application relied on secure, httponly cookies from the legitimate api.company.com, the attacker's cookie will be sent alongside legitimate cookies, allowing session hijacking or CSRF attacks. Users visiting the attacker's page or being redirected to it via phishing links will authenticate under the attacker's influence or have their session cookies stolen.",
+    "reasoning_requirement": "Connect dangling DNS records to cookie scope exploitation for session hijacking.",
+    "evaluation_criteria": "Describes subdomain enumeration and dangling CNAME detection; explains CDN claim process; identifies Set-Cookie domain scope exploitation.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 239,
+    "scenario": "Java application parses XML documents from user uploads without disabling XXE (XML External Entity) processing. The application's network allows outbound connections to arbitrary hosts. Cloud metadata service is accessible from the application server.",
+    "objective": "Extract AWS credentials via XXE chaining to metadata service.",
+    "prompt": "What reasoning path chains XXE through SSRF to cloud credential theft?",
+    "expected_answer": "Craft an XML payload that exploits XXE to access local files or network resources. Define a DOCTYPE with an ENTITY that references an external URI (typically file://, http://, or ftp://). Since the application parses XML without restricting entity expansion, the XML parser will fetch and parse the referenced resource. First, exfiltrate local files (e.g., /etc/passwd, application configuration) by defining an entity that reads file:// URIs and embedding the entity output in the XML structure returned to the attacker. Once file read is confirmed, pivot to network-based SSRF by defining an entity referencing http://169.254.169.254/latest/meta-data/iam/security-credentials/. The application's XML parser fetches this URL from within the internal network where metadata endpoints are implicitly trusted. The parser retrieves the AWS role name. Then reference the specific role's credentials endpoint: http://169.254.169.254/latest/meta-data/iam/security-credentials/[ROLE_NAME]/. The metadata service response contains AccessKeyId, SecretAccessKey, and Token in JSON format. Embed this entity in the XML structure returned to the attacker. Extract the credentials from the response and assume the AWS role.",
+    "reasoning_requirement": "Recognize XXE as a bridge from XML injection to SSRF-based cloud metadata access.",
+    "evaluation_criteria": "Describes XXE payload crafting with external entities; mentions metadata endpoint enumeration; explains credential extraction and IAM role assumption.",
+    "category": "attack_paths"
+  },
+  {
+    "id": 240,
+    "scenario": "GraphQL API does not require authentication for introspection queries. The schema exposes a User type with an ID field. The resolver for queries.userById(id: ID!) does not check authorization; it returns user data for any valid ID.",
+    "objective": "Enumerate user accounts and extract sensitive information.",
+    "prompt": "How would introspection-based enumeration lead to unauthorized data access?",
+    "expected_answer": "Send a GraphQL introspection query (IntrospectionQuery, available in Apollo Client tools) to the API endpoint. Since introspection is enabled, the response reveals the complete schema: all available types, fields, arguments, and return types. Parse the schema to identify sensitive entities (User, AdminUser, Company, PaymentMethod) and their accessible fields (email, ssn, api_key, password_hash). Note the queries and mutations available and their required input fields. Identify a query that accepts an ID parameter (userById, CompanyById, TransactionById) without requiring authentication. Craft a GraphQL query requesting userById(id: \"1\") with fields like { id, email, name, accountBalance }. If the resolver does not check authorization, it returns data for user ID 1. Iterate through ID values (1, 2, 3, ... or UUIDs if using sequential or predictable formats) to enumerate all users in the database. Export results to a CSV file containing email addresses, names, and sensitive data. For more sensitive queries (admin endpoints, password resets), check if the schema exposes them publicly. Exploit weak authorization by requesting data for users you're not allowed to access. This IDOR vulnerability succeeds because the API relies on obscurity rather than explicit authorization checks.",
+    "reasoning_requirement": "Connect introspection-based schema discovery to IDOR exploitation in GraphQL resolvers.",
+    "evaluation_criteria": "Describes introspection query execution and schema parsing; mentions ID enumeration technique (sequential, pattern-based); identifies IDOR exploitation and data exfiltration.",
+    "category": "attack_paths"
   }
 ]
