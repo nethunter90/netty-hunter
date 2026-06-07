@@ -3738,5 +3738,135 @@
       "Frames as regulatory obligation failure with HIPAA citation, elevating severity beyond technical complexity"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 341,
+    "scenario": "A researcher finds that user account settings can be accessed via /api/v2/account/{id} by incrementing the ID parameter. They can read profiles for competitors' accounts, including metadata from a B2B section marked 'for internal demo only.' The program scope lists 'user-facing APIs' but the B2B section uses the same hostname and authentication mechanism.",
+    "prompt": "Should this IDOR be reported as P3 or rejected as out-of-scope? How does platform policy affect the decision?",
+    "expected_answer": "Scope ambiguity requires careful qualification. The IDOR itself is clearly in-scope as it affects production user-facing endpoints. However, the B2B section's 'internal demo' classification creates a legitimate out-of-scope claim if the program explicitly states 'non-production features excluded.' On HackerOne, internal-only features are typically out-of-scope even on production servers. On Bugcrowd, the same IDOR might be in-scope if the hostname and authentication are production. The safe approach: report the IDOR fully reproducible on standard user accounts (P3/$500-1500), explicitly note the B2B metadata exposure separately, and ask the security team to clarify scope boundaries. Do not attempt to claim P4 by speculating on internal data sensitivity. If rejected, the reasoning will reveal the program's scope definition\u2014information valuable for future submissions. Always prioritize clarity over payout guessing.",
+    "reasoning_requirement": "Distinguish between confirmed vulnerability presence and scope ambiguity; recognize platform-specific scope enforcement variance.",
+    "evaluation_criteria": [
+      "Identifies the vulnerability core (IDOR on /api/v2/account) as clearly in-scope and reproducible.",
+      "Acknowledges scope boundary ambiguity around 'internal demo' data and explains platform variance (HackerOne vs Bugcrowd interpretations).",
+      "Recommends reporting the confirmed impact separately from speculative impact, with clear scope boundary questions for the program."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 342,
+    "scenario": "A researcher discovers that the image upload endpoint accepts SVG files and renders them server-side via ImageMagick. Crafted SVG payloads with <image> tags referencing external URLs trigger arbitrary command execution via ImageMagick's delegate feature. Reproduction requires: building a custom SVG, hosting a payload file, leveraging a specific ImageMagick version (6.9.10-*), and timing the upload with a race condition in temp file cleanup. Success rate is ~40% due to async cleanup timing.",
+    "prompt": "How should this P1 RCE be positioned despite reproduction complexity, and what PoC artifacts are non-negotiable?",
+    "expected_answer": "This is definitively P1 (CVSS 9.8+) despite reproduction complexity, because it achieves unauthenticated remote code execution. Reproduction difficulty does NOT lower severity\u2014it determines exploitability in the wild, not bounty tier. Position as: 'ImageMagick RCE via SVG delegate chain exploitation.' Non-negotiable PoC artifacts: (1) sanitized SVG payload demonstrating the delegate chain attack, (2) step-by-step reproduction including ImageMagick version check and timing window, (3) command execution evidence (screenshot or log showing output of a safe command like `id`), (4) root cause analysis explaining why the race condition window exists. Do NOT speculate on real-world exploitation difficulty; state facts: 'Requires specific ImageMagick version and ~40ms timing window.' Programs value understanding over slickness. Include version requirements so the vendor can patch efficiently. On HackerOne, this commands $5K-15K depending on program maturity. On Bugcrowd, expect $3K-8K due to different severity scaling. Executive summary: complexity is a feature for the vendor (showing the attack chain), not a liability.",
+    "reasoning_requirement": "Distinguish between reproduction complexity and severity tier; recognize that P1 status is invariant to exploitability barriers.",
+    "evaluation_criteria": [
+      "Clearly asserts P1 classification and CVSS 9.8+ despite noting the 40% success rate and race condition requirement.",
+      "Lists specific, non-negotiable PoC artifacts: payload, version requirements, execution evidence, root cause explanation.",
+      "Addresses program-specific payout variance (HackerOne $5K-15K vs Bugcrowd $3K-8K) without lowering severity claim."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 343,
+    "scenario": "A researcher discovers hardcoded AWS credentials in a public GitHub repository linked from the company's website. The same credentials are also present in three Docker images on Docker Hub. The credentials grant access to an S3 bucket containing 2TB of customer data (names, emails, payment methods). A concurrent report from another researcher arrives on HackerOne within 12 hours, claiming source code exposure without mentioning the Docker images.",
+    "prompt": "How should you assess duplicate risk and maximize payout when credentials are exposed across multiple vectors?",
+    "expected_answer": "This is a high duplicate-risk scenario complicated by multi-vector exposure. The core vulnerability is 'exposed AWS credentials with S3 data access,' but the attack surface spans GitHub, Docker Hub, and potentially package registries. Assess duplicate risk by: (1) the concurrent HackerOne report likely covers GitHub discovery\u2014check if they mentioned Docker images or S3 scope, (2) determine if your submission adds material new information (Docker image distribution, S3 bucket enumeration, customer data classification). To maximize payout and minimize duplicate rejection: submit immediately with a clear focus on the Docker Hub distribution and S3 data impact, explicitly noting 'GitHub vector mentioned in concurrent report #XXXXX, but Docker distribution and S3 scope are novel.' Include evidence that Docker images are still public and actively pulling. On HackerOne, first reporter typically gets $4K-6K for GitHub exposure; the second reporter adding Docker distribution and data classification might claim $2K-3K additional if the program has a 'different attack vector' policy. On Bugcrowd, duplication is harsher\u2014expect $1K-2K for the secondary report unless your Docker/S3 angle is truly novel. Best practice: contact the other researcher privately to coordinate disclosure rather than both reporting\u2014joint reports often settle faster.",
+    "reasoning_requirement": "Evaluate duplicate risk across multi-vector exposure; recognize program-specific duplicate payout policies and coordinate strategically.",
+    "evaluation_criteria": [
+      "Identifies the core vulnerability (exposed credentials) and multi-vector distribution (GitHub, Docker Hub, package registries).",
+      "Assesses duplicate risk by referencing the concurrent report and proposing a novel angle (Docker distribution + S3 impact).",
+      "Specifies program-dependent payout reduction (HackerOne secondary $2K-3K, Bugcrowd harsher at $1K-2K) and suggests coordination strategy."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 344,
+    "scenario": "A researcher finds a reflected XSS in a search page parameter. The XSS payload is <script>alert('xss')</script>. It executes only in the search results page, which is not authenticated. The vulnerability requires no user interaction beyond clicking a crafted link. However, the search page is a non-core feature; the program's primary revenue comes from premium subscription features, and the search page has no sensitive data access.",
+    "prompt": "Why is this P5 despite being a functional XSS, and how should it be presented to avoid rejection or triaging down?",
+    "expected_answer": "This is P5 (Low severity) despite being a functional, unauthenticated reflected XSS. CVSS alone doesn't determine severity\u2014context does. The vulnerability lacks impact escalation because: (1) the page is non-authenticated (no user state to steal), (2) no sensitive data is present (search queries are not PII), (3) it cannot access premium features or user accounts, (4) the attack surface is limited to users clicking malicious links (not worm-like propagation). CVSS scores this ~4.3 (Low), and the business context confirms it. Present this as 'informational XSS finding' rather than fighting for P4 classification. Position the value in defense: 'Though reflected and low-impact, this demonstrates the search parameter lacks input validation\u2014a foundational control gap to fix.' Many programs reward such findings at $50-200 on HackerOne's lower tiers or 'thanks-only' on conservative programs. Bugcrowd typically pays $100-300 for Low findings. The key: don't oversell impact. Instead, offer defensive value: suggest parameterized output encoding and provide a code snippet. Programs respect candor about severity more than inflated claims. If rejected, the reasoning reveals their threshold for low-severity findings, calibrating future submissions.",
+    "reasoning_requirement": "Justify P5 classification by analyzing context, not just technical presence; reframe low-severity findings as control-gap insights.",
+    "evaluation_criteria": [
+      "Explains P5 classification: non-authenticated page, no sensitive data, no account compromise, requires user click.",
+      "Calculates CVSS (4.3 Low) and aligns business impact analysis with severity tier.",
+      "Recommends defensive reframing: control gap identification and code-snippet suggestions instead of impact inflation."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 345,
+    "scenario": "A researcher finds a P3 Authentication Bypass via JWT manipulation (attacker can forge tokens without the signing key by exploiting a 'none' algorithm acceptance). The vulnerability affects the mobile app API but not the web API. Two programs are running simultaneously: HackerOne's standard bug bounty and Bugcrowd's enhanced VDP. Both list the same target but with different severity matrices.",
+    "prompt": "How should you decide which platform to prioritize, and how should severity claims differ between the two?",
+    "expected_answer": "JWT 'none' algorithm bypass is genuinely P3 across both platforms, but payout variance is significant based on scope and program maturity. Analyze: (1) HackerOne programs typically score this $1.5K-3K due to standardized severity tiers and higher baseline payouts, (2) Bugcrowd programs often score this $800-1.5K but may offer enhanced payouts if the program has 'critical infrastructure' or 'financial services' tier premiums. The mobile-app-only scope is crucial: if Bugcrowd's scope is broader, you may get better traction there. Decision framework: Check both programs' recent payouts for 'authentication bypass' findings\u2014Bugcrowd's reported payouts are often public in their payout reports. If HackerOne's similar findings average $2.5K and Bugcrowd's average $1K, prioritize HackerOne. However, if the Bugcrowd program has 'critical' rating, the multiplier may close the gap. Submit to HackerOne first (faster responsiveness, higher leverage), then Bugcrowd after 30 days if HackerOne shows no engagement. On HackerOne, emphasize the bypass mechanism and token forgery PoC. On Bugcrowd, emphasize mobile-app-specific impact and frequency of exploitation attempts. Both platforms accept updates: if one triages low, request a severity review citing the other platform's assessment carefully.",
+    "reasoning_requirement": "Compare program-specific payout signals and scope definitions; make data-driven platform prioritization decisions.",
+    "evaluation_criteria": [
+      "Confirms P3 severity on both platforms (JWT bypass with unauthenticated token forgery is consistently medium-high).",
+      "Identifies payout variance drivers: HackerOne $1.5K-3K vs Bugcrowd $800-1.5K, references program maturity and scope tiers.",
+      "Provides decision framework: check recent payouts, assess critical infrastructure multipliers, recommend HackerOne-first strategy with staggered Bugcrowd submission."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 346,
+    "scenario": "A researcher discovers that the password reset endpoint accepts any user email and sends a reset link with a predictable token (hash of email + fixed salt). The token is valid for 30 days. An attacker can precompute tokens for all public user emails and reset accounts without owner knowledge. However, the target is a B2B SaaS platform where 99% of users are enterprise employees with IT department oversight and password managers, making opportunistic account takeover unlikely.",
+    "prompt": "How should CVSS scoring (9.1 Critical) be reconciled with business impact (Low), and what severity tier should you claim?",
+    "expected_answer": "This is a genuine CVSS 9.1 Critical finding (unauthenticated account compromise) that must be reported as P2/High despite low business impact. CVSS measures technical exploitability and impact scope, not business risk\u2014they are orthogonal. The vulnerability is: (1) unauthenticated, (2) affects all users, (3) allows account takeover, (4) has no mitigation (30-day validity window). CVSS correctly scores this 9.1. However, business context reveals mitigation: enterprise users have IT oversight, password managers prevent token-based fraud, and account lockout policies limit lateral movement. Present as: 'P2 Critical authentication bypass with mitigated business risk due to enterprise control environment.' Do NOT downgrade to P3 to match business impact\u2014programs respect technical accuracy. Instead, note: 'While this vulnerability enables account takeover, the target environment's enterprise controls reduce real-world impact. However, the bypass mechanism requires immediate patching: consider short-lived tokens (5-minute expiry), email verification, and anomaly detection on password reset requests.' This positioning shows both technical rigor and contextual understanding. HackerOne typically pays $2K-4K for P2 authentication bypasses; Bugcrowd may offer slightly less. Some programs may request enterprise-context negotiation, favorable for the vendor.",
+    "reasoning_requirement": "Distinguish between technical CVSS severity and business impact; report P2 while acknowledging contextual mitigations.",
+    "evaluation_criteria": [
+      "Confirms CVSS 9.1 Critical classification: unauthenticated, affects all users, enables account takeover, unmitigated.",
+      "Explains business impact divergence: enterprise users with IT oversight and password managers reduce exploitation likelihood.",
+      "Recommends P2 claim with context-aware recommendations (short-lived tokens, email verification, anomaly detection) to demonstrate rigor without downplaying vulnerability."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 347,
+    "scenario": "A researcher finds SSRF in the image URL preview endpoint. An attacker can specify any URL (http://localhost:8080, http://internal-api:3000, etc.) and the server fetches and renders the image. Probing reveals: (1) access to internal staging API (http://staging-api:3000) with admin endpoints, (2) access to cloud metadata endpoint (http://169.254.169.254), (3) ability to chain to internal PostgreSQL database via localhost:5432 port scanning, (4) all internal APIs are unauthenticated or use IP-based authentication.",
+    "prompt": "How should this SSRF be scoped and positioned to maximize severity and reflect the full impact amplification chain?",
+    "expected_answer": "This is P2/High SSRF with significant impact amplification through chained internal service access. Position as: 'Server-side request forgery enabling access to internal APIs and metadata services.' The amplification chain is crucial for positioning: (1) direct impact: internal staging API access (likely admin endpoints), (2) escalation: cloud metadata access enabling credential theft or region information disclosure, (3) tertiary: database port scanning and potential brute-force vectors. Report with evidence of each step: (1) screenshot of staging API response (admin panel or API docs), (2) cloud metadata endpoint response showing region/instance ID, (3) port scan output showing internal database. Do NOT attempt P1 classification\u2014this is P2 because exploitation requires attacker insight into internal architecture and the initial SSRF alone doesn't achieve code execution. However, frame the internal API access as 'admin endpoint discovery via SSRF' to emphasize escalation. Impact narrative: 'Attacker can enumerate internal APIs, steal cloud credentials via metadata endpoint, and potentially escalate to database access via port scanning.' HackerOne typically pays $2K-5K for P2 SSRF with this amplification chain. Bugcrowd may pay similarly if the program covers internal infrastructure. The metadata endpoint access is often the highest-value finding.",
+    "reasoning_requirement": "Map SSRF impact amplification across service chains; classify P2 while demonstrating escalation vectors.",
+    "evaluation_criteria": [
+      "Identifies the core SSRF vulnerability and confirms P2 classification (not P1, due to lack of direct RCE).",
+      "Traces impact amplification chain: staging API access \u2192 metadata endpoint \u2192 database port scanning, with evidence for each.",
+      "Emphasizes credential theft risk via cloud metadata as the primary high-value impact, with platform-specific payout context ($2K-5K HackerOne, similar Bugcrowd)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 348,
+    "scenario": "A researcher discovers a vulnerability in the company's Zendesk support portal: agents can impersonate customers by setting a custom X-Customer-ID header. The Zendesk portal is hosted on zendesk.com but uses the company's custom domain (support.company.com) via CNAME. The program scope says 'company.com and all subdomains' but does NOT explicitly mention zendesk.com. The vulnerability allows reading and replying to customer support tickets as any user.",
+    "prompt": "Is this in-scope or out-of-scope? How should you handle the ambiguity, and what does your decision signal about future submissions?",
+    "expected_answer": "Scope ambiguity here is critical: the vulnerability exists on support.company.com (in-scope per scope statement), but the underlying service is Zendesk (third-party SaaS). Programs typically exclude third-party-managed services even if accessible via company domains, because remediation is the vendor's responsibility, not the company's. The right approach: contact the program before submitting and ask explicitly: 'I found a vulnerability in the support portal at support.company.com. The underlying service is Zendesk. Is this in-scope for your program, or should I report it to Zendesk directly?' This question achieves two things: (1) you avoid duplicate rejection and wasted effort, (2) the program's answer reveals their scope interpretation for future submissions. If they say 'out-of-scope, report to Zendesk,' you know to exclude third-party SaaS in future submissions. If they say 'in-scope, we manage the Zendesk integration,' proceed with your report. Do NOT assume and submit; the wasted effort cost is high (reputation damage if rejected, loss of payout if they reject due to scope). Programs respect researchers who ask clarifying questions before submission far more than those who guess and flood with out-of-scope findings. If the program doesn't respond within 48 hours, report to Zendesk instead\u2014they have a mature bug bounty program and will reward this finding appropriately.",
+    "reasoning_requirement": "Recognize third-party service integration scope ambiguity; proactively clarify rather than guess.",
+    "evaluation_criteria": [
+      "Identifies the scope ambiguity: support.company.com is in-scope, but Zendesk (third-party SaaS) is typically out-of-scope.",
+      "Recommends pre-submission clarification with exact question to the program, emphasizing that the answer calibrates future submissions.",
+      "Proposes fallback: report to Zendesk if program doesn't respond within 48 hours, avoiding wasted effort and reputation damage."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 349,
+    "scenario": "An e-commerce platform's checkout applies discount codes at the 'apply discount' step, then recalculates totals at the 'confirm order' step. A race condition exists: if an attacker submits 5 concurrent 'confirm order' requests within 200ms after applying an expired discount code, there's a 60% chance that one request confirms the order with the discount still applied before the expiration check re-runs. The vulnerability allows a customer to purchase $500 items for $50.",
+    "prompt": "How should this race condition be classified (P1 vs P2 vs P3), and what reproduction metrics are essential for credibility?",
+    "expected_answer": "This is P2/High, not P1, because exploitation requires specific timing and concurrency knowledge\u2014it's not a direct vulnerability like RCE. It is not P3 because it achieves direct financial loss (fraud/theft) with reasonable reproducibility (60% success rate). CVSS scores this ~7.5 (High) due to scope of impact (direct monetary loss) and required user privilege (any customer). Position as: 'TOCTOU race condition in checkout discount validation enabling fraudulent purchases.' Non-negotiable reproduction metrics: (1) exact timing window (200ms), (2) concurrency pattern (5 simultaneous requests), (3) success rate (60%), (4) quantified impact ($450 per transaction, scale to customer base for total exposure), (5) evidence: transaction logs showing order confirmation before discount expiration check. Include network timing trace (using Burp Suite or local proxy) demonstrating the race condition window. On HackerOne, P2 financial fraud typically commands $1.5K-3K; Bugcrowd may offer $1K-2.5K depending on program maturity. Some programs may request immediate patching evidence before high payout. The 60% success rate is actually valuable\u2014it shows the window is exploitable in practice, not a theoretical edge case. If the program attempts to downgrade to P3, provide transaction logs proving multiple fraudulent orders succeeded.",
+    "reasoning_requirement": "Distinguish between theoretical TOCTOU and practically exploitable race conditions; classify P2 on financial impact and reproducibility.",
+    "evaluation_criteria": [
+      "Classifies as P2, not P1 (requires timing/concurrency) or P3 (achieves direct fraud with 60% success), with CVSS 7.5 justification.",
+      "Lists specific reproduction metrics: 200ms window, 5 concurrent requests, 60% success rate, $450 per-transaction impact, transaction log evidence.",
+      "Provides network timing trace and explains why 60% success rate strengthens (not weakens) the credibility of real-world exploitation."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 350,
+    "scenario": "A researcher discovers that a regular user can escalate to admin by modifying their role field in the API request: PATCH /api/users/me {\"role\": \"admin\"}. The endpoint checks if the user is authenticated but doesn't validate role changes against user privilege level. Simultaneously, another researcher on HackerOne reports 'users can edit their own roles' on the same program. Your submission includes additional context: (1) the endpoint also allows escalating other users' roles via ID manipulation, (2) you've documented three different role-escalation vectors (direct patch, bulk import, API query parameter).",
+    "prompt": "How should you position this finding given the concurrent report, and what novel angles maximize differentiation?",
+    "expected_answer": "This is P3/Medium privilege escalation, likely subject to duplication. However, your submission has material novel angles that differentiate from the concurrent report. Position as: 'Privilege escalation via unrestricted role modification across multiple API vectors.' Differentiation strategy: (1) the concurrent HackerOne report likely covers the direct /api/users/me endpoint; (2) your novel angles are lateral privilege escalation (escalating other users' roles via ID manipulation) and the bulk import vector, (3) quantify the scope: your submission covers three distinct vectors, not just one endpoint. In your report, explicitly note: 'A concurrent report covers direct role modification. This submission adds two additional escalation vectors (ID-based lateral escalation and bulk import abuse) that compound the vulnerability's scope. These warrant independent evaluation.' On HackerOne, the first reporter typically gets $1.5K-2.5K; the second reporter with legitimate novel vectors might claim $500-1K additional. Bugcrowd is harsher on duplicates\u2014expect $300-700 additional if they accept the novel angle at all. The key: be crystal clear about what you're adding. If the program rejects you as duplicate, request a duplicate review and provide the vector list showing the concurrent report didn't cover your novel angles. If rejected, the reasoning reveals how much the program values multi-vector coverage, informing future submissions.",
+    "reasoning_requirement": "Evaluate duplicate risk while identifying and articulating novel vulnerability vectors; position for differentiated payout.",
+    "evaluation_criteria": [
+      "Acknowledges the concurrent report and P3 classification (privilege escalation with authentication required is medium-severity).",
+      "Identifies novel vectors: lateral escalation (other user IDs), bulk import path, distinct from the concurrent report's direct /api/users/me angle.",
+      "Quantifies differentiation and specifies payout variance: HackerOne $500-1K additional, Bugcrowd $300-700 if accepted, with duplicate review strategy."
+    ],
+    "category": "bounty_patterns"
   }
 ]
