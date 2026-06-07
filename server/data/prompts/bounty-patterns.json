@@ -2298,5 +2298,135 @@
     "reasoning_requirement": "Assess financial impact quantitatively; distinguish business logic flaws from technical exploits; evaluate fraud detection evasion",
     "evaluation_criteria": "Quantifies daily/cumulative financial impact; Provides transaction-level PoC; Analyzes why fraud detection systems may miss the vulnerability",
     "category": "bounty_patterns"
+  },
+  {
+    "id": 221,
+    "scenario": "Researcher discovers CSV injection in bulk export feature. The feature is rarely used (< 2% of monthly active users), but the export template includes employee financial data. The program limits scope to \"customer-facing features.\"",
+    "prompt": "Is this in scope and how should severity be negotiated given the scope ambiguity?",
+    "expected_answer": "Scope ambiguity here hinges on the distinction between customer-facing (UI that users interact with) and customer-impacting (features that affect customer data). CSV injection in an export containing employee financial data is out of scope if strictly interpreted as \"customer-facing UI features,\" but may be in scope if the program intended to protect any feature that exports data users could act upon. The negotiation strategy: (1) Clarify with program manager whether exports are in scope by citing the specific export feature, not just generic CVSS. (2) If denied, reframe as a proof-of-concept for a higher-impact scenario: demonstrate the exploit chain against a customer-facing endpoint if one exists. (3) Document that the vulnerability requires user interaction (opening CSV in macro-enabled software), which many programs downgrade to P4-P5 unless it's part of a larger attack chain. For payout expectation: P4 ($500-2000) if in scope, P5 ($100-500) if borderline, rejected if strictly out of scope. Recommend submitting a clear scope clarification request with a specific endpoint URL rather than general category ambiguity.",
+    "reasoning_requirement": "Distinguish between policy scope boundaries and actual attack surface; recommend negotiation approach when scope is ambiguous.",
+    "evaluation_criteria": [
+      "Identifies the customer-facing vs customer-impacting distinction and recommends clarification approach.",
+      "Assesses CSV injection severity (P4-P5) with user-interaction caveat; predicts payout range.",
+      "Suggests scope negotiation strategy with specific endpoint documentation."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 222,
+    "scenario": "Researcher finds insecure direct object reference (IDOR) on an internal audit-log API endpoint. The endpoint is documented in the API docs but marked \"[beta]\". It returns metadata only (timestamp, user email, action name), no sensitive data. Six months ago, the same IDOR was reported and closed as duplicate by the program.",
+    "prompt": "Should this be submitted as a new finding or will it be marked as duplicate? How to prevent duplicate rejection?",
+    "expected_answer": "This submission faces high duplicate risk because (1) the same endpoint was previously reported, and (2) IDOR on audit endpoints is a well-known pattern. Program managers use duplicate flags to reject resubmissions of the same endpoint/vulnerability pair, even if the original report was never publicly disclosed. Strategy to avoid rejection: (1) Verify the original report's fix by testing the specific endpoint parameters that were vulnerable; if they're now fixed, the new report is legitimately a regression, not a duplicate. (2) If still vulnerable, clarify what's different: demonstrate a higher-impact attack chain (e.g., using audit logs to learn user patterns, correlate with phishing attempts, or identify admin actions for social engineering). (3) Frame as \"systemic IDOR pattern\" if multiple endpoints share the same vulnerability, rather than resubmitting the single beta endpoint. (4) Provide proof that your access level differs from the original reporter (e.g., you're testing from a lower privilege tier). If the program has a public duplicate, expect automatic closure. If closed as duplicate despite a regression, escalate to the program manager with evidence the vulnerability reappeared.",
+    "reasoning_requirement": "Assess duplicate risk and develop strategies to reframe or differentiate findings from prior reports.",
+    "evaluation_criteria": [
+      "Correctly identifies duplicate risk from prior similar report; recommends verification of whether original fix was applied.",
+      "Suggests systemic reframing or regression angle to differentiate from duplicate.",
+      "Recommends escalation path if closed as duplicate despite legitimacy."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 223,
+    "scenario": "HackerOne program for a SaaS platform. Researcher finds a race condition in API rate-limit counters (can bypass limits by sending concurrent requests). The condition is real but exploitation requires precise timing within a 10ms window. Impact: a user could send 1000 requests in 1 second instead of the 100-per-second limit, enabling brute force on weak endpoints.",
+    "prompt": "How should this be presented to maximize payout on HackerOne specifically?",
+    "expected_answer": "HackerOne's vulnerability assessment philosophy emphasizes real-world exploitability over theoretical CVSS scoring. Race conditions are notorious for sounding dangerous but requiring unrealistic conditions; this 10ms window is genuinely exploitable but requires careful framing. (1) Emphasize reproducibility: provide a proof-of-concept script using `concurrent.futures` or `async/await` that reliably triggers the condition in <50 lines, tested 100+ times with 95%+ success rate. (2) Chain to realistic impact: don't stop at \"bypass rate limits.\" Demonstrate the actual attack: brute-force 2FA codes, password reset tokens, or API keys. Show that without this PoC, the brute-force would be rate-limited to 100 attempts/sec (infeasible); with the exploit, 1000/sec makes common weak endpoints exploitable. (3) HackerOne values clarity over complexity; provide a 3-step reproduction that a security engineer can verify in <5 minutes. (4) Expect P2-P3 ($1500-5000) if you demonstrate credential compromise; P3-P4 ($500-1500) if impact remains theoretical. The timing requirement won't lower the payout if you've proven exploitability through video/PoC.",
+    "reasoning_requirement": "Understand HackerOne's exploitability-first assessment model and tailor presentation to their evaluation criteria.",
+    "evaluation_criteria": [
+      "Recognizes HackerOne's emphasis on demonstrated exploitability; recommends concrete PoC with success metrics.",
+      "Chains race condition to realistic attack scenario (credential compromise, not abstract rate-limit bypass).",
+      "Predicts P2-P3 range with correct reasoning about HackerOne's payout model for complexity-gated vulns."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 224,
+    "scenario": "Researcher discovers that a debug endpoint (enabled in production) exposes database connection strings, API keys, and environment variables. The endpoint itself requires authentication (valid JWT), but the JWT is obtained trivially through the public login API. The program's severity matrix rates information disclosure of credentials as P1, but rates \"authenticated endpoints\" as max P3.",
+    "prompt": "How does the authentication requirement change severity assessment and payout, and how can this misalignment be challenged?",
+    "expected_answer": "This illustrates a critical severity classification ambiguity: the program's matrix says P3 (authenticated endpoint) but the actual impact is P1 (full credential disclosure leading to account takeover, lateral movement, infrastructure access). The authentication requirement is a **gating mechanism**, not a security control\u2014because authentication is trivial and open to anyone. The strategy: (1) Challenge the program's authentication-equals-severity-reduction logic by demonstrating the complete attack chain in a PoC video: login \u2192 request debug endpoint \u2192 exfiltrate creds \u2192 access internal systems. (2) Classify as **P1 Credential Disclosure**, not as **P3 Authenticated Information Disclosure**. The severity should be determined by the **confidentiality impact** (credentials = max impact), not by the authentication requirement (which is a side effect of the endpoint being exposed, not a mitigation). (3) Cite CVSS logic: CVSS:3.1/AV:N/AC:L/PR:N/UI:N rates this as Critical (9.1), not Medium, because authentication to that endpoint \u2260 a security boundary. (4) If the program pushes back, escalate to the security lead: \"Your matrix creates a perverse incentive where any endpoint can be made P3 by adding a login requirement, regardless of impact.\" Expect P1 ($5000+) after escalation.",
+    "reasoning_requirement": "Identify gaps between program severity matrices and CVSS/actual impact; develop escalation strategy.",
+    "evaluation_criteria": [
+      "Distinguishes gating mechanisms from security controls; explains why authentication requirement doesn't reduce credential disclosure from P1.",
+      "Demonstrates full attack chain (login \u2192 exfiltrate \u2192 impact) to override matrix classification.",
+      "Recommends escalation to security lead with CVSS reference and logical inconsistency argument."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 225,
+    "scenario": "Bugcrowd program for a financial services company. Researcher finds an open redirect in the password reset flow (user clicks \"forgot password\" \u2192 redirect to attacker's domain). Exploitation requires the victim to click the link (no auto-redirect), but it enables a sophisticated phishing attack (attacker can mimic the company's password reset form to capture credentials). The program's policy explicitly states \"Open redirects are P4 unless they facilitate a direct attack.\"",
+    "prompt": "How should the phishing chain be presented to Bugcrowd to justify P3 or higher instead of P4?",
+    "expected_answer": "Bugcrowd's philosophy prioritizes attack practicality and real-world risk vectors. An open redirect alone = P4 (low user interaction, low impact). But an open redirect in a **password reset flow** = P3-P2 because it directly facilitates phishing and credential theft, which Bugcrowd treats as a high-impact vector. (1) Frame as a **phishing enablement vulnerability**, not as a generic open redirect. The password reset context is critical: users expect to land on the company's reset page; an attacker-controlled domain can perfectly mimic the form and capture plaintext passwords before the actual reset. (2) Provide a phishing scenario: email the victim a malicious reset link (you can test this in your own lab with a mock victim account). Document the complete flow: victim clicks \u2192 lands on attacker domain \u2192 enters credentials thinking it's the company \u2192 credentials logged. (3) Bugcrowd values practical attack chains; your PoC should include a screenshot showing the attacker-controlled domain alongside the legitimate password reset page, highlighting the visual similarity. (4) Reference Bugcrowd's own guidance on phishing vectors (search their VRT or ask in the report). (5) Expect P3 ($1000-3000) with this framing; without the phishing chain, expect P4 ($200-800). The key is moving from abstract vulnerability to concrete attack scenario.",
+    "reasoning_requirement": "Leverage program-specific policy (Bugcrowd's phishing emphasis) to reframe vulnerability severity.",
+    "evaluation_criteria": [
+      "Correctly identifies Bugcrowd's phishing-vector emphasis; frames open redirect as credential-theft enabler, not generic redirect.",
+      "Demonstrates phishing attack chain with visual proof (screenshot of attacker form mimicking legitimate page).",
+      "Predicts P3 ($1000-3000) with phishing framing vs. P4 without; cites Bugcrowd's practical attack philosophy."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 226,
+    "scenario": "On an Intigriti program, researcher finds that a subdomain (cdn-old.company.com) has no active A/AAAA records, but the DNS name still resolves (NXDOMAIN handling by registrar points to a parked domain service). The subdomain is not mentioned in any company documentation and hasn't been used in 18 months. The researcher can claim the subdomain by registering it with a low-cost domain provider.",
+    "prompt": "How would Intigriti evaluate this subdomain takeover risk and what proof is required?",
+    "expected_answer": "Intigriti's evaluation framework for subdomain takeovers hinges on **demonstrable control** and **realistic attack chain**. A dangling DNS entry alone is insufficient; you must prove that claiming the domain enables a meaningful attack (email spoofing, phishing, malware hosting, or supply-chain compromise). (1) Verify registrar status: confirm that the subdomain's registrar is vulnerable (e.g., can re-register the domain at the same registrar without company verification). Most Intigriti programs require proof that the company *cannot* easily reclaim it (e.g., the registrar doesn't enforce ownership verification for re-registration). (2) Demonstrate control: register the subdomain and prove you control it by creating a simple HTTP server that responds with a signed message proving your account created the resource. Document screenshots of the DNS resolution pointing to your IP. (3) Chain to attack scenario: show that from your controlled subdomain, you can perform: (a) email spoofing (setup SPF/DKIM to send emails from company domain), (b) SSL certificate issuance (ACME challenge via DNS), or (c) phishing (host a login form). (4) Intigriti requires *current* exploitability, not historical risk; if the company easily re-registers and secures the domain upon notification, payout is lower. Expect P2-P3 ($2000-5000) if email spoofing is feasible; P3-P4 if only informational. Submission should include: DNS query output, registration proof, control demonstration, and attack chain screenshot.",
+    "reasoning_requirement": "Assess subdomain takeover from Intigriti's control-and-chain-demonstration perspective; meet their specific proof requirements.",
+    "evaluation_criteria": [
+      "Verifies registrar vulnerability and proves company cannot easily reclaim; demonstrates current control via HTTP/DNS proof.",
+      "Chains subdomain to realistic attack (email spoofing, phishing, SSL issuance); includes screenshot proof.",
+      "Predicts P2-P3 ($2000-5000) for email spoofing chain; explains why proof of control is mandatory on Intigriti."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 227,
+    "scenario": "Researcher finds a broken access control vulnerability affecting user profile settings. A user can modify another user's profile settings (name, email, phone) via an API endpoint that lacks proper authorization checks. The impact is limited to non-sensitive fields (no password/payment info exposed). However, modifying a user's email enables account takeover when combined with the password reset flow (attacker sets email, requests reset, controls reset token). The password reset flow is in a *different* microservice not mentioned in the program's scope.",
+    "prompt": "How should the account takeover chain be presented without violating scope boundaries?",
+    "expected_answer": "This is a scope boundary challenge: the BOLA vulnerability itself is in-scope, but demonstrating the full impact (ATO) requires chaining to an out-of-scope microservice. The strategy is to frame the finding as **\"BOLA enabling account takeover prerequisite\"** rather than claiming the full ATO is your finding. (1) Submit the BOLA with limited scope: document that the vulnerability allows attackers to modify user email addresses. This alone is P2-P3 (account-takeover prerequisite). (2) In the PoC, modify the victim's email to an attacker-controlled address via the vulnerable API. Stop there. Do not attempt the password reset on the out-of-scope service. (3) In the description, clearly state: \"This vulnerability does not independently cause account takeover, but it sets up the prerequisite. We stopped testing at this boundary to respect the program's scope. The next logical step (password reset on the authorization service) would complete the chain.\" (4) Programs typically award P2-P3 ($1500-5000) for BOLA that sets up account takeover, even if the final step isn't demonstrated. (5) If the program clarifies that password reset is also in scope, you can then demonstrate the full chain in a follow-up. This approach shows security maturity (respecting scope) while maximizing payout by documenting the chain intent.",
+    "reasoning_requirement": "Navigate scope boundaries while documenting complete attack chains; maximize payout within scope limits.",
+    "evaluation_criteria": [
+      "Identifies scope boundary and frames finding as \"ATO prerequisite\" rather than claiming out-of-scope service vulnerability.",
+      "Demonstrates email modification via BOLA; explicitly stops at scope boundary; documents next logical step without testing it.",
+      "Predicts P2-P3 payout for BOLA enabling ATO; explains how to escalate to full ATO payout if scope is clarified."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 228,
+    "scenario": "Researcher discovers a path traversal vulnerability in a file download endpoint. The endpoint is P5 in isolation (information disclosure of non-sensitive files: old logs, README files, etc.). However, a detailed audit of the application reveals that the same traversal logic is used in 8 other endpoints with different privilege contexts: an admin export feature that downloads compliance reports, a user-profile export feature, and an API key management endpoint. In each context, the traversal can access different sensitive files.",
+    "prompt": "How should this be reframed from P5 isolation into a P1 systemic architecture flaw?",
+    "expected_answer": "A single P5 path traversal endpoint = low impact. But the same vulnerability across 8 endpoints with varying privilege contexts = a systemic architecture flaw that enables privilege escalation, data theft, and infrastructure compromise. This is the difference between a bug and an architectural vulnerability. (1) Do not submit 8 separate P5 reports. Instead, audit all endpoints and document the systemic pattern: \"The application uses a shared utility function for path resolution that fails to canonicalize paths, allowing traversal in 8 separate contexts.\" (2) Demonstrate privilege escalation: show that a low-privilege user can use the traversal to access compliance reports normally available only to admins, or access other users' export data. This elevates from P5 (info disclosure) to P2-P1 (privilege escalation + data theft). (3) Provide proof: include a table mapping each vulnerable endpoint, the accessible files, and the privilege escalation achieved. (4) Reference the shared code (the vulnerable utility function) to show the root cause is architectural, not a collection of unrelated bugs. (5) This framing typically yields P1-P2 ($5000-15000) because programs value systemic fixes (one patch to the shared function) over instance-by-instance fixes. (6) If the program tries to rate this as P3-P4 despite the privilege escalation evidence, push back: demonstrate a complete scenario (low-priv user \u2192 access admin compliance report \u2192 data exfiltration) as video proof.",
+    "reasoning_requirement": "Identify systemic patterns from isolated vulnerabilities; escalate severity through privilege escalation chaining.",
+    "evaluation_criteria": [
+      "Maps single P5 vulnerability across 8 endpoints; identifies shared code root cause; classifies as systemic architecture flaw.",
+      "Demonstrates privilege escalation (low-priv user accessing admin data); chains to complete attack scenario (exfiltration).",
+      "Predicts P1-P2 ($5000+) for systemic fix potential; explains why architectural framing yields higher payout than instance reports."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 229,
+    "scenario": "A program's scope includes \"customer data\" but defines it restrictively as \"credit card numbers, SSN, passwords.\" Researcher finds an API endpoint that exports GDPR-regulated PII (full name, email, phone number, account creation date, IP address) in plaintext JSON. The program classifies this as P5 (\"only public data\") because phone and email are not on their sensitive list, even though GDPR treats this as personal data subject to strict handling requirements.",
+    "prompt": "How should GDPR scope ambiguity be challenged to justify higher payout and avoid low-severity closure?",
+    "expected_answer": "This is a critical scope and regulatory arbitrage opportunity. The program's restricted definition of \"sensitive data\" creates a blind spot: it ignores regulatory frameworks (GDPR, CCPA, etc.) that legally classify PII differently. (1) Challenge the program's scope by introducing regulatory context: submit with a note stating \"This data falls under GDPR Article 4(1) definition of personal data. Unencrypted PII export violates GDPR Articles 5 (confidentiality) and 32 (security), exposing the company to fines up to \u20ac20 million or 4% annual revenue.\" (2) Reference specific regulation: GDPR doesn't distinguish between \"sensitive\" and \"non-sensitive\" PII\u2014all personal data requires equivalent protection. The program's restrictive scope conflicts with the company's legal obligations. (3) Frame as \"regulatory compliance violation\" not just \"information disclosure.\" Show that the company is contractually or legally bound to protect this data (cite any public privacy policy, data processing agreements, or compliance certifications the company claims). (4) Contact the program manager or security lead (not just the bounty team) with a brief note: \"We believe this falls under regulatory scope despite not matching your severity matrix.\" (5) If initially closed as P5, appeal with GDPR reference documentation. Expect P3-P2 ($1000-5000) after escalation to legal/compliance stakeholder. This approach bypasses the severity matrix by introducing a higher-authority framework.",
+    "reasoning_requirement": "Leverage regulatory frameworks to reframe program scope ambiguities; escalate findings beyond severity matrices.",
+    "evaluation_criteria": [
+      "Correctly applies GDPR Article 4 definition of personal data; explains why program's scope is incomplete.",
+      "References GDPR fines (\u20ac20M or 4% revenue) and Articles 5/32 to frame as regulatory violation, not isolated information disclosure.",
+      "Recommends escalation to security lead/legal contact; predicts P2-P3 after regulatory argument."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 230,
+    "scenario": "Researcher finds a critical SQL injection in an admin-only reporting endpoint. However, the admin account can be compromised trivially: the admin password is documented in a public GitHub repository commit history (never deleted, commit is 3 years old). A separate P5 finding exists: the GitHub repo is public and allows account enumeration. Combining both = immediate admin access = RCE. The program's scope excludes \"source code exposure\" but includes SQL injection.",
+    "prompt": "How to present this without submitting out-of-scope source code findings, while demonstrating that the sqli is effectively unauthenticated?",
+    "expected_answer": "The SQL injection alone is severe (P1-P2 for RCE potential), but framing it as in-scope requires careful navigation. The challenge: the admin credentials are technically out-of-scope (source code exposure), but they're the only barrier to the sqli. (1) Do not submit the password discovery as a separate finding. Instead, present the sqli finding with this context: \"This SQL injection is in an admin-restricted endpoint. During reconnaissance, we identified that admin credentials are publicly available via [specific public source: GitHub, Stack Overflow, documentation, etc.]. This effectively makes the sqli unauthenticated from an attacker perspective.\" (2) Provide the sqli PoC using the known credentials, demonstrating end-to-end exploitation (SQL injection \u2192 query manipulation \u2192 data exfiltration or RCE). (3) Frame it as: \"The sqli severity is not mitigated by admin-only access if admin credentials are publicly available. The effective risk is equivalent to an unauthenticated sqli.\" (4) Do not link the password discovery and account enumeration as separate findings; treat them as reconnaissance context, not vulnerabilities. (5) Expect P1-P2 ($5000-15000) for the sqli with this framing. If the program initially rates it as P3 (admin-only), appeal by noting that public credentials undermine the authentication control. This avoids submitting out-of-scope findings while maximizing the sqli's payout based on actual attack complexity.",
+    "reasoning_requirement": "Reframe scoped vulnerabilities to reflect actual exploitation complexity when prerequisites are public.",
+    "evaluation_criteria": [
+      "Identifies that public credentials reduce admin-only sqli to effectively unauthenticated; frames as reconnaissance context, not separate finding.",
+      "Demonstrates end-to-end sqli exploitation using public credentials; avoids submitting password discovery as separate (out-of-scope) finding.",
+      "Predicts P1-P2 payout by arguing public prerequisites undermine authentication; appeals if program rates as P3."
+    ],
+    "category": "bounty_patterns"
   }
 ]
