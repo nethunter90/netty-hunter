@@ -168,6 +168,13 @@ FILE_CONFIGS = {
         "id_prefix": "PS", "id_field": "prompt_id",
         "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
     },
+    "web-intelligence-gathering.json": {
+        "target": 200,
+        "domain": "systematic web intelligence gathering for bug bounty recon — programmatic scraping patterns, API-driven OSINT, passive and active enumeration techniques",
+        "diversity": "sources: crt.sh, Shodan, Censys, WaybackMachine CDX API, GitHub code search, NVD, OSV.dev, BGPView, Passive DNS, DNSDumpster; techniques: certificate transparency, subdomain brute-force, ASN/IP discovery, HTTP banner grabbing, JS bundle analysis, webpack source maps, HTML form/comment parsing, document metadata (exiftool/PyMuPDF), robots.txt/sitemap parsing, DNS zone transfer, version fingerprinting; code patterns: resilient scrapers with exponential backoff, resume-capable progress files, concurrent.futures for parallel DNS resolution, rate-limit-aware pagination, regex extraction from minified JS",
+        "id_prefix": "WI", "id_field": "prompt_id",
+        "required": ["id", "prompt_id", "scenario", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
+    },
 }
 
 SYSTEM_PROMPT = (
