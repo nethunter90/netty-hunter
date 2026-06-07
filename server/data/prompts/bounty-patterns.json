@@ -898,5 +898,95 @@
     "reasoning_requirement": "Recognize missing authenticity verification.",
     "evaluation_criteria": "Mentions forged payment confirmation risk.",
     "category": "bounty_patterns"
+  },
+  {
+    "id": 101,
+    "scenario": "An authenticated user can export all customer PII through a data export feature without rate limiting or audit logging.",
+    "prompt": "How would you classify this finding and justify its severity?",
+    "expected_answer": "This is a P1 severity finding despite potentially moderate CVSS scoring (authentication required reduces exploitability). The critical factor is business impact: enabling insider threat vectors, regulatory violations (GDPR/CCPA/HIPAA fines 4-20% revenue), mass data exfiltration capability, and direct liability exposure. A single authenticated user exfiltrating complete customer datasets represents existential risk. CVSS may score 5-6 due to authentication requirement, but business context elevates to P1. Document: (1) volume of exportable records, (2) PII categories (SSN, payment data, health info), (3) lack of rate limiting enabling bulk export, (4) absent audit trail preventing detection. This finding forces mandatory remediation regardless of CVSS, making it higher payout ($5k-20k range) than CVSS suggests. Programs prioritize findings threatening regulatory compliance and customer trust over technical exploitability metrics alone.",
+    "reasoning_requirement": "Understand that business impact can exceed CVSS scoring in severity classification",
+    "evaluation_criteria": "Identifies insider threat vector and regulatory exposure; Distinguishes business impact from technical CVSS; Quantifies data volume and PII sensitivity",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 102,
+    "scenario": "Your research finds SQL injection in a parameter reported 6 months ago as patched. The patch validated one code path but missed another endpoint using the same parameter.",
+    "prompt": "Is this a duplicate? How do you handle it?",
+    "expected_answer": "Technically not a duplicate\u2014it's an incomplete patch. Reference the original report, clearly document the difference: 'Original report patch addressed /api/search but missed /api/advanced-search endpoint, both accepting user_query parameter.' Demonstrate the bypass by showing both endpoints execute similar unvalidated SQL. This is repositionable as either 'incomplete patch validation' or 'related vulnerability.' Program handling varies significantly: HackerOne rewards relationship documentation and treats it as a fresh finding if exploitation differs; Bugcrowd may classify as duplicate and award reduced bounty (20-30% of original); Intigriti typically considers it a new finding since the original patch validation was incomplete. Provide side-by-side proof that both endpoints are vulnerable post-patch. This positioning affects payout $500-3k depending on platform. Always reference the original finding ID and explain why the patch scope was insufficient.",
+    "reasoning_requirement": "Recognize incomplete patches and exploitation path variations across multiple endpoints",
+    "evaluation_criteria": "References original report with specific fix gap analysis; Identifies patch boundary differences; Explains platform-specific duplicate policies",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 103,
+    "scenario": "A vulnerability exists in a third-party JavaScript library loaded from CDN that's included in the target application. The library vulnerability itself is already publicly disclosed.",
+    "prompt": "Should you report this? Why or why not?",
+    "expected_answer": "Scope boundaries determine reportability\u2014most programs exclude known vulnerabilities in unmodified dependencies. However, if the application misuses the library or uses an outdated version when current versions are patched, it's in-scope as a 'vulnerable dependency misconfiguration.' Check three factors: (1) Is the library version outdated? (2) Does the application use unsafe library features? (3) Does program scope explicitly include/exclude dependency vulnerabilities? HackerOne programs vary\u2014some accept 'vulnerable dependency' reports ($500-2k) while others redirect to library maintainers. Bugcrowd typically declines known vulnerabilities. Intigriti requires active exploitation in-application context. The reframe that works: if upgrading the library would fix the vulnerability, it's in-scope misconfiguration. If the vulnerability exists in all current versions, it's likely out-of-scope unless you demonstrate application-specific exploitation. Clarify scope with program moderators before investing research effort.",
+    "reasoning_requirement": "Distinguish between in-scope application vulnerability and out-of-scope library maintenance issues",
+    "evaluation_criteria": "Analyzes version currency and patching status; Discusses application-specific misuse vs. inherent library flaws; References program scope clarification process",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 104,
+    "scenario": "A subtle JWT secret weakness allows token prediction. Impact is limited to a sandbox environment accessible only after account creation.",
+    "prompt": "On which platform would this likely receive higher payout: HackerOne, Bugcrowd, or Intigriti?",
+    "expected_answer": "Platform-specific risk tolerance creates significant payout variance ($1k-5k spread). HackerOne rewards cryptographic weaknesses heavily\u2014JWT secret prediction is P2-P3 ($2.5k-5k) regardless of sandbox limitation because crypto bugs are foundational. Bugcrowd emphasizes actual impact: sandbox-only access may reduce payout 40-60% ($600-1.5k) since damage is constrained. Intigriti sits between\u2014strict scope definition but high crypto-bug premiums ($1.5k-3k). The sandbox limitation is key: HackerOne accepts 'cryptographic weakness' as vulnerability even with limited exploitation context; Bugcrowd requires demonstrable business impact; Intigriti requires active exploitation chain. Program maturity matters\u2014enterprise programs (Microsoft, Google, AWS) value crypto bugs more than startups. Your strategy: submit to HackerOne first for maximum payout, frame as 'cryptographic weakness enabling sandbox account compromise,' minimize sandbox context. Expect HackerOne 60% higher payout than Bugcrowd for identical technical finding.",
+    "reasoning_requirement": "Recognize program-specific risk tolerance and payout model differences",
+    "evaluation_criteria": "Compares platform models with specific payout ranges; Identifies sandbox/limited-exposure impact factor; References program maturity effect on crypto-bug valuation",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 105,
+    "scenario": "A researcher chains: (1) Account enumeration via username leak, (2) Weak password reset token (7-day validity, predictable), (3) Account takeover. No single issue seems P1, but the chain is devastating.",
+    "prompt": "How do you position and score this chain for maximum clarity?",
+    "expected_answer": "Impact amplification through chaining elevates individual P3/P4 findings into P2 or P1 classification. Document each step separately with reproduction steps showing the full chain: username enumeration demonstrates vulnerability, predicted token generation demonstrates weakness, full account takeover demonstrates impact. Programs value 'full chain' reports more than fragmented ones because they reveal systemic security failure. Score based on chain outcome (full account takeover = P1) not individual components. Include attack complexity: if the chain requires minimal interaction or predictable conditions, emphasize that to justify severity upgrade. Reference attack surface: how many users can be targeted? Are usernames enumerable at scale? Is 7-day token validity and predictability exploitable during that window? Include CVSS v3.1 vector accounting for the chain: Access Vector=Network, Privilege Required=None, User Interaction=None, Scope=Changed. This typically yields 8.5-9.2 (Critical). Provide working PoC demonstrating successful full chain exploitation.",
+    "reasoning_requirement": "Recognize how vulnerability chains amplify individual findings into higher severity classifications",
+    "evaluation_criteria": "Documents each component step separately; Scores based on chain outcome not individual metrics; Includes attack complexity and scale analysis",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 106,
+    "scenario": "An application displays the current user's account ID in client-side HTML comments, accessible to any authenticated user. No further exploitation possible. CVSS 3.1 (Low).",
+    "prompt": "Is this P4 or P5? Justify your classification.",
+    "expected_answer": "This is P5 or potentially not reportable\u2014CVSS 3.1 confirms low impact. Information disclosure exists but leaked data (account ID) lacks sensitivity. Most systems assign sequential or predictable IDs; exposure enables no privilege escalation, authentication bypass, or further data access. This is 'unnecessary information exposure' rather than true vulnerability. Programs like HackerOne may decline this per their disclosure policy excluding non-sensitive information leaks. P4 would require: (1) sensitive data leak (email, phone, API keys, tokens), (2) enabled by privilege escalation, or (3) enabling further exploitation chain. This meets none. Document as low-risk informational finding: 'HTML comments should not contain user identifiers, even non-sensitive ones, as they represent unnecessary information disclosure per OWASP.' Bugcrowd and Intigriti typically decline P5-level disclosures. If submitting, frame as 'development artifact exposure' rather than information disclosure vulnerability to improve acceptance chances.",
+    "reasoning_requirement": "Distinguish between harmless information exposure and true information disclosure vulnerability with exploitable impact",
+    "evaluation_criteria": "Acknowledges data sensitivity level and non-exploitability; Aligns CVSS score with finding; References program disclosure acceptance policies",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 107,
+    "scenario": "A race condition requires microsecond-precision timing: (1) Account A initiates deletion, (2) Account B modifies A's data simultaneously, (3) Resulting state exposes A's deleted sensitive data. Reproducibility: 15%.",
+    "prompt": "How do you document and score this race condition for maximum credibility?",
+    "expected_answer": "High-complexity reproduction reduces program confidence despite real vulnerability. Document precisely: timing windows (microsecond-level), environmental factors (network latency, server load), reproducibility statistics (15% baseline success), improvement techniques (thread synchronization, concurrent libraries, load injection). Position as P2-P3, NOT P1, due to exploitation complexity\u2014but counter Bugcrowd's 'complexity penalty' by demonstrating real-world exploitability. Explain why low reproducibility doesn't mean low severity: consistent load patterns in high-traffic applications make race conditions reliable (race condition occurs once per 6-7 exploit attempts in production = practical exploitation). Include reproducible PoC script using Python threading or Go goroutines that increases success rate to 40-60% through synchronization. Show that adversary can trigger race 100+ times without rate limiting, achieving exploitation despite 15% per-attempt rate. Reference similar accepted findings (Stripe, AWS race condition submissions) that accepted low-reproducibility findings with strong PoCs. Include CVSS v3.1 vector: Attack Complexity=High (due to timing requirement) typically yields 5.5-6.5 base score, but business impact justifies higher classification.",
+    "reasoning_requirement": "Account for exploitation complexity and reproducibility in severity assessment while justifying real-world exploitability",
+    "evaluation_criteria": "Documents timing precision requirements and environmental factors; Provides reproducibility statistics with improvement techniques; Includes PoC with synchronization methodology",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 108,
+    "scenario": "XSS vulnerability exists in out-of-scope subdomain (help.company.com vs. in-scope app.company.com) but exploits cookies shared across domain.",
+    "prompt": "How do you handle this on Intigriti's platform?",
+    "expected_answer": "Intigriti enforces stricter scope than HackerOne\u2014typically subdomains are explicitly listed and out-of-scope subdomains are rejected. However, cross-subdomain cookie exploitation can reframe this as in-scope. Strategy: document the finding as 'Cross-Subdomain XSS Attack Chain' affecting in-scope assets. Demonstrate: (1) XSS in help.company.com, (2) Session cookie set with domain=.company.com, (3) Attacker reads cookie and uses it to access app.company.com (in-scope), (4) Impact to in-scope application. This reframes from 'out-of-scope help XSS' to 'in-scope account takeover via cross-subdomain attack.' Intigriti requires this clarification\u2014submit a scope clarification question: 'Is cross-subdomain session hijacking via shared cookies considered in-scope?' Most programs answer yes if the impact reaches in-scope assets. If help.company.com is managed by the same team and considered part of the same product, mention that. If genuinely out-of-scope, Intigriti will reject\u2014but the 'shared cookie domain impact' angle often convinces them of indirect in-scope relevance.",
+    "reasoning_requirement": "Understand platform-specific scope interpretation rules and cross-subdomain exploitation framing",
+    "evaluation_criteria": "References Intigriti's explicit subdomain scope policy; Analyzes cookie domain and cross-subdomain impact chain; Recommends scope clarification process before submission",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 109,
+    "scenario": "Passwords are stored with bcrypt cost factor of 4 (industry standard is 10+). Rapid brute-forcing becomes practical. No demonstrated breach yet.",
+    "prompt": "What signals indicate this finding will receive significant payout?",
+    "expected_answer": "Multiple high-payout signals converge: (1) Cryptographic standard violation\u2014bcrypt cost 4 objectively violates industry standards (OWASP, NIST recommend 10+), making it a clear policy breach not interpretation; (2) Authentication weakness affecting all users universally\u2014scope is 100% of accounts; (3) Practical brute-force demonstration with tools (hashcat benchmarks: 10 billion bcrypt attempts/second on GPU, cost-4 reduces to feasible timescales). (4) Remediation forcing mandatory password reset\u2014compliance/business impact; (5) If disclosed, triggers regulatory obligations\u2014this elevates business severity. Payout signals align: all top programs ($3k-15k range for cryptographic authentication weaknesses affecting all users). Position as P2 minimum (Authentication weakness). Strengthen with: comparison to industry breaches (LinkedIn, Yahoo password hashing failures), cost-benefit analysis of bcrypt cost factor, reference to OWASP/NIST standards establishing 10+ as minimum. Include proof that cost-4 bcrypt hash is breakable in hours/days on commercial hardware. This finding merits $5k-10k+ on HackerOne, $2k-4k on Bugcrowd, $3k-6k on Intigriti.",
+    "reasoning_requirement": "Recognize financial and payout indicator patterns in vulnerability characteristics",
+    "evaluation_criteria": "Identifies cryptographic standard violation with reference; Demonstrates brute-force feasibility with tool benchmarks; Quantifies universal user impact and remediation scope",
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 110,
+    "scenario": "Internal reporting tool (3 employees, non-customer-facing) allows viewing others' reports. No PII in system. CVSS 4.3 (Low). Reports contain competitive strategy worth millions.",
+    "prompt": "How do you reconcile CVSS (Low) with business impact (Critical)?",
+    "expected_answer": "CVSS is context-agnostic\u2014it scores technical exploitability, not business value of leaked assets. This demonstrates why CVSS often misses business-critical impact. Position as: 'CVSS 4.3 underscores this finding because CVSS assumes standard information assets. This target's competitive strategy data justifies P1 classification despite technical CVSS mismatch.' Reference CVSS v3.1 Environmental (CVSS-E) scoring which incorporates business context\u2014applying environmental modifiers for sensitive asset type increases score to 7-8 (High). Explain that while base CVSS is 4.3, this target classifies this as P0/P1 due to competitive harm, investor relations risk, and potential SEC disclosure requirements. Similar findings at public companies earning $15k-50k+ bounties; private targets may offer even higher. Document business context: (1) what specific information is at risk (product roadmap, acquisition targets, pricing strategy), (2) which business process depends on confidentiality, (3) what competitive advantage is threatened, (4) what regulatory disclosure implications exist. Programs familiar with your target's business model will substantially reward this despite CVSS mismatch\u2014this is where expert threat modeling creates payout advantage.",
+    "reasoning_requirement": "Distinguish between technical severity (CVSS) and business-context severity in vulnerability classification",
+    "evaluation_criteria": "Explains CVSS limitations for context-specific assets; References CVSS Environmental scoring modifiers; Justifies business-driven classification override with competitive/regulatory impact",
+    "category": "bounty_patterns"
   }
 ]
