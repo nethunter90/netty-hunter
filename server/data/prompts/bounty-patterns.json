@@ -2558,5 +2558,135 @@
       "Quantifies exposed cardholder data: sample of plaintext cards with valid format proof (Luhn check), expiry/CVV presence, date range, and remediation cost estimate"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 241,
+    "scenario": "XML API endpoint accepts user-supplied search terms directly into an XPath query without sanitization. The query targets a user database where email and payment_token fields exist. XPath boolean-based injection is possible, allowing character-by-character exfiltration of all records.",
+    "prompt": "What is the severity classification and what reproduction chain makes this P1 rather than P3?",
+    "expected_answer": "This is a P1/Critical vulnerability (CVSS 9.3+) enabling unauthenticated data exfiltration of sensitive fields via XPath injection. Severity stems from: (1) direct access to authentication/payment data without privilege escalation, (2) reliable exploitation via time-based or error-based boolean inference, and (3) scalable extraction affecting all users simultaneously. Programs often initially under-score this as P3 because they conflate 'requires authentication knowledge' with 'requires valid credentials'\u2014here it does not. Reproduction requires: craft XPath payload with sleep/error inference, confirm data exfiltration rate (typically 50-100 characters/minute via time-based), document 5-10 sample records including PII and payment tokens. High-payout signals: XPath is rarer than SQLi so bounties are $3K-8K on HackerOne; Intigriti programs pay 20% premium if you chain to session hijacking. Document CVSS separately from business impact\u2014the data exfiltration alone justifies P1.",
+    "reasoning_requirement": "Distinguish between CVSS baseline assumptions and actual attack surface; recognize XPath as under-reported class with payout premium.",
+    "evaluation_criteria": [
+      "Correctly identifies P1/Critical and justifies unauthenticated data exfiltration as severity driver, not exploitation difficulty.",
+      "Details reproduction chain: payload crafting, inference method (time/error), character extraction rate, sample dataset scope.",
+      "Specifies payout expectations ($3K-8K range), platform differences (HackerOne baseline vs Intigriti premium), CVSS vs business impact divergence."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 242,
+    "scenario": "Payment processing API marks invoices as 'paid' when POST is received. The endpoint checks account balance before crediting. Sending 10 concurrent POST requests with 1-second delay reliably bypasses balance check. The race condition is reproducible with 30-50% success rate and 500ms average window.",
+    "prompt": "Why is this P2 rather than P1, and what program-specific payout signals should inform your report?",
+    "expected_answer": "This is a P2/High TOCTOU (time-of-check-to-time-of-use) vulnerability exploiting race conditions in payment processing. It is P2 (not P1) because exploitation requires: (1) precise timing/concurrency knowledge, (2) multiple simultaneous requests that are detectable in logs, and (3) compensating controls often exist (transaction isolation, idempotency keys). Business impact is significant\u2014financial bypass\u2014but not catastrophic due to eventual detection. Reproduction requires: document concurrent request timing, average bypass success rate (30-50%), and server logs showing out-of-order processing. Platform-specific payout: Bugcrowd pays $2-5K for TOCTOU in payments, with bonuses for multi-user chains. HackerOne pays similarly but often negotiates P3 if database transactions mitigate implicitly. Intigriti European programs are likely to pay premium ($5K+) due to regulatory scrutiny. High-payout signals: include PoC code using threading/curl that others can reproduce; include transaction logs showing multiple debits within race window. Avoid claiming P1\u2014concurrency requirement and detectability justify P2.",
+    "reasoning_requirement": "Classify race conditions on exploitability, not just impact; recognize program variance in TOCTOU payment scoring.",
+    "evaluation_criteria": [
+      "Correctly identifies P2 and explains TOCTOU as medium-severity due to concurrency requirement and potential compensating controls.",
+      "Details reproduction: concurrent request count, timing window, success rate percentage, log evidence of out-of-order processing.",
+      "Specifies payout by platform (Bugcrowd $2-5K, HackerOne similar with P3 negotiation risk, Intigriti $5K+) and PoC strategy (threaded code + transaction logs)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 243,
+    "scenario": "Web application has two admin panel entry points: /admin-dashboard and /admin-legacy. The main /admin is in-scope and monitored. The /admin-legacy endpoint provides identical functionality but was overlooked in scope definition. Access control is missing on /admin-legacy but present on /admin.",
+    "prompt": "Is this a single finding or duplicate, and how does program type affect scope interpretation?",
+    "expected_answer": "This illustrates critical scope ambiguity that varies dramatically by program philosophy. On HackerOne, this is typically ONE finding ('scope creep via legacy endpoint')\u2014the duplicate risk is high because both are logically the same admin interface, so consolidation is standard. On Bugcrowd, this may be TWO findings if the legacy endpoint is on a different subdomain or infrastructure tier, even if logically identical. On Intigriti, scope interpretation depends on whether '/admin-legacy' is explicitly listed; if not listed, reporting may be rejected as out-of-scope even if it's same functionality. P3 vs P2 classification also diverges: HackerOne often scores as P3 (same asset), while Bugcrowd may call it P2 (forgotten legacy tier = higher risk). Reproduction strategy: document both endpoints return identical data, confirm same database/permissions apply, and explicitly state scope ambiguity in your report. Payout signals: HackerOne prefers consolidated reports ($1-2K), Bugcrowd accepts splitting ($500 each if separate infra), Intigriti rejects unless scope explicitly covered. Duplicate risk mitigation: email program managers asking 'are /admin and /admin-legacy both in-scope?' before reporting.",
+    "reasoning_requirement": "Recognize scope ambiguity as finding triage risk; understand program philosophy variance.",
+    "evaluation_criteria": [
+      "Identifies scope interpretation variance across HackerOne (consolidation), Bugcrowd (infrastructure-based splitting), Intigriti (explicit scope requirement).",
+      "Documents both endpoints' functional equivalence and data/permission alignment; preemptively addresses duplicate risk.",
+      "Provides program-specific payout expectations ($1-2K HackerOne, $500 each Bugcrowd, rejection risk Intigriti) with mitigation strategy."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 244,
+    "scenario": "Application's comment section allows HTML/script input without sanitization. Stored XSS is possible. Same application's login form has separate previously-reported stored XSS in password reset tokens. Both are stored XSS but on different endpoints.",
+    "prompt": "What is the duplicate risk, and how do program-specific policies affect payout?",
+    "expected_answer": "This illustrates duplicate classification variance across platforms. HackerOne treats 'stored XSS' as single class; comment section and password reset findings are HIGHLY likely to be marked duplicate or consolidated, resulting in payout for only one finding ($300-800) unless you demonstrate distinct root causes or uniquely severe impact chains. Both are stored XSS with same remediation (output encoding) and user impact model. Bugcrowd is more lenient; if the two XSS instances are in genuinely separate code paths (comment module vs auth module) with different injection points, they may be paid separately ($400 each), though duplicate risk remains 40-50%. Intigriti is strictest: any two stored XSS findings are consolidated into one severity level (typically P3/Medium) with single payout ($200-400 max). Duplicate risk mitigation: if reporting both, emphasize technical distinctness\u2014different sanitization bypass techniques, different code modules, or different escalation chains (admin theft vs user scraping). Payout signal: on HackerOne, submit only the HIGHEST impact XSS and mention other as 'related finding.' On Bugcrowd, submit both with clear differentiation. On Intigriti, submit single highest-impact instance and expect $200-300.",
+    "reasoning_requirement": "Classify XSS duplicates via platform policy, not just vulnerability class; understand payout consolidation risk.",
+    "evaluation_criteria": [
+      "Correctly identifies HackerOne high-consolidation (single payout likely), Bugcrowd moderate (separate possible if distinct code paths), Intigriti strict (one payout, lowest rates).",
+      "Details duplicate mitigation: emphasis on technical distinctness (different sanitization bypasses, separate code modules, distinct escalation chains).",
+      "Specifies payout risk by platform (HackerOne $300-800 if consolidated, Bugcrowd $400-800 if split, Intigriti $200-300 max) and submission strategy."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 245,
+    "scenario": "API endpoint returns detailed error messages including SQL syntax, database table names, and application version numbers. Error responses are unauthenticated and consistent. Documentation reveals 30+ distinct error types revealing database schema, ORM framework, and middleware stack. No data exfiltration is possible via errors alone.",
+    "prompt": "What is the severity, and how does impact amplification reasoning affect P5 vs P3 classification?",
+    "expected_answer": "This information disclosure is fundamentally P5/Low in isolation\u2014CVSS 5.3 (medium baseline) but with 'low impact' confidentiality. Base finding merits $50-200 payout due to widespread acceptance that error messages occasionally leak info. However, impact amplification analysis is critical: does this information accelerate exploitation of OTHER vulnerabilities? If errors reveal 'Struts 2.3.15.1' (known RCE class), this enables targeted exploitation but doesn't constitute P3 unless you chain it with real exploit. Correct approach: submit error disclosures as P5 UNLESS you demonstrate concrete amplification chain (e.g., 'errors reveal Django 1.8, enabling direct exploitation of CVE-2016-1234 in this version'). Platforms diverge: HackerOne consolidates all error disclosures into $100-300 findings; Bugcrowd pays per category ($50 x 30 errors = $1500) if documented individually; Intigriti pays $50-100 maximum. Payout signal: submit consolidated list with remediation guidance ('implement centralized error handler'), not individual errors. Duplicate risk: similar error disclosures are heavily consolidated. Avoid claiming 'enables P1 attacks'\u2014frame as informational only unless you provide working chained PoC.",
+    "reasoning_requirement": "Separate base-case information disclosure from impact amplification; understand platform variance in error consolidation.",
+    "evaluation_criteria": [
+      "Correctly classifies as P5/Low in isolation (CVSS 5.3, low impact); acknowledges impact amplification scenarios (framework version = CVE targeting).",
+      "Documents error consolidation strategy: one comprehensive report vs per-error submission; explains platform variance (HackerOne $100-300, Bugcrowd per-category, Intigriti $50-100).",
+      "Specifies payout expectations ($50-300 range) and explicit avoidance of 'enables P1' claims without concrete chained PoC."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 246,
+    "scenario": "GraphQL API allows batched queries without rate limiting and exposes full schema introspection. Researcher uses batched introspection to enumerate internal fields and unpublished endpoints (/internal/user-sync, /internal/cache-dump). Chaining with SSRF in image URL processing, researcher scans internal network and accesses unpublished endpoints, exfiltrating user data.",
+    "prompt": "What makes this P1, and why do Intigriti programs pay premiums for GraphQL findings?",
+    "expected_answer": "This is a P1/Critical finding (CVSS 9.2+) combining information disclosure (schema enumeration) with SSRF, enabling unauthenticated internal reconnaissance and RCE potential. P1 stems from: (1) unauthenticated introspection revealing internal infrastructure, (2) batched queries bypassing rate limits, (3) SSRF chainability enabling internal endpoint access, (4) actual data exfiltration via unpublished endpoints. Reproduction: craft batched introspection (100+ nested queries in single POST), document schema enumeration, identify internal endpoints, combine with SSRF in image processor to scan internal networks, capture exfiltrated user data. Intigriti programs pay 20-40% premium for GraphQL findings because: European programs view introspection as under-reported and high-severity; GraphQL is newer attack surface so fewer competitors claimed it; introspection + SSRF chains are rare and valuable. Payout expectations: Intigriti $5K-15K (premium for infrastructure reconnaissance), HackerOne $3K-8K, Bugcrowd $2K-5K. High-signal report: include full schema dump, endpoint enumeration, SSRF scan results (responsive IPs/ports), and user data sample. This combines discovery + exploitation + data exfiltration justifying top-tier payout.",
+    "reasoning_requirement": "Chain multiple vulnerabilities to justify P1; recognize Intigriti GraphQL payout premium.",
+    "evaluation_criteria": [
+      "Correctly identifies P1/Critical (CVSS 9.2+) and justifies via unauthenticated introspection + batched queries + SSRF chain + actual data exfiltration.",
+      "Details reproduction: batched introspection payload, schema enumeration, endpoint identification, SSRF in image processor, network scan results, exfiltrated user records.",
+      "Specifies Intigriti premium rationale, payout by platform (Intigriti $5K-15K, HackerOne $3K-8K, Bugcrowd $2K-5K), and high-signal elements (schema dump + scan results + data sample)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 247,
+    "scenario": "API endpoint uses JWT signed with HMAC-SHA256. Researcher tests JWT secret using 100K-word passphrase list. Secret is found to be 'MyApp-v2.5-admin' (32 characters, but only 88 bits entropy). Server rate limits token generation at 10 requests/second. Forging admin tokens is feasible within 6-8 hours on single CPU.",
+    "prompt": "Is this P1 or P2, and what payout signals vary by program?",
+    "expected_answer": "This is a P2/High finding, not P1, due to exploitation feasibility but classification variance across programs significantly affects payout. The vulnerability: weak JWT secret (88 bits entropy) enables brute-force token forgery in hours, leading to full account takeover including admin accounts. P2 vs P1 rationale: P1 would require demonstrated working token forgery + account access within submission (PoC), whereas this is theoretical brute-force feasibility. Payout variance is substantial: HackerOne treats JWT brute-force as P2 with $1K-3K payout, but heavily discounts without PoC (down to $500-800); submission of forged admin token elevates to $2K-4K. Bugcrowd's policy is inconsistent\u2014some programs rate P2 ($1-2K), others downgrade to P3 ($500-800) arguing entropy testing is 'theoretical.' Intigriti pays lowest ($300-800) treating JWT weakness as 'configuration flaw.' High-payout signals: (1) submit working forged admin JWT, (2) document entropy analysis, (3) include timeline, (4) test token acceptance against live endpoints, (5) provide cracking tool commands. Avoid submitting 'weak entropy' and 'brute-force feasible' separately\u2014heavy consolidation risk.",
+    "reasoning_requirement": "Distinguish JWT brute-force feasibility (P2) from working token forgery (higher payout); understand platform variance in 'theoretical' vs 'practical.'",
+    "evaluation_criteria": [
+      "Correctly identifies P2/High and explains why PoC (forged token + live access) affects payout: HackerOne $500-4K depending on PoC, Bugcrowd $500-2K with P3 risk, Intigriti $300-800.",
+      "Details technical reproduction: passphrase list, brute-force timeline (6-8 hours), entropy calculation, successful token forgery, database access via stolen creds.",
+      "Specifies payout amplification (working PoC vs theoretical), high-signal elements (entropy metrics, tool replication, endpoint access verification)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 248,
+    "scenario": "API implements CORS headers allowing POST from origins matching /.*\\.internal\\.company\\.com/. Application rejects unauthenticated GET requests to sensitive endpoints. However, vulnerable HTML form on attacker-controlled subdomain matching CORS regex could trigger state-changing POSTs (transfer funds, change password). Testing confirms attacker.internal.company.com matches the regex.",
+    "prompt": "What is the severity, and how does business impact divergence from CVSS affect classification?",
+    "expected_answer": "This is a P3/Medium vulnerability exploiting overly-permissive CORS configuration combined with POST-based state changes. CVSS scores at 7.5 (high baseline: cross-origin POST + confidentiality/integrity impact), but business impact analysis significantly diverges. Attack requires: (1) attacker control of subdomain matching regex, (2) user visit to attacker's page on that subdomain, (3) cross-origin POST execution, (4) state change without CSRF token validation. Business impact is constrained: most modern applications mitigate via CSRF tokens, SameSite cookies, or state-change verification, so actual exploitability is lower than CVSS suggests. P3 classification is appropriate: requires user interaction, subdomain control (not arbitrary origin), likely CSRF mitigations exist. Programs vary: HackerOne rates P3/Medium ($500-1.5K); Bugcrowd is more critical ($1-2K) treating CORS overpermissiveness as infrastructure risk; Intigriti pays lowest ($300-800) arguing POST + state change requires 'intentional application flaw.' High-payout signals: (1) demonstrate actual state change via cross-origin POST, (2) show CSRF token is absent, (3) prove subdomain registrability, (4) document CVSS vs actual impact divergence explicitly. Avoid claiming P2.",
+    "reasoning_requirement": "Separate CVSS baseline score from actual business exploitability; recognize CORS as infrastructure risk versus actionable vulnerability.",
+    "evaluation_criteria": [
+      "Correctly classifies as P3/Medium and explains CVSS (7.5) vs business impact divergence: user interaction, subdomain control barrier, likely CSRF mitigations.",
+      "Documents actual exploitability: PoC cross-origin POST causing state change, CSRF token absence/predictability, subdomain registrability.",
+      "Specifies payout by platform (HackerOne $500-1.5K, Bugcrowd $1-2K, Intigriti $300-800) and explicit CVSS vs business impact framing."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 249,
+    "scenario": "API endpoint accepts file uploads with filename validation only (checks extension, not path). Researcher uploads file with filename '../../../etc/config.ini' which, due to insufficient path normalization, overwrites application's configuration file containing database credentials. Attacker can then access the database directly. Reproduction is 100% reliable, unauthenticated, discoverable within 10 minutes.",
+    "prompt": "What severity classification and payout profile do Bugcrowd programs typically assign, and why is this pattern heavily bounties?",
+    "expected_answer": "This is a P2/High vulnerability enabling arbitrary file overwrite via path traversal in filename handling. Severity is P2 (not P1) because exploitation requires knowledge of target file location (config.ini path), but once discovered, impact is severe: credential exposure + database access. Bugcrowd programs HEAVILY bounty this pattern ($2-5K typical, up to $7K for critical configs) because: (1) it's common in file upload implementations, (2) path traversal in filenames is often overlooked in code review, (3) impact amplification is immediate (config overwrite = credential theft), (4) represents logic gap that Bugcrowd programs are incentivized to fix. Reproduction: (1) identify upload endpoint, (2) craft filename with ../ sequences (typically 3-5 levels), (3) guess target config location or brute-force common paths, (4) upload and verify file creation in unexpected location, (5) access database using exfiltrated credentials. HackerOne rates similarly ($2-4K) but less enthusiastic, often negotiating P3 if application 'already uses path normalization elsewhere.' Intigriti pays minimally ($800-1.5K). High-payout signals on Bugcrowd: (1) demonstrate overwrite of ACTUAL config file, (2) extract real credentials, (3) show database access using stolen credentials, (4) document full impact chain, (5) provide step-by-step PoC with tool commands. Bugcrowd bonus: include secure upload handling recommendations with before/after code.",
+    "reasoning_requirement": "Recognize path traversal in filenames as Bugcrowd-high-value pattern; understand platform variance in premium vs discounting.",
+    "evaluation_criteria": [
+      "Correctly identifies P2/High and explains Bugcrowd premium rationale (common oversight, credential exposure impact, remediation incentive).",
+      "Details full reproduction chain: endpoint discovery, ../ payload crafting, config location identification, file overwrite verification, credential extraction, database access, data exfiltration.",
+      "Specifies Bugcrowd payout ($2-7K depending on full-chain PoC), HackerOne discounting ($2-4K, P3 negotiation risk), Intigriti minimum ($800-1.5K), and high-signal elements (real config + real credentials + database results)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 250,
+    "scenario": "API endpoint serves JavaScript configuration file at /config.js containing read-only API key with access to user profile data. Key is accessible unauthenticated with scope 'user:read'. Researcher discovers same API key was previously disclosed in public GitHub repository 3 years ago in different project (now archived). Key is still valid and actively used by the application.",
+    "prompt": "What is the duplicate risk and payout implication if the key was previously reported to a different program?",
+    "expected_answer": "This illustrates complex duplicate/scope risk across multiple disclosure vectors. Core issue: API key disclosure in /config.js is P3/Low-Medium vulnerability ($200-600 typical), but duplicate classification depends on reporting history. If the key was PREVIOUSLY reported to a DIFFERENT program, duplicate risk emerges: (1) HackerOne consolidates by KEY across multiple programs, treating reuse in new project as 'same key, same vulnerability'; (2) Bugcrowd treats it as separate finding IF the new program scope is distinct, but discounts payout 30-50%; (3) Intigriti treats as new finding (new program = new scope) but expects full disclosure of prior reporting. Platform variance: HackerOne may reject as duplicate if key was previously reported to ANY program (searches internal database); they'll offer minimal payout ($50-200) or consolidation. Bugcrowd treats same key in different application as separate if code paths distinct, but still discounts 30-50%. Intigriti accepts as new finding but expects full prior-reporting disclosure; standard payout ($300-500). High-payout signals: (1) verify key is active (API call confirms 200 + user data), (2) identify which user profiles accessible, (3) check previous disclosures (GitHub/HackerOne search), (4) explicitly state 'key was previously disclosed [link] but continues used.' Payout range: HackerOne $50-300 (high duplicate risk), Bugcrowd $200-400 with 30-50% discount, Intigriti $300-500 with new-program emphasis.",
+    "reasoning_requirement": "Assess duplicate risk across programs and prior disclosure history; understand platform variance in 'same key, different application.'",
+    "evaluation_criteria": [
+      "Identifies duplicate risk across programs/platforms and prior GitHub disclosure; explains variance (HackerOne strict consolidation, Bugcrowd moderate, Intigriti new-program acceptance).",
+      "Documents active key usage: API call verification, user profiles accessible, scope of exposure (number of users, accessible fields).",
+      "Specifies payout expectations by platform (HackerOne $50-300, Bugcrowd $200-400, Intigriti $300-500) and pre-submission search mitigation strategy."
+    ],
+    "category": "bounty_patterns"
   }
 ]
