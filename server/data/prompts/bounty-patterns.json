@@ -5701,5 +5701,135 @@
       "Recommends severity classification (P2-P4) based on program context; justifies choice by comparing to 2-3 prior reports on the program or similar platforms"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 492,
+    "scenario": "Stored XSS in admin settings panel allows self-stored JavaScript. CVSS scores 4.3 (requires admin access, low-privilege storage). However, the admin panel contains financial reporting dashboards accessed by executive finance directors during quarterly reviews. A low-privilege admin injects JavaScript that executes when finance director accesses reports, enabling exfiltration of budgets, unauthorized approval of fraudulent transactions, and modification of revenue records. The CVSS impact (confidentiality) understates the actual business risk: financial integrity violation and fraud liability.",
+    "prompt": "How do you evaluate XSS severity when CVSS scores low but business impact is extreme?",
+    "expected_answer": "Focus on realistic attacker context and business consequence, not CVSS formula alone. This is P1 unauthorized financial transaction modification despite low CVSS. Demonstrate JavaScript access to sensitive controls (budget approval buttons, export functions, transaction approval workflows). Document the exploitation chain from XSS to fraudulent approval: proof-of-concept showing injection \u2192 execution \u2192 sensitive action triggered without re-authentication. Include compliance implications (SOX, PCI-DSS for payment processing). Compare payout signals: HackerOne emphasizes business impact ($20k-$50k), Bugcrowd VRT may score lower initially but responds to fraud evidence, Intigriti rewards if financial data includes EU customer information (GDPR amplification). Reframe from \"stored XSS in admin panel\" to \"unauthorized financial transaction approval via trusted admin interface.\" Calculate potential fraud exposure (average transaction value \u00d7 successful exploits \u00d7 recovery cost = business impact).",
+    "reasoning_requirement": "Identify business context that amplifies seemingly low-severity findings; construct exploitation chains demonstrating unauthorized action execution; map to compliance frameworks and regulatory liability.",
+    "evaluation_criteria": [
+      "Provides PoC showing JavaScript execution in financial dashboard, triggering budget modification without re-authentication",
+      "Quantifies business impact (fraud liability, regulatory risk, customer notification cost) separate from technical CVSS score",
+      "Documents fix requirements (CSP, frame-busting, re-authentication for sensitive actions) and payout escalation rationale across platforms"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 493,
+    "scenario": "SQL injection discovered in search parameter exists across: main domain (api.acme.com), five regional subdomains (api-eu.acme.com, api-asia.acme.com, etc.), three staging environments, two internal testing domains, and legacy production subdomain. Same vulnerable code deployed across multiple infrastructure. Program scope lists \"*.acme.com\" in-scope but guidance specifies \"production only.\" Filing 12 separate reports risks duplicate rejection; filing one comprehensive report might minimize payout. Platform caps rewards at one per \"domain cluster.\"",
+    "prompt": "How do you strategically report multi-instance vulnerabilities to maximize payout without duplicate rejection?",
+    "expected_answer": "Multi-instance vulnerabilities require careful scope interpretation and platform-specific strategy. File ONE comprehensive report demonstrating vulnerability across multiple instances with risk quantification (e.g., \"affects 5 customer-facing regional APIs impacting 2M+ users\"). Explicitly mark staging/testing as \"demonstration only\" while emphasizing production risk. On HackerOne, frame as \"variant instances of core vulnerability affecting broader customer base,\" which typically multiplies payout (base $5k \u00d7 5 regions = $25k potential). On Bugcrowd, align with VRT guidance: one report per distinct asset with multi-instance justification. Include clear production vs. staging distinction. Demonstrate that one code fix remediates all instances (single root cause). Provide reproduction steps for at least three instances (main + two regionals) to prove systematic deployment. Preemptively address scope ambiguity by stating interpretation (\"*.acme.com production\" = these 5 domains) and requesting clarification if incorrect.",
+    "reasoning_requirement": "Decompose multi-instance vulnerabilities to emphasize scope coverage; demonstrate single root cause across deployment; quantify user impact across regional infrastructure.",
+    "evaluation_criteria": [
+      "Demonstrates SQL injection on three+ distinct instances with clear evidence of shared vulnerable code",
+      "Quantifies total customer/user impact across regional APIs and production scope",
+      "Proposes single remediation affecting all instances and justifies multiplier payout approach vs. duplicate submission"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 494,
+    "scenario": "Information disclosure vulnerability exposes user emails, phone numbers, and encrypted account tokens via public GraphQL error messages. Allows unauthenticated enumeration of 100k+ user accounts. CVSS 5.3 (information disclosure, no authentication). Application is European SaaS with GDPR compliance obligations. Disclosed data includes personally identifiable information of EU residents. Under GDPR Article 33, this triggers mandatory breach notification. Same program runs on HackerOne (US-centric, rates P4 at $2k-$5k) and Intigriti (EU-centric, emphasizes regulatory risk).",
+    "prompt": "How do you identify and leverage jurisdiction-specific regulatory frameworks to increase severity and payout?",
+    "expected_answer": "Vulnerability severity is context-dependent. This demonstrates 2-5x payout variance based on regulatory framework. Frame as \"GDPR breach notification incident under Articles 33-34\" and quantify regulatory risk: mandatory authority notification, fines up to \u20ac20M or 4% revenue, reputational damage. File on Intigriti emphasizing GDPR compliance; expect P1-P2 ($10k-$25k+). On HackerOne, include GDPR context but expect lower score due to US-centric VRT. For non-EU platforms, focus on data sensitivity (PII) and customer notification liability. Demonstrate: (1) GDPR applicability (EU customer base, residency identifiable), (2) mandatory breach trigger (personal data + likely disclosure), (3) regulatory fine exposure calculation, (4) PoC showing 100k+ account enumeration with sample data retrieval. Include customer notification cost estimate (per-user notification, credit monitoring, incident response). Recommend filing on appropriate regional platform first for maximum payout, then cross-file after initial resolution.",
+    "reasoning_requirement": "Identify regulatory frameworks applicable to data exposure; quantify compliance liability; map to platform-specific VRT emphasis.",
+    "evaluation_criteria": [
+      "Demonstrates GDPR applicability with proof of EU resident data exposure and mandatory breach notification trigger",
+      "Provides PoC showing 100k+ account enumeration with regulatory sensitivity analysis",
+      "Calculates regulatory fine exposure and customer notification costs; compares payout across HackerOne vs. Intigriti with rationale"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 495,
+    "scenario": "On Bugcrowd, authorization bypass in multi-tenant SaaS: user session token, when appended to API requests for other tenants' resources, bypasses authorization and returns sensitive data. Requires: (1) valid user account, (2) knowledge of another tenant's workspace ID (enumerable via DNS or LinkedIn), (3) manual API call construction. Individual requests return sanitized data (no passwords, limited scope). Bugcrowd VRT classifies as P3 ($1k-$3k) due to \"requires valid account and manual exploitation.\" However, this is foundation for credential harvesting \u2192 phishing \u2192 account compromise. Security team dismisses as \"low-impact.\"",
+    "prompt": "How do you escalate authorization bypass findings that are high-impact in context but score low due to VRT limitations?",
+    "expected_answer": "Authorization bypasses are P1-P2 regardless of individual request scope because they represent architectural flaws enabling lateral movement and tenant isolation violation. Frame as \"broken multi-tenant isolation,\" not \"limited data exposure.\" On Bugcrowd, contest P3 by: (1) systematically enumerating workspace IDs (prove discoverable quantity), (2) showing context-specific impact (if tenant includes competitor data, financial data, or government contracts, emphasize regulatory/business risk), (3) providing attack chain proof\u2014enumerate \u2192 scrape \u2192 phishing targeting. Include PoC script showing exploitation across 10+ workspaces demonstrating systematic nature. Reference CWE-639 (authorization bypass) severity guidance. Calculate real-world impact: \"Any platform user can exfiltrate data from any other tenant's workspace, violating fundamental SaaS security model.\" Appeal with business impact and multi-tenant risk. Suggest architectural fix (token-scoped to tenant, proper RBAC). Expected payout after appeal: $5k-$15k.",
+    "reasoning_requirement": "Escalate authorization flaws from individual-request scope to systematic tenant isolation violation; construct attack chain demonstrating broad exploitability.",
+    "evaluation_criteria": [
+      "Provides PoC script showing systematic workspace enumeration and data exfiltration across 10+ tenants",
+      "Demonstrates context-specific impact (competitor data access, phishing targeting, regulatory risk)",
+      "Includes architectural fix recommendations and justified appeal to P1-P2 classification vs. initial P3"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 496,
+    "scenario": "API endpoint (/api/v2/export-reports) has weak rate limiting (1000 requests/hour per IP), but IP sourced from spoofable X-Forwarded-For header in cloud deployment. By rotating header, attacker bypasses rate limiting and exfiltrates entire customer database (5M records) in ~10 hours. Data includes customer names, emails, revenue, payment history, and usage analytics. Individually, rate-limit bypass is P4 (DoS vector), header spoofing is P5 (trust untrusted header). Combined, enables systematic data exfiltration at scale. Lab testing confirms 10k requests/minute feasible, returning paginated results.",
+    "prompt": "How do you identify and combine infrastructure configuration weaknesses into P1 data exfiltration attacks?",
+    "expected_answer": "Rate-limit bypasses are P1 when enabling exfiltration of sensitive data at scale. Demonstrate complete exploitation chain from bypass to access: (1) verify X-Forwarded-For spoofing (test custom headers, confirm origin validation absent), (2) quantify exfiltration rate (requests/minute \u00d7 records/request = total extraction time and bandwidth cost), (3) prove data sensitivity (PII + revenue data + usage patterns = high-value intelligence), (4) calculate attacker cost/feasibility (bandwidth ~$50-$200 for 5M records = low-friction attack). Provide PoC showing successful extraction of 1000+ records despite rate limits using header rotation. Frame as \"systematic data exfiltration vulnerability,\" not \"weak rate limiting.\" Clarify that fix requires per-user rate limiting, request signing/HMAC, or trust-based origin validation\u2014not just header parsing. On HackerOne, expect $15k-$50k depending on data scope and customer notification cost. On Bugcrowd, initial VRT may be P3-P2; escalate with exfiltration PoC.",
+    "reasoning_requirement": "Chain infrastructure misconfiguration with access control weakness into exfiltration attack; quantify data sensitivity and attacker feasibility.",
+    "evaluation_criteria": [
+      "Provides PoC demonstrating header spoofing bypass and extraction of 1000+ records; documents requests/minute and total extraction timeline",
+      "Quantifies data sensitivity (PII, revenue, competitive intelligence) and calculates business impact",
+      "Includes architectural fix requirements and clearly frames as P1 exfiltration vs. isolated rate-limit issue"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 497,
+    "scenario": "Time-based vulnerability in password reset flow: application calculates password strength requirements based on current UTC time-of-day (weaker requirements 2-4 AM when \"office staff offline\"). Race condition: if two reset requests submitted within 100ms, second reset's requirements fail validation. Attacker chains these by submitting reset during weak-requirement window, races two requests, sets weak password (123456) bypassing time-based requirements. Success rate ~15% under normal load, ~40% during peak traffic. Testing requires precise timing, multiple attempts, and traffic simulation to reliably trigger.",
+    "prompt": "How do you handle time-dependent and probabilistic vulnerabilities in reproduction and severity classification?",
+    "expected_answer": "Time-dependent and probabilistic vulnerabilities are P1-P2 even with moderate success rates because they enable systematic exploitation at scale. Reproduce reliably by: (1) automating attack with precise timing (use load testing tools, burst requests, timestamp coordination), (2) quantifying success rate under various load conditions (normal, peak, stress), (3) calculating real-world impact (success rate \u00d7 users attempting reset = exploited accounts annually). A 15% success rate on 100k monthly password resets = 15k compromised accounts/month. Provide PoC script demonstrating attack under controlled conditions; document environment setup (timing precision, traffic level, server load). Frame as \"exploitable under peak-traffic conditions,\" not \"race condition requiring specific timing.\" Don't minimize probabilistic vulnerabilities\u2014they compound at scale. For P1 (account takeover), success rate can be 5% and still qualify if impact is authentication bypass. Suggest fix: move strength requirements to client-side validation, use time-independent rules, or implement proper request sequencing with idempotency tokens.",
+    "reasoning_requirement": "Automate time-dependent and probabilistic attacks; quantify real-world impact through scale calculation; minimize dismissal via load condition analysis.",
+    "evaluation_criteria": [
+      "Provides PoC script demonstrating attack automation with precise timing and success rate quantification under multiple load conditions",
+      "Calculates annual impact (success rate \u00d7 user base \u00d7 exploitation frequency)",
+      "Justifies P1 account takeover classification despite moderate success rate; documents fix requirements"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 498,
+    "scenario": "Critical RCE vulnerability discovered on subdomain within program scope: \"vulnerability disclosure applies to all *.company.com subdomains except staging, dev, and qa.\" Vulnerable subdomain appears to be staging (staging-old.company.com per naming), but serves production customer data, uses production database credentials, hosts real user sessions, and is actively accessed by support staff with real customer data. Policy suggests exclusion; reality indicates **de facto production environment** despite name. RCE allows arbitrary code execution. Filing risks rejection for \"out of scope\"; not filing risks missing $25k+ bounty.",
+    "prompt": "How do you evaluate and argue scope ambiguity when a subdomain appears out-of-scope but is functionally production?",
+    "expected_answer": "Scope ambiguity is common in bounty programs. Resolve by proving **functional scope**, not trusting naming conventions alone. For this scenario: (1) demonstrate production data serving (screenshot real customer records, production API responses showing customer details), (2) show production database connectivity (error messages reveal production schema and credentials), (3) document real user impact (active sessions, support staff access, data modification capability), (4) reference program scope literally (\"all *.company.com subdomains\" = explicit scope overrides naming). File with scope clarification section: \"Functional analysis indicates production status despite naming. Evidence: [data samples, connectivity proof, active user sessions]. If out of scope, please clarify scope boundaries.\" Most platforms accept scope clarifications, especially for P1 findings. If rejected, file formal dispute citing functional production status and potential risk of legitimate vulnerability remaining unpatched. Don't self-exclude based on naming assumptions.",
+    "reasoning_requirement": "Gather evidence of functional production status; construct explicit scope argument; handle rejection and escalation.",
+    "evaluation_criteria": [
+      "Provides evidence of production data (customer records, production credentials, real sessions) vs. staging environment claims",
+      "Includes literal scope reference and formal scope clarification request to program",
+      "Documents dispute escalation path if initially rejected; quantifies business impact of unpatched RCE"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 499,
+    "scenario": "User profile page leaks \"recently viewed items\" section showing product slugs of items other users viewed, due to flawed privacy setting default. Individually, P5 information disclosure (non-sensitive data). However, product slugs correspond to customer companies' proprietary products in B2B platform. By viewing another user's profile, one can enumerate which companies they've viewed, revealing competitive intelligence, M&A targets, customer pipeline. Customer notices spike in patent searches for proprietary technology following competitor's profile view. Weak information disclosure enabled competitive espionage.",
+    "prompt": "How do you recognize seemingly low-severity findings that enable high-impact downstream attacks?",
+    "expected_answer": "Low-severity information disclosures are P1-P2 when they enable targeted attacks with business impact. Shift focus from \"data type\" (product slugs = non-sensitive) to \"attacker value\" (competitive intelligence, M&A targeting, regulatory arbitrage). Demonstrate systematic enumeration: write a script showing you can map a user's competitive intel gathered via profile viewing. Quantify business impact (e.g., \"reveals M&A pipeline, enabling competitor sabotage, regulatory filings that disclose confidential strategy\"). Document real-world harm if available (customer noticed intelligence leak post-breach). Frame as \"information disclosure enabling business intelligence harvesting or customer privacy violation.\" On HackerOne, reframe as P2-P1 by emphasizing customer impact and competitive risk. On Intigriti, emphasize GDPR sensitivity (reveals user behavior and business relationships of EU customers). Provide PoC showing systematic harvesting of competitive insights from 10+ profiles. This exemplifies how \"boring\" data disclosures become P1 in specific business contexts. Expected payout: $5k-$15k after demonstrating downstream impact.",
+    "reasoning_requirement": "Identify business context amplifying low-severity disclosures; construct systematic harvesting PoC; quantify competitive and privacy impacts.",
+    "evaluation_criteria": [
+      "Provides PoC script systematically enumerating competitive intelligence across 10+ user profiles",
+      "Quantifies business impact (M&A targeting risk, competitive intelligence exposure, customer privacy violation)",
+      "Justifies P1-P2 classification despite low-severity data type; includes GDPR implications if applicable"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 500,
+    "scenario": "SSRF vulnerability allows reading arbitrary files from internal network via http://localhost:8080/internal-api or http://internal.company.net/metadata. Initial testing returns internal configuration files. Classified as P3 \"SSRF, limited impact.\" Further testing reveals application runs on EC2; internal network includes AWS metadata service (169.254.169.254:80). By crafting request to http://169.254.169.254/latest/meta-data/iam/security-credentials/application-role, attacker retrieves temporary AWS credentials granting full EC2, S3, RDS access, enabling data exfiltration of all customer databases, log tampering, infrastructure compromise.",
+    "prompt": "How do you escalate seemingly limited SSRF vulnerabilities into P1 infrastructure compromise?",
+    "expected_answer": "SSRF is P1-P2 if reaching sensitive services (metadata endpoints, internal APIs, databases). Many researchers stop at \"read config files\" without further testing. Escalate by: (1) identifying services accessible from vulnerable host (nmap localhost, test common ports like 8080, 9090, metadata service), (2) targeting metadata services if cloud-hosted (AWS: 169.254.169.254, GCP: metadata.google.internal, Azure: 169.254.169.254), (3) extracting credentials from those services (AWS IAM roles, GCP service account keys, Azure managed identities), (4) chaining to infrastructure compromise (use stolen credentials to access S3, RDS, EC2 instances and exfiltrate customer data). For AWS specifically, request IAM credentials and attempt to list/access resources. Provide PoC showing credential extraction, authentication success, and data access (e.g., RDS query returning customer records). Frame as \"SSRF enabling credential theft and full AWS account compromise,\" not \"SSRF with limited impact.\" Expected payout: $15k-$50k for infrastructure compromise vs. $2k-$5k for isolated SSRF. This demonstrates why chaining SSRF \u2192 metadata extraction \u2192 credential theft \u2192 data access is critical for accurate severity.",
+    "reasoning_requirement": "Enumerate internal services from vulnerable host; target cloud metadata endpoints; extract and weaponize credentials; demonstrate infrastructure compromise.",
+    "evaluation_criteria": [
+      "Provides PoC retrieving AWS IAM credentials via metadata service and demonstrating authentication success",
+      "Includes data access proof (S3 listing, RDS query results, EC2 instance manipulation)",
+      "Frames escalation from limited file read to full infrastructure compromise and justifies P1 classification"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 501,
+    "scenario": "Reflected XSS discovered simultaneously on HackerOne, Bugcrowd, and Intigriti\u2014same company, different program departments. Vulnerability: reflected XSS in parameter stealing session tokens. HackerOne rates P3 ($3k-$5k) per VRT (reflected XSS, user interaction required, sanitization available). Bugcrowd rates P2 ($5k-$10k) emphasizing session token theft. Intigriti rates P1 ($15k+) because company is EU-based, XSS affects authenticated users, lacks CSRF protection enabling automated exploitation. Payout variance is 5x across platforms. Filing simultaneously risks duplicate accusations; filing exclusively leaves money on table.",
+    "prompt": "How do you navigate multi-platform bounty strategies for the same vulnerability across different program policies?",
+    "expected_answer": "Multi-platform reporting of identical vulnerabilities requires strategic disclosure while maintaining ethics. Immediately disclose across all programs that same vulnerability exists, citing potential duplicate submissions and requesting coordinated handling. Most programs accept simultaneous filing if disclosed upfront. Tailor each submission to platform's VRT and business context: HackerOne emphasizes user interaction and session scope; Bugcrowd focuses on authentication impact; Intigriti weights GDPR threat (EU users, automated exploitation, data breach notification). For XSS on Intigriti, emphasize \"authenticated XSS + CSRF-less exploitation \u2192 session theft \u2192 GDPR PII access\" to justify P1. Don't hide simultaneous submissions; transparency prevents rejection for duplicate claims and builds program trust. Most platforms accept vulnerability variants across different programs if disclosed. Ethically notify each program of others' involvement to prevent duplicate patching and wasted incident response. Expected outcome: HackerOne $3k-$5k + Bugcrowd $5k-$10k + Intigriti $15k-$25k = $23k-$40k total vs. $3k-$5k single platform. Some programs may coordinate on payout or request first-filer priority; this is acceptable if upfront disclosure occurred.",
+    "reasoning_requirement": "Manage simultaneous multi-platform reporting with ethical transparency; tailor findings to platform-specific VRT; optimize payout across jurisdictions.",
+    "evaluation_criteria": [
+      "Documents simultaneous filing with upfront disclosure of other platforms to all programs",
+      "Includes platform-specific framing (HackerOne user interaction focus, Bugcrowd auth impact, Intigriti GDPR emphasis) in each submission",
+      "Calculates total payout across platforms and documents coordination/dispute resolution if programs contest simultaneous reporting"
+    ],
+    "category": "bounty_patterns"
   }
 ]
