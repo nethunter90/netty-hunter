@@ -14,6 +14,7 @@ import random
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -230,11 +231,12 @@ def max_prompt_id_num(data, prefix):
 
 def call_claude(user_prompt, timeout=CALL_TIMEOUT):
     """
-    Call the claude CLI with a guaranteed hard kill on timeout.
+    Call the claude CLI with a threading-based hard kill on timeout.
 
-    Uses Popen + start_new_session so we can killpg() the entire process
-    tree — fixing the hang where subprocess.run(timeout=) sent SIGTERM but
-    the CLI's child processes kept the pipe open indefinitely.
+    communicate() can itself block even after TimeoutExpired because the
+    CLI spawns grandchild processes that keep stdout/stderr pipes open.
+    Solution: run communicate() on a daemon thread and kill the process
+    group from the main thread after `timeout` seconds — guaranteed exit.
     """
     env = {**os.environ, "SENTINEL_DATAGEN": "1"}
     proc = subprocess.Popen(
@@ -244,20 +246,39 @@ def call_claude(user_prompt, timeout=CALL_TIMEOUT):
         stderr=subprocess.PIPE,
         text=True,
         env=env,
-        start_new_session=True,  # new process group — lets us kill the whole tree
+        start_new_session=True,
     )
-    try:
-        stdout, stderr = proc.communicate(input=user_prompt, timeout=timeout)
-    except subprocess.TimeoutExpired:
+
+    result = {"stdout": "", "stderr": "", "done": False}
+
+    def _communicate():
+        try:
+            result["stdout"], result["stderr"] = proc.communicate(
+                input=user_prompt
+            )
+        except Exception as e:
+            result["stderr"] = str(e)
+        result["done"] = True
+
+    t = threading.Thread(target=_communicate, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if not result["done"]:
+        # Hard kill the entire process group — no survivors
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, OSError):
-            proc.kill()
-        proc.wait()
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        t.join(timeout=5)  # brief wait; daemon thread will die with the process
         raise RuntimeError(f"claude timed out after {timeout}s")
+
     if proc.returncode != 0:
-        raise RuntimeError(f"exit {proc.returncode}: {stderr[:300]}")
-    return stdout.strip()
+        raise RuntimeError(f"exit {proc.returncode}: {result['stderr'][:300]}")
+    return result["stdout"].strip()
 
 def extract_json_array(text):
     text = text.strip()
