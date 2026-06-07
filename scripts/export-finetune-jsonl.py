@@ -18,7 +18,8 @@ from pathlib import Path
 ROOT        = Path(__file__).parent.parent
 PROMPTS_DIR = ROOT / "server" / "data" / "prompts"
 OUT_FILE    = ROOT / "scripts" / "finetune-dataset.jsonl"
-HF_SUPP     = ROOT / "scripts" / "hf-supplement.jsonl"
+HF_SUPP      = ROOT / "scripts" / "hf-supplement.jsonl"
+BOUNTY_SCRAPE = ROOT / "scripts" / "bounty-scrape.jsonl"
 
 SYSTEM_PROMPT = (
     "You are an expert security researcher and bug bounty hunter with deep knowledge of "
@@ -100,16 +101,18 @@ def export():
         added = len(conversations) - count_before
         file_stats.append((json_file.name, added))
 
-    # Merge HF supplement if present
-    hf_count = 0
-    if HF_SUPP.exists():
-        with open(HF_SUPP) as hf:
-            for line in hf:
+    # Merge supplemental JSONL files if present
+    for supp_file in (HF_SUPP, BOUNTY_SCRAPE):
+        if not supp_file.exists() or supp_file.stat().st_size == 0:
+            continue
+        count = 0
+        with open(supp_file) as fh:
+            for line in fh:
                 line = line.strip()
                 if line:
                     conversations.append(json.loads(line))
-                    hf_count += 1
-        file_stats.append((HF_SUPP.name, hf_count))
+                    count += 1
+        file_stats.append((supp_file.name, count))
 
     # Write JSONL
     with open(OUT_FILE, "w") as f:
