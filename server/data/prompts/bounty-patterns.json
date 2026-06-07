@@ -4648,5 +4648,135 @@
       "Frames submission citing program's own values and commitments to vulnerable communities; demonstrates threat modeling beyond technical metrics."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 411,
+    "scenario": "A Python package on npm registry shares a name with a legitimate library (typosquatting). When installed via pip, it executes arbitrary code during setup.py installation. Only 15 downloads logged so far.",
+    "prompt": "Is this in-scope for a web application bounty program, and what's the payout justification?",
+    "expected_answer": "This is a supply chain attack with potential P1 severity IF the package appears on a vendor's internal artifact repository or build system. However, for standard web app programs, scope typically excludes: (1) third-party package ecosystems (delegated to npm/PyPI), (2) CI/CD infrastructure (often separate program), (3) build-time vulnerabilities. The payout depends on program context. HackerOne programs often classify typosquatting as out-of-scope unless the vendor published the malicious package. Bugcrowd may accept it under supply chain scope if targeting a vendor's private artifact repo. The critical distinction: is the vulnerability in the vendor's systems or external ecosystem? If external, it's P5 or out-of-scope. If internal (compromised private npm mirror), it's P1. The 15 downloads signal low real-world impact, which Intigriti programs explicitly weigh in payout decisions. Duplicate risk is high\u2014security researchers and registry monitors already hunt typosquatting. The winning approach: determine whether the target uses this package or if it exists only in the open ecosystem. If the latter, recommend disclosure to PyPI abuse team instead of vendor bounty program.",
+    "reasoning_requirement": "Map program scope boundaries to vulnerability location; distinguish vendor-controlled systems from external ecosystem risks; assess duplicate likelihood and real-world adoption signals.",
+    "evaluation_criteria": [
+      "Identifies scope ambiguity between application-vendor systems and external package registries",
+      "Demonstrates payout variance across platforms (HackerOne strictness vs Bugcrowd flexibility vs Intigriti impact weighting)",
+      "Assesses duplicate risk and adoption metrics (download count, vendor dependency verification)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 412,
+    "scenario": "An API endpoint /api/v1/internal/reports accepts JSON with a URL field. This URL is passed to curl in a shell script without quoting, then the response is stored in a file. Endpoint requires valid OAuth2 token and is rate-limited to 10 requests/minute. Attacker crafts URL: 'https://api.target.com $(whoami) && echo x' to achieve RCE.",
+    "prompt": "What's the kill chain from exploit to impact, and why might this be classified as P2 versus P1?",
+    "expected_answer": "This is Remote Code Execution via SSRF and OS command injection. The attack chain: (1) Attacker obtains valid OAuth2 token (via phishing, token theft, or insider access\u2014P2 precondition), (2) calls /api/v1/internal/reports with malicious URL payload, (3) server executes unquoted curl command with shell metacharacters, enabling code execution, (4) RCE achieved as the web service user. Base impact is P1 (full system compromise). However, classification nuance depends on: (a) Token acquisition difficulty\u2014easily obtainable tokens (weak auth) \u2192 P1; compromised account required \u2192 P1-with-precondition; (b) Service privilege\u2014RCE as root/with database credentials \u2192 P1; sandboxed low-privilege account \u2192 effectively P2; (c) Rate limiting (10 req/min) slows exploitation but doesn't prevent it for authenticated attacker. Most programs classify as P1 regardless of rate limit, as insider threat remains viable. Payout typically $5k\u2013$15k depending on program and context. The rate limit and OAuth requirement are NOT sufficient mitigations because an authenticated attacker (insider) or token-holder exploits freely.",
+    "reasoning_requirement": "Construct complete kill chain from initial access through impact; assess precondition severity; evaluate whether rate limiting mitigates RCE.",
+    "evaluation_criteria": [
+      "Maps OAuth token acquisition to precondition analysis (insider threat vs external exploit)",
+      "Explains why rate limiting fails to mitigate authenticated RCE severity",
+      "Distinguishes P1 RCE (privileged/root execution) from P2 RCE (sandboxed service account with limited permissions)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 413,
+    "scenario": "Company registered domains target-backup.com, target-old.com, target-prod.com historically. None are currently registered. DNS A records for target-prod.com still point to the company's old infrastructure. An attacker registers target-prod.com, configures an HTTP server, and intercepts API calls from legacy scripts that reference this domain.",
+    "prompt": "Is this P1 or out-of-scope, and how does program scope definition determine payout?",
+    "expected_answer": "Subdomain/domain takeover severity is entirely scope-dependent. If the program explicitly states 'out-of-scope: expired domains' or 'in-scope: only active subdomains on current primary domain,' this is P5/out-of-scope. If scope includes 'all subdomains that ever pointed to our infrastructure,' it becomes P2\u2013P3. Ambiguity stems from: (1) whether the domain actively receives traffic (check DNS logs, application telemetry, references in running code), (2) whether documentation or SDKs still reference it, (3) compliance implications if historical data flows through it. HackerOne programs require proof of active use or references in production code. Bugcrowd may accept as P4 if the domain appears in historical comments or legacy SDKs. Intigriti programs require PoC demonstrating traffic interception or application-level exploitation. Payout ranges from $0 (out-of-scope) to $500 (P4, minor impact). The researcher must verify: Does current production code reference this domain in any code path? Do monitoring systems track it? Is it listed in DNS SOA/NS records? The reproduction is moderate complexity (DNS recon, domain registration, traffic capture). Duplicate risk is high\u2014multiple researchers may discover the same expired domains.",
+    "reasoning_requirement": "Distinguish active subdomain takeover from historical domain archaeology; apply program-specific scope language; verify active use via code search and traffic analysis.",
+    "evaluation_criteria": [
+      "Identifies scope ambiguity: 'currently active' vs 'historically referenced' domain use",
+      "Demonstrates verification methods (code grep, DNS logs, SDK/docs audit, running process monitoring)",
+      "Maps payout to platform policy: HackerOne (high bar for active use) vs Bugcrowd (historical reference acceptable) vs Intigriti (PoC required)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 414,
+    "scenario": "Web application stores user session tokens in browser localStorage. App sets Content-Security-Policy allowing scripts from https://cdn.example.com. Attacker compromises the CDN and injects malicious JavaScript that reads localStorage and exfiltrates session tokens.",
+    "prompt": "Is this a valid finding for the application's bounty program, and what's the scope and responsibility boundary?",
+    "expected_answer": "This is a scope ambiguity with payout implications spanning two vulnerability layers: (1) application stores sensitive data (session tokens) in localStorage without HttpOnly/Secure protection, and (2) CSP is overly permissive toward third-party CDN. The question: which vulnerability is in-scope? Most web app programs explicitly exclude third-party vendor compromises (delegated to vendor's program or ISO 27001 compliance). However, the application's security configuration is in-scope. HackerOne programs classify this as P3\u2013P4 (insecure storage + weak CSP), independent of CDN compromise. Bugcrowd may differ if scope explicitly covers CDN security. The payout signal hinges on the attack narrative. Frame it as 'localStorage token storage + permissive CSP enables XSS-via-CDN attacks' \u2192 P3, payout ~$500. Frame it as 'you got pwned via CDN' \u2192 out-of-scope. The winning narrative: 'The app's CSP allows cdn.example.com without SRI hashes or origin restrictions. Better security would restrict CDN via nonce/integrity checks.' This is P4, payout ~$300. The storage vulnerability alone (P4) combined with weak CSP (separate control) creates a composite risk. Most programs credit one or the other, not both. Duplicate risk is moderate\u2014CSP misconfiguration is common, but storage+CSP together is less frequently reported.",
+    "reasoning_requirement": "Separate application-side security failures from supply chain compromises; identify the in-scope vulnerability narrative that program policy supports.",
+    "evaluation_criteria": [
+      "Identifies dual-layer vulnerability (storage + CSP) and determines which aspects are in-scope vs delegated to vendor",
+      "Explains why CDN compromise is typically out-of-scope but CSP misconfiguration is in-scope",
+      "Demonstrates payout reframing: avoid 'you got hacked via CDN' (out-of-scope) and instead emphasize 'CSP is overly permissive' (P4, in-scope)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 415,
+    "scenario": "Financial services API implements CSRF protection via SameSite=Lax cookies. Attacker crafts GET request to /api/transfer?amount=10000&recipient=attacker-account. When logged-in user visits attacker's site with <img src='https://api.target.com/api/transfer?amount=10000&recipient=attacker-account'>, the request is sent with credentials. However, response is HTML confirmation form, not direct transfer.",
+    "prompt": "Is this P2 or P4, and what reproduction complexity determines payout?",
+    "expected_answer": "This is CSRF with incomplete exploitation (P3\u2013P4 boundary). SameSite=Lax is insufficient because: (1) GET requests via img/form navigation may trigger under specific contexts, (2) state-changing via GET is an anti-pattern. However, actual impact depends on: (a) whether GET actually transfers funds or only renders confirmation form (latter = lower risk), (b) whether secondary POST+CSRF token is required (if so, SameSite=Lax prevents it), (c) whether form auto-submits (attacker can't control JavaScript execution from img tag). If the transfer executes on GET alone, it's P2 (direct state change). If form submission is required, it's P4 (requires additional user interaction or XSS to submit form). The reproduction chain complexity matters significantly for payout. One-click transfer (P2) \u2192 $2k\u2013$5k payout. Multi-step form with CSRF token (P4) \u2192 $500\u2013$1k. The key verification: Does GET trigger the transfer, or is POST+CSRF token mandatory? If POST is required, what is the CSRF token scope (per-session, per-form, per-endpoint)? If SameSite=Lax allows same-site POST, the chain becomes viable again. Payout also factors in program's CSRF stance\u2014some programs downgrade CSRF severity due to modern browser SameSite defaults.",
+    "reasoning_requirement": "Distinguish vulnerable-to-attack from vulnerable-to-exploitation-in-practice; assess multi-step reproduction chains and SameSite cookie policy gaps.",
+    "evaluation_criteria": [
+      "Differentiates GET-based state change (P2, direct transfer) from form-based confirmation (P4, requires additional interaction)",
+      "Assesses SameSite=Lax in context of application's actual request mechanism (GET vs POST+token)",
+      "Quantifies reproduction complexity and maps to payout: one-click (P2, ~$2k\u2013$5k) vs multi-step form (P4, ~$500\u2013$1k)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 416,
+    "scenario": "SaaS platform allows password reset via email. Attacker observes response time difference: valid emails take 150ms (email sent + database write), invalid emails take 50ms (no email). Attacker enumerates 50,000 valid accounts across the platform via timing attack. No rate limiting on password reset endpoint.",
+    "prompt": "How does this information disclosure rank (P3 or P5), and what's payout amplification when combined with a second vulnerability?",
+    "expected_answer": "Email enumeration via timing attack is traditionally P4\u2013P5 (low impact: list of valid emails without authentication). Severity escalates based on: (1) scale of enumeration (single account vs multi-tenant dataset), (2) downstream exploitation chains. Standalone 50k enumerated emails \u2192 P4. However, combined with credential stuffing (breached password databases) or phishing infrastructure, it becomes P3\u2013P2. HackerOne awards $200\u2013$500 for isolated timing enumeration; Bugcrowd may award $300\u2013$1k if you demonstrate downstream attack chain (e.g., '50k enumerated emails + credential stuffing = mass account takeover, P1 impact'). The amplification narrative 'email enumeration enables large-scale credential attacks' is critical. Stopping at 'I enumerated 50k emails' \u2192 payout ~$300, P4. Demonstrating credential stuffing against enumerated list \u2192 payout $2k\u2013$5k, P2. Reproduction complexity is trivial (timing script, linear queries), which may cause HackerOne to downgrade from P4 to P5. Multi-tenant scope is a double-edged sword: larger impact but also higher duplicate risk. Bugcrowd and Intigriti weight downstream chain PoCs more heavily than HackerOne, making credential stuffing PoC essential for maximum payout. The regulatory angle: enumerated data enables GDPR/CCPA violations if user PII is exposed.",
+    "reasoning_requirement": "Assess information disclosure severity based on enumeration scale and downstream exploitation potential; recognize payout amplification via attack chain PoC.",
+    "evaluation_criteria": [
+      "Distinguishes standalone email enumeration (P5, ~$200\u2013$300) from enumeration at scale with downstream chain (P2, ~$2k\u2013$5k)",
+      "Demonstrates payout amplification methodology: email list alone vs email list + credential stuffing PoC vs email list + phishing campaign impact",
+      "Explains platform variance: Bugcrowd/Intigriti reward downstream PoCs higher than HackerOne; accounts for multi-tenant scope and regulatory exposure"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 417,
+    "scenario": "Mobile app uploads images to https://api.target.com/uploads/user-123/image.jpg. User ID is client-side controlled. Attacker brute-forces user IDs (1, 2, 3, ...) and downloads any user's images, including sensitive documents (ID cards, receipts, financial statements). Rate limiting: 100 requests/minute per IP.",
+    "prompt": "Is this P1, P2, or P3, and how does rate limiting affect severity classification?",
+    "expected_answer": "This is Broken Access Control (IDOR) with unauthorized PII access, classified as P2\u2013P3. The vulnerability: user ID enumeration plus lack of authorization checks on file downloads. Impact: unrestricted access to sensitive documents (ID cards, financial statements, receipts). Rate limiting (100 req/min) does NOT mitigate severity because: (1) an attacker achieves ~144k user ID guesses per day (100/min \u00d7 1440 min/day), adequate for enumeration, (2) distributed attacks bypass per-IP limits, (3) rate limiting is a control band-aid, not a fix for missing authorization. Severity hinges on: (a) file type and sensitivity (ID cards/financial docs = HIGH impact P2; generic photos = LOW impact P3), (b) metadata exposure (filenames, timestamps, size patterns reveal info), (c) regulatory implications (GDPR/CCPA\u2014user PII from EU/US is regulated). Most programs classify as P2 (unauthorized PII access + regulatory exposure). Payout: HackerOne typically $2k\u2013$5k for IDOR on sensitive document access; Bugcrowd may award $5k\u2013$10k if regulatory angle is demonstrated. The rate limit is mentioned but NOT credited as mitigating factor by experienced programs. Reproduction is trivial (loop through IDs, download files), which may lower payout slightly. The document type is the primary driver\u2014if files are generic (receipts for small purchases), P3; if files are identity documents (passports, financial records), P2.",
+    "reasoning_requirement": "Separate rate limiting (insufficient control) from authorization (missing fundamental check); quantify enumeration feasibility; assess data sensitivity and regulatory exposure.",
+    "evaluation_criteria": [
+      "Explains why rate limiting is weak control and doesn't reduce IDOR severity (distributed bypass, linear enumeration feasibility)",
+      "Quantifies brute-force feasibility: requests/minute \u2192 daily enumeration capacity \u2192 realistic attack scope",
+      "Assesses document sensitivity (ID cards, financial records, receipts) and regulatory exposure (GDPR/CCPA implications for EU/US users)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 418,
+    "scenario": "API key is leaked in GitHub repository (public commit). Key grants read-only access to public dataset API (weather, currency rates, historical events). Same API key is visible in client-side JavaScript on company's website (intentionally public). Threat actors can revoke key or cause DoS via rate limit exhaustion.",
+    "prompt": "Is this a security vulnerability (P4 or P5), or out-of-scope? How does 'intentionally public API key' affect scope?",
+    "expected_answer": "API key exposure is context-dependent. If the key is intentionally public (designed for public use, properly scoped, rate-limited), exposure is P5 or out-of-scope. However, this scenario presents: (1) unintended exposure in private GitHub repo, (2) intended exposure in website JavaScript, (3) DoS risk via key revocation or rate limit exhaustion. Classification depends on: (a) whether the repo is private or public (private repo = accidental exposure, P3; public repo = already accessible, P5), (b) key revocation implications (if attacker revokes key, service degrades, enabling DoS attack \u2192 P3 impact), (c) rate limit enforcement (per-key rate limiting with low thresholds = easier to exhaust). HackerOne programs typically scope out intentionally-public API keys (P5). Bugcrowd may classify as P4 if evidence suggests the key should have been private (code comments, secret manager integration attempted but failed). Intigriti programs require PoC demonstrating actual impact (DoS, service interruption with measured metrics). Payout varies: truly public-by-design \u2192 $0; accidentally public in private repo \u2192 $100\u2013$300 (P5, key rotation/audit cost); revocation risk demonstrable \u2192 $500\u2013$1k (P4). Duplicate risk is extremely high\u2014automated key-scanning tools (TruffleHog, detect-secrets, GitHub Secret Scanner) find exposed keys constantly, and bug bounty platforms receive many duplicate submissions.",
+    "reasoning_requirement": "Distinguish intentional public exposure from accidental exposure; assess key privilege scope and revocation implications; evaluate DoS feasibility.",
+    "evaluation_criteria": [
+      "Identifies whether key is intentionally public (out-of-scope per program policy) vs accidentally exposed (in-scope)",
+      "Distinguishes private repo exposure (unintended, worse) from public repo exposure (already accessible, expected)",
+      "Demonstrates DoS/revocation risk quantitatively and evaluates rate limiting as mitigating control"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 419,
+    "scenario": "Web app authentication: user logs in, receives JWT with exp: 2 hours. Token is not revoked on logout. User logs out from one device, but JWT remains valid for 2 hours on another device. Attacker who steals JWT can impersonate user until expiration.",
+    "prompt": "Why is this P3, not P2, and what's the distinction between token expiration and immediate revocation?",
+    "expected_answer": "This is a session management vulnerability (P3) due to lack of immediate token revocation on logout. Risk: stolen JWTs grant access until expiration (2-hour window = significant but not indefinite attack surface). Classified as P3 (not P2) because: (1) vulnerability requires precondition\u2014token theft via phishing, malware, MITM, or XSS\u2014which is separate exploit, (2) JWT has known expiration (2 hours), limiting window vs indefinite access, (3) instant revocation without centralized blacklist (Redis, database) is operationally complex, so programs accept this as known limitation. The distinction: P2 is indefinite token validity (no expiration) combined with no revocation; P3 is time-limited validity post-logout (eventually expires). HackerOne and Bugcrowd classify as P3, awarding $500\u2013$1.5k. Intigriti rates P4 if expiration is short (15 min) or P2 if token lifetime is long (24+ hours). Payout reflects remediation cost: if blacklist infrastructure exists and just isn't wired to logout \u2192 P3 with higher payout (~$1.5k); if blacklist implementation required from scratch \u2192 P4 with lower payout (~$500, infrastructure investment burden). The 2-hour expiration is viewed as 'significant but not critical' by experienced reviewers. Reproduction requires token theft (complex) + verification of post-logout access (moderate). Combined, it's medium-complexity finding.",
+    "reasoning_requirement": "Separate time-based token expiration from immediate revocation controls; assess precondition severity; map payout to infrastructure implementation cost.",
+    "evaluation_criteria": [
+      "Explains why indefinite token validity (P2) differs from time-limited post-logout validity (P3) in severity",
+      "Assesses 2-hour window as 'significant but not critical' when compared against 24+ hour JWT lifespans",
+      "Maps payout to infrastructure cost: blacklist exists (P3, ~$1.5k) vs implementation required (P4, ~$500)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 420,
+    "scenario": "Startup's API uses Accept-Version: 1.0 header for version negotiation. Legacy API v1.0 has SQL injection vulnerability (patched in v2.0). Company believes v1.0 is deprecated and unused. However, old mobile app clients still request v1.0. Attacker can send Accept-Version: 1.0 header and exploit the SQL injection.",
+    "prompt": "Is this a duplicate of v2.0 testing, or a unique P1 finding? How do program scope rules affect payout?",
+    "expected_answer": "This is a critical payout and scope ambiguity issue. The question: does the program's scope include 'deprecated but live API versions'? Most programs define scope as 'current production versions' or 'versions in active support.' If v1.0 is documented end-of-life, programs may classify as out-of-scope or P5. However, if v1.0 still processes traffic (legacy clients), it's live attack surface and should be P1 (SQL injection + active exploitation). Payout variance: HackerOne programs require explicit scope language: 'only API v2.0+' or 'all versions in production use.' If v1.0 not mentioned, it may be in-scope by default. Bugcrowd may classify as P2 (duplicate of v1.0 SQLi) if already known, or P1 if novel. Intigriti programs favor strict scope: v1.0 deprecated = payout $0 or $100 (P5). The duplicate risk is high\u2014if researchers found v2.0 SQLi, they test older versions. The winning narrative: 'v1.0 is still accessible and processes requests from legacy clients; until removal, it's active vulnerability in production.' Justifies P1, payout $3k\u2013$8k. The losing narrative: 'v1.0 is old, you probably know it's vulnerable.' Payout drops to $0. The critical signal: demonstrate real traffic to v1.0 endpoint (from production logs, monitoring, legacy app telemetry) to prove active use. This separates 'deprecated' (removed) from 'deprecated but live' (still processing requests).",
+    "reasoning_requirement": "Distinguish 'deprecated but removed' from 'deprecated but live in production'; assess program scope language for version coverage; demonstrate active traffic.",
+    "evaluation_criteria": [
+      "Identifies scope ambiguity: whether program scope explicitly includes deprecated versions still processing traffic",
+      "Demonstrates active exploitation feasibility: logs showing legacy clients request v1.0, traffic is processed, requests reach database",
+      "Explains payout variance: explicit scope language (HackerOne/Bugcrowd) vs strict scope (Intigriti); impact of duplicate classification (known v1.0 SQLi vs novel finding)"
+    ],
+    "category": "bounty_patterns"
   }
 ]
