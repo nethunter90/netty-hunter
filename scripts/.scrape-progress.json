@@ -51,7 +51,7 @@
   "osv:Go:github.com/gorilla/mux": "done",
   "osv:Go:github.com/labstack/echo": "done",
   "osv:Go:github.com/beego/beego": "done",
-  "nvd:CWE-79": 1100,
+  "nvd:CWE-79": 25100,
   "nvd:CWE-201": 27,
   "nvd:CWE-285": 279,
   "nvd:CWE-287": 3204,
