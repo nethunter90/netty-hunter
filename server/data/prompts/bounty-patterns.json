@@ -4518,5 +4518,135 @@
       "Contrasts P2 vs. P3: explains why 5-second window justifies P2 (repeatable, reliable) vs. 100ms window (P3, theoretical), and cites program severity policy"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 401,
+    "scenario": "Two XSS findings submitted to Bugcrowd. First: DOM-based XSS in /search?q= parameter bypassing DOMPurify through SVG namespace attribute injection. Second: Similar DOM XSS in /filter?tags= parameter bypassing the same DOMPurify version through unicode normalization in regex filters. Both reach the same vulnerable code path, but use completely different bypass vectors.",
+    "prompt": "When are similar vulnerabilities in different parameters treated as duplicates versus separate findings in Bugcrowd?",
+    "expected_answer": "Bugcrowd's duplicate policy hinges on root cause equivalence, not parameter similarity. These findings represent the same underlying vulnerability (DOMPurify bypass in a shared validation function) exploited through different input vectors. However, the distinct bypass techniques indicate potential depth: different filters may be vulnerable to different attacks. Submission strategy: (1) Acknowledge parameter and bypass differences; (2) Trace both to identical code path to confirm root cause; (3) Argue that separate bypasses demonstrate the validation function is systematically weak, not incidentally broken in one parameter. If DOMPurify is outdated, submit single finding with bypass variations as proof-of-concept depth. If bypasses target different versions or implementations, argue they're separate vulnerabilities. Always preface with program's exact duplicate definition from their policy docs.",
+    "reasoning_requirement": "Distinguish between parameter-level duplicates and root-cause duplicates; identify when multiple vectors signal systemic weakness versus coincidental similarity.",
+    "evaluation_criteria": [
+      "Traces both findings to shared code/validation function; identifies whether bypass applies to both or is parameter-specific.",
+      "Recommends submission approach: single finding with multiple bypasses OR separate findings if vectors exploit different underlying issues.",
+      "References program's explicit duplicate policy language and applies it to the specific scenario."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 402,
+    "scenario": "Information disclosure classified as P5 by program: comments section of deleted posts briefly visible in HTML response before client-side JavaScript hides them (500ms race condition). Researcher discovers that during post deletion, comments containing API credentials for third-party integrations remain in the HTML for users with comment-view permissions, even after post is marked deleted.",
+    "prompt": "How do information disclosure vulnerabilities with low technical severity signal P2-P3 impact through content sensitivity analysis?",
+    "expected_answer": "Technical severity and content severity are independent dimensions. An information disclosure rated P5 based on discovery method becomes P2-P3 when the disclosed content carries high business risk. This finding discloses credentials, not just comment metadata. Severity recalibration framework: (1) Data classification: API credentials = authentication tokens = equivalent to account compromise; (2) Scope of impact: all users with comment permissions can see credentials, then use them against integrated services; (3) Blast radius: affects not just the program but downstream integrated services. Submission must reframe from 'brief visibility window' (technical framing) to 'API credential exposure' (business framing). Include proof that credentials are active, attempt to use them against integration partners, document integration partner risk. Programs with mature threat modeling recognize this escalation; expect P3-P2 rating and higher payout than 'simple disclosure' metrics suggest.",
+    "reasoning_requirement": "Analyze disclosed content severity independently from technical vulnerability severity; map information type to business classification.",
+    "evaluation_criteria": [
+      "Identifies data type disclosed (credentials vs. metadata) and maps to business classification (P5 disclosure \u2260 P5 credential exposure).",
+      "Demonstrates active credential exploitation potential; shows blast radius affecting multiple services.",
+      "Frames submission with content sensitivity argument, not just technical visibility window."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 403,
+    "scenario": "Program scope on HackerOne: 'api.company.com and all endpoints.' Explicitly out-of-scope: 'api-internal.company.com.' You discover RCE via /api-internal/debug endpoint. However, this endpoint is reachable from the in-scope web application at company.com because: (1) CORS is misconfigured to allow requests from company.com; (2) API uses session cookies automatically sent by browser; (3) JavaScript in web app can trigger requests to the internal API.",
+    "prompt": "How do out-of-scope assets become reportable through reachability from in-scope applications?",
+    "expected_answer": "Scope boundaries are increasingly blurred by cross-origin trust chains. An out-of-scope API asset becomes reportable if exploitable through in-scope application logic, because the vulnerability affects the user's in-scope experience. This finding requires two-part framing: (1) Technical chain: web app \u2192 CORS misconfiguration \u2192 internal API RCE; (2) Scope argument: the program's security depends on the internal API remaining isolated, so a misconfiguration that breaches isolation is relevant to program scope. Submission strategy: (1) Acknowledge internal API is out-of-scope; (2) Document that isolation controls (CORS, authentication) are expected to protect users of the in-scope web app; (3) Show proof-of-concept from web app context (browser origin, cookies, CORS bypass); (4) Frame as 'trust boundary violation' rather than 'internal API vulnerability.' Expect pushback; preemptively contact program asking for clarification on reachability as a scope inclusion criterion. If denied, document for appeal.",
+    "reasoning_requirement": "Distinguish between out-of-scope assets and cross-boundary exploitability; argue scope inclusion through trust-chain context.",
+    "evaluation_criteria": [
+      "Acknowledges out-of-scope status explicitly; frames finding as breach of isolation controls, not internal API issue.",
+      "Documents full cross-origin exploit chain with proof-of-concept from in-scope web app origin.",
+      "Recommends pre-submission program clarification on whether reachability from in-scope surface qualifies for scope inclusion."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 404,
+    "scenario": "Intigriti program: User enumeration vulnerability allows authenticated users to discover employee records via sequential user ID enumeration. Affects ~500 employees. Technical severity: P3 (limited exposure, known attack class). However, the program's vulnerability disclosure policy explicitly states GDPR compliance as a program pillar. Researcher identifies that enumerated records contain names, emails, and job titles covered under GDPR Article 4.",
+    "prompt": "How do platform-specific regulatory frameworks and program values affect severity assessment of privacy findings?",
+    "expected_answer": "Intigriti's European focus and explicit GDPR commitments mean that PII enumeration carries regulatory weight transcending pure exposure count. A finding affecting 500 employees would normally be P3-P2 by exposure scale. However, enumeration of personally identifiable data under GDPR's definition elevates the finding because: (1) the program has made GDPR compliance a public commitment; (2) regulatory non-compliance creates liability beyond user impact; (3) automated enumeration demonstrates systemic exposure, not accidental disclosure. Severity recalibration: P2-P1 depending on how program leadership weighs regulatory risk. Submission strategy: (1) Lead with GDPR Article 4 and program's stated compliance commitments; (2) Quantify enumerated records and data types (name, email, job title); (3) Show automation potential and bulk-export speed; (4) Document disclosure to data protection officer if program has one, establishing regulatory context. European programs and Intigriti specifically value findings demonstrating compliance gaps more than findings with high user-count impact.",
+    "reasoning_requirement": "Identify program-specific values and regulatory context; map technical findings to regulatory frameworks programs have publicly committed to.",
+    "evaluation_criteria": [
+      "Connects finding to program's stated GDPR or regulatory commitments; identifies GDPR articles or compliance clauses affected.",
+      "Quantifies enumerated PII and demonstrates bulk-export potential; frames as systemic compliance gap, not isolated disclosure.",
+      "Recommends regulatory-focused language in submission, mentioning program's public compliance commitments."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 405,
+    "scenario": "Privilege escalation from basic user to admin in an internal analytics dashboard. Tool has ~20 active users, classified as low-impact by program's severity matrix (P2, narrow user base). However, hidden business context: this dashboard controls experiment distribution for A/B tests affecting 2M production users. Changes to experiment allocation directly affect feature rollout timing and user targeting. Only 2 people in the organization know this dashboard's influence.",
+    "prompt": "How do hidden business dependencies amplify payout for seemingly narrow, low-impact vulnerabilities?",
+    "expected_answer": "Technical scope (20 users) and business scope (2M users) diverge dramatically when internal tools control external impact. A privilege escalation in a low-traffic internal tool becomes P1-P2 when that tool gates critical business processes. Payout signals misalignment indicates researcher opportunity: programs undervalue findings with hidden blast radius because few people understand tool criticality. Discovery strategy: (1) Enumerate the tool's integrations and outputs (does it control production features? affect customer-facing decisions? feed analytics used for business decisions?); (2) Research changelog and commits for the tool; (3) Correlate tool release dates with major product announcements; (4) Ask other researchers if they've reported on this tool (low reports = hidden importance or missed by others). Submission must bridge the gap: 'While dashboard has 20 admins, escalation enables unauthorized experiment allocation affecting 2M production users, with potential revenue impact if allocation is manipulated.' Quantify the blast radius, not the tool's direct user count. Programs may offer significantly higher bounties once they realize the hidden scope.",
+    "reasoning_requirement": "Identify hidden business dependencies and control-flow impacts; separate technical scope from business impact scope.",
+    "evaluation_criteria": [
+      "Researches and documents tool's external dependencies and downstream systems affected by admin access.",
+      "Quantifies true blast radius (2M users) and business impact (experiment control) separately from tool user count.",
+      "Reframes submission narrative from 'internal tool escalation' to 'production feature allocation control' to align with program's risk model."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 406,
+    "scenario": "API endpoint allows searching database records by common PII patterns (name, email, phone). CVSS 7.5 (high confidentiality impact, high availability via enumeration DoS). Program classifies as P2. However, testing reveals the database contains primarily phone numbers that are publicly available in reverse lookup services (verified by reverse-searching 20 random results). Researcher confirms no unexposed PII exists in results.",
+    "prompt": "When does high CVSS misrepresent actual business risk due to data sensitivity assumptions?",
+    "expected_answer": "CVSS assumes worst-case data sensitivity; real-world risk requires data classification review. This finding has high technical CVSS because the attack surface (searchable database) and capability (enumerate records) are significant. However, business impact is low because disclosed data lacks confidentiality value\u2014it's already public. CVSS inflation occurs when vulnerability assumes sensitive data without verification. Remediation framework: (1) Data classification audit: what data actually stored? Is it PII or already-public metadata?; (2) Confidentiality reassessment: if data is publicly findable, confidentiality impact = 0; (3) Availability reassessment: enumeration DoS is theoretical without rate limiting bypass; (4) Risk recalibration: P3 (medium impact, trivial to moderate effort) instead of P2. Submission strategy: (1) Acknowledge CVSS calculation; (2) Document data classification findings (phone number visibility in reverse lookup); (3) Argue CVSS assumes worst-case data sensitivity without context; (4) Propose realistic risk level based on actual stored data. This approach demonstrates security maturity and increases credibility. Programs appreciate researchers who distinguish between theoretical vulnerability and practical risk.",
+    "reasoning_requirement": "Separate technical vulnerability from data sensitivity; conduct data classification audit to ground business impact assessment.",
+    "evaluation_criteria": [
+      "Tests database contents and verifies data sensitivity (confirms public vs. confidential); documents data classification findings.",
+      "Recalculates CVSS components based on actual data sensitivity (confidentiality impact = low if data is public); justifies revised severity.",
+      "Frames submission as 'CVSS-informed but data-grounded risk assessment,' showing security expertise beyond automated metrics."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 407,
+    "scenario": "Session tokens stored in HTML5 localStorage, exploitable via XSS (technically trivial, P2 by program definition). However: (1) vulnerable endpoint only accessible post-2FA (time-based OTP changes every 30 seconds); (2) PoC requires scripting the exact timing window to capture a valid OTP; (3) headless automation fails due to browser-specific 2FA UI behavior; (4) reliable reproduction requires manual testing in live browser with synchronized OTP timing.",
+    "prompt": "How do practical reproduction constraints affect finding credibility despite technical simplicity?",
+    "expected_answer": "Technical vulnerability simplicity \u2260 reproduction reliability. Programs discount findings they cannot independently reproduce, especially when timing-dependent or environment-sensitive. This finding's reproduction requires: (1) Live 2FA with time-synchronized OTP (totp library, synchronized system clock); (2) Browser context (headless browsers fail 2FA detection); (3) Timing-precise XSS injection (must occur before OTP expires); (4) Manual verification or scripting 2FA bypass. Submission strategy: (1) Provide detailed reproduction guide with prerequisite setup (TOTP secret, synchronized clock, browser environment); (2) Include video PoC showing step-by-step reproduction with timestamps and OTP values visible; (3) Provide automated script that requires minimal manual intervention (e.g., TOTP generation, then browser automation); (4) Document why headless fails (2FA detection requires human-like interaction) and recommend manual reproduction steps; (5) Offer to schedule live demonstration with program's security team if video isn't sufficient. Programs value high-confidence, reproducible findings; reproduction friction reduces confidence and payout.",
+    "reasoning_requirement": "Assess reproduction feasibility and environment dependencies; identify constraints that affect independent verification.",
+    "evaluation_criteria": [
+      "Documents all reproduction prerequisites and environmental constraints (2FA, OTP timing, browser requirements).",
+      "Provides multiple reproduction paths (video, script, manual steps) with honest assessment of which is most reliable.",
+      "Acknowledges reproduction complexity and offers escalation (live demo) to increase program confidence in finding authenticity."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 408,
+    "scenario": "Information disclosure: server error messages expose internal service topology (microservice names like 'payment-svc-v2', internal IP addresses, database version 'PostgreSQL 9.6.2'). Classified P3 by program. Researcher correlates disclosed PostgreSQL version with known CVE-2021-XXXXX (privilege escalation in PostgreSQL 9.6.x). Topology reveals PostgreSQL is deployed on same subnet as payment service, accessible from web app via service-to-service communication.",
+    "prompt": "How do information disclosure findings become P1-P2 through correlation with known CVEs?",
+    "expected_answer": "Classify disclosure by what it enables, not by disclosure method alone. Topology disclosure becomes severe when it reveals exploitable CVEs and attack paths. This finding's escalation path: (1) Disclosure reveals PostgreSQL 9.6.2 + internal IP; (2) Researcher identifies known privilege escalation CVE affecting that version; (3) Topology shows payment service on same subnet; (4) Attacker workflow: trigger error \u2192 extract service topology \u2192 identify CVE-vulnerable service \u2192 exploit known CVE \u2192 escalate to payment service access \u2192 P1 impact. Severity is P1-P2, not P3, because disclosure directly enables RCE+lateral movement. Submission strategy: (1) Lead with impact (RCE enabling payment compromise), not disclosure method; (2) Document disclosure triggering mechanism (specific error page/condition); (3) Map disclosed versions to known CVEs with references (NVD IDs, CVSS scores); (4) Draw explicit exploit chain: disclosure \u2192 CVE identification \u2192 lateral movement \u2192 business impact; (5) Provide PoC showing error triggering AND proof that disclosed services are real (e.g., DNS resolution). Programs frequently underrate disclosures; correlation with known CVEs elevates severity immediately. This demonstrates threat modeling competence.",
+    "reasoning_requirement": "Connect information disclosure to known CVEs and downstream exploit chains; quantify attacker advantage from disclosed information.",
+    "evaluation_criteria": [
+      "Maps disclosed information (versions, topology) to known CVEs; provides NVD references and affected version ranges.",
+      "Documents full exploit chain: disclosure trigger \u2192 CVE exploitation \u2192 business impact; identifies lateral movement potential.",
+      "Frames submission as 'attack surface exposure enabling known exploits' rather than 'information leakage,' emphasizing threat model context."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 409,
+    "scenario": "Bugcrowd program: Web app at company.com (in-scope). Mobile API at api.company.com (explicitly out-of-scope in asset manager). Researcher discovers JWT algorithm confusion in the API (attacker can forge tokens using 'none' algorithm). API tokens are issued by api.company.com, but the web app (company.com) accepts these API tokens without re-validation, trusting the JWT signature present in the token.",
+    "prompt": "How do out-of-scope API vulnerabilities become reportable when they affect in-scope application authentication?",
+    "expected_answer": "Bugcrowd's scope distinction separates asset-level out-of-scope from impact-level in-scope. An out-of-scope API becomes reportable when its vulnerabilities propagate to in-scope applications through trust relationships. This JWT algorithm confusion is exploitable from the web app context because: (1) Attacker forges token with 'none' algorithm on out-of-scope API; (2) Web app accepts token because it trusts JWT signature format without algorithm validation; (3) Forged token grants authentication to web app (in-scope), enabling unauthorized access. Submission strategy: (1) Acknowledge API is out-of-scope; (2) Demonstrate that web app (in-scope) depends on API token security; (3) Show that web app's token validation is insufficient (trusts signature without algorithm validation); (4) Provide PoC from web app context (not API context): forge token with 'none' algorithm, use token to authenticate to web app, demonstrate access granted; (5) Frame as 'in-scope application accepts out-of-scope API vulnerabilities due to insufficient token validation.' Recommend pre-submission clarification email: 'Is JWT validation insufficient in the web app considered in-scope when it enables out-of-scope API vulnerabilities?' This approach maximizes likelihood of acceptance.",
+    "reasoning_requirement": "Distinguish between out-of-scope asset vulnerability and in-scope application trust-boundary violation; frame impact as in-scope consequence.",
+    "evaluation_criteria": [
+      "Acknowledges out-of-scope API explicitly; identifies in-scope application's dependency on API token security.",
+      "Demonstrates PoC from in-scope web app context; shows that insufficient token validation in web app enables API vulnerability exploitation.",
+      "Recommends pre-submission clarification on scope boundary and trust relationship to increase acceptance likelihood."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 410,
+    "scenario": "User mention feature in comments (@username) allows any authenticated user to mention any other user, triggering notifications (classified P4: low-impact notification spam). Researcher interviews program's user community and discovers: (1) platform serves mental health support communities; (2) users coordinate crisis support via mentions; (3) mention storms can overwhelm support coordinators; (4) the platform is the only connection some vulnerable users have to counselors.",
+    "prompt": "How do seemingly low-impact features become P1-P2 through understanding user population criticality?",
+    "expected_answer": "Vulnerability severity must account for user population risk profile and platform role in users' support infrastructure. A notification spam feature in a general social network = P4. The same feature in a mental health support platform = P1-P2 because: (1) Duty-of-care: platform has responsibility to support vulnerable populations; (2) Cascading impact: mention storms \u2192 coordinator unavailability \u2192 missed crisis escalations \u2192 user harm; (3) Systemic risk: users may have no alternative support channels. Severity recalibration through community context analysis. Submission strategy: (1) Research community type: are there vulnerable populations, support coordinators, or safety-critical workflows?; (2) Document cascading scenarios: mention storm \u2192 coordinator unresponsiveness \u2192 crisis unmanaged \u2192 harm; (3) Quantify vulnerable population (users identifying as requiring mental health support); (4) Interview users or coordinators if possible (with consent); (5) Map to program's own policies: does program claim to serve vulnerable communities? Cite their own commitments in submission; (6) Frame as 'safety-critical feature enabling denial-of-service to support infrastructure.' Programs serving high-risk communities apply higher severity bars and offer significantly higher payouts for findings affecting safety, accessibility, and support continuity. This demonstrates deep threat modeling.",
+    "reasoning_requirement": "Analyze user population characteristics and platform role; identify duty-of-care implications and cascading harm scenarios.",
+    "evaluation_criteria": [
+      "Researches program's user population and identifies vulnerable groups or safety-critical workflows enabled by the platform.",
+      "Documents cascading scenarios from low-impact spam to high-impact harm (mention storms \u2192 coordinator unavailability \u2192 crisis management failure).",
+      "Frames submission citing program's own values and commitments to vulnerable communities; demonstrates threat modeling beyond technical metrics."
+    ],
+    "category": "bounty_patterns"
   }
 ]
