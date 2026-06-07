@@ -1468,5 +1468,135 @@
       "Leverages Intigriti's rapid scope clarification and higher payouts for client vulnerabilities."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 151,
+    "scenario": "An API endpoint allows users to retrieve their own activity logs at /api/users/me/logs. A tester discovers they can modify the 'me' parameter to retrieve another user's logs by sending /api/users/{otherUserId}/logs without authentication. The endpoint returns transaction history, browsing behavior, and IP addresses for the target user.",
+    "prompt": "How should this IDOR be classified, and what factors determine if it's P2 or P3? What duplication risk exists?",
+    "expected_answer": "This IDOR is typically P2 if it exposes personally identifiable information (PII) and behavioral data without authentication. Classification depends on: (1) whether the program explicitly targets data exposure vs. authentication bypass, (2) if sensitive payment/medical/location data is included, and (3) whether the tester can modify or delete data or only read it. Duplication risk is moderate\u2014many bug bounty hunters test IDOR on user endpoints, so emphasize the specific data exposed (behavioral profiling potential, PII exfiltration at scale) over the vulnerability class itself. If this program prioritizes privacy/GDPR impact, expect P2 payout. If they focus only on financial data, might be P3. Cross-reference similar IDOR submissions in the program's disclosure history on HackerOne or Bugcrowd to gauge accepted severity.",
+    "reasoning_requirement": "Distinguish between generic IDOR detection and contextual data sensitivity; assess duplicate risk against program-specific threat modeling.",
+    "evaluation_criteria": [
+      "Identifies specific sensitive data types leaked and explains why behavioral data amplifies business impact",
+      "Compares IDOR classification rules across HackerOne and Bugcrowd programs to show program-specific variation",
+      "Proposes scale testing (enumerate multiple user IDs) to demonstrate systemic exposure and justify P2"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 152,
+    "scenario": "A password reset endpoint sends reset tokens via email. The tester discovers a reflected XSS vulnerability in the password reset confirmation page's error message. However, the page enforces a strict Content-Security-Policy that blocks inline script execution and external script loading. The XSS payload can only execute if the user's email client renders HTML before following the reset link.",
+    "prompt": "Why is this XSS constrained by CSP a duplicate concern, and what reproduction chain could justify P3 instead of P4?",
+    "expected_answer": "Reflected XSS vulnerabilities in password reset flows are commonly reported, making duplication a primary triage concern. However, the CSP constraint means this is NOT a traditional browser-based XSS. The email-context execution pathway is non-standard and program-specific: some email clients (Outlook desktop, Thunderbird) interpret HTML tags differently than browsers, potentially bypassing CSP. To justify P3 (not P4), the tester must demonstrate: (1) a specific email client renders the payload (with PoC screenshots), (2) this leads to credential theft or session hijacking via data exfiltration from the reset page, or (3) the XSS can be chained with account takeover. Without email client-specific execution proof, this is P4 (low impact due to CSP). Verify against the program's CSP bypass list on HackerOne\u2014some programs explicitly exclude CSP-blocked XSS from bounty scope.",
+    "reasoning_requirement": "Recognize CSP as a practical mitigation and assess whether email-context execution is reproducible; evaluate duplication risk in XSS/password reset space.",
+    "evaluation_criteria": [
+      "Explains why CSP blocks traditional XSS execution and identifies email client rendering as the only viable vector",
+      "Provides email client-specific PoC (with screenshots from Outlook, Gmail, Thunderbird) demonstrating HTML interpretation",
+      "Maps email-based XSS to actionable impact (session theft, password reset bypass) rather than generic DOM mutation"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 153,
+    "scenario": "A search endpoint accepts a 'query' parameter and returns results. The tester identifies SQL injection: manually crafting query=' OR '1'='1' causes a 500 error, but the application silently fails and returns zero results. The tester uses sqlmap, which confirms parameterized queries are in place but detects a time-based blind SQL injection via deliberate delays (query UNION SELECT SLEEP(5) -- returns after 5 seconds).",
+    "prompt": "Is this SQL injection in scope? How does the program's data model determine if it's P1 or P5?",
+    "expected_answer": "SQL injection with successful exploitation is typically in scope on all platforms (HackerOne, Bugcrowd, Intigriti). However, classification hinges on: (1) what data is accessible via the blind injection channel, (2) whether UNION-based exfiltration succeeds or is limited to time-based inference, and (3) the database schema permissions. If time-based blind SQL injection can only extract one character every 5 seconds, exfiltrating the entire user database is impractical (P3-P4). If the injected query has HIGH privileges or can execute stored procedures, it escalates to P1. Scope ambiguity arises if the program excludes 'theoretical' vulnerabilities\u2014some programs want proof of data access, not just injection proof. Bugcrowd and HackerOne differ: HackerOne typically accepts blind SQL injection as P2-P3; Bugcrowd may downgrade without exfiltration proof. The program's disclosure history will show their stance. Additionally, modern ORMs (Hibernate, SQLAlchemy) often prevent SQL injection entirely; if this legacy application uses raw SQL, it signals business criticality (upgrade priority = high payout signal).",
+    "reasoning_requirement": "Assess SQL injection exploitability constraints (blind vs. union-based, data access limits, database permissions) and map to program-specific severity expectations.",
+    "evaluation_criteria": [
+      "Explains why time-based blind SQL injection is slower and more difficult to monetize than UNION-based extraction",
+      "Identifies database schema and permissions required to make the injection P1 (RCE via xp_cmdshell) vs. P3 (data read-only)",
+      "Compares blind SQL injection payout rules across HackerOne, Bugcrowd, and Intigriti disclosure policies using recent reports"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 154,
+    "scenario": "A login endpoint enforces rate limiting: after 5 failed attempts, requests are throttled to 1 per 10 seconds from the same IP. A tester discovers they can bypass this by: (1) rotating user agents on each request, (2) using a distributed proxy pool, or (3) embedding login attempts in legitimate API calls (e.g., bundling them with analytics pings). The rate limiting check runs only on the /login route, not on internal API handlers.",
+    "prompt": "What payout signal does this rate limiting bypass present, and why might this be P4 instead of P3 on some programs?",
+    "expected_answer": "Rate limiting bypass is typically P3-P4 depending on business impact and program scope. The payout signal is weak because: (1) modern authentication uses multi-factor authentication (MFA), making brute force password attacks obsolete for high-value accounts, and (2) the bypass requires either distributed infrastructure (many IPs/proxies) or low-signal obfuscation (user agent rotation), limiting real-world credential stuffing attacks. However, classification depends on the program's user base and account recovery mechanisms. If the program targets consumer SaaS (email-dependent password reset), MFA bypass via rate limiting bypass could be P2. If targeting enterprise with SSO and account lockout policies, it's P4 (negligible impact). Payout signal analysis: programs prioritize rate limiting bypasses only if they measure historical account takeovers (financial fraud, data theft). On Bugcrowd/HackerOne, infrastructure and rate limiting bypasses are historically P4-P5 unless chained with authentication logic flaws. Recommend checking the program's recent disclosures for similar findings and their assigned severity.",
+    "reasoning_requirement": "Distinguish between technical exploitability and business impact; assess rate limiting bypass within context of account recovery and MFA.",
+    "evaluation_criteria": [
+      "Explains why distributed bypass (proxy rotation) differs from single-IP evasion and assess practical attacker capability",
+      "Maps rate limiting bypass to account takeover impact: does MFA or SSO eliminate the threat?",
+      "Provides example payouts from HackerOne/Bugcrowd showing rate limiting bypass severities (typically P4-P5) and exceptional cases"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 155,
+    "scenario": "An API endpoint returns error messages with full stack traces and SQL query details. Example: 'Error: LINQ query failed. Query: SELECT * FROM Users WHERE id={user_input}. Exception: System.Data.SqlClient.SqlException.' The tester's request is malformed (invalid JSON), triggering the error disclosure. No actual SQL injection exists because the ORM prevents parameterization escape. However, the error reveals the exact database schema, user table names, and LINQ query structure.",
+    "prompt": "Is this information disclosure in scope? How does CVSS scoring diverge from business impact, and what scope rules apply?",
+    "expected_answer": "Information disclosure (stack traces, schema leakage) is typically in scope on all platforms but classified as P3-P5 depending on program policy. CVSS scoring treats information disclosure as low-to-medium (CVSS 5-7) because it's a passive confidentiality loss. However, business impact differs: schema disclosure enables attackers to construct targeted IDOR, authorization bypass, or injection attacks using known field names and table relationships. Scope ambiguity arises because: (1) some programs explicitly exclude 'debug mode' errors or non-production environments, (2) Bugcrowd historically downgrades information disclosure without clear exploitation pathway, and (3) HackerOne's policy varies by program\u2014some treat it as P4 (minimal risk on SaaS), others as P3 (privacy/data model exposure). Intigriti programs tend toward P4 for generic information disclosure. The divergence occurs because CVSS treats information disclosure in isolation, while business impact considers it an attacker reconnaissance tool. Recommended action: check program's published severity guidelines or recent disclosures for similar findings. If the program accepts no bounty for debug error messages, it will be explicit in their policy.",
+    "reasoning_requirement": "Analyze information disclosure classification across platforms; distinguish between technical severity (CVSS) and business impact (reconnaissance enablement).",
+    "evaluation_criteria": [
+      "Explains how schema disclosure enables secondary attacks (IDOR enumeration, injection targeting)",
+      "Identifies program-specific information disclosure policies: HackerOne acceptance rules vs. Bugcrowd historical severity trends",
+      "Compares CVSS 5.7 (information disclosure base score) with business impact justification for P3 vs. P4 classification"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 156,
+    "scenario": "A tester discovers a subdomain takeover on 'cdn-old.example.com', a deprecated CloudFront distribution no longer actively used. The subdomain points to an unclaimed S3 bucket. The tester can upload arbitrary files and serve them via the subdomain. However, no active traffic routes through this CDN, the CNAME record is stale, and the application's primary CDN is 'cdn.example.com' (without the 'old' prefix).",
+    "prompt": "Is this subdomain takeover in scope and what severity? How does CVSS high rating diverge from business impact?",
+    "expected_answer": "Subdomain takeover on deprecated infrastructure creates scope ambiguity. If the program explicitly lists scope as 'example.com and all subdomains', cdn-old.example.com is technically included. However, 'explicitly out of scope' or 'deprecated services' language would exclude it. The key question: does anyone use this domain? CVSS rates subdomain takeover as 8.6 (High) because it enables cookie theft, malware distribution, and session hijacking via the trusted domain. However, business impact here is near-zero: (1) no active traffic reaches the domain, (2) users don't access it, (3) modern browsers enforce Secure and SameSite cookie attributes, limiting session theft, and (4) the deprecated status suggests it's monitored for abuse but not trusted for authentication. The severity divergence is critical: programs like Bugcrowd have historically downgraded 'stale subdomain takeovers' from P2 to P4-P5 because active exploitation is impractical. HackerOne policies vary by program\u2014enterprise programs prioritize exploitable vulnerabilities; some accept deprecated subdomain takeovers as P3 for potential attack chaining. Recommendation: clarify scope before submission. If unclear, contact the program and cite the subdomain's deprecation status.",
+    "reasoning_requirement": "Navigate scope ambiguity on deprecated infrastructure; assess CVSS-vs-impact divergence when no active exploitation path exists.",
+    "evaluation_criteria": [
+      "Identifies that CVSS 8.6 assumes active domain usage and cookie theft scenarios, which don't apply to stale CDN",
+      "Explains scope clarification process: how to query programs about deprecated subdomains (via HackerOne comments, Bugcrowd policy pages)",
+      "Demonstrates business impact analysis: proves no traffic reaches the subdomain (DNS lookups, WHOIS verification, HTTP headers)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 157,
+    "scenario": "A tester reverse-engineers a JWT token used in the application. The token's signature is generated with a weak secret (e.g., 'secret123' or 'password'). Using jwt.io or a custom script, the tester can forge valid tokens by re-signing with the discovered secret. However, the token also includes: (1) an 'alg' field set to 'HS256', (2) an 'exp' claim limiting token lifetime to 1 hour, and (3) a 'jti' (JWT ID) claim checked against a server-side revocation list.",
+    "prompt": "What reproduction complexity justifies P2 vs. P3? How does the revocation check impact payout?",
+    "expected_answer": "Weak JWT secret enables token forgery (typically P2), but the jti claim with server-side revocation checking significantly constrains exploitation. Reproduction complexity analysis: (1) discovering the weak secret requires either reverse engineering the binary (high complexity) or brute forcing common secrets (low complexity, depends on wordlist), (2) forging a token is trivial once the secret is known (jwt sign command), but (3) the jti revocation check means the forged token must avoid the blocklist, limiting reuse and preventing lateral movement attacks. This reduces severity from P2 (uncontrolled impersonation) to P3 (limited-lifetime token forgery with revocation risk). However, payout depends on: if the weak secret is embedded in client-side code or exposed in a public GitHub repo, discovery is trivial (P2 payout signal = high, because real-world attackers can exploit it). If the secret is only in compiled server binaries, the attack requires binary reverse engineering (P3 payout signal = moderate, because it's more difficult). Additionally, if the application performs security audits or rotates secrets regularly, the finding's business impact is lower. The reproduction chain: weak secret \u2192 reverse engineer/brute force \u2192 forge token \u2192 bypass jti check \u2192 perform unauthorized action. Each step's feasibility determines severity.",
+    "reasoning_requirement": "Assess JWT secret discovery complexity and revocation mitigation; map reproduction chain to P2 vs. P3 classification.",
+    "evaluation_criteria": [
+      "Identifies weak secret discovery method (client-side exposure vs. binary reverse engineering) and its impact on P classification",
+      "Explains how jti revocation lists limit token forgery impact and prevent persistent impersonation",
+      "Provides reproduction PoC showing token forgery and jti check evasion or bypass techniques"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 158,
+    "scenario": "A file download endpoint at /api/files/download?path=filename.pdf allows authenticated users to download files. The tester discovers path traversal: /api/files/download?path=../../../../etc/passwd returns sensitive system files. However, the endpoint also requires: (1) valid authentication token, (2) the file to exist in an 'allowed directory' (checked via os.path.normpath), and (3) the requesting user must have 'download' permission on the file's parent folder (checked in the database).",
+    "prompt": "How does authentication + path normalization + ACL check affect P classification? What is the exploitation chain?",
+    "expected_answer": "Path traversal is typically P1-P2 if it enables unauthenticated access to sensitive files or RCE. However, this version is constrained: (1) authentication eliminates external attacker risk (reduces scope to insider threat), (2) os.path.normpath prevents some traversal sequences (e.g., ../../../../etc/passwd becomes /etc/passwd, which fails the 'allowed directory' check), and (3) database ACL enforcement creates an additional gate. Exploitation chain: attacker must be an authenticated user WITH 'download' permission in at least one folder. From that folder, they can attempt traversal to access sibling or parent directories. The os.path.normpath call is key: it resolves .. sequences but doesn't check if the normalized path is within the allowed directory (common bug). If the ACL check occurs AFTER normalization using a string prefix check (if file_path.startswith(allowed_dir)), symlink attacks or case-sensitivity issues could bypass it. Classification: if the ACL check is properly implemented, this is P4 (low impact, requires authentication + permission). If the normalization or ACL check has a flaw, escalate to P2. The reproduction chain complexity is moderate (requires valid credentials, understanding path normalization behavior, testing with symlinks). Payout signal: depends on whether internal users can realistically exploit this to access other users' files.",
+    "reasoning_requirement": "Evaluate multiple constraint layers (authentication, path normalization, ACL enforcement) and identify bypass weaknesses in the chain.",
+    "evaluation_criteria": [
+      "Explains how os.path.normpath prevents certain traversal patterns but may miss edge cases (symlinks, double encoding)",
+      "Identifies the ACL check implementation risk: string prefix checks vs. canonical path comparison",
+      "Provides PoC showing traversal bypass chain: authenticate \u2192 navigate to allowed folder \u2192 exploit normalization flaw \u2192 access restricted file"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 159,
+    "scenario": "A web application offers bulk discount codes (e.g., 'BULK50' = 50% off). The tester discovers that discount codes can be stacked: applying 'BULK50' twice (in the same order) reduces the total by 75% instead of 50%. The application stores discounts in a JSON array and applies each one sequentially without deduplication. The tester can further stack multiple different discount codes, reducing the final price to near-zero before checkout completes.",
+    "prompt": "Why does this have high business impact but low CVSS score? What is the P classification and payout signal?",
+    "expected_answer": "Business logic vulnerabilities often diverge dramatically from CVSS scoring. This discount stacking flaw has high business impact (direct revenue loss) but low CVSS (no RCE, no data breach, no authentication bypass)\u2014CVSS would score it ~5 (Medium) because it's limited to the application's primary function (commerce). However, business impact is severe: an attacker can reduce order value to $0, creating financial loss per transaction. Impact amplification occurs when the vulnerability can be automated: if no CAPTCHA or rate limiting exists, attackers can generate hundreds of zero-dollar orders, triggering refunds and chargebacks. P classification is typically P1-P2 for exploitable business logic flaws affecting revenue. Payout signal is HIGH because: (1) the flaw directly costs the business money (automated exploitation = rapid loss), (2) it's likely unknown to the business (business logic audits lag security audits), and (3) the reproduction is simple (screenshot the discount stacking). Programs prioritize revenue-impacting bugs\u2014HackerOne and Bugcrowd show higher payouts for business logic flaws that bypass compliance controls than for low-severity technical vulnerabilities. The fix is straightforward (deduplication check), making this an attractive bounty. Reproduction chain: add item \u2192 apply discount code 1 \u2192 apply same code again (or different code) \u2192 observe price reduction multiplier.",
+    "reasoning_requirement": "Distinguish CVSS (technical severity) from business impact (revenue/compliance loss) in business logic vulnerability classification.",
+    "evaluation_criteria": [
+      "Explains why CVSS scoring ignores business context and underrates commerce vulnerabilities",
+      "Calculates financial impact: items \u00d7 discount stacking depth \u00d7 transaction volume = total loss",
+      "Demonstrates automated exploitation scenario: API calls to generate zero-dollar orders at scale"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 160,
+    "scenario": "An SSRF vulnerability exists in an image proxy endpoint: /api/proxy?url=https://attacker.com/image.jpg. The server fetches the image from the provided URL and serves it to the client. However, the application enforces network segmentation: (1) outbound requests are restricted to whitelisted domains, (2) internal IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) are blocked, and (3) all requests go through a corporate proxy that requires authentication. A tester finds they can SSRF internal services by: using the domain 'localhost' (resolved by the proxy to 127.0.0.1), 'metadata.google.internal' (cloud metadata endpoint), or 'http://[::1]/' (IPv6 loopback).",
+    "prompt": "What impact amplification justifies P2 instead of P4? How does the proxy constraint affect exploitation?",
+    "expected_answer": "SSRF vulnerabilities range from P1 (cloud metadata access) to P4 (blocked by network segmentation). This version has constrained impact: the application blocks RFC 1918 (private IP) ranges and requires proxy authentication, limiting direct internal service access. However, impact amplification occurs through: (1) localhost/IPv6 bypass \u2192 if the proxy resolves localhost to 127.0.0.1, the tester can access local services (database, cache, admin panels) running on the same machine, (2) cloud metadata bypass \u2192 if deployed on AWS/GCP, 'metadata.google.internal' or '169.254.169.254' (AWS metadata) could expose credentials and role information, enabling privilege escalation, and (3) proxy credential leakage \u2192 if the proxy's authentication token is sent with internal requests, the tester might extract it via error messages or response headers. The bypass chain: SSRF \u2192 localhost resolution \u2192 access local database port (5432, 6379) \u2192 extract credentials or data. Impact amplification is highest if: the application is containerized (localhost = other containers), or deployed on cloud with metadata services enabled. P classification depends on what services exist on localhost or cloud metadata. If only cache exists (P3), but database credentials are accessible (P2). Payout signal: cloud metadata access always commands P1-P2 bounty; localhost service access is P2 if sensitive services are exposed.",
+    "reasoning_requirement": "Identify SSRF bypass vectors against network segmentation (localhost, IPv6, cloud metadata) and chain to credential or service access.",
+    "evaluation_criteria": [
+      "Explains localhost/IPv6 loopback resolution and why application-level IP whitelisting cannot block them",
+      "Maps localhost access to specific internal services: database/cache/admin (e.g., http://localhost:5432 for PostgreSQL)",
+      "Demonstrates cloud metadata bypass with PoC (AWS 169.254.169.254, GCP metadata.google.internal) and credential extraction"
+    ],
+    "category": "bounty_patterns"
   }
 ]
