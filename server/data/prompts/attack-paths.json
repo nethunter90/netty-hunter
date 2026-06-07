@@ -7752,5 +7752,145 @@
     "reasoning_requirement": "Service account token extraction and Kubernetes API exploitation for lateral movement and cluster compromise.",
     "evaluation_criteria": "Explains service account token location and extraction; Details Kubernetes API enumeration and secret access; Describes lateral movement to other pods and persistent backdoor installation",
     "category": "attack_paths"
+  },
+  {
+    "id": 682,
+    "scenario": "A web application with a stored XSS vulnerability in user comments. The attacker crafts a payload that exfiltrates session tokens and makes authenticated requests to an internal GraphQL API endpoint that the frontend uses.",
+    "objective": "Pivot from front-end XSS to backend service compromise and data exfiltration.",
+    "prompt": "Describe the attack chain from XSS injection to compromising backend services used by the web app.",
+    "expected_answer": "Web app pivot chains exploit trust boundaries between frontend and backend services. An attacker injects malicious JavaScript via a stored XSS vulnerability in a user-controllable field (comments, profile data). The payload executes in the victim's browser context with their authenticated session tokens. The attacker uses the victim's session to make requests to internal GraphQL, REST, or gRPC endpoints that the frontend consumes. By enumerating these endpoints (via browser DevTools, network logs, or source maps), the attacker constructs queries that bypass business logic restrictions. For example, a comment XSS can steal authentication tokens and make requests to /api/internal/user/export to retrieve PII, or call mutation endpoints that modify billing information. The attacker chains multiple internal API calls to escalate privileges: first fetching user profile data, then modifying role attributes if the API lacks proper authorization checks, finally accessing admin endpoints. Detection requires monitoring for anomalous internal API calls from unexpected user agents, tracking JavaScript execution context changes, and enforcing Content-Security-Policy headers with strict script-src directives. Mitigation involves input sanitization, output encoding, frame-ancestor restrictions, and separation of internal APIs from public endpoints.",
+    "reasoning_requirement": "Understanding trust boundaries between frontend and backend, internal API enumeration, session token management, authorization vs authentication, CSP bypass techniques.",
+    "evaluation_criteria": [
+      "Explains stored XSS injection vector and JavaScript execution in victim's browser context with valid session.",
+      "Details internal API discovery methods and how XSS payload constructs authenticated requests to backend services.",
+      "Identifies detection signals and mitigations including CSP, input sanitization, and authorization checks."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 683,
+    "scenario": "An organization uses AWS with multiple accounts. An attacker compromises a developer account with limited permissions (EC2:DescribeInstances, S3:GetObject). Through STS:AssumeRole, they discover a cross-account role with overly permissive trust policy that allows assumption from the developer account.",
+    "objective": "Escalate privileges across AWS accounts by assuming a misconfigured cross-account IAM role.",
+    "prompt": "Walk through the cross-account privilege escalation attack in AWS.",
+    "expected_answer": "Cloud-to-cloud privilege escalation in multi-account AWS deployments exploits overly permissive cross-account IAM role trust policies. An attacker with compromised credentials in account A discovers available roles via sts:GetCallerIdentity, iam:ListRoles, and examining environment variables for role ARNs. They then attempt to assume roles in other accounts using sts:AssumeRole. Success depends on the trust policy of the target role; if it specifies a principal like 'AWS': 'arn:aws:iam::ACCOUNT-A:root' without condition restrictions, the attacker can assume it. Upon successful assumption, they obtain temporary credentials for account B with potentially higher privileges. The attacker then enumerates account B's resources using the assumed role credentials: s3:ListBuckets to find data stores, ec2:DescribeInstances to locate compute resources, iam:GetRole to check what additional roles can be assumed. This creates an escalation chain across multiple accounts. Detection requires monitoring CloudTrail for sts:AssumeRole calls, especially cross-account assumptions, and alerting on unusual patterns. Prevention includes explicitly defining condition constraints in trust policies (aws:SourceAccount, aws:SourceArn), using temporary credentials instead of long-lived keys, and implementing explicit approval workflows for cross-account access.",
+    "reasoning_requirement": "AWS IAM role mechanics, trust policies, STS assume-role flow, credential chaining, CloudTrail logging.",
+    "evaluation_criteria": [
+      "Explains IAM trust policy evaluation and conditions for successful role assumption across accounts.",
+      "Details STS:AssumeRole mechanics and how temporary credentials enable further enumeration and escalation.",
+      "Identifies detection via CloudTrail and prevention through explicit trust policy conditions."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 684,
+    "scenario": "An Active Directory environment has domain controllers with legacy Kerberos settings. An attacker compromises a standard domain user account and performs DCSync attack by requesting password hashes from a domain controller.",
+    "objective": "Extract NTLM password hashes via DCSync to escalate to domain admin.",
+    "prompt": "Explain the DCSync attack technique and how to execute and detect it.",
+    "expected_answer": "DCSync attacks exploit the Directory Replication Service (DRS) protocol in Active Directory to extract NTLM password hashes without direct domain controller access. An attacker with compromised domain user credentials requests password history and hashes for targeted accounts (especially domain admins, service accounts) using the IDL_DRSGetNCChanges function. This replication protocol is designed for legitimate DC-to-DC communication but is accessible to any account with Replicate Changes and Replicate Changes All permissions in AD. Attackers use tools like Mimikatz's `lsadump::dcsync` to automate this attack. The protocol doesn't require physical DC access\u2014a domain user from a workstation can initiate a replication request, and the DC will respond with hashes. Once hashes are obtained, attackers perform offline password cracking or pass-the-hash attacks to gain domain admin access. Detection relies on monitoring DRS-related event IDs: Event 4662 (object access), Event 4624 (logon), and analyzing unusual replication traffic. Prevention includes restricting Replicate Changes permissions to only system accounts, disabling legacy Kerberos versions, enforcing MFA for privileged accounts, and monitoring unusual account behavior. Additional controls include AD tiering models and credential guard on workstations.",
+    "reasoning_requirement": "Active Directory replication protocol mechanics, DRS permission model, NTLM hash operations, pass-the-hash attacks, Windows event log monitoring.",
+    "evaluation_criteria": [
+      "Explains DRS protocol mechanics and why replication requests succeed with compromised user credentials.",
+      "Details tools and techniques for executing DCSync and offline hash cracking or pass-the-hash attacks.",
+      "Identifies detection signals via Event IDs and prevention through permission restrictions."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 685,
+    "scenario": "A software vendor's developer account is compromised. The attacker pushes malicious code to a legitimate npm package that thousands of applications depend on. The malicious code exfiltrates environment variables and API keys from deployed services.",
+    "objective": "Compromise downstream organizations through supply chain poisoning via package repository.",
+    "prompt": "Analyze the supply chain attack vector through package dependencies.",
+    "expected_answer": "Supply chain attacks through package repositories (npm, PyPI, Maven, etc.) represent a critical escalation vector where compromising a single dependency author affects all downstream consumers. An attacker gains access to a legitimate package maintainer's credentials (via phishing, credential reuse, or device compromise). They modify the package code to inject malicious payloads: exfiltration of environment variables, API keys, AWS credentials, or insertion of backdoors. Upon the next release, all applications that auto-update or install the compromised version execute the malicious code in their deployment environments. This is especially dangerous because the package appears legitimate in package registries, bypassing traditional security scanning. The attacker may use obfuscation (Unicode tricks, dynamic loading, base64-encoded payloads) to evade static analysis. Propagation is exponential: one compromised transitive dependency can affect tens of thousands of applications. Detection requires package integrity verification, behavioral monitoring of dependency code during CI/CD, and supply chain scanning tools that analyze package contents before installation. Prevention includes: dependency pinning to specific versions, using software composition analysis (SCA) tools, requiring package signing and verification, isolation of dependency installation in sandboxed environments, monitoring outbound network connections from dependencies, and maintaining an allowlist of approved package registries.",
+    "reasoning_requirement": "Package repository architecture, transitive dependency propagation, code obfuscation and injection techniques, supply chain verification methods.",
+    "evaluation_criteria": [
+      "Explains how compromised credentials lead to malicious package publication and downstream impact propagation.",
+      "Details obfuscation techniques and how malicious payloads execute in victim environments.",
+      "Identifies detection via SCA tools and prevention through pinning, MFA, and signed packages."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 686,
+    "scenario": "An attacker gains access to a containerized microservice through a vulnerability in the application code. From within the container, they discover the container runtime socket is mounted, allowing them to interact with the Docker daemon.",
+    "objective": "Escape from container and gain control of the host system.",
+    "prompt": "Describe the container escape attack chain using exposed Docker socket.",
+    "expected_answer": "Container escapes exploiting exposed Docker daemon sockets represent a critical privilege escalation from containerized workload to host control. An attacker who compromises a containerized application (via RCE, deserialization, or similar vulnerability) can interact with /var/run/docker.sock if it's mounted into the container\u2014a common misconfiguration. The Docker socket provides API access to the daemon running on the host; an attacker with socket access can create containers, mount host filesystems, and run commands as root. The exploit sequence: (1) confirm Docker socket access with `docker ps` or `curl --unix-socket /var/run/docker.sock http://localhost/images/json`, (2) create a new container with the host filesystem mounted using `docker run -v /:/mnt privileged-image /bin/bash`, (3) access the host filesystem via the mounted volume and install backdoors, SSH keys, or cryptominers, (4) maintain persistence by modifying init systems or cron jobs on the host. Alternative techniques include using `docker exec` on existing containers, modifying container images, or accessing the Docker API to create privileged containers. Detection requires monitoring docker.sock access patterns, auditing container-to-host volume mounts, and tracking privileged container creation. Prevention includes: never mounting docker.sock into containers, using rootless Docker, implementing container isolation via seccomp/AppArmor/SELinux, enforcing resource limits, and disabling privileged containers.",
+    "reasoning_requirement": "Container runtime architecture, Docker API mechanics, privilege escalation in containerized environments, volume mounting risks.",
+    "evaluation_criteria": [
+      "Explains how mounted Docker socket provides API access to daemon and enables container manipulation.",
+      "Details step-by-step exploitation: socket discovery, container creation with host mount, backdoor installation on host.",
+      "Identifies detection via audit logs and prevention through socket isolation and rootless Docker."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 687,
+    "scenario": "A web application accepts XML input for file uploads and document processing. An attacker crafts an XXE (XML External Entity) payload that references an internal HTTP endpoint. The server resolves the entity, leaking internal service content. The attacker then chains this to reach a cloud metadata service.",
+    "objective": "Chain XXE\u2192SSRF\u2192Cloud metadata to extract IAM credentials.",
+    "prompt": "Walk through the XXE to SSRF to cloud metadata attack chain.",
+    "expected_answer": "XXE-to-SSRF-to-cloud-metadata attacks chain XML parsing vulnerabilities into server-side request forgery to steal cloud credentials. An attacker submits an XML payload with external entity declarations that reference internal or external URLs: <!DOCTYPE foo [<!ENTITY xxe SYSTEM 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'>]>. If the XML parser is configured to resolve external entities (a common misconfiguration), the server makes an HTTP request to the specified URL. In an AWS environment, the metadata service at 169.254.169.254:80 is not authenticated and returns JSON containing instance IAM role credentials. The attacker first uses XXE to confirm the vulnerability by retrieving metadata, then progresses to fetching security credentials using /latest/meta-data/iam/security-credentials/. The response includes access key, secret key, and session token for the instance's assumed IAM role. The attacker exfiltrates these credentials, then uses them to enumerate and compromise cloud resources: S3 buckets, RDS databases, DynamoDB tables, Lambda functions. Detection requires monitoring for XXE patterns in XML parsing, tracking HTTP requests to metadata services (169.254.169.254), and alerting on unusual credential access patterns. Prevention includes: disabling external entity resolution in XML parsers, implementing network-level controls to restrict metadata service access from containers, and using temporary credentials with short TTLs.",
+    "reasoning_requirement": "XML parsing vulnerabilities, external entity resolution mechanics, SSRF concept, cloud metadata service architecture, credential mechanics in AWS/GCP/Azure.",
+    "evaluation_criteria": [
+      "Explains XXE payload construction and how external entity resolution triggers SSRF to metadata service.",
+      "Details metadata service endpoint discovery and credential extraction from JSON responses.",
+      "Identifies detection of XXE and metadata service access; prevention through parser hardening."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 688,
+    "scenario": "An attacker crafts a phishing email with a malicious OAuth authorization link that appears to be from a legitimate third-party integration (e.g., Slack app requesting access to email). A victim clicks the link, sees a familiar OAuth consent screen with subtle spoofing, and grants permission.",
+    "objective": "Obtain OAuth authorization to user accounts through consent screen phishing.",
+    "prompt": "Describe the OAuth consent screen phishing attack and its impact.",
+    "expected_answer": "OAuth consent phishing exploits user trust in authorization flows by presenting misleading or falsified OAuth consent screens to trick users into granting excessive permissions to attacker-controlled applications. An attacker registers a malicious OAuth application with a legitimate provider (Google, GitHub, Microsoft, Slack API) using a URL and branding that closely mimics a legitimate service. They craft a phishing email or advertisement with a link to the OAuth authorization endpoint with carefully chosen parameters: `redirect_uri` points to attacker infrastructure, `scope` requests overly broad permissions (email:read, profile:write, calendar:manage), and the `client_id` belongs to their malicious app. The victim clicks, sees the OAuth consent screen which closely resembles a legitimate service due to visual spoofing or because they're legitimately familiar with OAuth flows. The victim grants consent, unaware they're authorizing an attacker's application. The attacker receives the authorization code, exchanges it for an access token, and gains permissions to the victim's account. Scope creep is critical: broad scopes like `email` allow reading all emails, `calendar:manage` allows modifying calendar events for phishing other users, and `admin:repo_hook` in GitHub allows installing backdoors in repositories. Detection requires monitoring authorization patterns (unusual grantees, broad scopes), training on phishing indicators, and requiring confirmation for high-risk permission scopes. Prevention includes: OAuth providers restricting default granted scopes, users reviewing permissions carefully, and enforcing allowlists of approved integrations.",
+    "reasoning_requirement": "OAuth 2.0 authorization code flow, consent screen mechanics, scope definitions and risk levels, social engineering tactics.",
+    "evaluation_criteria": [
+      "Explains OAuth authorization flow and how phishing redirects users to attacker-controlled consent screens.",
+      "Details scope overreach and how broad permissions enable post-phishing attacks.",
+      "Identifies detection via authorization pattern monitoring and prevention through scope restrictions."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 689,
+    "scenario": "A company uses subdomains for multiple services: cdn.company.com, api.company.com, admin.company.com. The attacker discovers that api.company.com's DNS is delegated to a third-party CDN provider that requires manual verification. The DNS record for api.company.com is deleted from the provider but not removed from the company's DNS registrar.",
+    "objective": "Take over subdomain and hijack user sessions by serving malicious content.",
+    "prompt": "Analyze the subdomain takeover attack chain leading to session hijack.",
+    "expected_answer": "Subdomain takeover to session hijacking exploits dangling DNS records and weak verification in cloud service providers. An attacker identifies subdomains still in DNS registrars but no longer claimed in the service provider (common when services are decommissioned). For example, api.company.com resolves to cdn.example.com, but the CDN provider doesn't own a CNAME claim for api.company.com. The attacker signs up for the CDN provider, claims the subdomain api.company.com, and hosts malicious content. When users access api.company.com, they reach the attacker's server. If the subdomain previously served API endpoints or web content, users may have bookmarks or cached credentials for api.company.com. The attacker serves JavaScript that exfiltrates stored tokens and cookies (if the original domain didn't use Secure/HttpOnly flags properly, or if the subdomain is same-origin with other services). For maximum impact, the attacker injects credential harvesting forms styled identically to the legitimate service, or phishing redirects. Session hijacking succeeds especially if: (1) users have long-lived tokens stored in localStorage (not httpOnly), (2) the subdomain shares a broad parent domain cookie policy (*.company.com), or (3) the API previously returned sensitive tokens that clients stored. Detection requires continuous DNS monitoring for unclaimed subdomains, scanning for takeover-prone services, and alerting on unexpected CNAME changes. Prevention includes: regular subdomain auditing, explicit claim verification in providers, removing old DNS entries, using Secure/HttpOnly flags on cookies, and short-lived tokens.",
+    "reasoning_requirement": "DNS delegation, CNAME mechanics, cloud provider verification workflows, cookie scope and flags, token storage in browsers.",
+    "evaluation_criteria": [
+      "Explains dangling DNS records and how unclaimed subdomains can be registered in provider accounts.",
+      "Details session hijacking through cookie exfiltration and token theft from localStorage.",
+      "Identifies detection via subdomain enumeration and DNS monitoring; prevention through audits and secure flags."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 690,
+    "scenario": "A GraphQL API exposes introspection queries by default. An attacker queries __schema and __type to enumerate all available queries, mutations, and field types without authentication.",
+    "objective": "Use GraphQL introspection to discover IDOR vulnerabilities and hidden endpoints.",
+    "prompt": "Walk through GraphQL introspection enumeration and subsequent IDOR exploitation.",
+    "expected_answer": "GraphQL introspection to IDOR attacks chain information disclosure with authorization flaws. An attacker queries the GraphQL introspection API (typically via `__schema { queryType { fields { name } } }`) to enumerate all available queries, mutations, subscriptions, and their argument types. Introspection is often enabled by default in development and accidentally left on in production. The enumeration reveals endpoints like `user(id: ID!)`, `order(id: ID!)`, `report(reportId: ID!)` that accept ID parameters. The attacker then performs IDOR attacks by sequentially or randomly modifying ID parameters to access other users' data. For example, `query { user(id: \"123\") { email, phone, address } }` followed by `query { user(id: \"124\") { ... } }` to access user 124's data. Introspection also reveals mutation endpoints that may lack authentication, such as `updateUser(id: ID!, name: String!)` or `deleteOrder(id: ID!)`. The attacker identifies business logic IDORs: purchasing items at unmodified prices, transferring funds between accounts, or escalating privileges. Detection requires: (1) monitoring introspection queries themselves, (2) implementing strict authorization checks on all queries/mutations, and (3) alerting on sequential ID access patterns. Prevention includes: disabling introspection in production environments, implementing proper authorization at resolver level, using strong token-based authentication, and enforcing field-level access control with rate limiting on ID enumeration.",
+    "reasoning_requirement": "GraphQL introspection mechanics, schema enumeration, IDOR vulnerabilities, authorization vs authentication, resolver-level access control.",
+    "evaluation_criteria": [
+      "Explains how introspection queries expose available GraphQL operations and parameter types.",
+      "Details IDOR exploitation using discovered ID parameters and impact of authorization-bypass mutations.",
+      "Identifies detection of introspection and IDOR patterns; prevention through introspection disabling and resolver authorization."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 691,
+    "scenario": "A microservice architecture uses service-to-service communication via an internal API gateway without strict mTLS. An attacker compromises a low-privilege service account in the Kubernetes cluster. They enumerate service endpoints and discover a payment processing service that lacks proper input validation.",
+    "objective": "Pivot from compromised service to high-privilege service and manipulate financial transactions.",
+    "prompt": "Describe the lateral movement attack chain in a microservice environment.",
+    "expected_answer": "Lateral movement in microservice architectures exploits weak inter-service authentication and authorization to pivot from compromised low-privilege services to high-value targets. An attacker compromises a low-privilege service (e.g., a logging aggregator or notification service) through a vulnerability or exposed credentials. From within the Kubernetes cluster, the attacker enumerates available services via DNS resolution (service-name.namespace.svc.cluster.local), inspects environment variables for service URLs, or queries the Kubernetes API server if RBAC is weak. They then probe internal endpoints of higher-privilege services: payment service, authentication service, user database service. Many internal services assume network-level isolation and lack strong authentication (no mTLS certificates, no bearer token validation). The attacker crafts requests to payment service endpoints, such as `POST /api/transactions { amount: 1000000, account_from: victim, account_to: attacker }`, and the service processes the request because it trusts the internal network. Escalation may involve exploiting deserialization vulnerabilities, SQL injection in internal queries, or privilege escalation within the service (e.g., accessing admin endpoints that lack authorization checks). The attacker maintains persistence by creating service accounts, installing backdoors in container images, or modifying Kubernetes RBAC policies. Detection requires monitoring inter-service communication for anomalous patterns, enforcing network policies, and alerting on unauthorized API calls. Prevention includes: mandatory mTLS between services, strict RBAC policies in Kubernetes, service account token rotation, network segmentation via network policies, and implementing authorization checks inside services.",
+    "reasoning_requirement": "Kubernetes service discovery, mTLS mechanics, RBAC policies, service account privileges, network policies, inter-service authentication.",
+    "evaluation_criteria": [
+      "Explains service enumeration in Kubernetes and identification of high-value services.",
+      "Details exploitation of services lacking mTLS/bearer token validation and impact of successful pivots.",
+      "Identifies detection via inter-service communication monitoring and prevention through mTLS and RBAC."
+    ],
+    "category": "attack_paths"
   }
 ]
