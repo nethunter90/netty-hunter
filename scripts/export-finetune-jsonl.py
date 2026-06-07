@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT        = Path(__file__).parent.parent
 PROMPTS_DIR = ROOT / "server" / "data" / "prompts"
 OUT_FILE    = ROOT / "scripts" / "finetune-dataset.jsonl"
+HF_SUPP     = ROOT / "scripts" / "hf-supplement.jsonl"
 
 SYSTEM_PROMPT = (
     "You are an expert security researcher and bug bounty hunter with deep knowledge of "
@@ -98,6 +99,17 @@ def export():
 
         added = len(conversations) - count_before
         file_stats.append((json_file.name, added))
+
+    # Merge HF supplement if present
+    hf_count = 0
+    if HF_SUPP.exists():
+        with open(HF_SUPP) as hf:
+            for line in hf:
+                line = line.strip()
+                if line:
+                    conversations.append(json.loads(line))
+                    hf_count += 1
+        file_stats.append((HF_SUPP.name, hf_count))
 
     # Write JSONL
     with open(OUT_FILE, "w") as f:
