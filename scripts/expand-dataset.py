@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bug bounty dataset expander — 1,785 → ~10,000 entries
-Uses claude -p CLI (already authenticated via Claude Code session).
+Uses claude CLI with guaranteed process-group kill on timeout.
 Resume-capable: saves progress to .expand-progress.json after every batch.
 
 Run: python3 scripts/expand-dataset.py
@@ -11,6 +11,7 @@ Run: python3 scripts/expand-dataset.py
 import json
 import os
 import random
+import signal
 import subprocess
 import sys
 import time
@@ -185,9 +186,10 @@ SYSTEM_PROMPT = (
     "evaluation_criteria must list 2-3 specific, checkable criteria."
 )
 
-BATCH_SIZE   = 10   # smaller batches = shorter generation time = fewer timeouts
-CALL_DELAY   = 3    # seconds between calls
-MAX_RETRIES  = 5    # more retries, each halving batch size on failure
+BATCH_SIZE   = 10   # entries per call
+CALL_TIMEOUT = 90   # seconds — hard kill after this; 90s is plenty for 10 entries
+CALL_DELAY   = 2    # seconds between successful calls
+MAX_RETRIES  = 6    # retries per batch; batch size halves each time
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -226,17 +228,36 @@ def max_prompt_id_num(data, prefix):
                 pass
     return m
 
-def call_claude(user_prompt):
+def call_claude(user_prompt, timeout=CALL_TIMEOUT):
+    """
+    Call the claude CLI with a guaranteed hard kill on timeout.
+
+    Uses Popen + start_new_session so we can killpg() the entire process
+    tree — fixing the hang where subprocess.run(timeout=) sent SIGTERM but
+    the CLI's child processes kept the pipe open indefinitely.
+    """
     env = {**os.environ, "SENTINEL_DATAGEN": "1"}
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         [CLAUDE_BIN, "--model", "haiku", "-p", SYSTEM_PROMPT],
-        input=user_prompt,
-        capture_output=True, text=True, timeout=360,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         env=env,
+        start_new_session=True,  # new process group — lets us kill the whole tree
     )
+    try:
+        stdout, stderr = proc.communicate(input=user_prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            proc.kill()
+        proc.wait()
+        raise RuntimeError(f"claude timed out after {timeout}s")
     if proc.returncode != 0:
-        raise RuntimeError(f"exit {proc.returncode}: {proc.stderr[:300]}")
-    return proc.stdout.strip()
+        raise RuntimeError(f"exit {proc.returncode}: {stderr[:300]}")
+    return stdout.strip()
 
 def extract_json_array(text):
     text = text.strip()
@@ -325,10 +346,9 @@ def expand_file(filename, cfg, progress):
                 success = True
                 break
             except Exception as exc:
-                # Shrink batch size on each timeout so we always eventually succeed
                 effective_batch = max(3, effective_batch // 2)
-                wait = 10 * attempt
-                log(f"  attempt {attempt} failed — retry with {effective_batch} entries in {wait}s")
+                wait = min(5 * attempt, 30)  # 5s, 10s, 15s … capped at 30s
+                log(f"  attempt {attempt} failed ({str(exc)[:80]}) — retry {effective_batch} entries in {wait}s")
                 time.sleep(wait)
 
         if not success:
