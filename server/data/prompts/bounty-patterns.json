@@ -5961,5 +5961,44 @@
       "Quantifies impact and supply chain risk: 'Prototype pollution impact: attacker can override Object.prototype properties, affecting all JavaScript code in application (authentication checks, authorization logic, data validation). Hypothetical attack: pollute Object.prototype.admin = true \u2192 all users become admins. Or pollute String.prototype.toString \u2192 inject malicious JSON serialization \u2192 data exfiltration via logs. Supply chain risk: stripe-payment-sdk installed 50k+ npm downloads/week; vulnerability likely affects 10k+ Stripe integrators. Severity: P1 (supply chain / RCE potential, widespread exploitation possible).'"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 512,
+    "scenario": "A race condition in the checkout cart allows simultaneous processing of the same limited-inventory item from a single user account. Two concurrent POST requests to /api/checkout with identical order payloads both succeed, resulting in duplicate charges and inventory depletion. CVSS 5.5 (Moderate), but business impact includes direct revenue loss, inventory chaos, and customer refund requests.",
+    "prompt": "How do you evaluate severity when CVSS scoring conflicts with documented business impact? What duplicate-finding risks exist in this scenario?",
+    "expected_answer": "Race conditions in financial transactions present a critical disconnect between CVSS (which emphasizes authentication/confidentiality/integrity scope) and business impact (financial loss, operational disruption). This warrants P2/High classification despite moderate CVSS because: (1) direct monetary loss is quantifiable and repeatable; (2) order-state integrity is compromised; (3) automated duplication attacks are trivial (concurrent requests). The gap widens because payment processors flag duplicate charges as fraud, amplifying support burden. Duplicate-finding risk is HIGH\u2014other researchers may submit identical race conditions on this endpoint or related financial flows (subscriptions, gifts, transfers). Differentiate by: demonstrating reproducibility with specific concurrency metrics and timing windows; quantifying customer impact scale (100 simultaneous checkouts = 100x inventory loss); proposing a fix (idempotency keys); and noting the program's payout bands for financial-impact findings. If unpublished, anchor expectations to P2 baseline ($2k\u2013$15k) with upside for proof of automated exploitability at scale.",
+    "reasoning_requirement": "Recognize business-impact-driven severity escalation; assess duplicate-finding competitive landscape; quantify reproducibility and automation potential.",
+    "evaluation_criteria": [
+      "Articulates CVSS-to-severity gap: explains why moderate CVSS (5.5) warrants P2 classification due to financial loss and operational integrity impact",
+      "Identifies duplicate risk mitigation: proposes technical differentiation (concurrency metrics, automation proof, scale quantification) to stand out against competing submissions",
+      "Provides payout-negotiation framework: anchors to P2 baseline bands with conditional upside for proof of scale and automated exploitability"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 513,
+    "scenario": "Intigriti program targeting a SaaS analytics platform. You discover: (1) subdomain takeover (analytics-legacy.company.com DNS points to abandoned GitHub Pages), (2) legacy subdomain hosts Swagger documentation with unredacted API keys in examples, (3) keys grant access to internal dashboards, (4) dashboards expose customer data exports, (5) exported data includes PII (email, phone) for 50k+ users. Each step individually is P3/Moderate; chained, it's P1. Intigriti's triage prioritizes 'validated exploitation' and 'end-to-end impact clarity.'",
+    "prompt": "How do you structure a multi-step vulnerability chain for Intigriti submission to maximize credibility and payout? What reproduction complexity signals should you highlight?",
+    "expected_answer": "Intigriti heavily rewards clear, validated exploitation chains demonstrating real-world attacker workflow. For this subdomain-takeover-to-data-exfil chain: (1) document each step with timestamped screenshots/video showing progression; (2) provide a 'prerequisites and timeline' section showing attacker discovery flow (DNS reconnaissance \u2192 GitHub recon \u2192 Swagger inspection \u2192 key extraction \u2192 API exploration \u2192 data access); (3) clearly separate 'what I did' from 'what an attacker could automate'; (4) quantify scale (50k users \u00d7 email/phone = massive GDPR violation). Intigriti values reproducibility guarantees\u2014explicitly state: 'Each step is immediately reproducible using [specific tools/commands]' and provide a documented sequence or shell script. Chain complexity itself is a payout multiplier; Intigriti's bands recognize P1 at $5k\u2013$30k with bonuses for 'elegant attack orchestration.' Emphasize that no single step requires insider access, making it a true external exploit. Avoid submitting step 1 alone and escalating later (Intigriti dislikes incremental disclosures); submit the full chain once validated. Reference the platform's published success stories or previous P1 payouts to anchor expectations at $5k+.",
+    "reasoning_requirement": "Structure multi-step attack chains for platform-specific triage; balance technical detail with clarity; recognize Intigriti's validation-first prioritization.",
+    "evaluation_criteria": [
+      "Explains Intigriti-specific submission framing: timestamped validation, end-to-end attack workflow, automated reproducibility script demonstrating each step",
+      "Articulates chain complexity as payout multiplier: identifies P1 drivers (data scale, exploitability, no insider access) and anchors to Intigriti's $5k\u2013$30k P1 range",
+      "Provides anti-fragmentation guidance: argues for full-chain submission vs. incremental disclosures to match Intigriti's preference for validated, complete impacts"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 514,
+    "scenario": "Bugcrowd program (enterprise SaaS). You discover an unauthenticated /api/internal/spec endpoint returning OpenAPI/Swagger documentation with API endpoint paths, parameter names, authentication schemes, and deprecated endpoints. The spec doesn't contain hardcoded credentials but clearly maps the attack surface. The program's scope explicitly includes 'API documentation endpoints' but excludes 'information disclosure that does not lead to further compromise.'",
+    "prompt": "Is this an in-scope, valid finding or a scope boundary issue? How do you position it for Bugcrowd triage to maximize payout while mitigating duplicate risk?",
+    "expected_answer": "This sits in a scope-gray zone common in Bugcrowd programs. The finding is technically in-scope (API spec endpoint is listed), but payout viability hinges on: (1) Does the spec enable attacks on excluded endpoints? If it reveals deprecated admin endpoints or pattern-based surfaces (e.g., /api/v1/users/{id}/export suggests /api/v1/users/{id}/delete), it becomes P3/Low-payout territory. (2) Does unauthenticated access violate baseline expectations? If the program treats all API docs as public, rejection is likely. (3) Can you mitigate duplicate risk? If 10 researchers submit the same spec, Bugcrowd collapses them; differentiate via novel endpoint discovery or specific exploitation path. Bugcrowd's payout signals: spec-only = $100\u2013$500; spec enabling endpoint enumeration = $500\u2013$3k; spec leaking deprecated high-privilege endpoints = $1k\u2013$5k. Position by: (1) explicitly arguing why the spec content crosses into 'enables further compromise' (provide specific endpoint examples); (2) propose a reproducible attack using the spec (e.g., 'spec reveals undocumented admin endpoint\u2014tested IDOR against it'); (3) offer a technical fix (authentication gate). Duplicate risk is severe\u2014submit only if you claim a unique attack angle or discover particularly sensitive endpoints.",
+    "reasoning_requirement": "Distinguish scope-boundary ambiguity from valid findings; evaluate Bugcrowd's information-disclosure payout signals; mitigate duplicate risk through novelty positioning.",
+    "evaluation_criteria": [
+      "Identifies scope-gray-zone factors: distinguishes 'spec is public' (lower payout) from 'spec enables attacks on other endpoints' (higher payout), with concrete endpoint examples",
+      "Anchors payout expectations to Bugcrowd's information-disclosure bands: $100\u2013$500 (spec-only) vs. $500\u2013$3k (spec-enabled-exploitation)",
+      "Proposes duplicate-risk mitigation: articulates unique attack angle or endpoint novelty that differentiates from mass-discovered 'unauthenticated spec' findings"
+    ],
+    "category": "bounty_patterns"
   }
 ]
