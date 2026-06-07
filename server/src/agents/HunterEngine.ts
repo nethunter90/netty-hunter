@@ -64,6 +64,7 @@ import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { zapScanner } from "../lib/tools/zap-scanner";
+import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 
 const execFileAsync = promisify(execFile);
 
@@ -416,6 +417,9 @@ export class HunterEngine extends EventEmitter {
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
   private mergedTools: typeof TOOL_KNOWLEDGE = TOOL_KNOWLEDGE;
+  private reconContext: ReconContext | null = null;
+  private reconPromise: Promise<ReconContext | null> | null = null;
+  private reconObservationInjected = false;
 
   private async loadCustomTools(): Promise<void> {
     const now = Date.now();
@@ -582,6 +586,16 @@ export class HunterEngine extends EventEmitter {
       const domain = new URL(params.targetUrl).hostname;
       await stealthCoordinator.runWarmup(domain, 'generic', false, params.programId);
     } catch { /* non-critical — target may not be reachable yet */ }
+
+    // Phase 0: passive OSINT recon — runs concurrently with first observe()
+    // Resolves before hypothesize() is called so the model reasons over real attack surface.
+    this.reconPromise = new ReconRunner(params.targetUrl, sessionUuid, (e, d) => this.emit(e, d))
+      .run()
+      .then(ctx => { this.reconContext = ctx; return ctx; })
+      .catch(err => {
+        logger.warn("[HunterEngine] Recon runner failed (non-critical)", { err: String(err) });
+        return null;
+      });
 
     // Run the main loop asynchronously
     this.runLoop().catch(err => {
@@ -784,6 +798,32 @@ export class HunterEngine extends EventEmitter {
     while (this.state.observations.length > MAX_OBSERVATIONS) this.state.observations.shift();
 
     this.emit("hunt:observations", { count: obs.length, observations: obs });
+
+    // Inject Phase 0 recon as a structured observation (once, when recon is available)
+    if (this.reconContext && !this.reconObservationInjected) {
+      this.reconObservationInjected = true;
+      const alive = this.reconContext.subdomains.filter(s => s.alive);
+      const reconObs: Observation = {
+        id: uuidv4(),
+        timestamp: Date.now(),
+        source: "recon_runner",
+        data: {
+          subdomainsDiscovered: this.reconContext.subdomains.length,
+          aliveSubdomains: alive.map(s => s.subdomain),
+          interestingHistoricalUrls: this.reconContext.interestingUrls.slice(0, 20),
+          historicalPathCount: this.reconContext.historicalPathCount,
+        },
+        anomalyScore: this.reconContext.interestingUrls.length > 5 ? 0.8 : 0.4,
+        tags: ["recon", "subdomains", "wayback", "osint", "attack_surface"],
+      };
+      this.state.observations.push(reconObs);
+      this.emit("hunt:observations", { count: 1, observations: [reconObs] });
+      logger.info("[HunterEngine] Phase 0 recon observation injected", {
+        subdomains: this.reconContext.subdomains.length,
+        aliveSubdomains: alive.length,
+        interestingUrls: this.reconContext.interestingUrls.length,
+      });
+    }
 
     // Vision observation — screenshot the target and describe the UI (first pass only, fire-and-forget)
     if (this.state.iteration === 1) {
@@ -1379,6 +1419,14 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
+    // Wait for Phase 0 recon (best-effort — won't block past 8s if still running)
+    if (this.reconPromise && !this.reconContext) {
+      await Promise.race([
+        this.reconPromise,
+        new Promise(resolve => setTimeout(resolve, 8000)),
+      ]).catch(() => {});
+    }
+
     // ── RAG: promptKB methodology hints ──────────────────────────────────────
     // Inject structured attack objectives from the KB for observed candidate
     // vuln classes so the model knows the expected exploitation approach.
@@ -1416,7 +1464,7 @@ Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 ${toolKnowledge.getSummaryBlock()}
-${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}
+${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}${this.reconContext ? `\n\nPre-hunt OSINT recon (use this to make targetUrl fields specific — probe discovered subdomains and historical paths):\n${this.reconContext.summary}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)

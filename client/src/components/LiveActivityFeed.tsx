@@ -49,7 +49,9 @@ export type ActivityEvent =
   | { type: "ai_reasoning"; ts: string; task: string; phase: "thinking" | "complete" | "decision";
       context?: { observations: number; hypotheses: number; iteration: number };
       promptPreview?: string; rawResponse?: string; summary?: string;
-      durationMs?: number; generatedCount?: number };
+      durationMs?: number; generatedCount?: number }
+  | { type: "recon_start";    ts: string; domain: string }
+  | { type: "recon_complete"; ts: string; subdomains: number; alive: number; interestingUrls: number; historicalPathCount: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -1111,6 +1113,27 @@ export function LiveActivityFeed({
               return <ZapScanRow key={key} ev={ev} />;
             case "ai_reasoning":
               return <AIReasoningRowMemo key={key} ev={ev} />;
+            case "recon_start":
+              return (
+                <div key={key} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                  <Globe className="w-3 h-3 text-hack-cyan shrink-0" />
+                  <span className="text-hack-dim">Phase 0 OSINT</span>
+                  <span className="text-hack-cyan">{ev.domain}</span>
+                  <span className="text-hack-dim">— crt.sh + Wayback CDX running…</span>
+                </div>
+              );
+            case "recon_complete":
+              return (
+                <div key={key} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                  <CheckCircle2 className="w-3 h-3 text-hack-accent shrink-0" />
+                  <span className="text-hack-dim">Recon complete —</span>
+                  <span className="text-hack-accent">{ev.alive}/{ev.subdomains} subdomains alive</span>
+                  {ev.interestingUrls > 0 && (
+                    <span className="text-hack-orange">{ev.interestingUrls} interesting paths</span>
+                  )}
+                  <span className="text-hack-dim">{ev.historicalPathCount.toLocaleString()} historical URLs</span>
+                </div>
+              );
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

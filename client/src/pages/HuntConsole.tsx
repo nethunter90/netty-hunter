@@ -325,6 +325,21 @@ export default function HuntConsole() {
       });
     });
 
+    socket.on("recon:start", (data: any) => {
+      push({ type: "recon_start", ts: ts(), domain: String(data.domain ?? "") });
+    });
+
+    socket.on("recon:complete", (data: any) => {
+      push({
+        type: "recon_complete",
+        ts: ts(),
+        subdomains: Number(data.subdomains ?? 0),
+        alive: Number(data.alive ?? 0),
+        interestingUrls: Number(data.interestingUrls ?? 0),
+        historicalPathCount: Number(data.historicalPathCount ?? 0),
+      });
+    });
+
     return () => {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
@@ -339,6 +354,7 @@ export default function HuntConsole() {
         "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
         "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found", "hunt:zap_scan",
         "hunt:ai_reasoning", "egress:route_changed", "hunt:state",
+        "recon:start", "recon:complete",
       ].forEach(e => socket.off(e));
     };
   }, [socket]);
