@@ -4312,5 +4312,145 @@
     "reasoning_requirement": "Connect LDAP filter injection to authentication bypass and privilege attribute manipulation.",
     "evaluation_criteria": "Explains LDAP filter syntax modification and wildcard-based bypass logic; Describes privilege attribute enumeration and attribute-based escalation; References JNDI injection for RCE and directory enumeration techniques.",
     "category": "attack_paths"
+  },
+  {
+    "id": 402,
+    "scenario": "Web application has SQL injection in user profile endpoint, returning database credentials in error messages. Application runs with service account having read access to internal documentation server.",
+    "objective": "Extract database credentials and pivot to internal documentation server to discover API keys.",
+    "prompt": "Construct the attack path from SQL injection to credential extraction to lateral movement.",
+    "expected_answer": "Begin by exploiting the SQL injection vulnerability using time-based or error-based techniques to extract the database connection string from application configuration. Craft payloads targeting system tables (information_schema) to identify table structure. Once database credentials are obtained, enumerate available databases and schemas. Use these credentials to access internal schema documentation or secrets stored in tables. The next pivot leverages extracted API keys or internal service credentials to authenticate to the documentation server. Query logs and configuration files to identify other services accessible with these credentials. This demonstrates the critical importance of credential isolation: service accounts should have minimal necessary permissions, error handling should never leak configuration, and sensitive data should be encrypted at rest. Implement prepared statements to prevent injection, use environment variables for secrets rather than database storage, and enable database audit logging to detect suspicious queries. Test application responses across all input fields for credential leakage.",
+    "reasoning_requirement": "Recognize credential extraction through injection, privilege escalation chains, and inter-service trust relationships.",
+    "evaluation_criteria": [
+      "Identifies both direct extraction (error messages) and inferred extraction (time-based techniques).",
+      "Explains the pivot mechanism between services using compromised credentials.",
+      "Proposes both detection (query audit logs) and prevention (secrets management, prepared statements) strategies."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 403,
+    "scenario": "AWS Lambda function assumes an IAM role with broad permissions (ec2:*, s3:*). Function accepts user input to specify an S3 bucket name and performs GetObject operations.",
+    "objective": "Escalate permissions to list all buckets, extract sensitive data, and access cross-account resources.",
+    "prompt": "How would you exploit overly-permissive IAM roles in serverless environments?",
+    "expected_answer": "Serverless functions often inherit overly-permissive IAM roles to simplify initial deployment. Exploit this by enumerating the function's assumed role using the AWS SDK or STS AssumeRole calls from within the Lambda context. Query the STS endpoint (environment variables in Lambda) to obtain temporary credentials. Use these credentials to test all available API actions: ListAllMyBuckets, ListBuckets, and GetBucketPolicy to discover accessible resources. Once bucket enumeration is possible, pivot to extracting objects containing database backups, API keys, or Terraform state files. For cross-account access, examine the trust relationships of the role to identify accessible external accounts. If the role allows sts:AssumeRole, attempt to assume roles in other accounts. Export credentials locally and use AWS CLI to enumerate remaining resources. Implement least-privilege IAM policies using permission boundaries, enable AWS Config rules to detect overly-permissive policies, and use IAM Access Analyzer to report all public or cross-account access. Separate Lambda functions by sensitivity tier with distinct roles. Monitor CloudTrail for AssumeRole events.",
+    "reasoning_requirement": "Understand IAM role assumption, credential exposure in serverless, and permission escalation vectors.",
+    "evaluation_criteria": [
+      "Explains the method to extract temporary credentials from Lambda runtime environment.",
+      "Details the progression from bucket enumeration to cross-account resource discovery.",
+      "Identifies detection controls (CloudTrail logging, IAM Access Analyzer alerts)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 404,
+    "scenario": "Active Directory domain contains service accounts with SPNs (Service Principal Names) that have weak passwords. An attacker has compromised a low-privilege domain user account.",
+    "objective": "Perform Kerberoasting to extract and crack service account passwords.",
+    "prompt": "Walk through the Kerberoasting attack sequence and detection bypass.",
+    "expected_answer": "Kerberoasting exploits the fact that service account credentials are encrypted in service tickets (TGS), but with weaker encryption than user account TGTs. From a compromised domain user, request service tickets for accounts with SPNs by querying for users matching service account flags. Tools like GetUserSPNs.py or Mimikatz enumerate SPNs via LDAP or Kerberos queries without admin privileges. Request TGS tickets for these accounts using the Kerberos TGS-REQ/TGS-REP exchange. The tickets are encrypted with the service account's password hash (RC4, DES, or AES depending on domain configuration). Offline, use tools like hashcat or JohnTheRipper to crack these hashes by dictionary attack. Success depends on weak password policy\u2014service accounts often have long-lived, predictable passwords. Extract multiple tickets to increase crack success likelihood. Mitigate by enforcing managed service accounts (MSAs) or group managed service accounts (gMSAs) with automatically rotated passwords, ensuring strong password policies, monitoring SPN registrations, and enabling Kerberos armoring. Monitor for mass TGS-REQ requests in Security Event ID 4769. Configure accounts to prevent kerberoasting and require Kerberos preauthentication.",
+    "reasoning_requirement": "Understand Kerberos authentication, SPN enumeration, and offline password cracking feasibility.",
+    "evaluation_criteria": [
+      "Explains the Kerberos TGS-REQ/TGS-REP flow and why service account encryption is weaker.",
+      "Details SPN enumeration methods and ticket extraction techniques.",
+      "Proposes detection (Event ID 4769 monitoring) and prevention (MSA, strong policies, Kerberos armoring)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 405,
+    "scenario": "Organization uses internal package registry for proprietary packages (e.g., @company/utils). Developers also have npm public registry in their .npmrc with higher precedence. An attacker publishes a public package with the same name as an internal package.",
+    "objective": "Inject malicious code into the build and deployment pipeline.",
+    "prompt": "How does dependency confusion enable supply chain compromise in mixed private/public registries?",
+    "expected_answer": "Dependency confusion exploits resolution order in package managers when both public and private registries are configured. If the public registry is searched first or has higher version precedence, an attacker publishes a package with the same name as an internal package but with a higher version number. During npm install, the package manager resolves to the public package, executing the attacker's code in the build process. This is particularly effective against organizations with internal packages because the names are known, and the attack requires no authentication to the private registry. Once the malicious code executes in the build environment, the attacker gains access to CI/CD secrets (AWS keys, GitHub tokens, deploy credentials), all source code, and the ability to inject backdoors into production artifacts. The attack scales across all developers and CI/CD pipelines simultaneously. Mitigate by scoping packages explicitly (@company/package-name), ensuring private registry has precedence in .npmrc, implementing package signature verification, using lockfiles with integrity checksums, enforcing Semantic Versioning constraints, and monitoring package installations against a whitelist. Enable audit logging in your private registry to detect external resolution attempts. Implement package mirrors that prevent public confusion.",
+    "reasoning_requirement": "Understand package manager resolution order, registry precedence, and CI/CD secret exposure.",
+    "evaluation_criteria": [
+      "Explains why version precedence exploitation works across .npmrc configurations.",
+      "Details how build environment secrets are compromised and propagated through deployments.",
+      "Proposes multi-layered mitigations (scoping, registry priority, verification, monitoring)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 406,
+    "scenario": "Docker container runs a web application and is deployed with privileged capabilities and access to the host's /sys filesystem. The container's /proc filesystem is not properly restricted.",
+    "objective": "Escape the container and execute arbitrary code on the host system.",
+    "prompt": "Construct a container escape exploiting cgroup v1 vulnerabilities and host filesystem access.",
+    "expected_answer": "Container escapes via cgroup exploitation leverage misconfigurations where the container has direct access to host resources. If the container has CAP_SYS_ADMIN or CAP_SYS_PTRACE capabilities, and access to /proc and /sys, an attacker can exploit cgroup v1 vulnerabilities. Enumerate the host's cgroup structure by reading /proc/self/cgroup to identify the host's root cgroup. Create a new cgroup and set its notify_on_release flag to execute a script when the cgroup empties. Write a malicious script to /sys/fs/cgroup that will execute with host privileges. Alternatively, if /sys/fs/cgroup/devices is writable, modify device access rules to grant access to the host's physical devices. Another vector involves ptrace if CAP_SYS_PTRACE is enabled\u2014identify host processes from /proc, and attach to them to read/write memory, achieving code execution. Some escapes exploit kernel vulnerabilities (CVE-2019-5736, CVE-2021-4034) by directly modifying host memory. Mitigate by dropping all unnecessary capabilities (CAP_NET_ADMIN, CAP_SYS_ADMIN, CAP_SYS_PTRACE), using read-only /sys mounts, enabling AppArmor or SELinux policies, using cgroup v2 (more restrictive), and regularly patching host kernels. Run containers as unprivileged users and monitor syscall patterns.",
+    "reasoning_requirement": "Understand Linux kernel namespaces, cgroup structure, and capability-based privilege escalation.",
+    "evaluation_criteria": [
+      "Identifies multiple escape vectors (cgroup notify, device access, ptrace, kernel exploits).",
+      "Explains why CAP_SYS_ADMIN and /sys access are dangerous in containers.",
+      "Proposes detection (syscall tracing, audit logs) and mitigation (capability dropping, AppArmor/SELinux)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 407,
+    "scenario": "A web application has a URL fetching feature that downloads and processes images. The application does not validate or restrict URLs, and it runs on an EC2 instance with an IAM instance profile.",
+    "objective": "Access the AWS Instance Metadata Service to extract credentials and enumerate cloud resources.",
+    "prompt": "How would you leverage SSRF to compromise cloud infrastructure via metadata services?",
+    "expected_answer": "Server-Side Request Forgery (SSRF) vulnerabilities allow attackers to make requests from the server's context, bypassing network restrictions. The critical risk in cloud environments is access to instance metadata services (IMDS). AWS IMDS is available at http://169.254.169.254/latest/meta-data/, GCP at http://metadata.google.internal/, and Azure at http://169.254.169.254/metadata/. By crafting an SSRF payload, request the metadata endpoint to obtain temporary AWS credentials (AccessKeyId, SecretAccessKey, Token). The server's HTTP client makes this request successfully because localhost/169.254.169.254 is unrestricted. With temporary credentials, enumerate EC2 instances, S3 buckets, RDS instances, and IAM role permissions. Extract user data scripts which may contain secrets. Exploit by fetching http://localhost:port to reach internal services (databases, admin panels). Bypass auth tokens from environment variables. Mitigate by implementing URL whitelisting (only allow specific domains), disabling access to 169.254.169.254 using firewall rules, enabling IMDSv2 which requires signed requests, using VPC endpoints instead of public IMDS, running security groups with minimal egress rules, and validating/sanitizing all URL inputs. Deploy WAF rules to detect IMDS access patterns and metadata service requests.",
+    "reasoning_requirement": "Understand SSRF mechanics, cloud metadata services, and credential exposure pathways.",
+    "evaluation_criteria": [
+      "Identifies the chain: SSRF \u2192 metadata endpoint \u2192 credential extraction \u2192 privilege escalation.",
+      "Explains metadata endpoints across AWS, GCP, Azure with specific paths and payloads.",
+      "Details mitigations including IMDSv2, network restrictions, and WAF rules."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 408,
+    "scenario": "Organization uses OAuth 2.0 for single sign-on via a third-party provider. Attacker sets up a malicious OAuth application with a legitimate-sounding name and redirects users to the provider's consent screen.",
+    "objective": "Obtain user authorization tokens with broad scopes to access emails, calendars, contacts, and sensitive data.",
+    "prompt": "Analyze the attack surface of OAuth consent phishing and scope abuse.",
+    "expected_answer": "OAuth consent phishing exploits user trust in OAuth flows and overly-permissive scopes. The attacker registers a malicious OAuth application with the identity provider (Google, Microsoft, GitHub, etc.), configuring it to request broad scopes (mail.read, calendar.read, contacts.read, etc.). The attacker crafts a phishing email impersonating internal IT support, claiming users must 'reauthenticate for security' and includes a link to the malicious OAuth consent screen. Users, believing they are authenticating to their provider, click through and grant permission. The OAuth authorization server redirects back to the attacker's redirect_uri with an authorization code. The attacker exchanges this code for an access token (and often a refresh token), gaining permanent access to the user's data with the granted scopes. Attackers then exfiltrate emails (including password reset links, 2FA codes), calendars (meeting invites with secrets), contacts, and cloud storage. The attack is effective because it's indistinguishable from legitimate OAuth consent screens, and users rarely review scope permissions. Mitigate by educating users to verify the OAuth application name and scopes before consenting, implementing conditional access policies that block suspicious OAuth grant attempts, enabling logging of OAuth consent events, and instructing users to check their connected apps settings periodically.",
+    "reasoning_requirement": "Understand OAuth 2.0 flow, scope definition, and user psychology in phishing attacks.",
+    "evaluation_criteria": [
+      "Explains the OAuth flow from authorization request through token exchange.",
+      "Details how scope overpermissioning enables data exfiltration across multiple data types.",
+      "Proposes user education, policy controls (conditional access), and detection (OAuth audit logs)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 409,
+    "scenario": "Organization used a subdomain (api.company.com) that was previously hosted on a third-party CDN. The DNS record now points to an unclaimed CDN instance, but the subdomain is still referenced in session cookies (Domain=.company.com).",
+    "objective": "Takeover the subdomain, host malicious content, and steal user session cookies.",
+    "prompt": "Construct the subdomain takeover and cookie theft attack chain.",
+    "expected_answer": "Subdomain takeover occurs when a subdomain's DNS record points to an external service (CDN, GitHub Pages, Heroku, etc.) that is no longer provisioned or has been deleted. The attacker claims the unclaimed resource, hosting malicious content on the attacker's account. If the parent domain has issued session cookies with Domain=.company.com, the attacker can read and exfiltrate these cookies because the browser sends them to any subdomain of company.com. First, identify the subdomain by passive reconnaissance (DNS records, certificate transparency logs, Google search). Check if the target service is unclaimed: for GitHub Pages, verify the repository doesn't exist; for CDN, check if the CNAME target is unclaimed. Claim the resource by creating an account on the third-party platform and associating the subdomain. Host a malicious page that exfiltrates cookies using JavaScript (document.cookie) or upgrades the attack to phishing for credentials. The attacker obtains authentication tokens and session IDs valid across all company.com subdomains. Mitigate by promptly removing subdomains when services are decommissioned, using DNSSEC to prevent DNS hijacking, issuing session cookies with specific subdomain restrictions (Domain=api.company.com), enabling SameSite=Strict cookie flags to prevent cross-subdomain leakage, and periodically auditing DNS records.",
+    "reasoning_requirement": "Understand DNS delegation, cookie scope policies, and session hijacking via subdomain compromise.",
+    "evaluation_criteria": [
+      "Identifies the subdomain enumeration and unclaimed service discovery process.",
+      "Explains the cookie scope vulnerability and how Domain=.company.com enables cross-subdomain theft.",
+      "Proposes DNS hygiene, cookie policies (SameSite, Domain restrictions), and continuous monitoring."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 410,
+    "scenario": "Web service accepts XML files for invoice processing. The XML parser is configured to resolve external entities. The application runs on a cloud platform with instance metadata enabled.",
+    "objective": "Chain XXE into SSRF to extract cloud credentials and pivot to other resources.",
+    "prompt": "Craft an XXE payload that chains to SSRF for metadata service exploitation.",
+    "expected_answer": "XML External Entity (XXE) injection occurs when an XML parser resolves external entities without proper restrictions. An attacker crafts a malicious XML file containing an external entity definition that references a URL: <!DOCTYPE invoice [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\">]>. When the parser processes the XML, it resolves the entity by making a request to the metadata service. The response is embedded in the XML output returned to the attacker. This chains XXE into SSRF: the server's XML parser (which has no network restrictions) fetches the metadata endpoint, returning AWS credentials. The attacker extracts the credentials from the response. Advanced XXE variants use Blind XXE with out-of-band callbacks: define an external entity that references an attacker-controlled DNS server, forcing the parser to make DNS queries. Monitor DNS logs to exfiltrate data character-by-character. Once credentials are obtained, assume the IAM role, enumerate resources, and pivot to other accounts. Mitigate by disabling external entity resolution entirely (set XMLConstants.ACCESS_EXTERNAL_DTD to false in Java, disable DOCTYPE processing in Python/libxml2), using XML schemas instead of DTDs, validating and sanitizing XML input, and running XML parsers in a sandboxed environment. Implement WAF rules to detect XXE patterns.",
+    "reasoning_requirement": "Understand XXE parsing, SSRF in application context, and credential exfiltration.",
+    "evaluation_criteria": [
+      "Explains the XXE entity resolution mechanism and how it triggers outbound requests.",
+      "Details chaining XXE into metadata SSRF with specific payloads and credential extraction.",
+      "Proposes parser configuration hardening, input validation, and detection (WAF, outbound monitoring)."
+    ],
+    "category": "attack_paths"
+  },
+  {
+    "id": 411,
+    "scenario": "GraphQL API returns full schema via introspection queries. Queries include user IDs in the schema that appear to be sequential integers. The API lacks proper authorization checks per user record.",
+    "objective": "Enumerate users and access unauthorized user data via insecure direct object references.",
+    "prompt": "How does GraphQL introspection combined with IDOR enable mass data exposure?",
+    "expected_answer": "GraphQL introspection allows attackers to query the full API schema, discovering all available queries, mutations, fields, and arguments. Send an introspection query (query { __schema { types { name fields { name } } } }) to retrieve the schema. The API design often exposes entity structure, revealing that user objects have fields like id, email, profile, orders, payments. By analyzing the schema, identify queries that return user data: getUser(id: Int), currentUser, listUsers. If IDs are sequential integers (1, 2, 3...), perform Insecure Direct Object Reference (IDOR) attacks by iterating through IDs: { user(id: 1) { email name orders { total } } }. The API may lack authorization checks, returning all users' private data to authenticated attackers or even unauthenticated users. Introspection also reveals mutations like updateUser(id: Int) or deleteUser(id: Int), enabling horizontal privilege escalation (modifying other users' data). An attacker can modify another user's email, phone, address, or payment information, or delete accounts. Mitigate by disabling introspection in production (set introspection: false in Apollo Server), implementing role-based access control (RBAC) checks on every resolver, verifying users only access their own data, using opaque identifiers (UUIDs) instead of sequential integers, and testing each resolver for authorization bypasses.",
+    "reasoning_requirement": "Understand GraphQL schema enumeration, IDOR mechanics, and authorization bypass pathways.",
+    "evaluation_criteria": [
+      "Explains the introspection query mechanism and information leakage from schema exposure.",
+      "Details how sequential user IDs enable IDOR attacks across resolvers (queries and mutations).",
+      "Proposes controls including introspection disabling, RBAC, opaque IDs, and resolver testing."
+    ],
+    "category": "attack_paths"
   }
 ]
