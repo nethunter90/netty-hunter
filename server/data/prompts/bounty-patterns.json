@@ -1338,5 +1338,135 @@
       "Provides decision framework for submission based on likelihood of user click-through"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 141,
+    "scenario": "An e-commerce platform's Java backend accepts serialized objects via an undocumented HTTP header, triggering RCE via gadget chain exploitation.",
+    "prompt": "How should the severity and reproducibility be evaluated for bug bounty submission?",
+    "expected_answer": "This is a critical P1 vulnerability (RCE = highest impact), but submission strategy must account for reproduction complexity. The finding requires a working gadget chain (depends on runtime classpath), making it replicable only in specific configurations. When submitting: (1) verify the exact gadget chain works against the target version\u2014provide a minimal PoC rather than speculation; (2) clarify whether the deserialization endpoint is accessible without authentication or only from authenticated sessions; (3) if authentication is required, document the user privilege level and assess whether lateral movement is the primary impact path. Programs like HackerOne prioritize attack surface accessibility\u2014unauthenticated RCE lands P1 immediately. Authenticated RCE from a limited user role may be downgraded to P2 depending on program policy. Include reproduction steps, the exact Java version/libraries involved, and confirm the gadget chain in your lab environment before submission to prevent duplicate rejections. Always include the gadget chain library (commons-collections, spring-core, etc.) in your writeup\u2014triagers use this to assess whether their patched version would be vulnerable.",
+    "reasoning_requirement": "Evaluate how reproduction complexity and access requirements affect P1 classification and payout.",
+    "evaluation_criteria": [
+      "Distinguishes between unauthenticated and authenticated RCE impact.",
+      "Emphasizes gadget chain verification in lab before submission.",
+      "Considers program-specific classification differences (HackerOne vs Bugcrowd)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 142,
+    "scenario": "A researcher reports a reflected XSS in a parameter, but the target has a Content-Security-Policy header that prevents inline script execution. The researcher also discovers a CSP bypass via a whitelisted CDN with user-controlled paths.",
+    "prompt": "Should these be reported as one finding or two? How does duplicate risk factor in?",
+    "expected_answer": "These are technically separate vulnerabilities with distinct remediation paths, but must be reported strategically to avoid duplicate rejection. The correct approach: (1) Report the CSP bypass as the primary finding\u2014it's the actual exploit chain and higher severity; (2) mention the XSS as context (what the CSP is protecting against), not as a separate report; (3) clarify that the XSS alone is mitigated by the current CSP, so the CSP bypass is the actionable vulnerability. Many programs auto-reject the XSS as 'mitigated by security headers' if reported separately, triggering duplicate status. When writing the report: lead with the CSP bypass PoC, explain the bypass mechanism (e.g., bypassing strict-dynamic via whitelisted CDN), and show how an attacker chains them together. On Bugcrowd, CSP bypasses often receive higher payouts than generic XSS. On HackerOne, the program's CSP policy determines severity\u2014if the CDN is attacker-controlled, it's P2+; if not, severity drops. Always include CSP headers in your reconnaissance to identify bypass opportunities before writing the finding to avoid predictable rejections.",
+    "reasoning_requirement": "Recognize when related vulnerabilities should be reported together vs separately, and understand duplicate risk.",
+    "evaluation_criteria": [
+      "Identifies CSP bypass as primary vs XSS as mitigated context.",
+      "Explains program-specific duplicate policies (Bugcrowd vs HackerOne).",
+      "Emphasizes reconnaissance of security headers to avoid predictable rejections."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 143,
+    "scenario": "A bug bounty program lists 'example.com and all subdomains' in scope, but explicitly excludes 'staging.*' environments. A researcher discovers a critical vulnerability in api-staging.example.com with weak authentication.",
+    "prompt": "Is this finding in or out of scope? How should it be handled?",
+    "expected_answer": "Despite the wildcard language, explicitly excluded staging domains mean the finding is technically out-of-scope. However, the handling depends on program maturity and communication: (1) Do NOT submit without clarification\u2014programs auto-close out-of-scope findings and may damage your trust score on HackerOne. (2) Instead, contact the program via their disclosure policy with a brief summary (no PoC) asking for clarification: 'staging.example.com is explicitly excluded, but api-staging.example.com may fall under the wildcard. Can you clarify scope boundaries?' (3) On Intigriti, use their dashboard to request scope clarification and track responses. (4) If the program includes it after clarification, submit immediately with timestamps showing their approval. If they decline, respect the decision\u2014programs intentionally exclude staging to manage scope. This approach demonstrates maturity and increases future collaboration chances. (5) If declined, check whether api-staging.example.com has its own security program or whether the vendor accepts disclosures directly. Never submit explicitly out-of-scope findings expecting programs to handle gracefully\u2014most won't. Programs value researchers who respect boundaries while diplomatically identifying gray areas.",
+    "reasoning_requirement": "Navigate scope ambiguity and understand program-specific policies on clarification.",
+    "evaluation_criteria": [
+      "Recognizes explicit exclusions override wildcard language.",
+      "Recommends pre-submission clarification over risk of out-of-scope rejection.",
+      "Cites program-specific practices (HackerOne trust score, Intigriti dashboard tracking)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 144,
+    "scenario": "A researcher discovers an authentication bypass affecting a single admin account (the program founder's test account) in a HackerOne-managed program. The CVSS score calculates to 8.6 (High), but the real-world impact is minimal because it's a test account with no actual permissions.",
+    "prompt": "How should this finding be positioned for maximum fairness in triage?",
+    "expected_answer": "This scenario highlights the divergence between CVSS and business impact, critical for payout negotiation. The finding is legitimate but requires careful positioning: (1) Acknowledge the CVSS score but emphasize real-world limitations\u2014a test account bypass doesn't grant access to production systems or user data. (2) Reframe as a business logic vulnerability or authentication design flaw rather than a critical account takeover. (3) Demonstrate the actual scope of compromise: can the attacker escalate to other accounts? Access user data? Modify program settings? If none are possible, severity caps at P3-P4 despite CVSS numbers. (4) On HackerOne, programs with mature security teams recognize this distinction and rate based on impact, not CVSS. Include a clear statement: 'While raw CVSS is 8.6, actual business impact is limited to a non-production test account. The vulnerability demonstrates a design flaw in [mechanism] that could be exploited more broadly if similar patterns exist.' (5) Suggest remediation steps addressing the root cause, not just the test account. This positioning demonstrates technical maturity and often results in higher payouts than submitting with inflated claims. Bugcrowd and Intigriti use CVSS more strictly, so tailor wording to each platform's known practices and severity scales.",
+    "reasoning_requirement": "Understand the difference between CVSS scores and actual business impact, and position findings accordingly.",
+    "evaluation_criteria": [
+      "Distinguishes CVSS calculation from real-world impact assessment.",
+      "Identifies actual scope (test account = no production impact).",
+      "Adjusts positioning based on program platform (HackerOne vs Bugcrowd vs Intigriti)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 145,
+    "scenario": "A researcher discovers a privilege escalation vulnerability allowing a free-tier user to access another free-tier user's profile data. The vulnerability affects ~50,000 active free-tier users. Revenue comes only from premium subscriptions (~5,000 users).",
+    "prompt": "What payout signals should guide expectations for this finding?",
+    "expected_answer": "This finding demonstrates high user impact but lower business impact\u2014a critical distinction for payout negotiation. Key payout signals: (1) User count is large (50k), suggesting P2-P3 severity, but free-tier data has limited business value; (2) No financial records or premium features exposed; (3) Revenue comes from premium users (5k), not free-tier. Expected payout: $500-$2k, not $5k+. Programs weight business risk and customer lifetime value\u2014free-tier breaches pay less than premium breaches. Positioning strategy: (1) Emphasize GDPR/privacy implications to elevate severity; (2) Investigate whether free-tier data chains with other vulnerabilities to reach premium accounts or payment methods; (3) Assess whether free-tier users can be manipulated (upselling via trust exploitation) due to exposure; (4) If systemic across all tiers, reframe as database architecture flaw. On Intigriti, privacy violations receive higher payouts. Research historical payouts for similar findings using HackerOne's reports filter to calibrate expectations realistically. Always check whether the vulnerability affects billing data or payment methods, which significantly elevate severity regardless of user tier.",
+    "reasoning_requirement": "Recognize how user impact differs from business impact and predict payout ranges.",
+    "evaluation_criteria": [
+      "Separates user count from business impact (free vs premium).",
+      "Suggests payout range with reasoning (business-focused programs pay lower for free-tier breaches).",
+      "Recommends impact amplification strategies (GDPR, chaining, systemic assessment)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 146,
+    "scenario": "A researcher discovers a stored XSS in user profile comments. The vulnerability triggers every time any user visits a profile. An attacker posting on a popular profile could affect all 100,000 active users.",
+    "prompt": "How should the severity be positioned given the exposure scale?",
+    "expected_answer": "This stored XSS has significant impact amplification potential due to its execution context and reach. Positioning for maximum severity recognition: (1) Lead with the exploit chain: attacker posts malicious script \u2192 script executes in every visitor's browser \u2192 attacker can steal session tokens, redirect users, modify account settings. (2) Quantify the exposure: '100,000 daily active users are vulnerable to account compromise if an attacker posts on a popular profile.' (3) Emphasize persistence\u2014unlike reflected XSS, the payload remains until moderated, potentially affecting weeks of visitors. (4) Clarify the infection vector: if the popular profile belongs to a company employee or influencer, the attacker can compromise accounts with elevated privileges. (5) Test whether the XSS bypasses content-security-policy and can exfiltrate sensitive data (CSRF tokens, API keys). (6) Document actual impact: can you steal session cookies? Modify user email? Trigger account recovery? Each escalates severity. On HackerOne, this finds P1-P2 depending on httpOnly flag and CORS policies. On Bugcrowd, stored XSS affecting sessions is P2. Intigriti rewards impact amplification\u2014provide PoC showing actual account compromise, not just alerts. Include reproduction video if possible. Frame as 'mass account compromise vector' rather than 'stored XSS' to elevate perceived severity and payout.",
+    "reasoning_requirement": "Recognize impact amplification through scale and persistence, and position accordingly.",
+    "evaluation_criteria": [
+      "Quantifies user exposure (100k affected).",
+      "Demonstrates impact escalation (session theft, privilege access).",
+      "Positions as mass compromise vector, not generic stored XSS."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 147,
+    "scenario": "A researcher discovers a P2 authentication bypass requiring: (1) leak a CSRF token via client-side cache, (2) race condition between password reset request and confirmation, (3) predictable reset token within a 2-minute window. The combined exploit works but requires precise timing and multiple requests within 60 seconds.",
+    "prompt": "How does reproduction complexity affect severity classification and payout?",
+    "expected_answer": "Reproduction chain complexity significantly impacts how programs classify this finding and the payout offered. The vulnerability is technically P2 (auth bypass = high severity), but the multi-step chain affects submission strategy: (1) Complexity increases duplicate risk\u2014if a simpler auth bypass already exists, programs may close this as a duplicate variation. (2) It increases verification difficulty; triagers may struggle to reproduce and request clarifications, delaying resolution. (3) Some programs (Bugcrowd especially) discount payouts for complex multi-step exploits because they're harder to patch comprehensively. (4) HackerOne and Intigriti tend to reward complexity if it demonstrates deep system understanding, potentially increasing payout. Strategy: (1) Break down the exploit into atomic components\u2014each step should be documented and POC'd independently first, then shown chained together. (2) Include detailed timeline: 'Step 1 executes at T=0, Step 2 at T=10s, Step 3 at T=45s, success at T=58s.' (3) Provide a working script or video, not just manual steps\u2014this reduces triager friction. (4) Suggest comprehensive fix addressing all steps, not just one. (5) Emphasize: 'While multi-step, each step is independently exploitable and the chain is deterministic, not random.' This helps triagers perceive it as systemic, not a fluke. Programs may still rate P3 if timing is fragile, so include robustness analysis.",
+    "reasoning_requirement": "Evaluate how multi-step reproduction chains affect severity, duplicate risk, and payout negotiation.",
+    "evaluation_criteria": [
+      "Breaks exploit into atomic, independently-exploitable steps.",
+      "Provides deterministic timing and scripted PoC, not manual steps.",
+      "Considers program-specific treatment of complex exploits (Bugcrowd discounts vs HackerOne rewards)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 148,
+    "scenario": "A researcher identifies a vulnerability in a Bugcrowd-managed program that falls technically out of scope (third-party payment processor used by the target), but the vulnerability could expose customer payment data processed through the target's API integration.",
+    "prompt": "What is the strategic approach to handling this out-of-scope but valuable finding?",
+    "expected_answer": "Bugcrowd programs have different out-of-scope handling than HackerOne\u2014third-party services are typically excluded to avoid liability and coordination complexity. However, when vulnerabilities affect data flowing through the target's system, there's a gray area. Strategic approach: (1) First, check whether the payment processor itself is in scope under a separate Bugcrowd program or has its own bug bounty. If yes, contact the processor directly (they offer better payouts). (2) Assess whether the target's API integration creates the vulnerability\u2014if the target fails to properly validate or sanitize payment data before forwarding to the processor, that's in-scope as an application logic flaw. (3) Document the chain clearly: 'Our application fails to validate payment data before passing it to the processor, which results in [impact].' Frame as target-side issue, not processor vulnerability. (4) Check Bugcrowd's explicit scope rules\u2014some programs include 'third-party data processing chains.' (5) Contact Bugcrowd's triager via their question system: 'Does this finding qualify as in-scope since the vulnerability originates in our application's integration code?' (6) If declined, ask for responsible disclosure email for the processor. Bugcrowd's 'out-of-scope' is sometimes negotiable if you reframe as application logic rather than third-party infrastructure. This approach demonstrates respect for scope while advocating for responsible disclosure.",
+    "reasoning_requirement": "Navigate program-specific scope rules and recognize reframing opportunities for out-of-scope findings.",
+    "evaluation_criteria": [
+      "Distinguishes between third-party infrastructure vs application integration flaws.",
+      "Recommends Bugcrowd's question system for scope clarification.",
+      "Identifies alternative disclosure paths (processor's own program)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 149,
+    "scenario": "A researcher discovers an unauthenticated endpoint leaking internal service logs containing employee email addresses, internal API keys, and non-sensitive operational data. CVSS calculates to 7.5 (High), but the API keys are read-only for diagnostics.",
+    "prompt": "How should the business impact be assessed when CVSS doesn't reflect real risk?",
+    "expected_answer": "This finding exemplifies CVSS-vs-business-impact divergence. A 7.5 CVSS score suggests high severity, but actual risk is significantly lower\u2014common on HackerOne and Intigriti where overinflated CVSS damages credibility. Impact assessment: (1) Leaked employee emails enable targeted phishing on company staff, a real but indirect risk. (2) Read-only API keys are low-severity\u2014they grant no write permissions and are likely rotated regularly. (3) Non-sensitive operational data provides reconnaissance value but no direct access. Real business impact: P3-P4, not P2. Positioning strategy: (1) Acknowledge CVSS but clarify actual technical impact: 'While CVSS calculates 7.5, the leaked data is read-only diagnostic keys and public-domain employee information. Primary risk is social engineering, not system compromise.' (2) Research whether the endpoint violates compliance requirements (GDPR, SOC 2) regarding internal data exposure\u2014sometimes business impact comes from regulatory violations, not technical exploitation. (3) Suggest tiered fix: immediate (require authentication), medium-term (rotate exposed keys), long-term (implement data minimization in logs). (4) On HackerOne, information-security-focused teams often appreciate candid CVSS-vs-impact analysis and rate fairly. On Bugcrowd, assessment tends stricter\u2014expect P4 classification unless you demonstrate direct attack chain. Expect $500-$1,500 payout. Honest impact assessment builds trust and often results in fairer ratings.",
+    "reasoning_requirement": "Assess business impact independently of CVSS scores and communicate honestly about actual risk.",
+    "evaluation_criteria": [
+      "Separates CVSS metric from real-world exploitation difficulty.",
+      "Identifies indirect risks (phishing) vs direct compromise.",
+      "Suggests tiered remediation addressing immediate vs systemic issues."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 150,
+    "scenario": "An Intigriti bug bounty program includes scope for 'example.com and all APIs,' but the application integrates with a third-party identity provider (OAuth 2.0 flow). A researcher discovers a vulnerability in the target's implementation that could expose user tokens to the third-party provider.",
+    "prompt": "How is scope determined when a vulnerability spans both the target and an integrated third party?",
+    "expected_answer": "Intigriti's scope model differs from HackerOne and Bugcrowd\u2014they emphasize 'impact on the target' rather than 'infrastructure boundaries.' In this scenario, the vulnerability exists in the target's OAuth implementation, making it in-scope despite third-party involvement. Scope analysis: (1) The target application implements OAuth client-side logic\u2014any flaw is in-scope, even if it affects token handling with a third party. (2) The third-party provider's infrastructure (identity server, token endpoint) is typically out-of-scope, but the target's misuse of OAuth is in-scope. (3) Examples of in-scope: improper state parameter validation, leaked tokens in logs, insecure token storage, missing PKCE on public clients. Out-of-scope: bugs in the provider's token generation. The distinction: if the target's code is the vulnerability vector, it's in-scope; if the target is a victim of third-party misconfig, it's out-of-scope. Strategic approach: (1) Document clearly: 'The target's OAuth client implementation fails to [protect tokens], enabling [attack].' (2) Avoid framing as 'third-party provider vulnerability'\u2014frame as 'insecure client implementation.' (3) On Intigriti, submit a clarifying question in their 'Scope' section; triagers respond within hours. (4) Intigriti payouts tend higher ($2k-$5k) for client-side OAuth flaws than HackerOne. Check whether the third party has its own Intigriti program\u2014if yes, disclose there for potentially higher payouts and clearer scope.",
+    "reasoning_requirement": "Understand Intigriti's scope philosophy (impact on target vs infrastructure boundaries) and navigate third-party integration vulnerabilities.",
+    "evaluation_criteria": [
+      "Distinguishes between target's OAuth implementation (in-scope) vs provider infrastructure (out-of-scope).",
+      "Frames vulnerability as client-side misuse rather than third-party bug.",
+      "Leverages Intigriti's rapid scope clarification and higher payouts for client vulnerabilities."
+    ],
+    "category": "bounty_patterns"
   }
 ]
