@@ -1948,5 +1948,135 @@
     "reasoning_requirement": "Assess business logic vulnerability severity divergence and construct reproducible impact evidence.",
     "evaluation_criteria": "Identifies P5-P1 classification variance due to business context and revenue impact; outlines reproduction chain components: discount application, race condition timing, payment state; proposes financial impact quantification to justify P2-P1 payout tier ($5K-$25K+).",
     "category": "bounty_patterns"
+  },
+  {
+    "id": 191,
+    "scenario": "Web application logs contain user input that is passed unsanitized to a shell command via Runtime.exec() in Java, allowing arbitrary command execution with application privileges.",
+    "prompt": "What is the severity classification and why might programs score this differently?",
+    "expected_answer": "This is a P1/Critical vulnerability (CVSS 9.8) with Remote Code Execution capability. The severity classification depends on the process privileges: if the application runs with root/system privileges, it's unquestionably P1. However, some programs may classify it P1.5 if the RCE is sandboxed or restricted to unprivileged user context. The key differentiator across bounty platforms is privilege context\u2014HackerOne typically treats unauthenticated RCE as P1 regardless of privilege level, while Bugcrowd may score it P1.5 if environment isolation is present. Programs with defense-in-depth may value the finding less if exploit requires multiple conditions (authenticated user + specific input encoding). Always clarify in your report: (1) privilege level of execution context, (2) what resources can be accessed post-RCE, (3) whether the application is containerized/sandboxed. If the RCE can be chained to compromise infrastructure (Docker escape, Kubernetes privilege escalation), emphasize this in your impact assessment.",
+    "reasoning_requirement": "Understand how privilege context and environment isolation affect RCE severity classification across different bounty programs.",
+    "evaluation_criteria": [
+      "Correctly identifies P1/Critical classification and explains CVSS scoring rationale",
+      "Discusses how privilege context, sandboxing, and platform-specific policies (HackerOne vs Bugcrowd) create classification variance",
+      "Provides actionable triage guidance: which privilege levels and chaining scenarios justify P1 submission"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 192,
+    "scenario": "A user search endpoint vulnerable to time-based blind SQL injection. The injection point allows SELECT statements but the application filters output. Manual testing confirms exfiltration of user credentials (hashed), email addresses, and application configuration.",
+    "prompt": "How does data sensitivity affect severity classification when CVSS doesn't fully capture business impact?",
+    "expected_answer": "This is a P2 vulnerability (CVSS 7.5 or higher depending on authentication requirements) but represents significant business impact beyond baseline scoring. Time-based blind SQL injection on its own rates CVSS 7.5, but the data type exfiltrated determines real-world severity. If the injection exfiltrates PII (names, emails, hashed passwords with weak hashing), the business impact justifies P1 consideration because: (1) regulatory impact (GDPR/CCPA), (2) credential compromise chain, (3) user trust violation. Platforms like Intigriti weight business context heavily\u2014they value P2 findings that explain downstream impact more than CVSS suggests. Always include in your report: (1) what data types are exposed, (2) regulatory implications, (3) whether exfiltrated credentials enable account takeover, (4) estimated exposed user count. This transforms a generic 'SQL injection' finding into a data-centric severity case that commands higher payouts and demonstrates your understanding of business-impact triage.",
+    "reasoning_requirement": "Distinguish between CVSS technical scoring and real-world business impact; recognize when data sensitivity elevates severity beyond baseline scoring.",
+    "evaluation_criteria": [
+      "Identifies P2 baseline but explains business-impact reasoning that could justify P1 consideration",
+      "Lists specific data types that elevate impact (PII, credentials, config) and connects to regulatory/exploitation chains",
+      "Demonstrates understanding of platform-specific impact weighting (Intigriti vs HackerOne in business-context evaluation)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 193,
+    "scenario": "A vulnerability allows authenticated users to enumerate and access other users' private API endpoints (/api/user/{id}/profile, /api/user/{id}/documents). The target program explicitly states 'API endpoints are out of scope unless they expose PII.' Your testing confirms access to first name, last name, and email (PII). However, the program also states 'horizontal privilege escalation on the same user role is accepted risk.'",
+    "prompt": "Is this in scope and what severity does it deserve?",
+    "expected_answer": "This is a P3 vulnerability (CVSS 6.5\u20137.5 depending on authentication model) with significant scope ambiguity that requires careful program interpretation. The vulnerability is IDOR/broken access control, which is typically in-scope. However, the program statement creates a boundary: 'API endpoints out of scope unless PII.' Your finding has two components: (1) PII exposure (in-scope per stated exception), (2) horizontal privilege escalation (explicitly marked accepted risk). The correct approach: report it as P3 (moderate severity) but frame it as 'Horizontal Access Control Bypass Exposing PII'\u2014anchor your severity to the PII component, which the program explicitly marked in-scope. Programs value clarity on scope edge cases; your writeup should explicitly quote the policy, explain why your finding intersects the exception, and offer the program an explicit scope clarification question. If unsure, submit as P3 with a scope question rather than P4. HackerOne and Bugcrowd handle these edge cases differently\u2014some programs auto-reject, others reward the clarification process.",
+    "reasoning_requirement": "Interpret ambiguous scope statements; recognize when a finding straddles multiple policy boundaries; determine submission strategy based on scope intersection.",
+    "evaluation_criteria": [
+      "Correctly identifies scope ambiguity and quotes relevant policy language",
+      "Explains the dual components (IDOR + PII) and which one anchors the in-scope argument",
+      "Provides a submission strategy: either explicit scope question or clear P3 framing that acknowledges the boundary"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 194,
+    "scenario": "An XML parsing endpoint on an internal admin panel (requires authentication) is vulnerable to XXE. Testing confirms the parser reads external entities. However, outbound HTTP from the application server is blocked by firewall. Blind XXE is not possible. Local file reads are restricted to non-sensitive files (/etc/hostname, /etc/os-release).",
+    "prompt": "What severity should this receive and why does environment context matter?",
+    "expected_answer": "This is a P4 vulnerability (CVSS 5.3\u20135.9, medium). XXE is typically P2, but environment constraints fundamentally reduce impact: (1) authentication requirement, (2) no outbound network, (3) restricted file read permissions. The attack surface becomes local only, and sensitive system files (/etc/shadow, application configs) are inaccessible. However, P4 vs non-reportable depends on program policy. Programs like Bugcrowd may reject XXE with 'no significant impact' if the environment severely restricts exploitation. HackerOne often accepts P4 if the finding includes: (1) clear PoC showing entity resolution, (2) explanation of environment constraints, (3) potential exploitation path if constraints were removed. The payout signals here are weak\u2014XXE without exfiltration or DoS capability rarely commands significant bounties. Your strategy: submit only if you can demonstrate a realistic attack path (e.g., XXE \u2192 information disclosure \u2192 credential leak), or clarify with the program first. If testing is purely PoC-based (entity resolution without actual data impact), mark it P4 but acknowledge limited real-world exploitability.",
+    "reasoning_requirement": "Evaluate how environment constraints (firewall, permissions, authentication) reduce vulnerability severity below baseline CVSS; understand platform-specific policies on 'theoretical' vulnerabilities.",
+    "evaluation_criteria": [
+      "Correctly identifies P4 and explains why XXE baseline is reduced by environmental constraints",
+      "Lists specific mitigation factors (auth, network isolation, file permissions) and their impact on exploitability",
+      "Provides submission guidance: when to include XXE findings vs. defer based on impact potential and program policy"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 195,
+    "scenario": "You discover a subdomain (api-old.target.com) that points to a GitHub Pages bucket but is not claimed. The subdomain was used in an old integration and no longer receives traffic. Testing confirms the subdomain is takeable\u2014you could claim it and host arbitrary content. However, the main application (target.com) does not have a login flow that redirects to this subdomain, nor does it appear in HTTP headers or cookies.",
+    "prompt": "Is this reportable and what are the duplicate/out-of-scope risks?",
+    "expected_answer": "This is P5 or potentially out-of-scope depending on program policy and existing reports. Subdomain takeover is a known class of vulnerability, and the duplicate risk is HIGH. Before reporting, mandatory checks: (1) search the program's disclosed reports on HackerOne/Bugcrowd for identical subdomains or takeover findings, (2) check your own submission history, (3) search the program's scope for explicit mention of this subdomain or 'retired infrastructure.' Programs value novel takeover findings differently: HackerOne may reject if similar subdomains were previously reported (treat as duplicate pattern). Bugcrowd may accept with lower payout if the subdomain genuinely affects users (e.g., appears in docs, backlinks from the main app). The critical question: is there an exploitation path from the main application to this subdomain? If api-old.target.com is never referenced, the risk of takeover is low despite technical feasibility. Strategy: report only if you can demonstrate: (1) active user trust in the subdomain (cookies, redirects, API calls), (2) no prior similar reports, or (3) novel exploitation chain. Otherwise, mark as 'insufficient impact' or ask the program if they want discontinued-infrastructure findings.",
+    "reasoning_requirement": "Recognize duplicate risk in infrastructure-class findings; evaluate user-impact vs. technical feasibility; assess program-specific policies on retired assets.",
+    "evaluation_criteria": [
+      "Acknowledges high duplicate risk and describes mandatory pre-submission checks (prior reports, program history)",
+      "Explains why lack of active application references reduces impact despite technical feasibility",
+      "Provides a decision framework: when to report subdomain takeover vs. defer based on active exploitation path and program appetite"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 196,
+    "scenario": "A web application generates single-use CSRF tokens but reuses them within a 5-minute window per user session. An attacker can: (1) trigger a logout request to the victim, forcing a new session; (2) capture the victim's new CSRF token via reflected XSS on a sibling domain (allowed by SameSite=Lax); (3) perform unauthorized state-changing actions. The full chain requires multiple steps and a helper vulnerability (XSS).",
+    "prompt": "How does reproduction chain complexity affect severity classification and payout?",
+    "expected_answer": "This is a P2 vulnerability with moderate payout potential, but severity depends on chain decomposition. CVSS for the composite chain is ~7.5 (requires user interaction + XSS), but the primary vulnerability is 'insufficient CSRF token rotation' (P2 on its own). Programs value chain complexity differently: (1) HackerOne rewards multi-step chains if the primary vulnerability is novel; payout reflects the chain's practical difficulty, (2) Bugcrowd may split the finding into separate components (token reuse as P3, XSS as P3), (3) Intigriti focuses on the most critical step in the chain as the primary classification. Your reporting strategy matters: present the finding as either (1) 'token reuse enables CSRF under specific conditions' (P3, lower impact), or (2) 'CSRF bypass chain exploitable via sibling-domain XSS' (P2, higher impact). The payout signal is moderate\u2014chains that require XSS or social engineering components command lower bounties than direct exploits. Always provide a PoC that isolates the primary vulnerability (token reuse alone) separate from the helper vulnerability (XSS), so the program can patch independently and judge your finding's severity correctly.",
+    "reasoning_requirement": "Decompose attack chains into primary and helper vulnerabilities; understand how platform-specific chaining policies affect severity classification and payout.",
+    "evaluation_criteria": [
+      "Correctly identifies primary vulnerability (token reuse, P2) and explains chain complexity impact on payout",
+      "Discusses platform-specific chain evaluation (HackerOne vs. Bugcrowd splitting strategies)",
+      "Provides a reporting strategy: how to isolate primary vulnerability and frame multi-step exploitation separately"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 197,
+    "scenario": "A document-proxy endpoint allows authenticated users to fetch URLs and display content. Testing confirms SSRF\u2014you can access internal services (http://internal-api.local:8080/admin). The internal service has no additional authentication and exposes: (1) service health/version info, (2) internal IP addresses, (3) no sensitive data directly. However, the exposed version info reveals a known vulnerability in the internal service.",
+    "prompt": "How do program-specific scoring models affect SSRF severity, and what is the payout signal?",
+    "expected_answer": "This is a P3 vulnerability (CVSS 6.5\u20137.5) with significant variance across platforms. Pure SSRF without direct data exfiltration typically rates P3; however, the exposed version information creates an amplification signal. HackerOne values SSRFs that expose internal architecture and known-vulnerable services at P3 with moderate payouts (~$500\u2013$2000 depending on service criticality). Bugcrowd may classify the same finding as P2.5 or P3 depending on whether the internal service can be directly exploited from the SSRF endpoint. Intigriti weights infrastructure exposure (service discovery, IP enumeration) heavily for P3 findings. The payout signal here is moderate: information disclosure without immediate RCE potential. However, if you can demonstrate a chaining path (SSRF reveals version \u2192 known RCE in internal service \u2192 further escalation), you elevate to P2 and justify higher payout. Your strategy: report the SSRF as P3, but include in your report a detailed inventory of exposed services and versions. Programs use this metadata to assess internal risk. Avoid speculation about known CVEs in internal services unless you can actually exploit them via the SSRF chain\u2014programs penalize unsubstantiated claims. Always check if the internal service is on the target's scope or a separate asset.",
+    "reasoning_requirement": "Evaluate SSRF severity based on exposed asset sensitivity and internal service exploitability; recognize amplification signals (version info, service discovery); understand platform-specific internal-network policies.",
+    "evaluation_criteria": [
+      "Correctly identifies P3 SSRF and explains version disclosure as an amplification factor",
+      "Discusses platform-specific scoring (HackerOne infrastructure disclosure vs. Bugcrowd exploitation chains)",
+      "Provides payout analysis and chaining strategy: when version info justifies P2 upgrade vs. standalone P3 submission"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 198,
+    "scenario": "A Java application deserializes user-supplied input in an authentication callback handler without validation. The classpath includes Apache Commons Collections and other gadget-chain libraries. Testing with ysoserial confirms reliable RCE with application privileges (non-root). The endpoint requires no authentication.",
+    "prompt": "What makes this P1 despite being 'just' a deserialization flaw, and what payout signals matter?",
+    "expected_answer": "This is a P1/Critical vulnerability (CVSS 9.8) due to unauthenticated RCE with high practical impact. Deserialization RCE is high-severity because: (1) exploitation is reliable and automated (ysoserial), (2) no user interaction required, (3) gadget chains like Commons Collections are well-known and widely present, (4) the attacker gains code execution within the application context. Programs universally treat unauthenticated deserialization RCE as P1\u2014payout expectations are high ($5K\u2013$25K+ depending on program maturity and impact). Payout signals to emphasize in your report: (1) gadget chains present (Commons Collections version), (2) endpoint accessibility (unauthenticated, network-accessible), (3) PoC reliability (reproducible across app versions), (4) blast radius (full application compromise, data access, lateral movement). The only scenario where this drops to P1.5 is if the application runs in a heavily sandboxed environment (e.g., AppArmor, SELinux strict policy) that prevents meaningful exploitation. HackerOne and Bugcrowd both prioritize Java deserialization findings\u2014fast-track to payout. Your reporting strategy: lead with a simple, reproducible PoC (ysoserial payload \u2192 RCE proof), then detail the gadget-chain library versions and Java version. Avoid over-explaining deserialization theory; focus on: 'this is reliably exploitable, here's how, here's impact.'",
+    "reasoning_requirement": "Understand why deserialization RCE is universally P1 despite being a known vulnerability class; recognize payout signals specific to Java ecosystem findings.",
+    "evaluation_criteria": [
+      "Correctly identifies P1/Critical and explains unauthenticated RCE rationale",
+      "Details gadget-chain presence (Commons Collections, etc.) and exploitation reliability as payout amplifiers",
+      "Provides a PoC-first reporting strategy and high-payout expectations ($5K+) with platform-specific reasoning"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 199,
+    "scenario": "An API endpoint (/api/generate-report) implements per-user rate limiting via Redis, but the check uses a client-supplied 'X-User-ID' header instead of session token. An attacker can bypass the limit by varying the header value, generating unlimited reports. Each report generation consumes server resources (15\u201330 second backend processing). No authentication required.",
+    "prompt": "Why is this P4 and not P3, and what duplicate risk exists?",
+    "expected_answer": "This is a P4 vulnerability (CVSS 5.3\u20136.5, medium-low severity) rather than P3 because: (1) impact is resource exhaustion or DoS, not data breach, (2) the attack requires no authentication but causes deferred (not immediate) harm, (3) the vulnerability is self-limiting (backend processing time prevents massive scale attacks). Rate-limit bypasses are notoriously duplicate-prone\u2014many programs have received similar findings across different endpoints. Before reporting, mandatory duplicate checks: (1) search the program's prior disclosures for 'rate limit bypass,' 'header-based limiting,' or 'rate limit evade,' (2) check if the program explicitly accepts rate-limit findings (some programs mark them out-of-scope as 'operational issue'), (3) verify this isn't a known finding by prior researchers. Duplicate risk amplifies if your finding affects a non-critical endpoint (report generation, notification delivery) vs. a sensitive endpoint (authentication, payment). Program appetite varies: HackerOne rewards novel rate-limit bypasses at P4 with modest payouts ($300\u2013$800); Bugcrowd may reject as out-of-scope if categorized as DoS. Intigriti values rate-limit findings more if you demonstrate business impact (e.g., 'attacker can consume X credits per hour'). Strategy: report only if you can demonstrate: (1) practical DoS impact or cost amplification, (2) no prior similar finding in the program, or (3) bypass affecting high-value endpoints.",
+    "reasoning_requirement": "Classify rate-limit bypass as P4 based on impact type (DoS vs. data breach); assess duplicate risk in infrastructure-class findings; understand program appetite for operational vulnerabilities.",
+    "evaluation_criteria": [
+      "Correctly identifies P4 and explains why resource exhaustion rates below P3 vs. P2",
+      "Acknowledges high duplicate risk and describes pre-submission verification (prior reports, program policies)",
+      "Provides payout expectations (P4 typically $300\u2013$800) and program-specific appetite (HackerOne vs. Bugcrowd vs. Intigriti)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 200,
+    "scenario": "An application allows account creation with any email address. Email verification is not enforced\u2014unverified accounts retain all privileges. Testing shows: (1) old account recovery feature sends password reset links to registered email, (2) an attacker can register target@victim.com without verification, (3) then request password reset, which goes to victim's email, (4) but the reset flow is flawed\u2014it accepts tokens from previous accounts. By registering with a victim's email, waiting 5 minutes, and using an old token from an older account, the attacker can reset the password.",
+    "prompt": "Why is this P2 and what reproduction complexity factors into severity?",
+    "expected_answer": "This is a P2 vulnerability (CVSS 8.1\u20139.0, high severity) due to account takeover with moderate reproduction complexity. The vulnerability is a multi-step chain: (1) email verification not enforced (P3 on its own), (2) password reset token reuse across accounts (P3 on its own), (3) combined they enable account takeover (P2). Account takeover is universally P2 minimum because it grants unauthorized account access, and programs prioritize it for fast payout. Reproduction complexity affects payout: this finding requires multiple steps and timing constraints, which platforms value differently. HackerOne values detailed PoCs showing step-by-step reproduction, especially when race conditions or timing windows are involved\u2014expect P2 with strong payout ($2K\u2013$8K+). Bugcrowd may score this P2.5 or P2 depending on whether they consider email verification enforcement mandatory; if the program's policy is 'email verification optional,' they may treat the finding as lower risk. Intigriti rewards complex chains that demonstrate genuine account compromise\u2014this qualifies. Your reporting strategy: clearly decompose the finding into component vulnerabilities, then show the composite exploitation path. Provide: (1) proof that unverified accounts retain privileges, (2) token reuse demonstration across two different emails, (3) complete PoC showing attacker gaining access to victim's account. Emphasize the reproducibility and that the attack requires no social engineering or victim interaction beyond email delivery.",
+    "reasoning_requirement": "Recognize account takeover as P2 minimum; decompose complex chains into component vulnerabilities while explaining composite impact; understand platform-specific policies on email verification and token lifecycle.",
+    "evaluation_criteria": [
+      "Correctly identifies P2 account takeover and explains composite-chain impact",
+      "Acknowledges reproduction complexity as a payout signal and provides detailed PoC decomposition",
+      "Offers platform-specific payout expectations (HackerOne $2K\u2013$8K+) and reporting strategy for multi-step chains"
+    ],
+    "category": "bounty_patterns"
   }
 ]
