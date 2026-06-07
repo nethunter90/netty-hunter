@@ -3128,5 +3128,135 @@
     "reasoning_requirement": "Reverse-engineer platform-specific severity tier patterns from public reports; align impact arguments to program's valuation signals.",
     "evaluation_criteria": "Cites historical payout data from the same program to calibrate tier expectation; quantifies business impact of payment API access; proposes tier argument aligning with program's emphasis on impact clarity.",
     "category": "bounty_patterns"
+  },
+  {
+    "id": 291,
+    "scenario": "A researcher finds an unauthenticated information disclosure in the application's build metadata endpoint. It leaks non-sensitive server OS version and framework versions. CVSS 3.1 score is 5.3 (medium). However, the application is a financial services platform, and the leaked framework version matches a critical 0-day affecting millions in assets under management.",
+    "prompt": "How should CVSS scoring be contextualized against business impact and threat intelligence?",
+    "expected_answer": "CVSS measures technical severity in isolation, but bounty payouts reflect business risk. A medium CVSS (5.3) disclosing framework versions in a fintech context becomes a P1 finding because it enables exploitation of known 0-days affecting high-value assets. The payout signal here is not the CVSS score, but threat intelligence: if a 0-day exists for that framework version, and your company processes high-value transactions, the disclosure is critical. To maximize payout: (1) Research known CVEs for the leaked version and document potential impact; (2) Demonstrate active exploit availability via threat feeds; (3) Quantify business impact (assets under management, transaction volume, incident response cost); (4) Compare to similar disclosures on HackerOne\u2014framework version leaks in fintech historically pay $5k-$50k+. The key insight is that CVSS low/medium findings often pay higher in industries with high-value assets, strict compliance requirements, or active threat landscapes. Always research the threat context, not just the technical metric.",
+    "reasoning_requirement": "Contextualize CVSS scores against industry threat models and active exploit availability; map technical disclosures to business risk.",
+    "evaluation_criteria": [
+      "Explains why CVSS 5.3 misses business context; identifies the fintech threat model as the deciding factor.",
+      "Recommends leveraging threat intelligence (0-day existence, exploit availability) to justify P1 classification.",
+      "Provides payout research strategy: historical fintech framework disclosure payouts and incident response cost amplification."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 292,
+    "scenario": "A researcher discovers an API endpoint returning paginated user profiles. By incrementing the user ID parameter, they enumerate all 500,000+ users and extract email addresses, phone numbers, and account creation dates. The application has no rate limiting. Similar user enumeration vulnerabilities have been reported on 15+ HackerOne programs in the past 6 months alone.",
+    "prompt": "How should researchers evaluate duplicate risk when reporting a seemingly straightforward enumeration vulnerability?",
+    "expected_answer": "User enumeration via sequential ID enumeration is a high-frequency bounty submission that increases duplicate risk significantly. Before submission: (1) Search the program's resolved reports for similar issues ('user enumeration,' 'ID enumeration,' 'user disclosure'); (2) Check the program's duplicate rate on HackerOne (programs with >20% duplicate rate are high-risk); (3) Research competitor program reports\u2014if 15+ similar findings in 6 months, the vulnerability class is saturated; (4) Identify uniqueness: does your chain include privilege escalation (e.g., enumerating admin accounts), data sensitivity amplification (PII extraction), or a novel abuse vector? If the finding is pure enumeration with no escalation, the payout is typically P4 ($500-$2k) and duplicate risk is 40-60%. Mitigation strategy: (1) Combine with other findings (timing attack + enumeration = P3); (2) Demonstrate scale impact with business impact quantification; (3) Include remediation clarity (rate limiting + pagination token randomization). Research the program's historical responses to enumeration\u2014some rate P5, others P3, depending on regulatory context.",
+    "reasoning_requirement": "Assess saturation of vulnerability class; predict duplicate risk via program history and competing reports; identify uniqueness factors.",
+    "evaluation_criteria": [
+      "Quantifies duplicate risk by checking program history, competitor reports, and HackerOne duplicate rate trends.",
+      "Identifies uniqueness factors (escalation chains, data sensitivity, novel vector) that justify P3+ instead of P4.",
+      "Provides pre-submission research workflow: how to search resolved reports and competitor programs before submission."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 293,
+    "scenario": "A Bugcrowd program explicitly excludes 'third-party integrations' from scope but covers 'user authentication mechanisms.' The application uses OAuth2 from Google for login. The program's implementation redirects users without validating the 'state' parameter, enabling CSRF-based account takeover during the OAuth callback\u2014the vulnerability lives in the program's code, not Google's.",
+    "prompt": "How should researchers navigate scope boundaries when third-party integrations intersect with in-scope authentication mechanisms?",
+    "expected_answer": "This scenario illustrates the critical distinction between third-party infrastructure and flawed integration implementation. Google's OAuth2 service is out-of-scope; the program's failure to validate the 'state' parameter is in-scope because it's the program's authentication mechanism, not Google's. The vulnerability lies in implementation, not integration. On Bugcrowd, this distinction matters because programs explicitly carve out third-party dependencies to avoid report volume, but flawed implementations of third-party services are fair game. Key submission strategy: (1) Frame the finding as 'CSRF in OAuth2 redirect handling' rather than 'OAuth2 vulnerability'\u2014emphasize the program's control; (2) Provide a proof-of-concept that doesn't depend on Google infrastructure; (3) Reference Bugcrowd's scope policy verbatim: authentication mechanisms are in-scope regardless of provider; (4) If uncertain, use Bugcrowd's question feature to get written clarification before submitting. Historically, CSRF vulnerabilities in OAuth handling pay P2-P3 ($2k-$10k). Always validate state parameter handling in pre-submission reconnaissance.",
+    "reasoning_requirement": "Distinguish between third-party provider vulnerabilities and flawed integration implementation; use policy language precisely.",
+    "evaluation_criteria": [
+      "Clarifies that the vulnerability is in the program's state validation logic, not in Google's OAuth2 service.",
+      "Demonstrates how to reframe the finding for scope clarity using program policy language (authentication mechanism vs integration).",
+      "Recommends pre-submission clarification via Bugcrowd's question feature to confirm scope acceptance before investing in PoC."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 294,
+    "scenario": "A researcher discovers that an EU-focused SaaS application stores user IP addresses and User-Agent strings in plaintext logs indefinitely with no user control over retention policy. CVSS 4.3 (low). However, under GDPR Articles 5 (data minimization) and 32 (integrity and confidentiality), this violates EU regulatory requirements, affecting 100K+ users and triggering mandatory breach notification.",
+    "prompt": "How do European regulatory frameworks amplify the business impact of data handling vulnerabilities?",
+    "expected_answer": "GDPR compliance is a payout multiplier for EU-focused programs on Intigriti. A data handling vulnerability with low CVSS (4.3) becomes P2-P3 through regulatory lens because: (1) GDPR Article 5 requires data minimization\u2014storing IP/User-Agent indefinitely violates this; (2) Article 32 mandates integrity and confidentiality controls\u2014plaintext logs violate this; (3) a data breach triggers mandatory notification to authorities within 72 hours, resulting in regulatory fines up to \u20ac20M or 4% of global revenue. Intigriti programs emphasize compliance impact over technical CVSS scoring. Payout signals: (1) EU program scope = 2-3x multiplier for data handling findings; (2) regulatory violation documentation = +$2k-$10k over baseline; (3) mandatory breach notification requirement = P2 minimum. Submission strategy: (1) Include GDPR article citations in your report; (2) Quantify affected users and regulatory exposure; (3) Reference the program's privacy policy to show non-compliance; (4) Mention ePrivacy Directive if applicable. EU programs typically pay $5k-$30k for data handling issues; US programs pay 30-50% less for identical findings.",
+    "reasoning_requirement": "Map regulatory frameworks to business impact; identify compliance violations that amplify technical severity.",
+    "evaluation_criteria": [
+      "Cites specific GDPR articles (5, 32) and connects them to the vulnerability (data minimization, plaintext storage).",
+      "Quantifies regulatory impact: affected user count, breach notification triggers, potential fines (\u20ac20M/4% revenue).",
+      "Recommends program-specific research: Intigriti vs HackerOne vs Bugcrowd payout precedents for GDPR violations."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 295,
+    "scenario": "A tester discovers that password reset emails are sent via unencrypted SMTP (plaintext credentials in transit). Individually, this is a P5 concern ('email confidentiality best practice'). However, testing reveals an open SMTP relay on the same network segment, allowing an attacker to intercept, read, and forge password reset emails server-side, enabling full account takeover for any user requesting password reset.",
+    "prompt": "How should chaining seemingly low-severity findings into critical exploits impact severity and payout?",
+    "expected_answer": "This is a P1 authentication bypass achieved through chaining two findings. The initial finding (plaintext SMTP) is low-severity in isolation, but combined with the SMTP relay vulnerability, it becomes critical because an attacker gains complete control over account recovery. Severity escalation from P5 to P1 requires demonstrating the full chain: (1) plaintext SMTP transmission \u2192 password reset tokens are readable; (2) open SMTP relay \u2192 attacker can inject forged reset emails; (3) no email verification \u2192 forged emails are accepted as valid. Payout amplification strategy: (1) Document each component's technical merit independently; (2) Provide a step-by-step PoC video showing interception and account takeover; (3) Quantify impact: 'This attack affects 100% of users and requires no authentication'; (4) Compare to direct authentication bypass payouts ($10k-$50k+). The key insight is that infrastructure vulnerabilities (SMTP relay) enable exploitation of application vulnerabilities (plaintext transmission). Programs reward comprehensive chain identification: a complete chain pays 3-5x more than reporting individual findings. When scouting vulnerabilities, always ask: 'What infrastructure failures could amplify this?'",
+    "reasoning_requirement": "Identify how infrastructure vulnerabilities amplify application-level findings; construct complete exploitation chains for severity escalation.",
+    "evaluation_criteria": [
+      "Maps plaintext SMTP transmission to SMTP relay abuse with clear causal chain (interception \u2192 forging \u2192 account takeover).",
+      "Provides step-by-step PoC demonstrating the full attack from interception to successful unauthorized login.",
+      "Compares payout: P5 plaintext email (~$200-$500) vs P1 account takeover via chaining (~$10k-$50k+), with reasoning for 3-5x multiplier."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 296,
+    "scenario": "An application's API relies on JWT tokens for authentication. The backend validates the signature but does not check the 'exp' (expiration) claim. Researchers can extend their own expired tokens by modifying the 'exp' value to a future date, re-sign them with their private key, and the API accepts them. Testing confirms this affects 100% of API endpoints across all user tiers.",
+    "prompt": "What makes this JWT validation bypass a guaranteed P1, and how should researchers present systemic authentication issues?",
+    "expected_answer": "JWT expiration bypass is a P1 authentication vulnerability affecting 100% of API surface. The vulnerability is systemic because: (1) validation failure is present across all endpoints (no exceptions); (2) affected user scope is 100% of user base; (3) exploitation requires no authentication\u2014attacker can use their own token and extend it indefinitely. Presentation strategy for P1 classification: (1) Document the vulnerability location: specify which middleware or auth handler skips expiration check; (2) Prove systemic scope by testing 5-10 diverse API endpoints (payment, profile, admin, etc.); (3) Provide signed PoC tokens valid for one year, proving non-ephemeral exploitation; (4) Quantify business impact: 'Any user can maintain indefinite session, rendering logout ineffective.' Duplicate risk is low for systemic authentication bypasses. However, avoid over-scoping: if vulnerability only affects one endpoint, reduce severity to P2. Research the program's authentication scope: some programs have 'custom authentication' out-of-scope. Historical P1 authentication bypass payouts range $5k-$50k+ depending on program size and assets. This finding is rarely duplicated because proper JWT validation is table-stakes. Always include remediation guidance: 'Verify expiration claim using jwt.verify() with complete option set.'",
+    "reasoning_requirement": "Establish systemic scope (all endpoints, all users); distinguish between authentication bypass and authorization bypass; quantify business impact.",
+    "evaluation_criteria": [
+      "Proves systemic scope by testing minimum 5 endpoints across different feature areas (payments, admin, profile).",
+      "Provides signed PoC tokens with future expiration dates and demonstrates acceptance across API surface.",
+      "Includes remediation guidance (jwt.verify() with strict validation) and explains why this is not a duplicate (table-stakes implementation)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 297,
+    "scenario": "A researcher discovers that admins can enable 'custom code execution' in user templates (P1 feature). When enabled, user-provided Handlebars syntax is evaluated server-side without sandboxing. However, exploitation requires: (1) admin to manually enable the feature; (2) user to craft malicious Handlebars; (3) target application uses Handlebars <4.5.0 with RCE vulnerability; (4) user's template must be rendered by the application. The researcher provides an 8-minute video PoC with screenshots.",
+    "prompt": "How should researchers present complex, multi-step reproduction chains to maximize credibility and payout?",
+    "expected_answer": "Complex reproduction chains reduce perceived severity unless presented with exceptional clarity. This finding has legitimate P1 potential (RCE) but faces skepticism due to the four-step requirement. Presentation strategy: (1) Lead with impact, not preconditions: 'RCE via template injection in user-controlled Handlebars'; (2) Separate exploitation into 'admin negligence' (enabling the feature) and 'attacker action' (crafting payload)\u2014the admin step is a deployment choice, not part of the vulnerability; (3) Provide a layered PoC: first, simplified Handlebars RCE in isolation (20 seconds); then, the full attack chain (8 minutes); (4) Document the version requirement: 'Handlebars <4.5.0 is vulnerable; your app includes this version'; (5) Quantify blast radius: 'If any admin enables this feature, all users can achieve RCE.' Make the 8-minute video interactive with chapter markers (0:00 setup, 2:30 admin enablement, 4:15 payload execution, 8:00 verification). Duplicate risk is low for RCE findings. Payout for multi-step RCE ranges $10k-$100k+ depending on program scale; complexity incurs ~20-30% discount because validation effort is higher. Frame this as RCE, not feature abuse.",
+    "reasoning_requirement": "Present multi-step exploits with clarity hierarchy; separate attacker actions from deployment choices; quantify blast radius.",
+    "evaluation_criteria": [
+      "Leads with impact (RCE) before preconditions; separates admin negligence (enabling) from attacker action (payload).",
+      "Provides layered PoC: isolated RCE in Handlebars (20s) + full chain (8 min) with chapter markers for clarity.",
+      "Documents version specificity (Handlebars <4.5.0) and quantifies blast radius (all deployments with feature enabled)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 298,
+    "scenario": "Two identical SQL injection vulnerabilities discovered: one in a startup's product ($2M ARR, 10 engineers), one in an enterprise SaaS ($500M ARR, 1000 engineers). Both affect user input validation in a search parameter. Both have identical CVSS scores (9.8), identical exploitation steps, and identical data exposure scope (100% of user database). Historical HackerOne data shows enterprise programs pay 3-5x more for identical SQL injection findings.",
+    "prompt": "Why do company scale and revenue structure signal payout expectations, and how should researchers allocate effort accordingly?",
+    "expected_answer": "Bounty payout correlates strongly with company revenue, not vulnerability severity. Two identical SQL injection vulnerabilities will pay $3k-$10k at a startup and $15k-$50k at an enterprise, solely due to budget allocation and risk tolerance. Key payout signals: (1) Company revenue: enterprise ($500M+) budgets 0.5-1% for security; startup ($2M) budgets 5-10% of revenue, but in absolute dollars, enterprise wins; (2) Insurance requirements: publicly-traded companies must disclose incidents; private startups do not\u2014regulatory risk is the payout multiplier; (3) Program scope maturity: enterprise programs have managed bug bounty platforms with established payout tables; startups often negotiate case-by-case; (4) Response time: enterprise programs guarantee 24-hour response; startups may take weeks. Research strategy before reporting: (1) Check the company's Crunchbase for ARR and funding stage; (2) Search HackerOne for the program's historical payouts for similar severity; (3) Look for IPO status or regulatory filings\u2014IPOs = higher payouts; (4) Check if the program uses a published scope document. Effort allocation: if you identify identical vulnerabilities in multiple programs, prioritize enterprise programs first (higher payout, better process). Data point: HackerOne's 2024 report shows enterprise SQL injection payouts average $25k vs startup averages $6k for identical CVSS.",
+    "reasoning_requirement": "Map company size/revenue to payout expectations; prioritize effort based on program maturity and risk structure.",
+    "evaluation_criteria": [
+      "Explains why identical CVSS scores yield 3-5x payout difference (revenue, insurance, regulatory risk).",
+      "Provides company research workflow: Crunchbase, HackerOne historical data, IPO status, scope maturity indicators.",
+      "Recommends effort allocation strategy: prioritize enterprise programs first, use startup programs for low-risk testing."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 299,
+    "scenario": "A researcher discovers that the main application (in-scope) trusts a sibling product's subdomain without validating the trust chain. Via a vulnerability in the in-scope subdomain, the researcher can escalate to compromising the out-of-scope product. The program's policy states 'we cover our main product and necessary integrations' but provides no explicit definition of 'necessary integration.' The out-of-scope product serves 10,000 users and processes $5M annually.",
+    "prompt": "How should researchers navigate scope boundaries when vulnerability chains cross between in-scope and out-of-scope properties?",
+    "expected_answer": "Scope boundary vulnerabilities are the highest-risk submission type because rejection feels personal, even though it's policy. This scenario sits at the gray zone: the initial vulnerability is in-scope (in-scope subdomain), but the impact crosses to out-of-scope property. Decision criteria: (1) If your entry point is 100% in-scope, and the chain reaches out-of-scope through a trust relationship, you have a strong case; (2) Frame the finding as 'Trust boundary bypass in in-scope property' rather than 'Vulnerability in out-of-scope property'\u2014ownership matters more than impact location; (3) Use the program's policy language: 'necessary integration' likely includes any product your engineers maintain or any service handling customer data. The $5M annual impact may convince the program to expand scope. Pre-submission strategy: (1) Submit a scoping question: 'If a vulnerability in Product A [in-scope] directly compromises Product B [out-of-scope], how should I classify it?'\u2014get written clarification; (2) Provide your PoC in two versions: one stopping at the in-scope boundary, one continuing to out-of-scope impact; (3) Let the program decide whether to award points for both or just the in-scope portion. Historical outcomes: 60% of programs award full payout for cross-boundary chains, 30% award partial, 10% reject. Document everything to protect your research if scope expands later.",
+    "reasoning_requirement": "Distinguish between entry-point scope and impact scope; frame findings by owner responsibility; use clarification questions to mitigate rejection risk.",
+    "evaluation_criteria": [
+      "Frames finding as 'in-scope trust boundary bypass' rather than 'out-of-scope vulnerability' to anchor scope claim to property ownership.",
+      "Provides layered PoC: in-scope portion only (standalone value) + full chain (impact context).",
+      "Recommends pre-submission scoping question with documented response to establish precedent for cross-boundary findings."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 300,
+    "scenario": "A 'Forgot Password' flow requires only the user's email address. The flow lacks rate limiting and sends tokens via email without verifying the user's email address first. An attacker can enumerate all registered emails via timing analysis (200ms for registered users, 1200ms for unregistered) and then mass-reset passwords for targeted accounts, forcing all users into password reset during a DDoS attack.",
+    "prompt": "How should researchers present multi-vector authentication issues that combine enumeration, timing attacks, and denial of service?",
+    "expected_answer": "This finding combines three separate vulnerability classes (user enumeration, timing attack, lack of rate limiting) into a single abuse chain, creating classification ambiguity between P2 and P3. Severity depends on how you frame the primary impact. Framing options: (1) As DDoS amplification: lack of rate limiting allows mass-reset spam, causing service disruption (P3, $2k-$5k); (2) As account takeover enablement: timing-based enumeration + mass-reset = targeted account compromise (P2, $5k-$15k); (3) As authentication bypass: combined vectors allow unauthorized password reset initiation (P2-P3, $5k-$15k). Most researchers report this as two separate findings (enumeration + lack of rate limiting) and get paid P5+P4. However, the correct approach is to frame this as a single P2 issue: 'User enumeration via timing + password reset spam = targeted authentication bypass.' Presentation strategy: (1) Lead with the complete attack: 'Attacker enumerates all users, mass-triggers password resets, and induces account lockout or password reset fatigue'; (2) Provide separate PoCs for each vector (timing attack script, rate-limit bypass proof) that demonstrate they are necessary; (3) Quantify business impact: 'Affects all users; can be triggered without authentication; scales to thousands of accounts.' Payout precedent: similar findings on HackerOne average $8k-$20k. Avoid splitting this into separate findings unless the program explicitly encourages it.",
+    "reasoning_requirement": "Combine multi-vector vulnerabilities into unified impact narrative; avoid fragmenting related findings into low-payout submissions.",
+    "evaluation_criteria": [
+      "Frames the finding as unified authentication bypass (enumeration + timing + lack of rate limiting) rather than three separate issues.",
+      "Provides individual PoCs for each vector (timing script, reset spam test) demonstrating necessity for full exploit chain.",
+      "Quantifies impact scope (all users, no authentication required) and compares payout: split submission (~$1.5k each = $3k total) vs unified (~$12k)."
+    ],
+    "category": "bounty_patterns"
   }
 ]
