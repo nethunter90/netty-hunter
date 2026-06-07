@@ -4128,5 +4128,135 @@
       "Quantifies risk by employee VPN population and mTLS token reuse; proposes P4 on defense-in-depth basis"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 371,
+    "scenario": "A deserialization vulnerability in a Java application processes user-supplied serialized objects during file upload. The vulnerability requires: (1) uploading a malicious serialized object, (2) triggering a specific workflow that deserializes it, (3) possessing internal gadget chain knowledge. The program documentation is vague about safe/unsafe workflows.",
+    "prompt": "How do you establish P1 severity for a complex reproduction chain?",
+    "expected_answer": "Complex reproduction chains require three proof layers: (1) confirmed code execution via Playwright proof-of-concept with measurable artifacts (command output, file creation, network callback\u2014not just application error), (2) no additional privilege elevation beyond documented scope, (3) reproducibility under clean conditions with explicit step-by-step instructions. For this deserialization flaw: craft the serialized object using available tools (ysoserial if Java), upload via the documented endpoint, trigger the unsafe workflow, capture evidence of RCE (e.g., touch /tmp/pwned, curl exfil callback, command output in response). Establish P1 severity by mapping post-compromise scope: can the attacker access user data? Modify records? Escalate to other services? Document the exact 3+ step reproduction sequence in a script. Frame the finding around the unused gadgets in the classpath\u2014this proves the vulnerability is not mitigated by environment hardening. If the unsafe workflow is labeled 'admin-only' in documentation but accessible to regular users, it's P1. If admin-only and role-enforced, it's P2-P3. Complexity of reproduction (3+ steps) actually strengthens severity when it demonstrates the flaw persists across multiple attack paths and isn't a one-off edge case. Programs reward researchers who show systematic exploitation, not theoretical vulnerabilities.",
+    "reasoning_requirement": "Map reproduction steps to confirmed code execution artifacts and scope boundaries.",
+    "evaluation_criteria": [
+      "Demonstrates proof-of-concept with measurable code execution artifact",
+      "Clearly maps reproduction steps to scope boundaries and privilege levels",
+      "Establishes post-compromise impact independent of attack complexity"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 372,
+    "scenario": "A web application's form validation displays error messages in plain text instead of styled error boxes. Users must scroll down to see validation feedback after form submission. A researcher reports this as 'poor UX discoverability causing user confusion.'",
+    "prompt": "Why is this typically P5/rejected, and what signals indicate legitimate escalation?",
+    "expected_answer": "UX discoverability issues are P5 or out-of-scope because they have zero direct security impact and minimal business value (users can scroll or re-submit). Payout signal is near-zero across all platforms. However, escalation exists when the UX flaw combines with security properties: (1) if the form handles sensitive data (passwords, credit cards, SSNs) and delayed feedback causes multiple failed submissions logged with timing variations, enabling user enumeration via response-time side channels, (2) if the form is on the authentication path and error differentiation (incorrect username vs. incorrect password) is obscured by poor UX, reducing attacker ability to enumerate valid accounts (this is a security benefit, not a flaw). Escalate only if you can demonstrate that the UX delays attack reconnaissance. For example: 'Password reset form shows errors only after scroll; combined with timing variations, enables account enumeration.' This becomes P3-P4 only if you prove the UX delay directly impacts security properties. The key signal: does the UX issue enable or amplify an attack? If not, it's P5. Programs like HackerOne explicitly reject standalone UX issues; Bugcrowd may accept minor fixes in critical auth flows if tied to security. Always check program rules before reporting. When in doubt, ask the program: 'Is UX improvement in-scope if combined with timing-based enumeration?'",
+    "reasoning_requirement": "Recognize when UX issues have zero security signal vs. when they combine with side channels.",
+    "evaluation_criteria": [
+      "Identifies zero payout signal for standalone UX issues",
+      "Recognizes when UX obscuration provides security benefit vs. creates vulnerability",
+      "References program-specific policies on UX acceptance"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 373,
+    "scenario": "A researcher discovers an API endpoint at /api/v2/profile/{id} that reflects user-supplied input in JSON responses without sanitization. HackerOne program history shows the same vulnerability was marked duplicate on /api/v1/profile/{id} six months ago. The current finding targets a distinct microservice with a separate incident response team. The program allows service-specific reports.",
+    "prompt": "How do you evaluate and overcome duplicate risk across HackerOne program structure?",
+    "expected_answer": "HackerOne's overlapping program scopes (main vs. service-specific) create duplicate risk if root causes and assets are identical. The duplicate gate: does the prior disclosure cover the EXACT same asset and root cause, or is it a different service/version? Here, argue separation: (1) the prior report was on /api/v1/profile\u2014a deprecated API version, (2) the current finding is /api/v2/profile\u2014a separate microservice with different backend and remediation timeline, (3) v2 may handle additional fields (e.g., sensitive PII not in v1), increasing impact. Frame the report to emphasize scope distinction and unique business impact. Before submission, search program disclosure history for the exact endpoint and version. If the prior report is closed as 'fixed,' note that the fix was version-specific and v2 remains vulnerable. HackerOne's duplicate policy prioritizes first-to-report on the same asset but allows re-reporting if you prove scope separation and impact uniqueness. Include a note in your report: 'Related to report #XXXX (v1 API), but this affects v2 microservice with independent remediation path. I can delete if confirmed as duplicate.' This transparency builds reviewer trust, expedites triage, and increases acceptance likelihood. If rejected as duplicate, the learning informs future reports: always check version history and service ownership before submitting.",
+    "reasoning_requirement": "Distinguish same-asset duplicates from scope-separated findings using API versioning and service ownership.",
+    "evaluation_criteria": [
+      "Separates API versions and microservices to argue uniqueness",
+      "Uses scope documentation and remediation ownership to prove independence",
+      "Demonstrates awareness of HackerOne duplicate policy and includes transparency note"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 374,
+    "scenario": "A Bugcrowd program states: 'testing of legacy API endpoints deprecated as of 2024 is out-of-scope.' A researcher finds an authentication bypass on a legacy endpoint that still returns live production user data. The endpoint is marked 'deprecated' in documentation but remains functional and unauthenticated requests succeed.",
+    "prompt": "How do you navigate scope ambiguity when 'deprecated' endpoints still expose production data?",
+    "expected_answer": "'Deprecated' in Bugcrowd scope often means 'not actively developed' but doesn't mean 'shut down.' Distinguish by analyzing: (1) is the endpoint authenticated or does it return live data? (Yes\u2014this endpoint is fully accessible), (2) can modern endpoints achieve the same function? (If yes, strengthens 'out-of-scope' argument; if no, still in active use), (3) what is the deprecation timeline? ('As of 2024' could mean 'will sunset in Q4' or 'has been deprecated for a year'\u2014temporal context matters). The safest approach is a clarifying report: 'Authentication bypass exists on /api/legacy/users/{id}. This endpoint is documented as deprecated, but currently exposes live production user data. If shutdown is planned for [date], this may be low-priority. However, if it remains in production, this represents unauthorized access to production records.' This reframes scope as a program decision, not a researcher judgment. Bugcrowd reviewers will then clarify scope status. Include a timeline question: 'Current hunt date: June 2024. If deprecation sunset is planned, what is the ETA?' Bugcrowd is more flexible than HackerOne on gray-area scope but values transparency about ambiguity. If rejected as out-of-scope, request clarity: 'Can you confirm whether endpoints containing production data are in-scope regardless of deprecation status?' This informs future hunts and builds researcher credibility.",
+    "reasoning_requirement": "Identify ambiguity in 'deprecated' terminology and propose clarity through data-freshness analysis.",
+    "evaluation_criteria": [
+      "Identifies the ambiguity ('deprecated' \u2260 'shut down') via timeline analysis",
+      "Proposes a clarifying report format that shifts scope decision to the program",
+      "References Bugcrowd's flexibility vs. stricter platform policies"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 375,
+    "scenario": "A researcher discovers Server-Side Template Injection (SSTI) in a Jinja2 endpoint allowing arbitrary file read. They submit to Intigriti with a screenshot of /etc/passwd being read, minimal reproduction, no CVSS score, and a note 'This is P1 RCE.' The report is rejected with feedback: 'Missing CVSS calculation and detailed steps.'",
+    "prompt": "What submission format mistakes reduce Intigriti acceptance despite valid findings?",
+    "expected_answer": "Intigriti enforces stricter submission formatting than HackerOne or Bugcrowd, particularly CVSS quantification and reproducible step clarity. Common rejection triggers: (1) claiming 'P1 RCE' without CVSS context\u2014Intigriti requires explicit CVSS 3.1 scores calculated using the NVD calculator, (2) screenshot-only evidence without copy-paste reproducible steps (HTTP requests, command chains, payloads), (3) missing 'affected versions/components' field, (4) no business impact statement separated from technical risk. To strengthen the SSTI report: (1) calculate CVSS explicitly: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H = 9.8 (Critical), with justification for each metric, (2) provide exact steps: 'POST /template/render HTTP/1.1\nContent-Type: application/json\n{\"template\": \"{{ open('/etc/passwd').read() }}\"}' (include actual HTTP request, not just description), (3) specify affected versions: 'Jinja2 < 3.1 with default environment,' (4) frame business impact separately: 'Attacker gains arbitrary file read access, enabling credential theft, config exfiltration, and lateral movement.' Intigriti also values researcher profile strength\u2014link prior valid reports. On resubmission after rejection, include reviewer feedback verbatim, demonstrating you addressed each concern. Programs on Intigriti are often fintech/healthcare; compliance impact (PCI DSS, HIPAA, SOC 2) strengthens the case. Always structure submissions as: Technical Finding \u2192 CVSS \u2192 Steps \u2192 Impact \u2192 Remediation.",
+    "reasoning_requirement": "Recognize Intigriti-specific submission requirements and format severity claims with quantified metrics.",
+    "evaluation_criteria": [
+      "Demonstrates CVSS 3.1 calculation with explicit metric justification",
+      "Provides copy-paste reproducible steps (HTTP requests, payloads) with affected versions",
+      "Frames business impact and compliance exposure separately from technical description"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 376,
+    "scenario": "A finding: email-based password reset tokens are 6-digit numeric codes without rate limiting. Theoretical CVSS is 5.7 (Medium): AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N. However, the e-commerce platform processes 5M password resets daily. Statistical analysis shows 1M-attempt brute force can compromise ~50K accounts over 12 hours using residential IPs.",
+    "prompt": "How do you argue business impact when CVSS underestimates real-world risk?",
+    "expected_answer": "CVSS is a static framework; business impact is contextual and temporal. CVSS:3.1 rates this Medium because attack complexity (AC:H) reflects theoretical brute-force effort. In practice: (1) scale matters\u20145M resets daily \u00d7 99% unique distribution = ~50K tokens vulnerable to 1M-attempt attacks per day, (2) attack window matters\u2014tokens valid 24-48 hours provide wide window for distributed attacks, (3) downstream access matters\u2014password reset = full account takeover = payment method access, PII exfiltration, GDPR breach notification obligation. Reframe the finding: 'While CVSS rates this 5.7 (Medium), business impact is P1 (Critical) because: (a) token space (1M possibilities) is small relative to daily reset volume (5M), (b) attack complexity is reduced by automation and distributed IP rotation, (c) successful exploitation leads to full account compromise including payment data (PCI compliance violation). Statistical proof: 1M-attempt brute force on 50K daily tokens = 2% success rate \u00d7 5M resets = 100K compromised accounts annually.' Include a proof-of-concept showing token generation patterns (time-seeding, user-ID patterns) to demonstrate that tokens are even more predictable than theoretical complexity. Programs weight business impact heavily; explicitly separate CVSS limitations from bounty eligibility. The program decides payout based on impact scale (100K accounts) and compliance exposure (PCI DSS), not CVSS score. Frame remediation: 'Implement alphanumeric 10+ character tokens or OTP-based verification with rate limiting.'",
+    "reasoning_requirement": "Quantify scale impact and compliance penalties to override CVSS underestimation.",
+    "evaluation_criteria": [
+      "Quantifies exploitation likelihood with statistical analysis (tokens vulnerable per day)",
+      "Identifies compliance penalties (PCI DSS breach notification) and user-impact scale",
+      "Separates CVSS limitations from real-world risk to argue severity upgrading"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 377,
+    "scenario": "A researcher chains three vulnerabilities: (1) a self-service API creates temporary admin tokens (P2-level), (2) admin actions are logged in a cleartext audit log endpoint (P2-level), (3) the audit log date filter doesn't validate format, allowing log injection (P3-level). Alone, each is moderate. Combined: attacker creates admin tokens, watches them in logs, injects false entries to hide activity.",
+    "prompt": "How do you frame chained vulnerabilities for maximum impact and payout recognition?",
+    "expected_answer": "Chained vulnerabilities (CVSS attack chain bonus, CVE scoring advantage) attract significantly higher payouts when framed as a coordinated attack narrative rather than three separate issues. The key is demonstrating that patching individual components fails to prevent the attack. Establish the attack workflow: 'Attacker creates temporary admin token via /api/token/create \u2192 observes token in /api/audit/logs (confirms creation) \u2192 injects false log entries via malformed date parameter to hide administrative activity from forensic review.' Then establish amplification: (1) individually, token creation might be intended functionality, (2) individually, log exposure is medium risk, (3) individually, log injection is low-severity. Together: 'Undetectable administrative access with audit trail tampering prevents forensic detection and incident response.' CVSS for the chain: AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H = 9.8 Critical. Frame remediation as systemic (not per-component): encrypt audit logs with HMAC signatures, implement audit log immutability, rotate admin token credentials regularly. Programs reward this highly because: (1) demonstrates deep system understanding, (2) fix cost is high (systemic vs. single-endpoint patch), (3) scarcity (requires chaining 3 flaws, competitors unlikely to find it), increasing payout tier. Submit as a single unified report with visual attack workflow diagram. Include timeline showing dependencies between steps. If the program tries to split it into three findings, argue: 'This is a single attack chain; patching only (1) or (2) doesn't prevent exploitation.'",
+    "reasoning_requirement": "Demonstrate attack amplification where each step enables the next and partial patches fail.",
+    "evaluation_criteria": [
+      "Provides attack workflow diagram showing each step enables the next",
+      "Proves that patching individual components fails to prevent the attack",
+      "Frames remediation as systemic to increase fix complexity perception"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 378,
+    "scenario": "A Bugcrowd program explicitly excludes 'staging/sandbox environments' but a researcher discovers database injection on staging.example.com. The staging database is a production-data replica updated daily from production. The vulnerability exposes real user records (names, emails, hashed passwords) and sensitive PII.",
+    "prompt": "How do you determine if staging-environment data exposure violates scope bounds?",
+    "expected_answer": "Staging vs. production scope disputes hinge on three factors: (1) data freshness (production replica or sanitized test data?), (2) environment isolation (separate database or backend-shared replica?), (3) disclosure risk (could staging compromise lead to production impact?). In this case: staging contains a production-data replica with real user PII updated daily, so data exposure has immediate impact equivalent to production breach. The argument: 'While staging is listed as out-of-scope, the database is a production replica containing live user records (names, emails, hashed passwords). Exploitation exposes the same PII as a production attack and may enable credential harvesting for password-spray attacks. Additionally, if staging and production share authentication systems or deployment pipelines, this could be a stepping stone to production compromise.' Submission strategy: (1) report as 'Staging environment with production data replica' (respect scope language while clarifying data classification), (2) ask for clarification: 'If staging contains production data replicas, should database injection here be in-scope?' (3) provide proof\u2014show the data is production data (real usernames, timestamps matching production timelines, cross-reference with public LinkedIn data if applicable), (4) frame remediation: 'Remediate on both staging and production to prevent lateral movement and future data leakage.' Bugcrowd typically accepts these if the researcher clearly separates technical finding from scope question. If rejected, follow up: 'Confirm whether endpoints exposing production data are in-scope regardless of environment label.' This learning informs future hunts.",
+    "reasoning_requirement": "Distinguish data freshness and production-replica status from environment labels.",
+    "evaluation_criteria": [
+      "Identifies production data replica status as distinct from 'staging' environment label",
+      "Proves data is production replica via cross-referencing timestamps and user records",
+      "Proposes clarifying question to resolve scope ambiguity based on data classification"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 379,
+    "scenario": "A researcher analyzes two findings: (1) race condition in payment flow allowing duplicate charges (requires custom script, <1% user trigger rate), (2) missing email verification on signup (affects 100% of new users, one-line fix). Both are valid. Program pays $500 for P3, $5K for P2, $30K for P1. Which should be prioritized?",
+    "prompt": "What payout signals predict program prioritization and bounty tier?",
+    "expected_answer": "Payout signals reflect program values and risk appetite. Analyze four dimensions: (1) fix cost (engineering hours \u00d7 hourly rate), (2) incident likelihood (% of users/transactions affected), (3) compliance impact (GDPR, PCI, CCPA penalties), (4) attack automation (easily exploitable at scale?). Here: race condition has high fix cost (requires careful synchronization logic refactoring), low likelihood (<1% accidental trigger), low automation potential. Email verification has low fix cost (validation rule addition), 100% likelihood (affects all signups), medium automation (bots create unverified accounts). Payout signals for email issue: (1) compliance exposure\u2014unverified email \u2192 account takeover via password reset \u2192 GDPR breach notification (\u20ac20M or 4% revenue penalty), (2) scale\u2014affects every signup, (3) detection ease\u2014attacker can create 10K accounts daily. Program likely pays $15K-$30K (P1 tier) because: (a) it's a guaranteed security control failure affecting entire user base, (b) remediation impacts signup-flow infrastructure, (c) compliance penalty is quantifiable and substantial, (d) attacker can exploit at scale. Race condition may only get $1K-$3K because it's hard to exploit, low-frequency, and hard to detect (accidental duplicate charge = customer service issue, not attacker signature). Before reporting, estimate: 'How many users/transactions daily affected? What's the maximum compliance penalty?' High compliance + high scale = high payout tier. Cross-reference program's published payout tiers and past reports. When unsure, ask: 'How do you weight systemic security controls (all users) vs. rare race conditions?'",
+    "reasoning_requirement": "Quantify exploitation scale and compliance exposure to predict payout tier.",
+    "evaluation_criteria": [
+      "Quantifies exploitation likelihood and affected-user scale (% or absolute numbers)",
+      "Identifies compliance penalties and ties to regulatory frameworks (GDPR, PCI DSS)",
+      "Distinguishes between technical complexity (hard to find) and payout priority (user impact)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 380,
+    "scenario": "Two findings: (1) CORS misconfiguration allowing any origin (one HTTP header change to fix), (2) XML External Entity (XXE) injection via file upload requiring specific XML structure, DTD definition, file server access to exfiltrate data, and specific file format. XXE is more complex but technically impressive.",
+    "prompt": "When does reproduction complexity reduce vs. increase severity classification?",
+    "expected_answer": "Reproduction complexity is a double-edged signal\u2014it increases severity when it indicates a fundamental architectural flaw (attacker needs system knowledge, high scarcity), but decreases when it reflects artificial constraints (requires user cooperation or niche conditions). For CORS: simple reproduction (change origin header) indicates systematic misconfiguration affecting all endpoints and API consumers. High severity (P1-P2). For XXE: complex reproduction (specific XML structure, DTD, file server interaction) could suggest niche attack surface. However, escalate XXE severity if: (1) file uploads are common user-facing feature (resume uploads, profile pictures, document parsing), (2) XML parsing is default-enabled (not rare/deprecated), (3) data exfiltration reaches sensitive stores (database credentials, /etc/passwd). Reframe XXE complexity: 'Requires specific XML structure, but any user with file upload access can craft this. Exploitation enables arbitrary file read on 100% of uploads.' This recontextualizes complexity as a feature of functionality breadth, not a liability. Rule: complexity tied to functionality breadth = high severity. Complexity tied to attacker constraints (requires specific timing, user interaction, race conditions) = lower severity. Always present minimal reproduction case (CURL payload or screenshot) to reduce reviewer friction, even if actual exploitation is complex. For XXE, provide: 'curl -X POST http://target/upload -F \"file=@malicious.xml\"' (exact syntax). For CORS, show exact origin that bypasses (e.g., 'origin: https://attacker.com'). Severity comes from impact and user reach, not research effort required.",
+    "reasoning_requirement": "Distinguish fundamental-flaw complexity from attacker-constraint complexity using functionality reach analysis.",
+    "evaluation_criteria": [
+      "Differentiates between architectural-flaw complexity (high severity) and attacker-constraint complexity (lower severity)",
+      "Connects reproduction difficulty to user-facing functionality breadth and affected user percentage",
+      "Provides minimal reproduction case (copy-paste payload) despite underlying exploitation complexity"
+    ],
+    "category": "bounty_patterns"
   }
 ]
