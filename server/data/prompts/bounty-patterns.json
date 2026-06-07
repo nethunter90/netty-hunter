@@ -1078,5 +1078,135 @@
     "reasoning_requirement": "Distinguish between unified architecture failure and independent vulnerability aggregation.",
     "evaluation_criteria": "Addresses when to split vs consolidate findings; considers remediation strategy and program policy; discusses duplicate risk coordination.",
     "category": "bounty_patterns"
+  },
+  {
+    "id": 121,
+    "scenario": "An internal image processing endpoint accepts a URL parameter that is fetched server-side without validating against an internal IP allowlist.",
+    "prompt": "What is the vulnerability and what business systems might be exposed?",
+    "expected_answer": "This is a Server-Side Request Forgery (SSRF) vulnerability where the server makes requests to attacker-controlled URLs. The application fails to validate that URLs are external-only and reachable by end-users, allowing attackers to access internal services, metadata endpoints (AWS EC2 metadata, GCP metadata), or internal APIs. Impact escalates if the service runs with IAM roles or API credentials. In bug bounty triage: SSRF to metadata endpoints (AWS/GCP/Azure) = P1, SSRF to internal APIs = P1-P2 depending on what data is leaked, SSRF to internal monitoring tools = P2-P3. Payout signals include: proof of accessing cloud metadata, evidence of inter-service data leakage, or demonstration of privilege escalation through exposed credentials. On HackerOne, these often pay $2k-$10k+; on Bugcrowd, similar tier. Reproduction complexity is typically low (one HTTP request), which increases likelihood of duplication\u2014check prior reports carefully.",
+    "reasoning_requirement": "Identify SSRF as distinct from generic 'makes HTTP requests' and understand cloud metadata as critical asset.",
+    "evaluation_criteria": [
+      "Identifies server-side fetching as the root cause",
+      "Mentions cloud metadata endpoints or internal API exposure",
+      "Specifies payout tier and duplication risk"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 122,
+    "scenario": "A payment processing endpoint processes refund requests without idempotency checks. Multiple simultaneous refund requests against the same transaction are processed independently.",
+    "prompt": "Why is this critical despite a low CVSS score, and how should it be reported?",
+    "expected_answer": "This is a race condition / concurrency vulnerability in financial logic. While CVSS scoring might yield a moderate score (due to requiring timing precision and user interaction), the business impact is severe: attackers can double-refund transactions, leading to direct financial loss. This is a gap between CVSS and real-world severity\u2014a P1/P2 bounty despite low exploitability metrics. The vulnerability requires demonstrating: (1) simultaneous requests to the same endpoint for the same transaction ID, (2) evidence of both succeeding (two refunds recorded), and (3) net negative impact to the platform. Reproduction is non-trivial (requires race condition crafting), which reduces duplicate likelihood. Report strategy: lead with financial impact, quantify potential loss, include a race condition proof-of-concept (using threading or concurrent HTTP clients). HackerOne/Bugcrowd will prioritize based on financial exposure; $5k-$25k+ payout range. Avoid relying on CVSS base score alone; emphasize business logic breakdown.",
+    "reasoning_requirement": "Recognize that concurrency bugs in financial flows cause CVSS/impact divergence and require specialized reproduction.",
+    "evaluation_criteria": [
+      "Addresses the CVSS vs business impact gap",
+      "Mentions race condition reproduction techniques",
+      "Specifies financial loss as the key payout signal"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 123,
+    "scenario": "A company's API documentation lists rate limits of 100 req/min per endpoint. Testing reveals that the /api/users/list endpoint has no effective rate limit, while /api/users/{id} is properly limited.",
+    "prompt": "Is this a vulnerability? How does scope ambiguity affect severity?",
+    "expected_answer": "This is an inconsistent rate limiting implementation across endpoints. Whether it's a reportable vulnerability depends on scope: if /api/users/list is documented as having a rate limit but doesn't enforce it, this is a P3-P4 security control bypass. If the endpoint is intentionally public/unlimited but exposes sensitive data (email, phone, account creation date), it becomes P2-P3 (information disclosure + enumeration). Scope ambiguity is a major triage challenge: always clarify with the program whether rate limiting is in-scope and whether the endpoint's documented vs. actual limits constitute a vulnerability. HackerOne programs often reward this as \"Broken Authentication/Authorization\" (P3), while Bugcrowd may classify as \"Rate Limiting\" (P4). Intigriti emphasizes business impact: if the list can enumerate all users (user enumeration attack), payout increases. Reproduction complexity is trivial (loop HTTP requests), making duplication risk high\u2014check prior reports extensively. Payout signals: quantify leak scope (how many users exposed?), time to enumerate (seconds vs. hours), and whether parallel/distributed enumeration amplifies impact.",
+    "reasoning_requirement": "Differentiate between documented vs. actual behavior and assess how scope rules affect bounty severity.",
+    "evaluation_criteria": [
+      "Clarifies the difference between documented and actual rate limits",
+      "Addresses scope ambiguity and program-specific variations",
+      "Mentions duplication risk and enumeration-based impact amplification"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 124,
+    "scenario": "A user profile page allows HTML markup in the 'About Me' field. The field is displayed on the user's public profile without encoding, and also appears in search results and user directory listings.",
+    "prompt": "Why is this difficult to deduplicate, and what makes it reportable as a single finding?",
+    "expected_answer": "This is a stored XSS vulnerability with multi-vector exposure. The same payload executes across at least three contexts (profile page, search results, directory). Duplication risk is HIGH because researchers may report this as three separate findings ('XSS in profile', 'XSS in search', 'XSS in directory'), all stemming from the same root cause (unsanitized HTML storage). Best practice: report as a single vulnerability affecting the 'About Me' field with examples of all affected contexts. Include proof-of-concept showing the payload executes in each context. Specify the attack flow: attacker creates account \u2192 injects payload \u2192 victim visits profile/search/directory \u2192 XSS fires \u2192 session hijack/account takeover. P2 severity if user-to-user (requires social engineering), P1 if admin/staff profiles are vulnerable (reduced required interaction). Payout varies: stored XSS to admin = $2k-$5k+, user-to-user = $1k-$2k. Platform matters: HackerOne rewards reflected vs. stored distinction strongly; Bugcrowd emphasizes impact scope (how many users can be affected?). Avoid submitting this as three findings.",
+    "reasoning_requirement": "Recognize multi-vector XSS as a single vulnerability and quantify duplication risk across contexts.",
+    "evaluation_criteria": [
+      "Explains why this should NOT be reported as three separate findings",
+      "Identifies the root cause (unsanitized HTML storage) as the key",
+      "Specifies attack chain and platform-specific payout signals"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 125,
+    "scenario": "An admin endpoint /api/admin/users/{userId}/permissions allows any authenticated user to view/modify user permissions, returning full role configuration including API keys.",
+    "prompt": "Why is the reproduction chain complex, and how does that affect severity classification?",
+    "expected_answer": "This is an Insecure Direct Object Reference (IDOR) in admin functionality with high complexity. While the root vulnerability (missing authorization check) is simple to test, the reproduction chain to demonstrate *impact* is non-trivial: (1) identify a valid admin user ID, (2) authenticate as a low-privileged account, (3) request the admin endpoint with the admin's user ID, (4) demonstrate API keys were leaked, (5) show that stolen keys enable impersonation or further privilege escalation. Each step requires manual effort or custom tooling. Reproduction complexity affects severity: P1 if the endpoint exposes production API keys directly (immediate impact), P2 if it exposes role configuration that enables privilege escalation (requires proof of escalation chain). Triage teams respect findings with detailed reproduction steps; vague IDORs ('I can access other users') are often closed as duplicates. To stand out: include screenshots of the leaked data, demonstrate that stolen credentials grant admin privileges, and quantify user exposure (e.g., 'at least 50 admin accounts were enumerable'). HackerOne/Bugcrowd: P1 = P1 payout tier ($5k-$25k+), P2 = $2k-$5k. Include a detailed replay attack flow.",
+    "reasoning_requirement": "Distinguish between vulnerability discovery (simple) and impact proof (complex) in authorization bypasses.",
+    "evaluation_criteria": [
+      "Acknowledges the multi-step reproduction chain to demonstrate impact",
+      "Explains how complexity affects triage and deduplication",
+      "Provides payout benchmarks correlated to impact proof quality"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 126,
+    "scenario": "API error responses return full stack traces including database connection strings, server IP addresses, and dependency versions when exceptions occur.",
+    "prompt": "Why might this receive a surprising payout despite low CVSS, and how should it be framed?",
+    "expected_answer": "This is information disclosure with a low CVSS base score (often 5.3, medium) but disproportionate business impact. Stack traces leak critical reconnaissance data: database server IP (enables network mapping), connection strings (may contain credentials), and software versions (enables version-specific exploit targeting). The vulnerability itself doesn't cause direct compromise, but it enables attacks downstream. Payout signals: frame as 'vulnerability enabler' rather than standalone issue. Mention that this information directly lowers the barrier to exploiting other vulnerabilities (e.g., 'once attacker knows we run PostgreSQL 12.3 with [CVE], they can craft a targeted exploit'). Programs care about information leak scope: if only accessible to authenticated users, P4 ($200-$500); if public API, P3-P2 ($500-$2k). Bugcrowd and HackerOne both reward information disclosure highly when chained with downstream attacks. Strategy: research if the leaked versions have known CVEs, then link them in your report ('stack traces reveal PostgreSQL 12.1, which is vulnerable to CVE-YYYY-XXXX'). This transforms a boring disclosure into a severity escalation. Include remediation (disable stack traces in production, log them server-side only).",
+    "reasoning_requirement": "Recognize information disclosure as an attack enabler and quantify reconnaissance value.",
+    "evaluation_criteria": [
+      "Explains the downstream attack chain enabled by the leak",
+      "Mentions specific payout signals (version-specific CVEs, credential exposure)",
+      "Differentiates payout based on accessibility (public vs. authenticated)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 127,
+    "scenario": "A web application's login endpoint processes authentication via both username/password AND API key in the same request. Parameter pollution occurs when both are present; the application processes only the API key and ignores the username/password fields.",
+    "prompt": "Why do HackerOne and Bugcrowd classify this differently, and what's the correct approach per program?",
+    "expected_answer": "This is HTTP Parameter Pollution (HPP) resulting in authentication bypass. The classification and payout differ dramatically between platforms due to their vuln taxonomy: HackerOne classifies as 'Broken Authentication' (P1-P2, $2k-$5k+), emphasizing the bypass mechanism. Bugcrowd may classify as 'Authentication Flow Bypass' (similar tier, $2k-$5k) or downgrade to 'Parameter Tampering' (P3-P4) if the API key is attacker-controlled (turning it into a TOCTOU issue rather than bypass). Intigriti values the 'unauthenticated' aspect: if the API key can be omitted (requiring only the name/password field to be present), they reward higher. Key triage question: can an attacker control the API key parameter? If yes, it's 'weak authentication logic' (P2-P3). If the application forces a valid API key but ignores credentials when both are present, it's a critical bypass (P1). Reproduction complexity is trivial (POST with both fields), so duplication risk is HIGH. To avoid duplicates: demonstrate a complete attack chain (account takeover, privilege escalation). Program-specific strategy: check the program's hall of fame and prior vulns to see how similar issues were classified. Always link to the program's scope document and explicitly state which asset class is affected.",
+    "reasoning_requirement": "Understand how parameter pollution interacts with authentication and how different platforms weight the same vulnerability differently.",
+    "evaluation_criteria": [
+      "Identifies the HPP mechanism and explains authentication bypass result",
+      "Addresses platform-specific classification differences (HackerOne vs Bugcrowd vs Intigriti)",
+      "Mentions duplication risk and how to differentiate this report from prior art"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 128,
+    "scenario": "A search filter in the admin panel accepts a user ID parameter that is concatenated into a SQL WHERE clause. Input validation strips single quotes but not double quotes, allowing a SQL injection payload via double-quoted strings.",
+    "prompt": "How can this be amplified from P3 to P1, and what's the complete attack narrative?",
+    "expected_answer": "This is SQL Injection with incomplete input validation (blacklist-based quote escaping). Base severity is P2-P3 (admin-only search function, requires authentication). Amplification to P1 occurs via a three-step narrative: (1) inject INTO...SELECT payload to extract user password hashes, (2) crack hashes offline (reasonable if weak hashing), (3) demonstrate account takeover of an admin account. The amplification isn't just 'you can extract data' but 'you can escalate from authenticated user to full system compromise.' Include the complete kill chain in your report: proof of SQL injection \u2192 hash extraction \u2192 offline cracking \u2192 admin session hijack. This transforms 'info disclosure in admin panel' (P3) into 'authentication bypass via insider escalation' (P1). Impact amplification signals for payout: (1) demonstrate data exfiltration (which users were dumped?), (2) show hash cracking success rate (if hashes are SHA1, your success rate is >90%), (3) link to downstream privilege escalation. HackerOne/Bugcrowd: P1 SQL injection pays $5k-$25k+, P3 pays $500-$1.5k. The difference is the narrative. Always include: vulnerable code snippet, injection payload, query reconstruction, and proof-of-concept output showing extracted data.",
+    "reasoning_requirement": "Recognize that incomplete input validation enables SQL injection and construct a kill chain to maximize impact/payout.",
+    "evaluation_criteria": [
+      "Explains the incomplete validation mechanism (quotes blacklist)",
+      "Constructs a three-step amplification chain (injection \u2192 extraction \u2192 takeover)",
+      "Quantifies payout impact of adding downstream exploitation"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 129,
+    "scenario": "A sensitive API endpoint (/api/user/profile) returns Access-Control-Allow-Credentials: true and Access-Control-Allow-Origin: * without validating the requesting origin.",
+    "prompt": "Why does Bugcrowd reward this higher than HackerOne, and what makes it P1 vs P3?",
+    "expected_answer": "This is CORS misconfiguration enabling cross-site request forgery (CSRF) with credential leakage. The dangerous combination is: (1) wildcard origin (*) + (2) credentials enabled (allows cookies/auth headers to be sent cross-origin) = any attacker can forge requests from a victim's browser and read response data. Payout divergence: HackerOne often classifies as 'CSRF' (P3-P4, $500-$2k) because CSRF technically requires state-change impact (transfer funds, change password). Bugcrowd classifies as 'Insecure Cross-Origin Resource Sharing' (P2-P3, $1k-$3k) because they weight the confidentiality breach (attacker can read user profile data cross-site) higher. Intigriti's payout depends on whether the endpoint modifies state: if it's read-only (profile fetch), P3 ($500-$1.5k); if combined with a state-change endpoint (payment API), P1-P2 ($2k-$5k+). Reproduction is trivial (embed fetch in attacker's page, intercept response), so duplication is HIGH. To stand out: demonstrate the attack in practice (provide attacker HTML page that exfils victim data), show what data was leaked (PII, payment info), and link to downstream attacks (can you read auth tokens? Modify profile?). The payout signal is: CORS misconfig = information disclosure baseline ($500-$1k), + state-change capability = ($2k+).",
+    "reasoning_requirement": "Distinguish CORS misconfiguration severity based on endpoint impact (read-only vs. state-change) and platform-specific valuations.",
+    "evaluation_criteria": [
+      "Explains the credential leakage mechanism via wildcard + credentials",
+      "Addresses HackerOne vs Bugcrowd classification differences",
+      "Provides impact demonstration (what data/actions are exposed) as payout signal"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 130,
+    "scenario": "A password reset endpoint generates tokens using only the user ID and timestamp, making them predictable. The token expires in 48 hours and is sent via email. Researchers discover that tokens can be brute-forced in 10 seconds.",
+    "prompt": "How do you determine if this is a duplicate finding, and what makes it reportable as new?",
+    "expected_answer": "This is a weak token generation vulnerability (OWASP A02: Cryptographic Failures). Duplication risk is VERY HIGH because password reset token weaknesses are frequently reported. Before submitting: (1) search the program's hall of fame and prior disclosures for 'password reset token', (2) check if they've patched similar issues before, (3) verify the token scheme (check if they recently updated from MD5-based tokens). If prior reports exist, your submission is likely closed as duplicate (zero payout). To make it reportable as NEW: (1) demonstrate a novel aspect (e.g., tokens are reusable\u2014multiple reset links work simultaneously, enabling race condition-based account takeover), or (2) show downstream chaining (weak tokens allow enumeration of valid email addresses, enabling targeted phishing attacks), or (3) identify that the vulnerability affects multiple token types (password reset, email verification, invite links\u2014all use the same weak scheme). Severity: standalone weak tokens = P3-P4 ($300-$1k), weak tokens + reusability = P2 ($1k-$3k), weak tokens enabling enumeration = P2-P3 ($800-$2k). Include: token generation code analysis, brute-force POC with runtime measurement, and a full attack narrative (reset account \u2192 what access is gained?). If submitting anyway, explicitly note: 'This improves upon prior reports by demonstrating token reusability across concurrent resets.'",
+    "reasoning_requirement": "Assess duplication likelihood for common vulnerabilities and identify novel angles to make stale patterns reportable.",
+    "evaluation_criteria": [
+      "Explains the duplication checking process and prior art search",
+      "Identifies novel aspects that differentiate from typical weak token reports",
+      "Quantifies attack speed/feasibility and downstream impact as differentiation signals"
+    ],
+    "category": "bounty_patterns"
   }
 ]
