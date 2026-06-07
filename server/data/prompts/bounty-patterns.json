@@ -1728,5 +1728,135 @@
       "Clarifies whether exploitation targets secrets (P2) or generic context (P3) and assesses sandbox-bypass feasibility"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 171,
+    "scenario": "Race condition in concurrent balance transfer API allows double-spending of funds.",
+    "prompt": "How should the impact be classified and what reproduction chain complexity exists?",
+    "expected_answer": "This is a P1 critical vulnerability because it enables financial theft at scale. The race condition occurs when two transfer requests targeting the same source account are processed simultaneously without atomic validation, allowing the same balance to be transferred twice. Impact amplification occurs because: (1) attacker can automate large-scale fund theft across multiple accounts, (2) detection lag (reconciliation happens post-facto), and (3) replay potential across payment rails if system lacks idempotency tokens. Reproduction requires specific timing\u2014testing via concurrent HTTP requests or load tools to hit the narrow window. Classification challenge: Some platforms score this P2 if the fund transfer is capped by daily limits, but the ability to bypass those limits via parallelization (thousands of concurrent requests) re-escalates to P1. Business impact divergence: CVSS 7.5 (high) but actual loss is unbounded. Verification must confirm: funds were debited without crediting recipient (hung transaction), or both debited and credited (double-spend). Supply proof via API logs showing two simultaneous transaction initiations with same source balance.",
+    "reasoning_requirement": "Identify timing-window vulnerabilities and their automation potential; recognize when CVSS underrepresents financial impact.",
+    "evaluation_criteria": [
+      "Explains atomic validation breach and fund duplication mechanism.",
+      "Addresses automation/scale and impact amplification via parallel requests.",
+      "Distinguishes between CVSS scoring and actual financial loss magnitude."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 172,
+    "scenario": "Subdomain (api-staging.company.com) is pointing to stale AWS S3 bucket; scope document ambiguous on 'staging' coverage.",
+    "prompt": "How should the duplicate risk and scope validity be evaluated?",
+    "expected_answer": "Subdomain takeover findings face high duplicate rejection risk on HackerOne/Bugcrowd if staging infrastructure is explicitly excluded. Scope analysis: (1) Check program scope document for exact wording\u2014'production API only' excludes staging; 'all subdomains under company.com' includes it. (2) Verify the bucket's owner\u2014if AWS account belongs to company, it's valid even if stale; if it's an orphaned third-party bucket, claims are weaker. (3) Check DNS propagation status and update frequency to confirm actual takeover window. Payout signals: HackerOne frequently rejects staging-only findings with 'informational' or 'N/A' severity; Bugcrowd may pay P4-P3 depending on data exposure. Intigriti emphasizes 'realistic attack path'\u2014staging with production data gets P2+, staging with synthetic data gets P4 or rejection. Duplicate risk is extreme: if another researcher reported the same subdomain/bucket combination, yours is marked duplicate regardless of proof quality. Mitigation: search existing reports before submitting. If submitting, explicitly state why this is NOT a duplicate (different bucket, different takeover method) and include proof the bucket is actually writeable/controllable. Program-specific note: read Bugcrowd's 'Staging vs. Production' FAQ for that program.",
+    "reasoning_requirement": "Assess scope document precision; evaluate program-specific staging policies; detect duplicate vulnerability patterns.",
+    "evaluation_criteria": [
+      "Identifies scope ambiguity markers and proposes clarification steps.",
+      "Cites platform-specific policies (HackerOne vs Bugcrowd vs Intigriti) for staging findings.",
+      "Explains duplicate detection risk and pre-submission checks."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 173,
+    "scenario": "Email enumeration vulnerability (login endpoint reveals whether email is registered) chains to attacker-directed phishing campaign targeting company employees.",
+    "prompt": "What is the severity classification and how does impact amplification affect payout?",
+    "expected_answer": "Email enumeration is typically P4-P3 (low to medium) in isolation\u2014CVSS ~5.3 (information disclosure). However, when paired with a real-world social engineering campaign targeting a known employee list, it escalates to P2-P1 depending on outcome. Impact amplification chain: (1) Attacker enumerates company employee emails via login endpoint; (2) Sends targeted phishing emails ('Your account was accessed\u2014reset here') with fake reset link; (3) Captures credentials; (4) Gains access to company systems or customer data. Severity multiplier: if even one employee's credentials enable lateral movement to admin panel or customer database, the original enumeration finding is retroactively re-evaluated as P1 (unauthorized access chain). Program-specific variation: HackerOne often closes enumeration-only reports as duplicate/informational unless chained; Bugcrowd may pay P3 for enumeration with proof of phishing campaign (requires screenshot/email sample); Intigriti emphasizes 'real-world attacker impact'\u2014phishing chain examples significantly boost payout. Payout signal: provide proof of your own phishing test (e.g., enumeration results + sample phishing email you would send). Business impact divergence: CVSS remains ~5.3 (information disclosure), but business impact is 'credential compromise of X% of workforce'\u2014P1 in real terms. Classification rule: if you can prove OR demonstrate the enumeration enables credential theft at scale, upgrade to P2+.",
+    "reasoning_requirement": "Chain information disclosure to higher-order attack; recognize impact amplification; evaluate platform-specific proof requirements.",
+    "evaluation_criteria": [
+      "Describes complete attack chain from enumeration through credential capture.",
+      "Cites proof requirements per program (HackerOne vs Bugcrowd vs Intigriti).",
+      "Quantifies business impact multiplier when phishing succeeds."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 174,
+    "scenario": "XML External Entity (XXE) injection in file upload form; payload requires specific MIME type, 5-step validation bypass, and POST format to trigger.",
+    "prompt": "How does reproduction chain complexity affect severity classification and proof requirements?",
+    "expected_answer": "XXE is classified P1 if it leads to file disclosure (e.g., /etc/passwd) or RCE via Out-of-Band (OOB) exfiltration. However, reproduction complexity determines whether the finding is 'credible' or 'theoretical.' This vulnerability has: (1) MIME type check (must be application/xml or text/xml, not application/octet-stream); (2) Content validation (whitelist of allowed elements); (3) Entity expansion limits (XXE bomb prevention); (4) Network segmentation (OOB callback must reach attacker-controlled server); (5) Error handling (server must echo parsed content or leak via side-channel). Classification rules: If all 5 barriers require bypassing in sequence, proof of concept (PoC) must demonstrate each step\u2014single-step bypass is P3 (medium), multi-step is P2-P1. Reproduction chain complexity note: proof must include (1) exact payload (XML source code), (2) request format (raw HTTP with headers), (3) verification method (file read output or OOB callback log), (4) timing/repeatability. Payout signals: HackerOne pays P1 for file disclosure with PoC; P4 for theoretical XXE without proof of bypassing input validation. Bugcrowd emphasizes 'realistic attack surface'\u2014if validation is strict, they may downgrade to P4 even with PoC. Severity divergence: CVSS 8.6 (high) for confidentiality breach, but payout varies wildly based on whether attacker can actually read sensitive files (prod keys, database creds) vs. harmless config. Include file disclosure proof (e.g., /etc/hostname output) to establish real impact.",
+    "reasoning_requirement": "Assess multi-step attack prerequisites; distinguish theoretical from practical exploitability; map PoC complexity to severity.",
+    "evaluation_criteria": [
+      "Lists all validation layers and describes bypass method for each.",
+      "Specifies exact PoC format (payload, headers, verification method).",
+      "Quantifies severity based on reproducibility barriers, not just vulnerability class."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 175,
+    "scenario": "API key hardcoded in client-side JavaScript; researcher found via GitHub search; company claims it's read-only staging key with no production access.",
+    "prompt": "What is the duplicate risk and how should the payout classification differ between HackerOne and Bugcrowd?",
+    "expected_answer": "API key exposure is universally P1 if it grants production access, but duplicate risk is extreme: hundreds of researchers scan GitHub daily for credentials. Classification depends on: (1) key scope (staging vs. production), (2) permissions (read-only vs. write/delete), (3) key age (active vs. revoked), (4) whether it's already been exploited. Duplicate detection: GitHub search leaks are reported thousands of times per month. If your report includes only 'I found this key on GitHub,' rejection is near-certain with message 'publicly disclosed credential.' Differentiation strategy: (1) Verify the key is still active (make test API call); (2) Demonstrate impact beyond theoretical (e.g., 'key grants read access to 50,000 user profiles'); (3) Check if key has been previously reported (search HackerOne, Bugcrowd, security advisories). Platform divergence: HackerOne often closes GitHub-found credentials as 'out of scope\u2014public disclosure' unless you prove ongoing active exploitation. Bugcrowd pays P3-P2 if you demonstrate the key's actual permissions and scope with API call screenshots. Intigriti rewards first-reporter advantage heavily\u2014if you find it on GitHub but first report it there, higher payout than 10th reporter. Payout signal: do not submit unless you have proof the key is (1) actively used, (2) not yet revoked, (3) exploitable in your PoC. Scope ambiguity: if company claims 'staging keys have no access to production,' verify by attempting to access production endpoints\u2014if you succeed, re-classify as P1 across all platforms. Staging key exposure on HackerOne = P4 or 'informational'; on Bugcrowd = P3-P4 with proof.",
+    "reasoning_requirement": "Detect duplicate vulnerability reporting; differentiate novel from re-disclosed findings; assess platform-specific payout variance.",
+    "evaluation_criteria": [
+      "Explains how to verify key is active and exploitable (not already revoked).",
+      "Cites platform divergence (HackerOne vs Bugcrowd) on GitHub-sourced credentials.",
+      "Proposes PoC to prove scope (staging vs. production) and differentiate from duplicate reports."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 176,
+    "scenario": "Open redirect via 'redirect_to' parameter; attacker can redirect users to attacker-controlled domain; company argues it's P3 because browser warnings mitigate risk.",
+    "prompt": "How does CVSS scoring diverge from actual business impact, and what chain amplifies severity?",
+    "expected_answer": "Open redirect is rated P3-P4 under CVSS v3.1 (score ~5.4, medium) because modern browsers warn users before cross-site navigation. However, business impact can reach P1 if the redirect is chained with: (1) phishing (users click familiar origin, then redirected to fake login page); (2) credential theft (attacker captures reset tokens via redirect + parameter injection); (3) account takeover (if redirect parameter includes session ID or auth token). CVSS divergence example: CVSS rates open redirect as 'low risk' (users can see the redirect URL in browser bar), but in practice: (1) users trust their bank's domain (mybank.com) and click links without scrutinizing the redirect parameter; (2) attacker chains open redirect with password reset flow (mybank.com?redirect=attacker.com/fake-reset); (3) attacker intercepts reset token; (4) user account is compromised. Impact amplification: single open redirect = P3; open redirect + password reset flow = P2; open redirect + MFA bypass = P1. Classification rule: if you can demonstrate the redirect endpoint is (1) used in security-sensitive flows (password reset, MFA enrollment), (2) popular enough that users don't scrutinize links, (3) exploitable without user interaction (via JS redirect after page load), severity escalates to P2. Proof: submit PoC demonstrating full chain\u2014reset flow redirect to attacker domain with token capture. Platform note: HackerOne often requires impact amplification proof before upgrading from P3; Bugcrowd pays based on workflow it affects (password reset = P2, general redirect = P4).",
+    "reasoning_requirement": "Recognize vulnerability chaining and impact amplification; distinguish CVSS from real-world attack scenarios.",
+    "evaluation_criteria": [
+      "Identifies the security-sensitive workflow (reset, MFA) that amplifies risk.",
+      "Demonstrates complete phishing/credential capture chain with PoC.",
+      "Quantifies CVSS score divergence and explains why business impact is higher."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 177,
+    "scenario": "Public S3 bucket contains 2.3 GB of compressed database backups with PII (customer names, emails, phone numbers); bucket is misconfigured 'public-read' instead of private.",
+    "prompt": "What payout signal indicators should be evaluated to assess this finding's value?",
+    "expected_answer": "Cloud misconfiguration findings (P1-P2) have highly variable payouts based on: (1) data sensitivity, (2) scale/volume, (3) regulatory context, (4) how quickly it can be fixed, (5) historical precedent for the program. Payout signal evaluation: Data sensitivity: customer PII (emails, phone numbers) triggers GDPR/CCPA liability\u2014high payout. Data volume: 2.3 GB suggests thousands of records\u2014scale matters. Competitor data vs. customer data: company databases are higher value than public marketing content. Regulatory context: healthcare/financial data commands premium payouts (30-50% higher on HackerOne). Replacement cost: if attacker sells the data, what's the street value? (PII goes for $1-20/record depending on richness; 100k records = $100k-$2M potential loss). Program budget indicators: check if the program is from a Series C+ company (higher budget), regulated industry (healthcare, fintech = premium payouts), or Fortune 500 (baseline P1 = $5-20k). Historical precedent: search that program's public reports\u2014if they previously paid $10k for similar data exposure, this likely gets $8-15k. HackerOne payout: P1 cloud misconfig with PII typically $5-25k; Bugcrowd ranges $3-15k depending on program tier. Payout amplification: if you also identify the bucket's owner (company name from S3 metadata) and demonstrate regulatory risk (e.g., 'GDPR violation = \u20ac20M fine'), payout increases 20-30%. Timing: submit immediately\u2014other researchers likely find this too; first-reporter advantage is critical. Pro tip: verify the bucket is still accessible when you submit; include download proof (file list, sample record decrypted).",
+    "reasoning_requirement": "Evaluate data sensitivity, scale, regulatory context, and market value; map payout indicators to program tier and historical precedent.",
+    "evaluation_criteria": [
+      "Quantifies data sensitivity and scale (e.g., record count, PII types).",
+      "Cites regulatory context (GDPR/CCPA fines) and historical payouts for similar findings.",
+      "Recommends submission timing and proof format to maximize payout (file list, sample record)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 178,
+    "scenario": "JWT token uses hardcoded secret in source code; attacker can forge arbitrary tokens and impersonate any user.",
+    "prompt": "How should severity be classified if the secret is found in prod vs. dev source, and what scope ambiguity exists?",
+    "expected_answer": "JWT secret exposure is P1 if in production; P3-P4 if in development-only code. Classification variance: Production hardcoded secret = ability to forge tokens for any user (admin, customer, service account) = P1 authentication bypass (CVSS 9.8, critical). Development hardcoded secret = scope ambiguity: (1) if dev code is deployed to production servers, it's P1; (2) if it's development-only and never deployed, HackerOne rates it 'low' or 'rejected'; (3) if it's a historical artifact in git history but not used in current code, it's rejected as 'fixed.' Scope navigation: Check if the hardcoded secret appears in (1) production build output (build logs, deployed artifact), (2) current git HEAD (active code), or (3) historical commits only. Proof requirement: submit a valid JWT signed with the hardcoded secret that (1) authenticates to the API, (2) impersonates a specific user, (3) performs a privileged action (e.g., access admin panel). PoC format: raw JWT token + screenshot showing successful authentication as forged user. Program-specific classification: HackerOne often rejects 'hardcoded secret in dev files' with 'not exploitable in production' unless you prove it's deployed. Bugcrowd may pay P3 for dev-only secrets if the repository is internal-only (low-exposure secret). Intigriti emphasizes 'realistic attacker access'\u2014if attacker must compromise git repo to find the secret, impact is lower than if it's visible in production logs. Severity escalation: if the hardcoded secret also appears in error messages, logs, or version control history, it's re-classified as P1 (public disclosure). Timing: if the secret was recently rotated, note the rotation date in your report\u2014fresh exploitability is a payout signal.",
+    "reasoning_requirement": "Distinguish production vs. dev scope; assess exploitability in deployed code; recognize public disclosure impact.",
+    "evaluation_criteria": [
+      "Verifies secret is in active production code (not historical/dev-only).",
+      "Demonstrates JWT forgery PoC with working authentication as arbitrary user.",
+      "Addresses program-specific scope (HackerOne vs Bugcrowd) on code artifact classification."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 179,
+    "scenario": "Server-Side Request Forgery (SSRF) in image proxy endpoint (fetch_image?url=...) enables internal service access; chained with unauthenticated internal API to achieve RCE on worker process.",
+    "prompt": "How does reproduction chain complexity affect severity classification and proof sufficiency?",
+    "expected_answer": "SSRF to RCE is classified P1, but severity depends on reproduction chain length: Single-step SSRF (attacker requests internal IP via proxy) = P2-P3. SSRF + internal service discovery = P2. SSRF + internal API exploitation + RCE = P1. Chain complexity analysis: Step 1 (SSRF itself): Request http://localhost:8080/internal-api triggers error or response. Severity so far: P3 (server-side port scan). Step 2 (internal API enumeration): Attacker fuzzes /internal-api endpoints and finds /execute-task accepting POST requests. Severity escalates to P2 (unauthorized internal API access). Step 3 (RCE exploitation): Attacker crafts request to /execute-task with command parameter that executes arbitrary code on worker process. Severity escalates to P1 (remote code execution). Reproduction complexity factors: (1) Network segmentation (firewall between proxy and internal service), (2) authentication (does /execute-task require internal token?), (3) input validation (does command parameter filter dangerous characters?), (4) output feedback (does attacker see RCE output or must use side-channel). Proof sufficiency: minimal proof (server responds to localhost:8080 request) = P3, disputed. Complete proof (RCE command executes and attacker demonstrates output, e.g., 'touch /tmp/pwned' file created) = P1, undisputed. Program-specific: HackerOne requires full RCE PoC (command execution + output proof) for P1 classification. Bugcrowd may pay P2 for intermediate steps (SSRF + internal API access) without full RCE. Reproduction documentation: provide exact curl commands for each step, including URL, parameters, and expected responses\u2014allow program to replicate independently.",
+    "reasoning_requirement": "Map multi-step attack chain to severity tiers; identify minimal vs. complete proof for each step; assess network/auth barriers.",
+    "evaluation_criteria": [
+      "Breaks attack chain into discrete steps (SSRF discovery, API enumeration, RCE).",
+      "Provides reproducible curl commands or scripts for each step with expected responses.",
+      "Addresses proof requirements per platform (HackerOne vs Bugcrowd) for intermediate vs. full-chain impact."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 180,
+    "scenario": "Insecure Direct Object Reference (IDOR) on user profile endpoint; attacker increments 'user_id' parameter to view arbitrary user profiles with email, phone, age, address data.",
+    "prompt": "What severity classification should be assigned, and how does data sensitivity determine payout variance across programs?",
+    "expected_answer": "IDOR is rated P2-P4 depending on data accessed. Severity scale: Public data (user avatar, username) = P4-P5 (low/informational). Sensitive data (email, phone, address) = P2-P3. Highly sensitive data (financial info, medical records, government ID) = P1. Classification rules: Email + phone = P3 (enables targeted social engineering/SIM swap attacks). Address = P2-P3 (enables physical harassment, doxing). Financial account numbers = P1 (direct financial fraud). Payout variance across platforms: HackerOne bases payout on 'maximum possible impact'\u2014if email alone enables password reset, classification is P2-P3 (~$500-2k). If address enables swatting or harassment, P1-P2 (~$2-5k). Bugcrowd uses 'affected user count + data type'\u20141k users exposed = P3; 100k users = P2; 1M users = P1. Intigriti emphasizes 'proof of exploitation'\u2014screenshot showing sequential user IDs reveals all user data = P1; theoretical IDOR without proof = P4. Scope ambiguity pitfall: If the endpoint is undocumented or 'admin-only,' HackerOne may rate it P3 even if data is sensitive ('reduced exposure = reduced severity'). If endpoint is public API, severity is not reduced. Payout amplification: quantify affected user count. Instead of 'IDOR on profile,' say '3.2M user profiles exposed via sequential user ID.' Include proof: screenshots of at least 3 different user profiles, each showing distinct email/name/address. Program-specific signals: healthcare programs pay P1 ($10-50k) for PII IDOR; e-commerce programs pay P2-P3 ($2-5k) for address exposure. Submit with clear impact statement: 'exposure of X user records with Y data types = Z business impact (phishing, doxing, fraud).'",
+    "reasoning_requirement": "Map data type to severity; quantify user count impact; distinguish proof from theoretical analysis; assess program-specific sensitivity.",
+    "evaluation_criteria": [
+      "Specifies exact data types exposed (email, phone, address, financial) and maps to CVSS severity.",
+      "Quantifies user count and proof (screenshots showing multiple distinct profiles).",
+      "Cites platform-specific payout variance (HackerOne vs Bugcrowd vs Intigriti) for PII data types."
+    ],
+    "category": "bounty_patterns"
   }
 ]
