@@ -3868,5 +3868,135 @@
       "Quantifies differentiation and specifies payout variance: HackerOne $500-1K additional, Bugcrowd $300-700 if accepted, with duplicate review strategy."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 351,
+    "scenario": "Stored XSS vulnerability (CVSS 6.1) discovered in user comment field across 14 subdomains (api.*, admin.*, tenant-*.company.com). Initially reported as single finding on api.company.com. Researcher later discovers identical code path in all subdomains. Program policy explicitly scopes to api.company.com only; other subdomains are 'legacy properties awaiting decommission.' Bugcrowd platform.",
+    "prompt": "How do you handle duplicate/overlapping scope findings when program language is ambiguous? Should scope creep be reported as new finding or collapsed into original submission?",
+    "expected_answer": "Scope ambiguity creates payout friction: collapsing 14 instances into one CVSS 6.1 finding may yield $800-$1,500, while separate submissions risk rejection for duplication or scope violation. Optimal strategy: clarify scope first via Bugcrowd's initial triage form (\"affects 14 subdomains; are all in scope?\"). If yes, submit single comprehensive report showing all instances with reproduction steps per subdomain\u2014this signals sophisticated reconnaissance and justifies P2 ($2,000-$5,000) over P3. If no, document the out-of-scope instances as evidence of systemic code-sharing risk, recommend engineer handoff to legacy team. Never submit duplicate tickets; instead, reference previous ID and provide supplemental evidence. This preserves researcher credibility and prevents auto-rejection.",
+    "reasoning_requirement": "Distinguish between genuine duplicates (should be collapsed) and scope ambiguity (should be escalated to triage); calculate payout variance by scope interpretation; avoid multi-submission penalty.",
+    "evaluation_criteria": [
+      "Clarifies scope via program's platform-specific triage process before submitting duplicates.",
+      "Quantifies payout impact: single consolidated report ($2,000-$5,000) vs. split submissions (rejection risk + $800/instance).",
+      "Provides escalation path: if scope contested, generates scope-clarification ticket rather than duplicate submission."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 352,
+    "scenario": "SQL injection (CVSS 8.9) found in user search API endpoint. Researcher tests on staging environment (data: 500 test records, no sensitive data, staging DB credentials visible in environment logs, 200 test accounts). Clarification question: is finding in-scope? Program's security.txt points to HackerOne but vulnerability disclosure policy lists only 'production systems where customer data resides.'",
+    "prompt": "How should staging vs. production scope be evaluated? When does a staging vulnerability earn payout despite no customer impact?",
+    "expected_answer": "Staging SQL injection presents a dilemma: CVSS 8.9 suggests P1 payout, but zero customer exposure and test data limit business impact. HackerOne's triage typically rejects pure staging findings unless they demonstrate clear escalation path to production (e.g., same code deployed to production, staging shares authentication with production, or staging contains masked production data). Your payout strategy: (1) verify the code path is identical in production via repository evidence (commit hash, git blame); (2) if production code differs, position as 'pre-production discovery'\u2014many programs reward this at P3-P4 ($1,000-$3,000) for preventing prod rollout; (3) if purely staging-only, consider non-payout disclosure for resume credit + program goodwill (future higher payouts). Document the staging-to-production deployment pipeline in your report. HackerOne favors researchers who identify process improvements preventing future incidents.",
+    "reasoning_requirement": "Assess whether staging finding has production escalation path; distinguish between process improvements and customer-impact findings; align with HackerOne's triage rubric.",
+    "evaluation_criteria": [
+      "Confirms code identity between staging and production via git history or environment configuration review.",
+      "If production contains same vulnerability, justifies P1-P2 payout; if staging-only, reframes as process/deployment risk (P3-P4 or non-payout).",
+      "Provides actionable deployment timeline evidence (last production rollout, pending release containing fix)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 353,
+    "scenario": "Information disclosure (CVSS 5.3): API response includes pagination metadata revealing total user count (4.2M active users). Individually, this low CVSS fact seems minor. However, when combined with (1) leaked API endpoint timing data allowing user enumeration at 1,000 req/sec, and (2) publicly disclosed competitor user counts, an attacker can infer customer growth rate, market share, and churn signals. Intigriti program (EU data subject).",
+    "prompt": "How do you amplify a low-CVSS finding into P2-P3 through chain-linking? What evidence demonstrates business-intelligence impact?",
+    "expected_answer": "CVSS 5.3 information disclosure normally yields P4-P5 ($300-$800), but chaining transforms it into P2 ($3,000-$8,000) by demonstrating cumulative risk. The exploit chain: (1) enumerate total users via metadata leak, (2) parallelize enumeration using timing-based attack (1,000 req/sec on disclosed endpoint), (3) infer growth trends across monthly snapshots. For Intigriti (EU focus), emphasize GDPR angle: revealing user count in aggregate may trigger aggregate-data-protection regulations. Your report structure: (1) individual vulnerability description and CVSS, (2) reproduce each component independently, (3) synthesize the chain with proof-of-concept code showing time-series inference, (4) quantify business impact (e.g., 'competitor intelligence reduces product differentiation value by X%'). Include screenshots of competitor public filings to show user-count significance. Intigriti rewards researchers who map multi-step chains and regulatory implications\u2014expect P2 or program invitation to managed program.",
+    "reasoning_requirement": "Link individual low-severity findings into compound attack chain; quantify downstream business impact; tailor regulatory angle to platform (GDPR for Intigriti).",
+    "evaluation_criteria": [
+      "Demonstrates each chain component independently reproducible and chained together in proof-of-concept.",
+      "Quantifies business impact (e.g., investor intelligence, market-share inference accuracy, GDPR aggregate-data violations).",
+      "References competitor public data or financial filings to show user-count significance; recommends P2-P3 for chain, not individual finding."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 354,
+    "scenario": "Authentication bypass (CVSS 8.1) affecting SaaS accounting software. On HackerOne, researcher receives $6,000 P1 payout after 8 days. Same vulnerability submitted to Bugcrowd equivalent program yields $1,500 P3 offer. Same vulnerability submitted to Intigriti receives $12,000 P1 after 3 days (EU program, financial data involved). Researcher now has 3 conflicting payouts, wants to understand platform-specific triage variance.",
+    "prompt": "Why do program platforms (HackerOne vs Bugcrowd vs Intigriti) assign different severity/payout to identical vulnerabilities? How should researchers optimize platform choice?",
+    "expected_answer": "Platform triage variance stems from (1) regional regulation, (2) average program payout budgets, (3) researcher pool composition, and (4) domain focus. HackerOne's generalist program base averages $3,000-$8,000 for P1 auth bypass; Bugcrowd's enterprise-heavy portfolio skews conservative ($1,500-$4,000) unless explicitly high-payout (government, finance). Intigriti's EU regulatory emphasis inflates finance/healthcare payouts 2-3x due to GDPR/PSD2 compliance severity. For identical auth-bypass CVSS 8.1: HackerOne may triage as 'session fixation' (P2, $4,000), Bugcrowd as 'account takeover conditional on phishing' (P3, $1,500), Intigriti as 'financial-data access violation' (P1, $10,000+). Optimization: (1) research program's historical payouts on vulnerability aggregator (BugCrowd.com, HackerOne.com stats), (2) match vulnerability domain to platform strength (financial findings \u2192 Intigriti, infrastructure \u2192 HackerOne), (3) tailor write-up language to platform's triage rubric (emphasize compliance for Intigriti, scalability for HackerOne), (4) negotiate on higher-payout platform first; exclusivity windows often apply. Document all three submissions in your dataset for future pattern matching.",
+    "reasoning_requirement": "Map platform triage rubrics to regional regulation and portfolio composition; optimize write-up framing per platform; understand exclusivity windows.",
+    "evaluation_criteria": [
+      "Identifies platform-specific payout variance sources: HackerOne avg $6k, Bugcrowd avg $1.5k, Intigriti EU premium $12k for identical finding.",
+      "Recommends submission sequence (highest-payout platform first) and explains exclusivity window implications.",
+      "Provides historical data from vulnerability aggregators showing HackerOne/Bugcrowd/Intigriti payout distributions by domain (finance, healthcare, tech)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 355,
+    "scenario": "Remote code execution via deserialization vulnerability (CVSS 9.8). Reproduction requires: (1) intercept HTTPS traffic (MitM), (2) inject malicious serialized Java object, (3) Java deserialization gadget chain (commons-beanutils + JNDI injection). Affects only users on corporate networks with HTTP interception proxies (estimated <2% of user base). Program is Bugcrowd, standard SaaS.",
+    "prompt": "How do you evaluate reproduction complexity and 'realistic attack surface' when CVSS is maximum? Does complexity warrant downgrade from P1?",
+    "expected_answer": "CVSS 9.8 RCE typically maps to P1 ($5,000-$20,000+), but reproduction complexity directly impacts triage. Bugcrowd's classification matrix distinguishes between 'theoretical attack vector' and 'realistic exploitation.' Your MitM requirement (corporate proxy + commons-beanutils gadget chain) narrows realistic attack surface to <2% of users. However, CVSS 9.8 is 'network-adjacent' (AV:N), not requiring local access. Strategy: (1) submit as P1 with caveat: 'requires MitM + specific gadget chain,' (2) provide proof-of-concept video showing full exploitation, (3) note that gadget chain presence (commons-beanutils in dependencies) is the limiting factor, not CVSS score, (4) recommend mitigation order: (a) update commons-beanutils, (b) disable unsafe deserialization, (c) enforce network-level MitM detection. Bugcrowd will likely offer P1 ($5,000-$10,000) despite complexity, because RCE + network exposure = critical impact. If program balks, escalate to 'is this code path reachable from internet without MitM?' to confirm network exposure.",
+    "reasoning_requirement": "Distinguish between CVSS theoretical attack surface and realistic exploitation complexity; quantify affected user percentage; justify P1 despite complex reproduction.",
+    "evaluation_criteria": [
+      "Confirms CVSS 9.8 AV:N is network-exposed (not requiring local access); MitM is transport-layer concern, not CVSS concern.",
+      "Provides proof-of-concept video demonstrating full exploitation chain and gadget chain dependency confirmation.",
+      "Quantifies affected surface (<2% of users) but recommends P1 due to RCE + network exposure, with escalation condition: 'if gadget chain removed from dependencies, becomes non-exploitable.'"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 356,
+    "scenario": "Data exposure via misconfigured S3 bucket (CVSS 7.5, Public Read Access). Bucket contains customer invoices (PII: names, addresses, tax IDs, purchase history). CVSS calculation assumes 'confidentiality impact: High' (because PII is exposed), but the S3 bucket has been public for 18 months with no detected abuse, no evidence of external access in CloudTrail logs, and program's cyber insurance covers data breach liability up to $50M. Program is on HackerOne.",
+    "prompt": "When a high-impact data exposure shows zero real-world harm, how do you position the finding for fair triage without underselling it?",
+    "expected_answer": "CVSS 7.5 data exposure typically maps to P1-P2 ($3,000-$10,000), but zero real-world breach evidence and insurance coverage can trigger low-payout offers ($800-$2,000). Balanced positioning: (1) acknowledge CVSS 7.5 is correct for PII exposure severity, (2) highlight the 18-month exposure window and lack of CloudTrail evidence as risk factors (e.g., 'either not yet discovered or already exploited without detection'), (3) reframe as 'preventable incident' rather than 'prevented incident' (program hasn't detected abuse, but absence of evidence \u2260 evidence of absence), (4) quantify potential liability ($50M insurance suggests enterprise data sensitivity), (5) recommend immediate remediation + forensic audit of CloudTrail for potential attackers who accessed but didn't trigger alerts. HackerOne favors researchers who provide operational clarity. Submit with recommendation: 'P1 for discovery window (18 months undetected); escalate to incident response if CloudTrail audit reveals suspicious access.' This positions you as collaborative, not dollar-hunting, and typically yields P1-P2 ($5,000+) over 'covered by insurance' dismissal.",
+    "reasoning_requirement": "Decouple CVSS from real-world harm; frame zero-abuse window as risk indicator not cost-reduction signal; provide operational recommendations.",
+    "evaluation_criteria": [
+      "Confirms CVSS 7.5 PII exposure is correct severity rating; acknowledges insurance coverage but notes undetected breach risk.",
+      "Provides CloudTrail audit recommendation and supplies redacted access-pattern analysis showing no obvious exploitation.",
+      "Recommends P1 ($5,000+) for preventable incident + forensic clarity, not P3 ($1,000) for insurance-covered risk."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 357,
+    "scenario": "Local privilege escalation (CVSS 7.8) on a web application running as root (non-standard configuration). Attacker on shared hosting can escalate from unprivileged application user to root. In production, application runs as unprivileged app-user (proper configuration). Vulnerability exists in code deployed across all environments (dev, staging, prod), but only dev/staging misconfiguration allows exploitation. Production hardening (proper user permissions) mitigates the vulnerability. Program is on Intigriti.",
+    "prompt": "How do you assess 'configuration-dependent' vulnerabilities? Does environmental hardening downgrade a code-level vulnerability?",
+    "expected_answer": "Configuration-dependent vulnerabilities (code flaw + deployment misconfiguration) occupy the gray zone between P3 and P1. CVSS 7.8 suggests P1-P2, but real-world exploitability hinges on deployment posture. Intigriti's European triage framework emphasizes 'likelihood \u00d7 impact' over pure CVSS. Your strategy: (1) confirm the vulnerability exists in code across all environments, (2) test exploitation on dev (succeeds) and staging (succeeds) via documented screenshots, (3) verify production mitigation (application runs as app-user, not root) via environment configuration audit, (4) recommend that Intigriti document this as a 'configuration-dependent P1' in their security guidelines\u2014meaning 'code flaw is P1, but deployment hardening reduces real-world risk to P3.' This dual framing shows maturity: the code is absolutely exploitable if misconfigured, and some customers may have inherited the misconfiguration. Intigriti often awards P2 ($2,000-$5,000) for such findings as encouragement of defense-in-depth thinking. Frame as 'root-cause analysis: code flaw + deployment audit opportunity' rather than 'prod is safe, so lower payout.'",
+    "reasoning_requirement": "Separate code-level from configuration-level vulnerability; evaluate both; acknowledge that hardening reduces but doesn't eliminate code risk.",
+    "evaluation_criteria": [
+      "Confirms vulnerability reproducible on dev/staging (with screenshots) and mitigated (not absent) on production via user-permission audit.",
+      "Explains why code flaw merits P1-P2 despite production hardening; recommends P2 for 'configuration-dependent' finding as architectural learning.",
+      "Provides remediation (run application as app-user, enforce via container/systemd/K8s admission) and suggests code-level fix (avoid privilege assumption)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 358,
+    "scenario": "Denial of Service (algorithmic complexity attack on sorting function, CVSS 5.3, causes 100% CPU consumption). Requires sending 100,000 specially crafted requests over 10 minutes. Real-world impact: application becomes unresponsive for 5 minutes during attack; DDoS mitigation (rate limiting: 1,000 req/min per IP) prevents exploitation. Rate limiting is in place on production, but misconfigured on staging. Researcher tested on staging, not prod.",
+    "prompt": "How do you handle DoS vulnerabilities when mitigation (rate limiting) is already deployed? Does existing defense downgrade to P5?",
+    "expected_answer": "DoS CVSS 5.3 normally yields P4-P5 ($500-$1,500), but the existence of rate limiting (1,000 req/min per IP) makes real-world exploitation infeasible\u2014an attacker cannot sustain 100,000 requests/10 minutes under this limit. However, the limit is misconfigured on staging and potentially on other edge cases. Strategic positioning on HackerOne: (1) confirm rate limiting is deployed everywhere (production, CDN, API gateway) via security documentation or code review, (2) if yes, submit as 'defense-in-depth edge case' (P5, $300-$500) with note: 'hypothetically exploitable if rate limiting disabled,' (3) if rate limiting is selectively disabled for certain API endpoints or user roles (e.g., premium users), this becomes P3 ($1,000-$2,500). Test both hypotheses via API calls with different headers (API key vs. no key). Most programs appreciate this diligence and often award P4 ($800-$1,500) for identifying a flaw mitigated by existing controls, as it signals architectural depth. Avoid submitting as 'not vulnerable because rate limited'\u2014instead, frame as 'verified mitigated by deployed rate limiting; would be P2 if limit removed.'",
+    "reasoning_requirement": "Assess mitigation effectiveness and deployment breadth; distinguish between code-level flaw and runtime protection; evaluate edge cases (role-based exceptions).",
+    "evaluation_criteria": [
+      "Verifies rate limiting deployment across production, CDN, API gateway; tests with and without API credentials to confirm uniform enforcement.",
+      "Confirms DoS requires 100,000 req/10 min, but rate limit (1,000 req/min) prevents sustained attack; quantifies real-world exploitability as infeasible.",
+      "Recommends P4-P5 ($500-$1,500) for 'defense-in-depth edge case' and notes escalation condition: 'If rate limiting removed or role-based exceptions added, becomes P2.'"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 359,
+    "scenario": "Cross-Site Scripting (Reflected XSS, CVSS 6.1) in user profile page, requires victim to click attacker-controlled link with malicious query parameter. No user interaction required beyond clicking link. Proof-of-concept: attacker can steal session cookies, but program uses HTTPOnly + Secure flags (prevents JavaScript access). Cookies are httpOnly, so JavaScript-based exfiltration fails. Victim browser logs out, re-login required. Real-world exploitation path: attacker would need to combine XSS with CSRF or other attack. HackerOne program, technology sector.",
+    "prompt": "How do you position a 'technically confirmed but mitigated' XSS? Does HTTPOnly flag warrant downgrade from P2?",
+    "expected_answer": "Reflected XSS CVSS 6.1 suggests P2-P3 ($1,500-$4,000), but HTTPOnly cookies eliminate the primary exploitation vector (session theft via JavaScript). However, the XSS itself is real, and HTTPOnly is a defense, not an absence of vulnerability. Strategic approach on HackerOne: (1) confirm the XSS is reproducible (proof-of-concept with unescaped user input), (2) acknowledge HTTPOnly flag and demonstrate that `document.cookie` returns empty (proving protection), (3) identify alternative exploitation paths (DOM-based attacks, defacement, phishing, keylogging if user re-logs in), (4) recommend P3 ($1,500-$2,500) with note: 'XSS confirmed; HTTPOnly mitigates primary vector; recommend defense-in-depth: CSP header, input validation.' HackerOne's triage tends to reward researchers who map both vulnerability + defense posture. If you undersell as P4, you signal lack of attack-chain thinking. If you ignore HTTPOnly, you signal lack of defense understanding. The 'correct' framing: 'This is a real XSS that existing controls (HTTPOnly) partially mitigate. Recommend CSP + input validation for defense-in-depth.' Expect P3 offer.",
+    "reasoning_requirement": "Confirm vulnerability; evaluate defense mechanisms; identify residual exploitation paths; balance technical validity against deployed mitigations.",
+    "evaluation_criteria": [
+      "Demonstrates XSS reproducible with unescaped input; confirms HTTPOnly flag present and functional (document.cookie returns empty).",
+      "Identifies alternative exploitation paths (DOM sink, defacement, phishing, subsequent session hijack); rules out direct cookie theft.",
+      "Recommends P3 ($1,500-$2,500) for confirmed XSS with partial mitigation; suggests defense-in-depth (CSP, input validation) as escalation prevention."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 360,
+    "scenario": "Subdomain takeover vulnerability (CVSS 4.3, informational). Attacker can register expired domain A.example.com and host malicious content. Domain is used only for internal documentation (not customer-facing). No SEO value (robots.txt disallows crawl). No authentication required; public read-only docs already available on main domain. Researcher considers: is this worth reporting? If yes, what P-level? Bugcrowd program, low-security-maturity fintech startup.",
+    "prompt": "How do you evaluate 'true but low-impact' vulnerabilities? Should every confirmed finding be submitted?",
+    "expected_answer": "Not every confirmed vulnerability merits submission. Subdomain takeover CVSS 4.3 is technically exploitable but contextually trivial: (1) internal-only documentation has no external audience, (2) no authentication bypass (docs are public), (3) no SEO or brand-damage vector (robots.txt + no external links), (4) zero customer impact. Submission strategy: (1) document the finding in your personal tracker (resume/portfolio credit), (2) consider non-payout disclosure if you value program goodwill (email security@example.com with remediation: 'renew domain or point CNAME to non-resolving target'), (3) skip Bugcrowd submission\u2014likely P5 ($100-$300) + processing friction + potential bounty-hunter reputation damage ('submitted low-value finding'). Reserve Bugcrowd submissions for P3+ findings ($1,000+) to maintain positive negotiation posture. However, if the startup's Bugcrowd program explicitly lists 'subdomain takeover' as in-scope, and if they reward P5 findings, submit for portfolio credit. The decision hinge: does the finding help the program more than it costs your reputation? For low-maturity startups, non-payout disclosure (demonstrating security awareness) often yields future-engagement trust that exceeds $300 payout.",
+    "reasoning_requirement": "Evaluate business impact beyond CVSS; assess submission ROI (time vs. payout vs. reputation); decide whether non-payout disclosure provides better long-term value.",
+    "evaluation_criteria": [
+      "Confirms vulnerability is technically real (expired domain takeover possible); acknowledges CVSS 4.3 is low.",
+      "Quantifies business impact: internal-only docs, public availability, no SEO value, zero authentication bypass\u2014minimal customer risk.",
+      "Recommends non-payout disclosure over P5 submission for reputation ROI; reserves Bugcrowd submissions for P3+ findings ($1,000+)."
+    ],
+    "category": "bounty_patterns"
   }
 ]
