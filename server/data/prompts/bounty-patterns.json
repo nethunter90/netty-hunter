@@ -1598,5 +1598,135 @@
       "Demonstrates cloud metadata bypass with PoC (AWS 169.254.169.254, GCP metadata.google.internal) and credential extraction"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 161,
+    "scenario": "An AWS S3 bucket URL is hardcoded in the React bundle's public/config.json. The bucket has a signed URL policy allowing public reads for 30 days. Attackers can enumerate files and extract customer data, but the bucket is located in a restricted VPC endpoint\u2014access only works from specific AWS IP ranges.",
+    "prompt": "Is this P1 or P2 information disclosure? How does VPC-restricted access affect severity classification, and what makes it distinct from a standard 'credentials in client-side code' report?",
+    "expected_answer": "This is P2, not P1, due to the VPC endpoint restriction\u2014while the bucket is readable, the attacker must be on AWS infrastructure or route through a compromised instance. The severity differs from classic hardcoded-credentials reports because exploitation requires network-level access, not just code discovery. Document the exact attack chain: (1) decode config.json, (2) obtain AWS credentials or instance role, (3) access S3 from VPC-enabled IP. To avoid duplicate rejection ('AWS exposure already known'), emphasize the network-restricted exploitation path and demonstrate enumeration of actual customer objects to prove data exposure. Payout on Bugcrowd typically 40-60% lower than unrestricted public buckets. Verify bucket lifecycle policies didn't already expire the keys\u2014check S3 datetime headers.",
+    "reasoning_requirement": "Distinguish network-restricted data exposure from unrestricted exposure; articulate how VPC policies change exploitability and triage impact against scope.",
+    "evaluation_criteria": [
+      "Explains why VPC-restricted access is P2 not P1, with specific exploitation prerequisites",
+      "Provides reproduction steps showing enumeration from AWS infrastructure or compromised instance",
+      "Identifies why this is distinct from 'standard hardcoded credentials' and avoids duplicate classification"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 162,
+    "scenario": "An XML API endpoint at /api/reporting/export accepts user-supplied XML and converts it to PDF via LibreOffice. XXE injection is possible, but the server is air-gapped (no internet access). An attacker can exfiltrate /etc/passwd and application config files via XXE out-of-band techniques using local DNS servers, but cannot reach external HTTP callbacks.",
+    "prompt": "What is the true severity\u2014P1 or P2? How does the air-gap constraint affect reproducibility and payout, and how do you differentiate this from a generic XXE report?",
+    "expected_answer": "This is P2 XXE with confidentiality impact, not P1, because exploitation is constrained to internal file disclosure without remote code execution or privilege escalation. The air-gap prevents typical XXE exfiltration (Burp Collaborator) but enables local file reading via file:// protocol and out-of-band DNS tunneling. Document exploitation precisely: (1) craft XML with XXE payload targeting /etc/passwd, (2) observe PDF generation delay indicating parsing, (3) use DNS exfiltration to leak file content byte-by-byte (slower, but effective). HackerOne typically pays 1200-1800 USD for XXE with file access; Bugcrowd may value at P2 ($600-1200) due to air-gap constraints. Avoid 'duplicate: XXE' by demonstrating air-gap-specific bypass techniques and providing proof-of-concept DNS tunneling setup. Verify PDF output confirms file existence before claiming exploitation.",
+    "reasoning_requirement": "Assess XXE severity in isolated networks; justify P2 classification based on data sensitivity and exfiltration limitations; differentiate from generic XXE.",
+    "evaluation_criteria": [
+      "Explains why air-gap constraints lower XXE from P1 to P2 and why out-of-band DNS tunneling is the exploitation path",
+      "Provides exact reproduction steps including DNS exfiltration mechanics and file-read proof",
+      "Distinguishes air-gapped XXE from internet-reachable XXE to avoid duplicate rejection"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 163,
+    "scenario": "A subdomain (cdn-backup.company.com) previously hosted a CDN but was decommissioned 18 months ago. The DNS CNAME still points to a third-party CDN provider's unclaimed slot. An attacker can claim the slot and serve malicious content as company.com, but the subdomain is never linked from the main site\u2014it only appears in old GitHub commits and archived CSP headers.",
+    "prompt": "Is this P3, P4, or out of scope? How does lack of user traffic affect severity, and what scope ambiguity exists across different programs?",
+    "expected_answer": "This is borderline P3-P4 and highly program-dependent. HackerOne and Bugcrowd both accept subdomain takeovers, but severity hinges on: (1) user reachability (this one is dormant, lowering impact), (2) scope inclusion (must verify 'cdn-backup.company.com' is explicitly in scope\u2014many programs exclude 'retired' subdomains), (3) business risk (can the attacker pivot to the main domain or steal cookies?). Check the program's scope rules: if explicitly listed, report as P3 (medium risk due to historical linkage and CSP exposure). If marked 'retired' or 'out of scope,' pre-emptively state why you believe it should be in scope. Payout typically 300-800 USD for dormant takeovers; active CDNs command 1200+. Differentiate from generic subdomain takeover by emphasizing historical exposure in Git and archived headers\u2014proves past significance. Verify the CNAME still points and test whether main-domain cookies leak.",
+    "reasoning_requirement": "Navigate scope ambiguity for abandoned infrastructure; assess user-impact zero scenarios; distinguish program-specific takeover acceptance criteria.",
+    "evaluation_criteria": [
+      "Clarifies program-specific scope rules for retired subdomains and explains P3 vs P4 vs out-of-scope decision logic",
+      "Demonstrates historical attack surface (Git commits, archived CSP) to justify scope inclusion despite dormancy",
+      "Explains why this differs from active-traffic takeovers and provides payee expectations across platforms"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 164,
+    "scenario": "An OAuth2 implementation accepts JWT tokens with the 'alg' header set to 'HS256' (symmetric) when the public key is known. The server uses the public key to validate the signature, but a crafted token signed with the public key as the HMAC secret bypasses authentication. However, the application only accepts tokens issued within the last 60 seconds (strict time validation), and the attacker cannot influence time on their machine.",
+    "prompt": "Is this P2 or P3? How does the 60-second window limit exploitation, and what makes this distinct from a standard 'algorithm confusion' duplicate?",
+    "expected_answer": "This is P2 authentication bypass, not P3, because the time window is a minor constraint\u2014an attacker can chain it with local time manipulation (NTP spoofing on their network, or if the server uses lax NTP validation, system clock reset). However, if the server strictly validates against a secured NTP source, exploitation becomes infeasible in most pentesting scenarios, potentially downgrading to P3 or requiring significant additional steps. Distinguish this from standard algorithm confusion by emphasizing the time-window constraint: many duplicate reports skip time validation entirely. Document exploitation: (1) obtain public key from JWKS endpoint, (2) craft JWT with HS256 and public key as secret, (3) set 'iat' timestamp within 60 seconds of server time, (4) send crafted token to protected endpoint. If NTP spoofing is necessary, detail the full attack chain and note that most bug bounty programs accept NTP manipulation as in-scope (since it's feasible on non-hardened networks). Payout: 800-1200 USD if exploitation doesn't require NTP tricks; 400-600 if it does.",
+    "reasoning_requirement": "Evaluate how temporal constraints affect authentication bypass severity; distinguish from generic algorithm confusion; assess NTP-requirement exploitability.",
+    "evaluation_criteria": [
+      "Articulates why 60-second window is P2, not P3, and explains NTP-spoofing as a viable exploitation path",
+      "Provides exact reproduction steps showing JWT crafting and time-window alignment",
+      "Differentiates from standard 'algorithm confusion' reports by detailing the time-constraint bypass"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 165,
+    "scenario": "A company's security policy requires HSTS headers on all endpoints. An API endpoint at /api/internal/metrics returns sensitive performance data but lacks the HSTS header (headers are set selectively by route, and this one was forgotten). CVSS 2.1 (Low). No data exposure occurs\u2014the header simply isn't present.",
+    "prompt": "Is this P5, P4, or not reportable? How do you assess information disclosure vs. missing controls? What program-specific policies differ?",
+    "expected_answer": "This is P5 or not reportable\u2014it's a missing security control without direct exploitability. CVSS 2.1 (Low) confirms minimal risk. Missing HSTS is a configuration gap, not a vulnerability, because: (1) no data is actually exposed by the absence, (2) the endpoint requires HTTPS to be reached, (3) HSTS only strengthens existing HTTPS. However, Intigriti and some HackerOne programs with strict policy governance may accept this as a P5 if missing headers create a demonstrated risk (e.g., if combined with mixed-content scripts). Before reporting, check the program's disclosed security policy\u2014if HSTS is mandated and this endpoint violates it, report as P5 with business justification (e.g., 'this metrics endpoint could be targeted by protocol-downgrade attacks on less secure networks'). Most programs reject or pay minimal bounties (50-200 USD) for header-only issues without demonstrated exploitation. Avoid reporting unless you can show: (1) documented policy violation, (2) practical exploitation scenario, or (3) program explicitly accepts missing-header reports.",
+    "reasoning_requirement": "Distinguish missing controls from exploitable vulnerabilities; assess when configuration gaps warrant bounty submission; evaluate program-specific policies.",
+    "evaluation_criteria": [
+      "Explains why missing HSTS is P5 or not reportable due to lack of direct exploitability",
+      "References program-specific policies and shows where HSTS-only reports are accepted vs. rejected",
+      "Provides decision framework: when to report missing headers and expected payout (typically minimal or zero)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 166,
+    "scenario": "An e-commerce platform processes refunds asynchronously. A race condition allows an attacker to submit two refund requests simultaneously for the same order\u2014by timing the requests within 100ms, both requests bypass duplicate-check logic and refund the customer twice. The attacker receives two refunds instead of one, each for the full order amount.",
+    "prompt": "Is this P1 or P2? How does the financial impact magnitude affect severity, and what reproducibility challenges should you address?",
+    "expected_answer": "This is P1 logic error with direct financial impact\u2014potential for unlimited double refunds constitutes critical business risk and violates financial integrity controls. CVSS would score 9.0+ due to high impact (financial loss) and high exploitability (timing-based, no special privileges needed). However, P1 assignment depends on: (1) whether refunds are indeed processed twice without manual recovery friction, (2) whether the race window is reliably reproducible (100ms is very tight; you must test across different network conditions and server loads), (3) whether there are downstream controls (payment processor approval, audit logs) that catch and prevent the duplicate. To avoid duplicate rejection and ensure reporter credibility, provide: (1) exact reproduction steps with tool selection (threading, concurrent curl, or Playwright), (2) proof of dual refunds via order-status API or email confirmation, (3) full timeline of state changes (request 1 accepted, request 2 accepted, ledger shows two credits). Payout: 5000-15000 USD on major platforms due to financial impact. Test under load to prove race condition is reliable, not intermittent.",
+    "reasoning_requirement": "Map financial impact to P1 severity; articulate race-condition reproducibility and timing sensitivity; demonstrate downstream control gaps.",
+    "evaluation_criteria": [
+      "Justifies P1 based on unlimited financial-loss potential and low exploitation barriers",
+      "Provides exact race-condition reproduction steps with timing precision and tool-based proof",
+      "Demonstrates dual refund verification via API/email and addresses downstream control gaps"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 167,
+    "scenario": "An API endpoint at /api/reports/{reportId}/download allows users to retrieve reports. A tester discovers they can change {reportId} to other users' report IDs and download their reports without authorization. However, report IDs are UUIDs (not sequential). The tester enumerates 500 random UUIDs and successfully retrieves 47 reports belonging to other users, exposing financial data and personal information.",
+    "prompt": "Is this P2 or P3 BOLA? How does UUID-based enumeration affect severity vs. sequential ID escalations, and what scale-testing approach prevents duplicate rejection?",
+    "expected_answer": "This is P2 BOLA with demonstrable scale-based impact, not P3, because the attacker successfully enumerated 47 reports despite UUID randomness\u2014proving systemic authorization bypass. BOLA classification typically defaults to P3 for single-ID enumeration, but scales to P2 when you demonstrate: (1) bulk enumeration success (47/500 is 9.4% hit rate\u2014meaningful), (2) sensitive data exposure (financial + PII), (3) reproducibility across multiple ID ranges. Differentiate from generic 'BOLA on sequential IDs' by emphasizing the UUID-enumeration difficulty\u2014proving you didn't just iterate numbers strengthens the report and reduces duplicate risk. Document methodology: (1) generate 500 random UUIDs in the ID format, (2) batch-request all 500 reports, (3) analyze response times and sizes to identify successful retrievals, (4) extract and summarize the data leaked (e.g., 'financial reports from 47 different user accounts'). Payout: 1000-2500 USD for P2 BOLA with PII exposure on major platforms. Avoid 'we found BOLA on {reportId}' without scale-testing\u2014programs expect enumeration proof.",
+    "reasoning_requirement": "Assess BOLA severity based on enumeration success rate and data sensitivity; distinguish UUID-based from sequential-ID escalations; justify scale testing.",
+    "evaluation_criteria": [
+      "Explains why 47/500 UUID enumeration is P2, not P3, based on success rate and sensitive-data exposure",
+      "Provides exact enumeration methodology showing UUID-based approach differs from sequential escalation",
+      "Demonstrates data summary and explains why bulk enumeration proof strengthens the report vs. single-ID BOLA"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 168,
+    "scenario": "A payment form includes a CSRF token in the HTML, but the token is not validated if the Content-Type header is 'application/x-www-form-urlencoded' (it's only validated for 'application/json'). An attacker crafts a form that submits to a user's bank-linked payment account and changes the payment amount. The CSRF token is present in the form but bypassed due to Content-Type mismatch.",
+    "prompt": "Is this P2 or P3? How does token presence affect severity classification, and what determines exploit vs. non-exploit scenarios?",
+    "expected_answer": "This is P2 CSRF with financial impact, not P3, because the CSRF token is present but validation logic is flawed\u2014this is a more sophisticated bypass than missing-token CSRF and indicates deeper control issues. Severity is critically dependent on the target action: (1) if the action is changing payment amount on a pending transaction, it's P1-P2, (2) if it's changing a payment method, it's P2, (3) if it's viewing transaction history, it's P4 or lower. The Content-Type bypass is notable because it shows developers implemented CSRF protection but introduced a validation gap\u2014this amplifies business risk (implies other Content-Type bypasses may exist). To avoid duplicate rejection and prove the finding's uniqueness, emphasize: (1) the token IS present (unlike standard CSRF reports), (2) the validation is selectively enforced based on Content-Type, (3) this differs from 'missing CSRF token' reports. Provide exact reproduction: send form with 'application/x-www-form-urlencoded', verify token is in request but not validated, demonstrate state change. Payout: 2000-5000 USD for P2 CSRF on financial actions; lower (500-1000) for non-financial state changes.",
+    "reasoning_requirement": "Evaluate CSRF severity when token is present but validation is flawed; distinguish Content-Type bypasses from missing-token CSRF; assess financial-action impact.",
+    "evaluation_criteria": [
+      "Clarifies why token-present CSRF with Content-Type bypass is P2, not P3, and distinguishes from missing-token CSRF",
+      "Provides exact reproduction showing token presence in request but validation bypass via Content-Type mismatch",
+      "Maps severity to specific financial action and explains why flawed validation amplifies business risk"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 169,
+    "scenario": "An error page in a login endpoint displays stack traces including full file paths (e.g., '/home/ubuntu/app/src/routes/auth/login.ts'), imported package versions (e.g., 'bcrypt@5.1.0'), and database connection strings with hostnames (e.g., 'postgres://db.internal:5432'). No secrets are directly exposed. CVSS 4.3 (Medium, information disclosure).",
+    "prompt": "Is this P4 or P5? When do stack traces justify a bounty, and how does information specificity affect classification?",
+    "expected_answer": "This is P4 or potentially not reportable, depending on the program's information-disclosure threshold. CVSS 4.3 (Medium) reflects moderate risk\u2014stack traces are information disclosure, but no direct exploitability. However, report-worthiness depends on: (1) what information is disclosed (hostnames and paths are valuable for attackers; hardcoded secrets would be P2), (2) program policy (some programs explicitly reject information disclosure; others accept it if it enables follow-up attacks), (3) whether you can chain the information to a concrete vulnerability (e.g., 'knowing db.internal hostname enables targeted database attacks'). This specific stack trace is borderline: the hostname and file paths are useful reconnaissance but don't directly enable exploitation. Check the program's scope and accepted vulnerability types\u2014HackerOne generally accepts stack-trace disclosure as P4 (100-300 USD), while Intigriti and Bugcrowd may classify as P5 or decline. To maximize acceptance, show business context: 'path disclosure enables targeted attacks on source control systems' or 'database hostname reveals internal infrastructure topology.' Most programs pay minimally (50-200 USD) for pure information disclosure without demonstrated exploitation path.",
+    "reasoning_requirement": "Distinguish information disclosure from exploitable vulnerabilities; assess when reconnaissance data warrants bounty submission; evaluate program-specific policies.",
+    "evaluation_criteria": [
+      "Explains why stack-trace disclosure is P4-P5 based on CVSS (4.3) and lack of direct exploitability",
+      "References program-specific policies and shows how HackerOne, Bugcrowd, and Intigriti treat stack-trace disclosure",
+      "Provides decision framework: when stack traces justify submission (with concrete chaining examples) and typical payout expectations"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 170,
+    "scenario": "An internal email-generation system uses Jinja2 templates to compose user account notifications. An attacker with application control (via another bug, or by leveraging a template injection in user input) can inject Jinja2 payload into the template: '{{ config.items() }}' or '{{ self.__class__.__bases__[0].__subclasses__() }}'. Due to Jinja2's strict sandbox, only template context variables are accessible\u2014no file read or code execution. However, the attacker can leak internal configuration values through rendered email content.",
+    "prompt": "Is this P1, P2, or P3 SSTI? How does sandbox restriction affect severity, and what exploitation paths matter?",
+    "expected_answer": "This is P2-P3 SSTI depending on exploitability and data sensitivity\u2014Jinja2's sandbox prevents full RCE, but context leakage via email content is still impactful. Classify as P2 if: (1) injected config contains secrets (API keys, database credentials), (2) attack chain is short (direct template injection in user input), (3) attacker can read rendered emails or trigger error messages. Classify as P3 if: (1) sandbox prevents accessing meaningful config, (2) injection requires chaining with another vulnerability. Critical distinction: vanilla Jinja2 sandbox (using `jinja2.sandbox.SandboxedEnvironment`) blocks file access and code execution, but custom config leakage is still feasible. Document exploitation: (1) inject payload '{{ config.items() }}' into a field (e.g., username), (2) trigger email generation, (3) retrieve email via API or intercept SMTP, (4) extract config from rendered output. Verify sandbox is actually enabled\u2014if the app uses `Environment()` instead of `SandboxedEnvironment()`, it's P1 (full RCE via `os.popen()`). Payout: 1000-2500 USD for P2 SSTI with config leakage; 300-800 for P3 sandbox-constrained injection.",
+    "reasoning_requirement": "Assess SSTI severity when sandbox restrictions apply; distinguish sandbox-bypass attempts from info-disclosure leakage; evaluate secret-exposure impact.",
+    "evaluation_criteria": [
+      "Explains why Jinja2 sandbox restricts SSTI to P2-P3 and identifies the difference between sandboxed and unsandboxed Jinja2",
+      "Provides exact injection payload and email-retrieval proof showing config leakage through rendered content",
+      "Clarifies whether exploitation targets secrets (P2) or generic context (P3) and assesses sandbox-bypass feasibility"
+    ],
+    "category": "bounty_patterns"
   }
 ]
