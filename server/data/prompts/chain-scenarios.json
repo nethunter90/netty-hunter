@@ -4321,5 +4321,115 @@
     "impact_level": "High \u2013 Unauthorized ticket manipulation and data access via XSS-CSRF combination",
     "category": "chain_scenarios",
     "evaluation_criteria": "Must explain how reflected XSS executes in admin context and bypasses CSRF tokens; must identify the API endpoint and how authentication cookies enable unauthorized requests; must articulate why both XSS and CSRF protections are necessary."
+  },
+  {
+    "id": 394,
+    "scenario": "Internal service misconfiguration allows SSRF to RCE via command injection in service parameters.",
+    "chain_steps": "SSRF to internal service \u2192 Service endpoint vulnerable to command injection \u2192 Remote code execution",
+    "prompt": "How does SSRF chain to RCE through an internal vulnerable service?",
+    "expected_answer": "An attacker first identifies an SSRF vulnerability in a web application that allows fetching internal URLs. They then discover an internal service (e.g., Jenkins, Consul, Kubernetes API, or a custom automation service) that accepts user-controlled parameters. By crafting an SSRF payload that targets this internal service's vulnerable endpoint with injected commands, the attacker can execute arbitrary code on the server. For example, if an internal Jenkins instance is accessible via SSRF at http://jenkins.internal:8080/scriptText?script=<injected>, the attacker embeds Groovy code to execute system commands. The chain exploits the assumption that internal services have fewer security controls than external-facing applications, making SSRF to internal networks significantly more dangerous than previously believed.",
+    "reasoning_requirement": "Connect SSRF vulnerability to internal service exploitation for code execution.",
+    "impact_level": "Critical \u2013 Complete system compromise via RCE",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify a plausible vulnerable internal service endpoint; must show how SSRF parameters are passed to command injection; must explain why internal network access is a prerequisite for exploitation and why internal services are typically less hardened."
+  },
+  {
+    "id": 395,
+    "scenario": "Reflected XSS in email parameter enables CSRF token theft and account takeover.",
+    "chain_steps": "Reflected XSS in email field \u2192 Extract CSRF token from page \u2192 Perform state-changing action as victim \u2192 Account takeover",
+    "prompt": "Explain how XSS enables CSRF to cause account takeover.",
+    "expected_answer": "An attacker crafts a malicious URL containing JavaScript payload in the email parameter. When a victim clicks the link, the XSS executes in their browser context with access to the DOM. The attacker's JavaScript extracts the CSRF token from the page (e.g., from a hidden form field or meta tag), then uses fetch/XMLHttpRequest to make authenticated requests to sensitive endpoints like password change, email update, or 2FA disable. Since the request originates from the victim's authenticated session and includes a valid CSRF token harvested from the page, the request succeeds despite CSRF protections. The attacker can then lock the victim out or add their own recovery email, completing account takeover. This chain demonstrates why XSS is considered worse than CSRF\u2014it bypasses CSRF protections entirely by executing in the victim's context.",
+    "reasoning_requirement": "Chain reflected XSS to CSRF token extraction to authenticated state changes.",
+    "impact_level": "Critical \u2013 Complete account compromise and unauthorized access",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show XSS payload that extracts CSRF tokens from page context using specific DOM selectors; must identify a state-changing endpoint vulnerable to CSRF token harvesting; must explain why CSRF tokens provide no protection when XSS allows dynamic token extraction from the response."
+  },
+  {
+    "id": 396,
+    "scenario": "Insecure direct object reference in user profile API leaks personally identifiable information at scale.",
+    "chain_steps": "Enumerate user IDs \u2192 Request profile endpoint with sequential/guessed IDs \u2192 Retrieve PII (SSN, address, phone, payment data)",
+    "prompt": "How does IDOR enable privacy violations and regulatory breaches?",
+    "expected_answer": "An IDOR vulnerability occurs when an application fails to properly verify authorization. In user profile APIs, this manifests as accepting sequential user IDs in URL parameters without authorization checks. An attacker can iterate through user IDs (e.g., /api/users/123/profile, /api/users/124/profile) to retrieve PII including social security numbers, home addresses, phone numbers, and financial data. The lack of proper access control validation means the API trusts the client-supplied ID entirely. Attackers can bulk-dump entire user databases automatically. Even UUID obfuscation doesn't prevent IDOR if authorization is absent\u2014the vulnerability is missing access control logic, not ID predictability. This chain is particularly damaging because it exposes sensitive data at massive scale with minimal effort, triggering regulatory violations (GDPR, CCPA fines) and civil liability.",
+    "reasoning_requirement": "Demonstrate unauthorized access to confidential user data via resource enumeration.",
+    "impact_level": "Critical \u2013 Privacy breach and regulatory violation (GDPR, CCPA, state privacy laws)",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show sequential or enumeration technique with specific API endpoint and parameter names; must identify specific PII fields exposed and their sensitivity; must explain why role-based access control checks must verify both authentication AND authorization before returning any user resource."
+  },
+  {
+    "id": 397,
+    "scenario": "SQL injection into LOAD DATA INFILE enables arbitrary file write and remote code execution.",
+    "chain_steps": "SQL injection in search parameter \u2192 INTO OUTFILE clause writes malicious file \u2192 File executed as code (PHP/JSP shell)",
+    "prompt": "Explain the SQL injection to file write to RCE chain in MySQL environments.",
+    "expected_answer": "In MySQL, SQL injection can be escalated to arbitrary file write using the INTO OUTFILE clause. An attacker injects SQL like: ' UNION SELECT '<?php system($_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php' -- . If the MySQL user has FILE privileges and the web root is writable, this writes a PHP web shell to the server. The attacker accesses the shell via HTTP to execute arbitrary commands. This chain requires: (1) SQL injection with UNION capability, (2) MySQL FILE privileges for the database user, (3) Knowledge of the web root path, (4) Write access to the target directory, (5) Web server executing files in that directory. The chain bypasses application-level defenses because file write happens at the database layer, and execution happens via web access. Attackers can also poison startup files or configuration directories for persistence.",
+    "reasoning_requirement": "Chain database-level file write operations to server-level code execution.",
+    "impact_level": "Critical \u2013 Arbitrary command execution and complete system compromise",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show valid MySQL OUTFILE syntax with proper payload escaping; must identify prerequisite permissions and path requirements specific to the target OS and web server; must explain why database user privileges and file system permissions are critical chaining factors."
+  },
+  {
+    "id": 398,
+    "scenario": "File upload bypass enables Server-Side Template Injection through template file upload.",
+    "chain_steps": "Bypass file type validation \u2192 Upload template file with SSTI payload \u2192 Template rendering executes injected code",
+    "prompt": "How do upload restrictions enable SSTI exploitation?",
+    "expected_answer": "An application attempts to restrict file uploads to images but uses client-side or weak server-side validation. An attacker bypasses these checks using techniques like double extension (shell.php.jpg), null byte injection, magic byte spoofing, or content-type manipulation. The attacker uploads a template file containing SSTI payload like {{7*7}} or {%for x in ().__class__.__bases__[0].__subclasses__()%}...{% endfor %}. When the application processes uploaded files as templates (common in Jinja2, Twig, FreeMarker), the payload executes in server context. The attacker achieves RCE because template engines are designed to execute code. This chain exploits the assumption that uploaded files are inert data. Additionally, if uploads are stored in web-accessible directories or auto-included by template systems, exploitation becomes trivial.",
+    "reasoning_requirement": "Connect file upload bypass to template injection and code execution.",
+    "impact_level": "Critical \u2013 Remote code execution via template processing",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show specific file upload bypass technique with content-type header and filename manipulation; must demonstrate SSTI payload syntax for a specific template engine; must explain why storing uploads in web-accessible directories and processing them as templates creates a critical vulnerability chain."
+  },
+  {
+    "id": 399,
+    "scenario": "JavaScript prototype pollution in JSON parsing leads to DOM-based XSS via polluted properties.",
+    "chain_steps": "Prototype pollution via __proto__ or constructor.prototype \u2192 Pollute global object properties \u2192 Injected properties used in HTML rendering \u2192 XSS",
+    "prompt": "Explain how prototype pollution chains to XSS vulnerabilities.",
+    "expected_answer": "Prototype pollution exploits JavaScript's prototype chain to inject properties into all objects. When applications use unsafe merge functions (Object.assign with user input without deep cloning), an attacker sends JSON like {\"__proto__\": {\"sanitizeHtml\": false, \"innerHTML\": \"<img src=x onerror=alert(1)>\"}}. This modifies Object.prototype globally. Subsequently, template rendering code checking if userData.sanitizeHtml is true finds it false due to prototype pollution. When rendering userData.innerHTML to the DOM, XSS executes because the polluted property controlled the sanitization flag. The chain is subtle\u2014individual properties seem safe, but prototype pollution inverts trust assumptions. Code written as if local object properties are safe becomes vulnerable when those properties inherit from a polluted prototype. This is particularly dangerous in applications using deep object operations without considering prototype chain attacks.",
+    "reasoning_requirement": "Link prototype chain manipulation to DOM-level XSS via inherited properties.",
+    "impact_level": "High \u2013 Client-side code execution and session hijacking",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show prototype pollution payload targeting a specific property name and demonstrate how it's inherited globally; must identify how the polluted property reaches DOM operations (innerHTML, eval context); must explain why Object.create(null) or property whitelisting prevents this attack."
+  },
+  {
+    "id": 400,
+    "scenario": "Local file inclusion combined with log poisoning enables arbitrary code execution.",
+    "chain_steps": "LFI vulnerability to include application logs \u2192 Attacker injects PHP code via HTTP requests \u2192 Log file contains executable code \u2192 LFI includes and executes log file",
+    "prompt": "How does log poisoning convert read-only LFI to RCE?",
+    "expected_answer": "An application has a file inclusion vulnerability (e.g., ?page=../../../../var/log/apache2/access.log) but initially seems limited to reading configuration files. An attacker poisons application logs by sending HTTP requests with PHP code in User-Agent, Referer, X-Forwarded-For, or GET parameters. Example: GET /vulnerable.php?page=test HTTP/1.1, User-Agent: <?php system($_GET['cmd']); ?>. The web server logs this with the PHP code intact. The attacker then uses the LFI vulnerability to include the log file: ?page=../../../../var/log/apache2/access.log. When the log is included and processed as PHP by the vulnerable script, the injected code executes. This chain exploits seemingly low-impact vulnerabilities: LFI is dismissed if it's read-only, and log injection seems harmless. Combined, they achieve RCE. Success depends on log file location, format, and whether the server processes included files as code.",
+    "reasoning_requirement": "Chain read-only file inclusion to code execution via log injection.",
+    "impact_level": "Critical \u2013 Remote code execution through multi-step exploitation",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show log poisoning payload with PHP code in a loggable HTTP header; must identify specific log file path (varies by OS and web server); must explain why inclusion of log files in executable script contexts (PHP/JSP) is dangerous even without explicit eval() calls."
+  },
+  {
+    "id": 401,
+    "scenario": "DNS rebinding attack bypasses same-origin policy to enable SSRF to internal resources.",
+    "chain_steps": "Attacker controls domain \u2192 Returns victim's IP for first lookup, attacker's IP for second \u2192 JavaScript makes requests \u2192 Requests forwarded to internal IP \u2192 SSRF targets internal services",
+    "prompt": "How does DNS rebinding enable SSRF exploitation of internal networks?",
+    "expected_answer": "DNS rebinding exploits browser same-origin policy by manipulating DNS responses. An attacker registers a domain and configures it to return the victim's IP on the first DNS lookup and the attacker's server IP on subsequent lookups. A victim visits the attacker's website loading JavaScript. Initial same-origin checks pass based on the first resolution. JavaScript makes requests to the attacker's domain. When the browser attempts to connect, DNS is re-queried (due to TTL expiry or cache strategies), returning the attacker's IP. The attacker's server receives the connection and forwards it internally to the victim's internal network or localhost. This effectively converts the victim's browser into a proxy for SSRF attacks. Internal services like admin panels (port 8080), databases, or cloud metadata endpoints (169.254.169.254) become accessible. The attack bypasses same-origin restrictions entirely by pivoting through the victim's network location.",
+    "reasoning_requirement": "Connect DNS manipulation to bypassing browser security for internal network access.",
+    "impact_level": "Critical \u2013 SSRF to internal resources and cloud credential theft",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain DNS TTL mechanics and cache refresh timing; must show how same-origin policy is satisfied despite attacker's server receiving the request; must identify specific internal targets (metadata endpoints, admin services) exploitable via this technique."
+  },
+  {
+    "id": 402,
+    "scenario": "CORS misconfiguration allowing dynamic origins enables cross-origin credential theft.",
+    "chain_steps": "CORS header echoes Origin without validation \u2192 Attacker's domain makes credentialed request \u2192 Response includes sensitive data \u2192 Attacker's JavaScript accesses response",
+    "prompt": "Explain CORS misconfiguration leading to session and credential theft.",
+    "expected_answer": "CORS (Cross-Origin Resource Sharing) headers control which origins can access resources. Misconfigured headers like Access-Control-Allow-Origin: * (wildcard) or dynamic origin echoing (server sets Access-Control-Allow-Origin to whatever Origin was sent) combined with Access-Control-Allow-Credentials: true create severe vulnerabilities. An attacker tricks a logged-in user into visiting a malicious domain. JavaScript on attacker's site makes credentialed XHR/fetch requests (credentials: 'include') to the victim's application. Due to misconfigured CORS headers, the browser permits the response to be read by JavaScript. The response contains sensitive data: authentication tokens, user profile information, API keys, or CSRF tokens. The attacker's JavaScript extracts this data and sends it to the attacker's server. Even with SameSite cookies, dynamic origin CORS (server echoing Origin without validation) allows any domain to access resources. This bypasses traditional CSRF defenses because the attacker satisfies CORS requirements designed for legitimate cross-origin scenarios.",
+    "reasoning_requirement": "Link CORS misconfigurations to credential and session data exposure.",
+    "impact_level": "Critical \u2013 Session hijacking and unauthorized API access",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show specific vulnerable CORS header configuration (dynamic origin echo with credentials); must identify a sensitive endpoint returning protected data accessible via XHR; must explain why Access-Control-Allow-Credentials: true combined with unrestricted Access-Control-Allow-Origin creates a critical vulnerability."
+  },
+  {
+    "id": 403,
+    "scenario": "Open redirect in password reset flow enables token interception and unauthorized password change.",
+    "chain_steps": "Password reset requests include redirect parameter \u2192 Redirect to attacker's domain \u2192 Reset token captured in referer or URL \u2192 Token used to reset victim's password",
+    "prompt": "How does an open redirect in password reset flows enable account compromise?",
+    "expected_answer": "An application's password reset mechanism sends users a link like /reset?token=abc123&redirect=/dashboard. The redirect parameter is meant to send users to a safe page after reset, but it's not validated against a whitelist. An attacker sends a password reset request for the victim's account and receives a legitimate reset link with a valid token. The attacker modifies the redirect parameter to their domain: /reset?token=abc123&redirect=attacker.com/steal. When the victim clicks the link, they see a legitimate reset page. After submitting the reset, they're redirected to attacker.com. More critically, the token is exposed via HTTP referer header: the attacker's server receives the referer header containing the reset token, or the token appears in the redirect URL logged by intermediate proxies. The attacker then uses the captured token on the legitimate application to change the victim's password. This chain exploits inadequate redirect validation combined with tokens in URLs\u2014a critical combination even if tokens are time-limited.",
+    "reasoning_requirement": "Connect open redirect in password reset to token leakage and password compromise.",
+    "impact_level": "Critical \u2013 Account takeover via credential reset token theft",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must show how reset tokens are exposed via HTTP referer or URL parameters to attacker's domain; must explain why time-limited tokens still create a compromise window if tokens are leaked immediately; must identify why redirect_uri whitelisting combined with moving tokens to Authorization headers prevents this attack."
   }
 ]
