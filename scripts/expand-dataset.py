@@ -154,6 +154,13 @@ FILE_CONFIGS = {
         "id_prefix": "VT", "id_field": "prompt_id",
         "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
     },
+    "platform-schema-training.json": {
+        "target": 400,
+        "domain": "Sentinel Primordial hunt engine platform-specific prompt/response schemas for hypothesis generation, solver task planning, verifier confirmation, report generation, CMD sentinel execution, confidence calibration, and multi-iteration pivot reasoning",
+        "diversity": "schemas: hypothesis JSON array (vulnClass/targetUrl/reasoning/confidence/priority), solver task JSON array (vulnClass/priority/confidence/reasoning), verifier JSON (confirmed/reasoning/confidenceAdjustment), report JSON (summary/impact), CMD sentinel [CMD:{bin,args,detached,description}], attack tree JSON (id/goal/preconditions/approaches/children); vary: target tech stacks, vuln classes from platform taxonomy (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe/ssti/http_smuggling), evidence strength mapped to confidence scores, multi-iteration pivots, Kali tool combinations",
+        "id_prefix": "PS", "id_field": "prompt_id",
+        "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
+    },
 }
 
 SYSTEM_PROMPT = (
