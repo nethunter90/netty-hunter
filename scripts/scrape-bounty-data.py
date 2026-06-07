@@ -10,11 +10,16 @@ Sources (all free, no auth required):
 
 Output: scripts/bounty-scrape.jsonl
 
+NVD API key (free, 10x higher rate limit):
+  Request at: https://nvd.nist.gov/developers/request-an-api-key
+  Then set:   export NVD_API_KEY=your-key-here
+  Or add to server/.env: NVD_API_KEY=your-key-here
+
 Usage:
   python3 scripts/scrape-bounty-data.py [--nvd] [--osv] [--ghsa /path/to/advisory-database]
 
   # Fetch all sources:
-  python3 scripts/scrape-bounty-data.py --nvd --osv
+  NVD_API_KEY=your-key python3 scripts/scrape-bounty-data.py --nvd --osv
 
   # If you cloned the GitHub advisory DB:
   git clone --depth=1 https://github.com/github/advisory-database.git /tmp/advisory-database
@@ -25,8 +30,8 @@ The output file is automatically picked up by export-finetune-jsonl.py.
 
 import argparse
 import json
+import os
 import time
-import random
 import re
 import sys
 from pathlib import Path
@@ -37,6 +42,17 @@ try:
 except ImportError:
     print("ERROR: pip install requests")
     sys.exit(1)
+
+# Load .env if python-dotenv available, otherwise fall back to env
+try:
+    from dotenv import load_dotenv
+    _env = Path(__file__).parent.parent / "server" / ".env"
+    if _env.exists():
+        load_dotenv(_env)
+except ImportError:
+    pass
+
+NVD_API_KEY = os.environ.get("NVD_API_KEY", "")
 
 ROOT     = Path(__file__).parent.parent
 OUT_FILE = ROOT / "scripts" / "bounty-scrape.jsonl"
@@ -227,55 +243,76 @@ def cve_to_qa(cve_id: str, description: str, cwe_id: str, cwe_name: str,
 # ─── Source 1: NVD CVE API ───────────────────────────────────────────────────
 
 def scrape_nvd(progress: dict, out_fh) -> int:
-    """Pull CVEs for web-relevant CWEs from NVD. Rate limit: 5 req/sec without key."""
-    base = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    """Pull CVEs for web-relevant CWEs from NVD.
+    Without API key: 5 req/30s.  With key: 50 req/30s (10x faster).
+    Set NVD_API_KEY env var or add to server/.env.
+    """
+    base    = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    headers = {"apiKey": NVD_API_KEY} if NVD_API_KEY else {}
+    # Authenticated: 0.6s between requests (50 req/30s).
+    # Unauthenticated: 6s between requests (5 req/30s).
+    delay   = 0.65 if NVD_API_KEY else 6.5
+
+    if NVD_API_KEY:
+        print(f"  NVD: using API key (10x rate limit) — delay={delay}s/req")
+    else:
+        print("  NVD: no API key — unauthenticated (slow). Set NVD_API_KEY to speed up.")
+
     total_written = 0
     session = requests.Session()
+    session.headers.update(headers)
 
     for cwe_id, cwe_name in WEB_CWES.items():
-        prog_key = f"nvd:{cwe_id}"
+        prog_key  = f"nvd:{cwe_id}"
         start_idx = progress.get(prog_key, 0)
+
+        # Skip already-completed CWEs (stored as int equal to totalResults)
+        # Progress is an integer tracking the next startIndex; "done" means
+        # we stored the totalResults value and start_idx caught up.
 
         params = {
             "cweId":          cwe_id,
-            "resultsPerPage": 100,
+            "resultsPerPage": 2000 if NVD_API_KEY else 100,
             "startIndex":     start_idx,
         }
 
-        # First call to get total
         try:
             r = session.get(base, params=params, timeout=30)
             r.raise_for_status()
             data = r.json()
         except Exception as e:
             print(f"  NVD {cwe_id} fetch error: {e}")
-            time.sleep(6)
+            time.sleep(delay * 10)
             continue
 
         total = data.get("totalResults", 0)
-        print(f"  NVD {cwe_id} ({cwe_name}): {total} CVEs, resuming at {start_idx}")
+        if start_idx >= total and total > 0:
+            print(f"  NVD {cwe_id} ({cwe_name}): already complete ({total} CVEs)")
+            continue
+
+        print(f"  NVD {cwe_id} ({cwe_name}): {total:,} CVEs, resuming at {start_idx}")
+        page_size = params["resultsPerPage"]
 
         while start_idx < total:
             for vuln in data.get("vulnerabilities", []):
-                cve = vuln.get("cve", {})
+                cve    = vuln.get("cve", {})
                 cve_id = cve.get("id", "")
-                descs = [d["value"] for d in cve.get("descriptions", []) if d.get("lang") == "en"]
+                descs  = [d["value"] for d in cve.get("descriptions", [])
+                          if d.get("lang") == "en"]
                 if not descs:
                     continue
                 description = descs[0]
 
-                # CVSS
                 score, vector, av = None, None, None
                 for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
                     metrics = cve.get("metrics", {}).get(key, [])
                     if metrics:
-                        cd = metrics[0].get("cvssData", {})
+                        cd     = metrics[0].get("cvssData", {})
                         score  = cd.get("baseScore")
                         vector = cd.get("vectorString")
                         av     = cd.get("attackVector") or cd.get("accessVector")
                         break
 
-                # Skip low severity and non-network attack vectors
                 if score and score < 4.0:
                     continue
                 if av and av.upper() in ("LOCAL", "PHYSICAL", "ADJACENT_NETWORK"):
@@ -286,28 +323,44 @@ def scrape_nvd(progress: dict, out_fh) -> int:
                     out_fh.write(json.dumps(qa, ensure_ascii=False) + "\n")
                     total_written += 1
 
-            start_idx += 100
+            start_idx += page_size
             progress[prog_key] = start_idx
             save_progress(progress)
 
             if start_idx >= total:
                 break
 
-            time.sleep(0.6)  # stay well under 5 req/sec limit
+            time.sleep(delay)
             params["startIndex"] = start_idx
             try:
                 r = session.get(base, params=params, timeout=30)
                 r.raise_for_status()
                 data = r.json()
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 429:
+                    wait = 35
+                    print(f"  NVD 429 rate-limit — waiting {wait}s then retrying …")
+                    time.sleep(wait)
+                    try:
+                        r = session.get(base, params=params, timeout=30)
+                        r.raise_for_status()
+                        data = r.json()
+                    except Exception as e2:
+                        print(f"  NVD retry failed: {e2}")
+                        break
+                else:
+                    print(f"  NVD page fetch error at {start_idx}: {e}")
+                    time.sleep(delay * 5)
+                    break
             except Exception as e:
                 print(f"  NVD page fetch error at {start_idx}: {e}")
-                time.sleep(10)
+                time.sleep(delay * 5)
                 break
 
-        progress[prog_key] = total  # mark complete
+        progress[prog_key] = total
         save_progress(progress)
-        print(f"    → wrote {total_written} Q&A pairs so far")
-        time.sleep(1)
+        print(f"    → {total_written:,} Q&A pairs total so far")
+        time.sleep(delay)
 
     return total_written
 
