@@ -5641,5 +5641,38 @@
     "impact_level": "Critical \u2013 Authentication bypass and privilege escalation via JWT algorithm confusion",
     "category": "chain_scenarios",
     "evaluation_criteria": "Must explain how JWT algorithm confusion exploits missing algorithm validation and the difference between HS256 (symmetric) and RS256 (asymmetric); Must detail how the attacker obtains the public key and uses it as an HMAC secret to forge a valid signature; Must identify algorithm whitelisting and explicit algorithm validation before verification as mitigations."
+  },
+  {
+    "id": 514,
+    "scenario": "REST API endpoint accepts XML payloads without DTD validation, enabling XXE attack against internal services.",
+    "chain_steps": "Parse malicious XML with XXE \u2192 SSRF to AWS metadata endpoint \u2192 Extract IAM role credentials \u2192 Assume AWS role \u2192 Access cloud resources",
+    "prompt": "Explain how XXE injection in a REST API can lead to cloud credential theft and infrastructure compromise.",
+    "expected_answer": "An attacker crafts an XXE payload targeting the AWS metadata service endpoint (169.254.169.254) accessible from EC2 instances. By exploiting XML external entity expansion without proper DTD validation, the attacker forces the server to make an SSRF request to the metadata service. The response contains temporary IAM credentials (AccessKeyId, SecretAccessKey, Token) bound to the instance's role. These credentials are extracted from the XXE output and used to authenticate AWS API calls, allowing enumeration of resources, access to S3 buckets, security group modification, or privilege escalation. The chain works because: (1) XXE provides a trusted-boundary SSRF primitive from a verified instance, (2) metadata endpoints are accessible only from the instance itself, and (3) no network-level restrictions prevent instance-to-metadata queries. Mitigation requires disabling XXE processing at the XML parser layer (FEATURE_SECURE_PROCESSING in Java, libxml2 NOENT/NONET flags) and implementing network segmentation to restrict metadata access from untrusted processes.",
+    "reasoning_requirement": "Recognize XXE as a trusted-boundary SSRF vector and understand AWS metadata service as a high-value target accessible only from affected instances.",
+    "impact_level": "Critical \u2013 Cloud account compromise and cross-service privilege escalation",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain XXE DTD expansion mechanism enabling SSRF, identify the AWS metadata endpoint and credential extraction process, and explain why instance-bound credentials enable full account compromise including the infrastructure trust assumption violated."
+  },
+  {
+    "id": 515,
+    "scenario": "MySQL database application accepts user input in a SELECT query, and the database user has FILE privileges.",
+    "chain_steps": "Inject SQL with INTO OUTFILE \u2192 Write malicious PHP to web-accessible directory \u2192 Access uploaded PHP via HTTP \u2192 Execute arbitrary code with web server privileges",
+    "prompt": "Explain how SQL injection combined with database file write privileges leads to remote code execution.",
+    "expected_answer": "An attacker exploits SQL injection to inject a MySQL INTO OUTFILE clause, writing malicious PHP to the web root. A payload like `' UNION SELECT '<?php system($_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php'-- ` succeeds if the MySQL user has FILE privileges and the web directory is writable by the MySQL service. The attacker then accesses the file via HTTP, triggering PHP execution with web server privileges. This chain bypasses upload filters because the file is written by the database service, not standard mechanisms. Key prerequisites: (1) SQL injection vulnerability, (2) Database user with FILE grant, (3) Known writable web-accessible path, (4) Script execution enabled in that directory. The vulnerability chain exploits the privilege model by using database write capabilities to reach the web execution context. Mitigation: Remove FILE privileges from application database users, implement parameterized queries, disable script execution in upload directories via .htaccess or nginx configuration.",
+    "reasoning_requirement": "Understand database privilege model and how file system write access through database escalates to code execution in web context.",
+    "impact_level": "Critical \u2013 Complete web server compromise with potential for lateral movement",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must explain the SQL injection syntax required for INTO OUTFILE exploitation, identify FILE privilege requirement and writable directory path, and trace the chain from database write to HTTP-triggered code execution showing the privilege escalation from database to web context."
+  },
+  {
+    "id": 516,
+    "scenario": "Web application processes uploaded files through a server-side template engine (Jinja2, Freemarker) without sanitizing template syntax.",
+    "chain_steps": "Upload file containing SSTI payload \u2192 Application processes file as template \u2192 Evaluate malicious expressions \u2192 Execute arbitrary code with application privileges",
+    "prompt": "Explain how file upload combined with template processing enables remote code execution.",
+    "expected_answer": "An attacker uploads a file containing server-side template injection (SSTI) payloads. When the application processes the file through a template engine, template syntax is evaluated as code rather than literal content. A Jinja2 payload like `{{ __import__('os').popen('whoami').read() }}` executes OS commands. The exploit works because: (1) upload validation checks only MIME type or extension, missing template syntax, (2) no sandboxing prevents access to dangerous functions like __import__ or java.lang.Runtime.getRuntime(), and (3) the file is processed with application privileges. Different template engines expose different RCE primitives\u2014Jinja2 allows __import__ and os.system, Freemarker exposes new() for Java instantiation, Velocity allows reflection. The attacker identifies the engine through error messages, crafts payloads with benign extensions (txt, csv, html) to bypass filters, and achieves code execution. The chain succeeds because file upload lacks application-context awareness\u2014developers don't realize that processing user files as templates invokes code evaluation. Mitigation: Never process user-supplied files as templates, disable dangerous template functions, implement strict sandboxing, validate file content post-upload, and use allowlist-only template features.",
+    "reasoning_requirement": "Recognize file upload as a data injection vector when combined with server-side processing, and understand how template engines evaluate expressions as code.",
+    "impact_level": "Critical \u2013 Remote code execution with application-level privileges",
+    "category": "chain_scenarios",
+    "evaluation_criteria": "Must identify the SSTI payload syntax and specify the vulnerable template engine (Jinja2, Freemarker, etc.), explain why file upload filters fail to detect template syntax, and describe the code execution mechanism showing the vulnerability in combining user input with template processing."
   }
 ]
