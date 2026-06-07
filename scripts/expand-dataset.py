@@ -154,6 +154,13 @@ FILE_CONFIGS = {
         "id_prefix": "VT", "id_field": "prompt_id",
         "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
     },
+    "platform-chat-training.json": {
+        "target": 250,
+        "domain": "operator bubble chat assistant for Sentinel Primordial — conversational security guidance covering tool output interpretation, payload crafting by tech stack, finding escalation chains, bug bounty strategy, live hunt state analysis, report writing, and recon methodology",
+        "diversity": "tool outputs: nmap/ffuf/nuclei/sqlmap/whatweb/nikto; payloads: XSS (WAF bypass), SQLi (PostgreSQL/MySQL), SSRF (AWS metadata, gopher), SSTI (Jinja2/Twig), XXE, command injection, JWT attacks; escalation: SSRF→RCE, IDOR→PII, XSS→ATO, SQLi→exfil, JWT→admin; strategy: time-limited hunts, WAF presence, P4→P1 chains, triage; hunt state: stalled engine, active probing, 0-finding pivots; markdown-formatted responses with code blocks",
+        "id_prefix": "CH", "id_field": "prompt_id",
+        "required": ["id", "prompt_id", "scenario", "visual_tags", "prompt", "reasoning_focus", "expected_answer", "evaluation_criteria", "category"],
+    },
     "platform-schema-training.json": {
         "target": 400,
         "domain": "Sentinel Primordial hunt engine platform-specific prompt/response schemas for hypothesis generation, solver task planning, verifier confirmation, report generation, CMD sentinel execution, confidence calibration, and multi-iteration pivot reasoning",
