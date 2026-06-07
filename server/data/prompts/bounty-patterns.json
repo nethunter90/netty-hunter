@@ -3608,5 +3608,135 @@
       "Cites precedent from HackerOne/Bugcrowd for similar enterprise findings; references SOC2 compliance implications for P1 justification"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 331,
+    "scenario": "An API endpoint returns user account metadata (created_date, last_login, plan_type, role) in error messages. CVSS base score: 3.7 (Low - Information Disclosure). However, the company monetizes access based on these data points. Competitors can enumerate customer tiers and identify high-value accounts for targeted social engineering or competitive intelligence.",
+    "prompt": "How do you escalate a 'low' CVSS finding when business impact clearly exceeds the risk score? What signals indicate hidden severity?",
+    "expected_answer": "This exemplifies the CVSS-impact divergence inherent in modern SaaS business models. CVSS metrics assume uniform information value, but competitive/financial context transforms low-entropy leaks into strategic weapons. To escalate: (1) Identify downstream business risk (competitive targeting, customer stratification, social engineering vector preparation); (2) Quantify the attack chain (enumerate \u2192 profile \u2192 target); (3) Present as P2-P3 by framing as 'Account Targeting via Metadata Enumeration' rather than generic 'Information Disclosure'. Bugcrowd and HackerOne recognize this pattern \u2014 programs with market-sensitive data (SaaS, fintech) weight business impact 40-60% against CVSS. Include competitor research (can you enumerate their customers?) and a dashboard of derived insights (customer tier distribution, growth velocity) to justify escalation. This is where researcher domain knowledge creates 2-3x payout multipliers.",
+    "reasoning_requirement": "Distinguish between CVSS technical severity and business impact; identify downstream attack chains; tailor framing to program risk tolerance.",
+    "evaluation_criteria": [
+      "Identifies specific downstream risk (competitive targeting, social engineering prep, customer stratification)",
+      "Quantifies attack feasibility (enumeration speed, accuracy of tier inference, attackable surface size)",
+      "Recommends P2-P3 classification with business-impact justification and competitor validation proof-of-concept"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 332,
+    "scenario": "A file upload endpoint allows uploading SVG files without sanitization. Researchers find that SVG+XML can execute embedded JavaScript, leading to XSS. The program has 47 previous XSS reports. Your SVG finding triggers XSS in a different context (file preview modal, not comment rendering) and via a different vector (SVG namespace, not HTML event handlers). Duplication risk appears extremely high.",
+    "prompt": "What differentiates this SVG-based XSS from generic XSS duplicates, and when is it reportable as a novel finding?",
+    "expected_answer": "SVG-based XSS is frequently marked duplicate because 'XSS is XSS' \u2014 but this misses critical differentiation. Duplication determination requires: (1) Unique Attack Vector \u2014 SVG+XML introduces parser-level XSS (namespace pollution, DTD expansion) orthogonal to DOM-based XSS in previous reports; (2) Unique Affected Component \u2014 file preview modal != comment rendering; separate sanitization rules and trust boundaries; (3) Unique Remediation Path \u2014 SVG requires XML-aware sanitization (SVG.js library or Content Security Policy for object-src/img-src) distinct from HTML sanitization. Search the program's previous reports for 'SVG' and 'XML' explicitly. If absent, it's reportable. Pitch as 'SVG-based XSS via File Upload' to signal the vector and context clearly. This distinction is critical on HackerOne where detailed duplicate searching is table-stakes; programs with high XSS volume (>50) expect researchers to prove orthogonal surfaces.",
+    "reasoning_requirement": "Identify unique attack vectors, affected components, and remediation paths to differentiate duplicates; use precise terminology to surface novelty.",
+    "evaluation_criteria": [
+      "Distinguishes SVG+XML parser-level XSS from DOM-based XSS in previous reports",
+      "Identifies unique component (file preview modal) and separate trust boundary",
+      "Proposes XML-aware remediation path (SVG.js, CSP object-src/img-src) distinct from HTML sanitization"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 333,
+    "scenario": "A company runs a HackerOne program with scope '*.company.com' excluding 'staging.company.com'. You find a critical RCE in api-staging.company.com (database write access, reverse shell capability). It's clearly staging but technically matches the wildcard. The program paid $50k+ for production RCE but pays $500 for staging bugs.",
+    "prompt": "Is this in scope? How do you handle scope ambiguity to maximize payout while maintaining program trust?",
+    "expected_answer": "Scope ambiguity is a critical triage decision. Technically, api-staging.company.com matches *.company.com, but the explicit staging.company.com exclusion signals intent to exclude all staging. However, api-staging != staging directly, so plausible deniability exists. The right approach: (1) Before submission, contact the program's security team via HackerOne's 'Ask a Question' feature with the exact domain asking for clarification; (2) If they confirm in-scope, submit as P1 RCE; (3) If they say out-of-scope, do NOT submit (trust preservation > one-off payout). This demonstrates collaboration, not ambiguity exploitation. If the response is ambiguous, document the conversation and submit with a note: 'Scope clarification requested and received (attached); domain appears to match main scope wildcard despite staging naming convention.' HackerOne programs respect researchers who ask first \u2014 payout bonuses are common for good-faith scope questions. Intigriti takes a stricter approach where scope is binding, so there use the 'Ask for Clarification' feature before any work.",
+    "reasoning_requirement": "Navigate scope ambiguity without appearing to exploit grey areas; use program-specific communication channels strategically; prioritize long-term trust.",
+    "evaluation_criteria": [
+      "Recommends program-specific communication approach (HackerOne's 'Ask a Question' vs Intigriti's stricter scope enforcement)",
+      "Demonstrates good-faith scope confirmation before submission to avoid rejection and maintain trust",
+      "Quantifies payout trade-off (out-of-scope confirmation vs. ambiguous submission risk)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 334,
+    "scenario": "A server-side template injection (SSTI) exists in Jinja2 email templates. Previous SSTI reports were P3-P4 ($2k-$5k). However, this SSTI is in an endpoint where the template is rendered with a database connection object in scope, enabling SQL injection via template context (e.g., `{{ db.execute('SELECT...') }}`). CVSS: 6.5 (Medium), but SQL access is orders of magnitude higher impact.",
+    "prompt": "What payout signals indicate this deserves P1 despite medium CVSS? How do you frame it to justify 10x escalation?",
+    "expected_answer": "Payout signals reveal program priorities orthogonal to CVSS. This SSTI-to-SQLi chain is P1 because: (1) Database Access Escalation \u2014 template context includes database connection, transforming template injection into database access; (2) Data Exfiltration at Scale \u2014 SQL execution enables customer data extraction (compliance risk, financial impact); (3) Payout Pattern Signal \u2014 the program has 15+ SSTI reports at P3-P4 but zero 'SSTI with database access' cases, signaling this variant is genuinely novel; (4) Remediation Complexity \u2014 fixing requires template context isolation (sandboxing database objects), not just input sanitization. Search the program's previous reports for 'SSTI database' and 'template context'. If absent, this is a variant they haven't patched. Frame as 'Server-Side Template Injection with Database Context Access \u2192 SQL Injection' to clarify escalation. On Bugcrowd, programs with high SSTI volume often pay premium bounties ($15k+) for context-escalation variants because they signal architectural gaps (database objects shouldn't be in template scope). Include PoC demonstrating SQL execution through template syntax.",
+    "reasoning_requirement": "Identify variants of common vulnerabilities that unlock additional attack surfaces; use payout pattern history to signal novel impact; frame escalation through remediation complexity.",
+    "evaluation_criteria": [
+      "Identifies SSTI \u2192 SQLi escalation via template context manipulation (database object exposure)",
+      "Searches prior SSTI reports for context-escalation variants and confirms novelty",
+      "Proposes P1 classification with remediation justification (template context sandboxing, not input sanitization alone)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 335,
+    "scenario": "A multi-factor authentication bypass exists via race condition: users who initiate MFA disable, then immediately log out and log back in during the 5-second window before MFA revocation syncs across sessions, can bypass MFA. The race window is tight (\u00b12 seconds variance), and reproduction succeeds 3 out of 5 attempts. P1 impact (account takeover) but P4 reproducibility challenge.",
+    "prompt": "How do you document a race-condition MFA bypass to pass reproducibility checks and prevent rejection?",
+    "expected_answer": "Race conditions are notorious for rejection due to flaky reproduction. Key to acceptance is removing timing ambiguity through deterministic documentation: (1) Environmental Prerequisites \u2014 specify exact browser versions, network latency, server load (Chrome 125, Linux 6.1, 200ms RTT, single-user load); (2) Step-by-Step with Timing \u2014 provide a script (Python/bash) automating the race, removing manual variance. Send MFA disable request and immediately (within 50ms) send logout-then-login sequence; measure success rate over 20 iterations; (3) Causal Explanation \u2014 explain WHY the race exists (session tokens validated against cached MFA state; revocation has 5-second sync delay; login service reads stale cache during sync window); (4) Proof of Concept Video \u2014 time-stamped video with server/client logs overlaid showing both successful (timing hit) and failed (timing miss) attempts. Frame as 'MFA Bypass via Session Synchronization Race Condition' to signal the root cause. Include server-side logs showing the sync delay explicitly. This transforms a 'flaky' finding into a 'deterministically reproducible race condition' \u2014 the difference between P3 ($5k) and P1 ($25k+).",
+    "reasoning_requirement": "Transform non-deterministic findings into documented, reproducible scenarios through environmental isolation and causal explanation; provide automated PoC and video evidence.",
+    "evaluation_criteria": [
+      "Specifies exact environmental prerequisites (browser version, network latency, server load) to eliminate variance",
+      "Provides automated PoC script demonstrating >50% success rate across 20+ iterations",
+      "Includes timestamped server/client logs and video proof showing MFA state before/after race window"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 336,
+    "scenario": "Three seemingly independent findings: (1) DOM-based XSS in user profile page (P4), (2) Unencrypted localStorage access via browser DevTools (not a vuln, context), (3) No HttpOnly flag on session cookies (P4). Individually P5, N/A, P4. Combined: attacker executes XSS \u2192 steals localStorage tokens \u2192 impersonates user across authenticated API calls. Complete account takeover.",
+    "prompt": "How do you document and price this authentication bypass chain? Should it be reported as one P1 or three separate findings?",
+    "expected_answer": "Authentication chains exemplify impact amplification \u2014 individually moderate findings unlock critical impact when sequenced. Report strategy depends on program policy: (1) Single P1 Report (Recommended): Title 'Complete Account Takeover via XSS + Unprotected Token Storage'. Detail all three components, emphasizing chain logic: XSS \u2192 steal localStorage tokens \u2192 impersonate user. This single report is P1 ($25k+) because it demonstrates end-to-end compromise. (2) Three Separate Reports (only if program policy requires 'report each issue separately'): Submit as P4 XSS + P3 HttpOnly oversight, but they'll likely merge during triage. Check the program's Responsible Disclosure policy on HackerOne/Bugcrowd. (3) Impact Quantification: Provide PoC showing the full chain in <30 seconds (navigate to profile \u2192 trigger XSS \u2192 extract token from localStorage \u2192 use token to access /api/admin). The token storage issue (unencrypted localStorage) is the critical differentiator \u2014 this alone isn't P1, but with XSS it is. Frame as 'Session Hijacking via XSS and Insecure Token Storage'. Most HackerOne/Bugcrowd programs treat auth chains as single P1 findings because they require coordinated remediation.",
+    "reasoning_requirement": "Assess cumulative impact across individual findings; justify single-report vs. multi-report strategy; quantify end-to-end attack execution time.",
+    "evaluation_criteria": [
+      "Demonstrates end-to-end attack chain in PoC (XSS trigger \u2192 token exfiltration \u2192 API impersonation) with timing <30 seconds",
+      "Identifies unique impact of token storage failure (localStorage unencrypted + no HttpOnly) as differentiator",
+      "Recommends single P1 report with remediation requirements across all three components"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 337,
+    "scenario": "An Intigriti program explicitly states scope: 'production web application only; staging and development environments are out of scope per compliance requirements.' A researcher discovers that the main application imports JavaScript from a CDN, and that CDN's staging environment (cdn-staging.company.com) is linked in HTML source code comments. The staging CDN serves outdated, vulnerable library versions (XSS-prone sanitizer). Accessing it requires DNS hack or direct staging URL access.",
+    "prompt": "Is this in-scope for Intigriti? How do you handle strict scope policies without losing the finding?",
+    "expected_answer": "Intigriti enforces strict scope compliance \u2014 violating it results in immediate disqualification and potential account suspension. This finding is OUT OF SCOPE because the vulnerable resource (cdn-staging) is explicitly excluded. However, the vulnerability is reportable if you can demonstrate it's accessible from the PRODUCTION environment. Strategy: (1) Verify whether production application actually loads the staging CDN (check browser Network tab on production; if staging URLs appear, it's in-scope); (2) If production doesn't load staging, the finding is out-of-scope \u2014 do NOT submit. Intigriti is stricter than HackerOne/Bugcrowd on this; they view scope violations as good-faith test failures; (3) Alternative approach: check if the production CDN serves the SAME vulnerable library version. If yes, report the production CDN vulnerability \u2014 that's clearly in-scope. The staging URL reference becomes context, not the attack surface. Intigriti programs are often subject to SOC2/ISO27001 audits where out-of-scope testing could violate audit scope. Always err toward strict interpretation; contact support if ambiguous. They'll clarify faster than HackerOne and reward the researcher for asking.",
+    "reasoning_requirement": "Respect program-specific governance rigor (Intigriti > HackerOne/Bugcrowd on scope strictness); propose in-scope reformulation without violating boundaries.",
+    "evaluation_criteria": [
+      "Clarifies that Intigriti's strict scope enforcement disqualifies staging findings (including those referenced from production)",
+      "Proposes in-scope reformulation: check if production CDN serves the same vulnerability",
+      "Recommends support channel clarification for ambiguous scope boundaries on Intigriti"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 338,
+    "scenario": "A Bugcrowd program's payout structure: P1 $10k, P2 $5k, P3 $1k, P4 $250. A researcher finds a critical API authentication bypass (P1 candidate) but notices ZERO previous P1 payments and all top payouts are P2 ($5k). The security team's remediation history shows P2 fixes ship in 2 weeks, but no P1 fixes have shipped in 6+ months. This signals either: (a) they don't consider auth issues P1, or (b) they value quantity over depth.",
+    "prompt": "How do you read payout patterns and remediation history to determine realistic severity classification and payout expectations?",
+    "expected_answer": "Bugcrowd programs reveal their true risk priorities through payout history and remediation velocity. Flat payout history (all reports P2-P3, no P1s) indicates either: (1) Program Risk Tolerance \u2014 they may not consider certain issues (e.g., auth bypass in non-critical flows) as P1-worthy, or (2) Researcher Quality Bias \u2014 they've received low-quality P1 submissions and stopped accepting them. To determine which: (a) Review the 10 most recent P2 reports and their themes (authentication, injection, access control?); if auth issues cluster at P2, that's your ceiling; (b) Check remediation velocity \u2014 2-week P2 fixes but 6-month P1 delays suggests P1s are backlogged or deprioritized; (c) Search for 'authentication' and 'API' in closed reports; if high-severity auth bugs exist and are marked P2, that's your severity cap; (d) Contact the program via Bugcrowd's 'Ask a Question': 'Previous authentication bypass reports appear P2; is this API auth issue P1 or P2?' They'll clarify. Pitch it P2 ($5k) initially; if they escalate, great. Bugcrowd programs with flat payout histories often reward quantity and relationship-building \u2014 if you build a track record of P2s, future P1s are more likely to be believed.",
+    "reasoning_requirement": "Analyze payout patterns and remediation velocity to infer program risk perception; calibrate severity claims to historical precedent; use program communication strategically.",
+    "evaluation_criteria": [
+      "Identifies payout pattern (flat P2-P3 history, zero P1s) as signal of program risk tolerance or researcher quality bias",
+      "Analyzes remediation velocity (2-week P2s vs. 6-month P1 backlog) to determine escalation likelihood",
+      "Recommends P2 submission with escalation pathway and suggests relationship-building strategy for Bugcrowd"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 339,
+    "scenario": "A financial SaaS platform contains a privilege escalation vulnerability: a normal user can send `PUT /api/account` with `is_admin=true` parameter, and the server naively trusts it, promoting the user to admin. CVSS: 7.2 (High). The vulnerability requires authentication and only affects single accounts (no lateral movement). However, it grants access to financial transaction logs, customer data, and billing controls. The program's P1 definition emphasizes 'Confidentiality Impact: High' and 'Integrity Impact: High.'",
+    "prompt": "Is this P1 or P2? How do you distinguish between severity inflation and legitimate P1 escalation?",
+    "expected_answer": "This is P1 by the program's own definition: Confidentiality (financial transaction logs, customer data) and Integrity (billing controls) are both High. However, it appears P2-adjacent due to limited scope (single account, requires auth). Key to justifying P1 without inflation: (1) Impact Quantification \u2014 if the program has 10,000 users with average $1000 in transaction data, that's $10M exposure per compromised user; (2) Severity of Impacted Actions \u2014 billing controls (charge reversal, customer fraud) are financial impact, not just information disclosure; (3) Remediation Complexity \u2014 this requires an authorization framework review across all endpoints, not just input validation. Check the program's P1 criteria explicitly. If they say 'any authenticated privilege escalation to admin' = P1, submit as P1. Most fintech programs classify privilege escalation to admin as P1 automatically. Frame as 'Unauthorized Admin Privilege Escalation via Parameter Tampering' to signal impact clearly. Avoid generic 'privilege escalation' language; specificity matters. CVSS mismatch (7.2 = High, but feels like P2) is common in fintech \u2014 program definitions override CVSS for financial impact.",
+    "reasoning_requirement": "Apply program-specific severity definitions; quantify business impact (financial exposure, regulatory risk) to justify P1; distinguish severity inflation from legitimate escalation.",
+    "evaluation_criteria": [
+      "Cites program's explicit P1 criteria and maps finding to those criteria (Confidentiality/Integrity High)",
+      "Quantifies financial exposure and regulatory risk (e.g., $10M data exposure, fraud vulnerability)",
+      "Proposes 'Unauthorized Admin Escalation' framing to emphasize authorization framework failure"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 340,
+    "scenario": "A healthcare platform (HIPAA-covered) has a vulnerability: patient notes are indexed in Elasticsearch without field-level encryption, making them searchable via a public API endpoint. Attackers can enumerate patient records by medical keywords (e.g., 'diabetes', 'cancer') and retrieve PHI (Protected Health Information). Reproduction requires: (1) API key enumeration (public GitHub search), (2) Elasticsearch query syntax knowledge, (3) Medical terminology awareness.",
+    "prompt": "How do you document a multi-step, domain-specific vulnerability to justify P1 without appearing to require unrealistic expertise?",
+    "expected_answer": "Domain-specific vulnerabilities are often underestimated because their complexity is hidden. This is clearly P1 (HIPAA violation, mass PHI exposure), but reproduction documentation must eliminate the perception that it requires specialized knowledge. Strategy: (1) Simplify Reproduction Steps \u2014 instead of 'search for medical keywords', provide exact API calls: `curl https://api.example.com/search?q=diabetes --header 'Authorization: Bearer LEAKED_KEY'`. This removes the 'medical terminology' barrier; (2) Provide API Key Sources \u2014 include the exact GitHub dork search: `repo:patient_notes 'healthapp-api-key'` and results showing 3+ exposed keys. This demonstrates the key is findable, not hypothetical; (3) Quantify Exposure \u2014 if Elasticsearch indexes 50,000 patient notes and 15% contain searchable keywords, that's 7,500 records (HIPAA minimum penalty: $100 per record = $750k); (4) Regulatory Context \u2014 reference HIPAA \u00a7 164.306 (safeguards) and \u00a7 164.410 (notification) to frame as regulatory violation. Programs with HIPAA obligations weight regulatory impact heavily. Include a screenshot of 5+ PHI records retrieved via the API to prove reproducibility is trivial. This transforms perceived complexity into simplicity.",
+    "reasoning_requirement": "Simplify domain-specific reproduction through exact commands and external validation; quantify regulatory/financial impact; contextualize complexity as non-critical.",
+    "evaluation_criteria": [
+      "Simplifies reproduction with exact curl commands and GitHub dork results (removes domain expertise barrier)",
+      "Quantifies PHI exposure and HIPAA violation financial impact ($750k+ minimum penalty for 7,500 records)",
+      "Frames as regulatory obligation failure with HIPAA citation, elevating severity beyond technical complexity"
+    ],
+    "category": "bounty_patterns"
   }
 ]
