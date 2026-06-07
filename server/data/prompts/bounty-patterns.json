@@ -3998,5 +3998,135 @@
       "Recommends non-payout disclosure over P5 submission for reputation ROI; reserves Bugcrowd submissions for P3+ findings ($1,000+)."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 361,
+    "scenario": "A POST endpoint changing user email requires a CSRF token, but the token validation only checks for token presence in the request, not whether it matches the session token. The token itself is generated as a hash of user_id+timestamp, making it predictable across multiple sessions.",
+    "prompt": "Why does weak CSRF token validation result in P2 on HackerOne but P3 on Bugcrowd? How do you frame the payout divergence?",
+    "expected_answer": "CSRF severity classification hinges on token validation rigor, not mere token existence. A predictable token (user_id-based hash) allows attackers to craft valid requests from cross-origin contexts, bypassing Same-Site cookie protections if the app doesn't enforce them. HackerOne typically rates state-changing CSRF as P2 when combined with predictable token generation, as it enables unauthorized account modifications (email change, preference modification). Bugcrowd may downgrade to P3 if the endpoint logs all changes, allowing user detection and reversal. The payout divergence stems from program-specific business models: HackerOne weighs exploitation ease heavily; Bugcrowd emphasizes user impact detection. To maximize payout, demonstrate token predictability via multiple requests, show lack of Same-Site enforcement, and illustrate email hijacking (changing victim's email to attacker-controlled address). Provide PoC HTML demonstrating exploitation. Programs with strict change-logging and user alerts often pay less; programs with notification delays pay more due to account takeover risk window.",
+    "reasoning_requirement": "Distinguish token presence from token validation strength; map to platform-specific triage heuristics; quantify payout by time-to-detection window.",
+    "evaluation_criteria": [
+      "Identifies token predictability mechanism and maps to multi-session exploitation",
+      "Compares HackerOne P2 vs Bugcrowd P3 rating patterns with business-logic reasoning",
+      "Quantifies payout by account modification scope and detection delay"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 362,
+    "scenario": "Password reset endpoint generates a 6-digit token valid for 72 hours and emails it to the user. The /api/reset endpoint accepts the token as URL parameter (e.g., /api/reset?token=123456) and doesn't require the user's email in the verification check. No rate limiting is enforced. An attacker can brute-force all 1M possible tokens by automated requests.",
+    "prompt": "Is this P1 or P2? How do you prove maximum impact via chained reproduction?",
+    "expected_answer": "This is P1 (account takeover with trivial exploitation). The 6-digit token space (1M combinations) with 72-hour validity window and no rate limiting allows account compromise in under 5 minutes via automated requests. Unlike email-based password reset flows requiring the victim's email parameter (which self-limits brute force), this endpoint accepts any token, enabling mass account takeover. Reproduction chain: (1) Request password reset for any email, (2) Automate requests to /api/reset with tokens 000000\u2013999999, (3) Verify success via response code or redirect; (4) Demonstrate full account access (change password, email, retrieve sensitive data). The P1 classification holds across all platforms (HackerOne, Bugcrowd, Intigriti) because account takeover directly impacts confidentiality, integrity, and availability. Payout is typically $5K\u2013$25K depending on user base size. To maximize: provide working PoC, quantify affected accounts (\"affects all users with password reset requests in past 72 hours\"), demonstrate data exfiltration potential, and show the exploit requires zero authentication or social engineering.",
+    "reasoning_requirement": "Map reproduction complexity to exploitability; quantify account takeover impact; distinguish from rate-limited variants (P3).",
+    "evaluation_criteria": [
+      "Demonstrates token space calculation and brute-force feasibility (<5 min exploitation)",
+      "Shows chained reproduction: request \u2192 automate \u2192 verify \u2192 escalate to data theft",
+      "Quantifies P1 classification across all platforms and typical payout range ($5K+)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 363,
+    "scenario": "Subdomain api-old.example.com has CNAME record pointing to cdn.oldprovider.example.com. The old CDN provider was decommissioned and the CNAME is stale; DNS resolves to an IP controlled by the CDN provider's successor. The program scope explicitly states: 'api.example.com in scope; legacy subdomains (*.old, *.legacy) excluded.' However, api-old still receives traffic and authenticates users via shared OAuth provider.",
+    "prompt": "How do you navigate scope ambiguity when a 'stale' subdomain is technically exploitable but explicitly excluded?",
+    "expected_answer": "Stale CNAME takeovers exist in the gray zone between scope interpretation and technical feasibility. The program excludes api-old explicitly, but the vulnerability (stale CNAME) affects the company's security posture and shared authentication infrastructure. Strategy: (1) Clarify scope via support ticket with specific technical evidence\u2014show that api-old shares OAuth with in-scope api.example.com, (2) Demonstrate the attack surface: a takeover of the stale CNAME could redirect users during OAuth callback, capturing auth tokens, (3) Emphasize that shared infrastructure creates risk spillover beyond declared scope, (4) Propose reporting under \"OAuth redirect bypass\" or \"shared infrastructure vulnerability\" rather than \"subdomain takeover,\" shifting framing from scope violation to business-critical infrastructure risk. Document the DNS configuration, certificate chain, and OAuth token flow to show exploitability. If the program declines, escalate to asking whether they have processes for discovered-out-of-scope vulnerabilities (many programs have secondary bounties for scope-adjacent findings). Typical payout for stale CNAME with authentication linkage: P3 ($1K\u2013$3K) if reported as scope ambiguity clarification rather than direct takeover.",
+    "reasoning_requirement": "Distinguish technical exploitability from program scope; propose reframing to emphasize shared infrastructure risk.",
+    "evaluation_criteria": [
+      "Maps CNAME misconfiguration to shared OAuth backend to establish business-critical spillover",
+      "Proposes scope clarification with technical evidence rather than assuming scope exclusion is absolute",
+      "Recommends reframing as infrastructure-risk discovery vs. out-of-scope subdomain"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 364,
+    "scenario": "Public GitHub repository contains an AWS IAM access key in git history (commit from 8 months ago, key still present when repository was cloned). The key provides read-only access to S3 bucket containing archived user data (10K records: names, emails, order history). Program scope explicitly states: 'GitHub repositories and public code not in scope; production systems only.' The AWS key is revoked in production but remains valid against the staging AWS account.",
+    "prompt": "Should you report this? How do you maximize payout despite explicit scope exclusion?",
+    "expected_answer": "Reporting depends on the distinction between code-repo scope exclusion and compromised credential scope inclusion. Most programs exclude GitHub repositories to reduce noise from intentional samples or outdated forks. However, the AWS key itself is a credential, not code\u2014it's the artifact of a deployment failure. Reporting strategy: (1) Contact program security team before public submission; frame as 'exposed credential affecting AWS staging infrastructure' rather than 'GitHub source code finding'; (2) Provide evidence that the key is functional (show read access to staging S3 without revealing actual data), (3) Emphasize staging-to-production spillover risk\u2014if staging credentials are reused or follow similar patterns, production could be at risk; (4) Recommend credential rotation audit. Many programs pay for 'exposed credentials with verified access' even if the original discovery vector (GitHub) is out of scope. Typical payout: P4 ($500\u2013$2K) for staging-only key; P3+ ($2K\u2013$5K+) if you can show staging\u2013production credential pattern reuse. Avoid downloading or exfiltrating data; verify access only and report findings. If the program declines, the credential can be responsibly disclosed to AWS security or the company's security team via their responsible-disclosure policy.",
+    "reasoning_requirement": "Distinguish code-repo scope from credential-compromise scope; propose reframing and pre-disclosure coordination.",
+    "evaluation_criteria": [
+      "Separates GitHub repo scope exclusion from exposed-credential reporting opportunity",
+      "Demonstrates key functionality without data exfiltration; emphasizes staging-to-prod risk spillover",
+      "Proposes pre-disclosure coordination to maximize payout on credentialed vulnerability"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 365,
+    "scenario": "E-commerce SaaS application stores user tier (free/pro/enterprise) in browser localStorage. A POST request to /api/sync-profile includes a 'tier' field. If a free user manually changes localStorage tier to 'pro' and calls /api/sync-profile, the backend trusts the client-side tier value and grants premium features (bulk export, API access, advanced analytics). No authentication bypass occurs; user account remains valid. Revenue impact: ~$100/month per compromised account.",
+    "prompt": "P2 or P3? How does 'business impact' diverge from 'technical severity' in triage, and how do you quantify payout?",
+    "expected_answer": "This is a P2/P3 boundary case where CVSS technical severity (low: no credential exposure, no system compromise) diverges sharply from business impact (high: revenue loss, SLA violation). CVSS would rate this P4 (CWE-434 Unrestricted Upload equivalent, or CWE-440 Expected Behavior Violation = CVSS 3.5). However, bounty programs weight business logic flaws by financial exposure. HackerOne typically rates revenue-impacting flaws as P2 ($2K\u2013$5K); Bugcrowd may rate identically as P3 ($1K\u2013$3K) if the company's detection systems flag free-to-pro conversion attempts. To maximize payout: (1) Quantify impact\u2014calculate monthly revenue loss if all free users exploit (worst-case); (2) Demonstrate reproducibility and scale\u2014show 10 accounts upgraded, document API calls; (3) Provide timeline evidence\u2014show how quickly the abuse would propagate (hours vs. weeks); (4) Differentiate from 'low-impact' logic bugs by tying to user-facing revenue streams. Programs emphasizing fraud prevention (fintech, SaaS) pay higher; programs with weak fraud detection pay lower due to payout caps. Typical P2 payout: $3K\u2013$7K for revenue-impacting logic bypass affecting core monetization.",
+    "reasoning_requirement": "Map low technical severity to high business impact; distinguish program-specific fraud-risk modeling.",
+    "evaluation_criteria": [
+      "Quantifies revenue impact per-user and at-scale over detection window",
+      "Demonstrates reproducibility with API logs and tier-change evidence",
+      "Compares HackerOne P2 vs Bugcrowd P3 rating patterns for business-logic vulns"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 366,
+    "scenario": "Reflected XSS vulnerability (no HTML sanitization, no CSP) exists in two locations: (1) /admin/reports?filter=<script>alert('xss')</script> (admin-only, requires login); (2) /forum/post/{id}/comments?q=<script>alert('xss')</script> (public, unauthenticated). Both reflect unsanitized user input. The admin XSS could steal admin session tokens; the forum XSS could steal visitor cookies or perform actions as any user viewing that post.",
+    "prompt": "Same vulnerability, different blast radius. How do you report these separately to maximize payout?",
+    "expected_answer": "Contextualized XSS severity depends on authentication boundary and user exposure. The admin XSS is P3 (authenticated, limited victim pool, requires admin to visit malicious link); the forum XSS is P2 (unauthenticated, high victim exposure, affects all users viewing compromised post). Reporting strategy: (1) Submit as two separate findings, not one, emphasizing distinct attack surfaces; (2) For admin XSS: frame as privilege escalation\u2014attacker crafts link, tricks admin into visiting, steals admin token, gains platform control; quantify admin count (small blast radius) but high impact; payout typically P3 ($500\u2013$2K); (3) For forum XSS: frame as wide-area user targeting\u2014attacker posts malicious comment on popular thread, affects thousands of visitors, enables cookie theft or CSRF; quantify forum traffic and session value; payout typically P2 ($2K\u2013$5K+). Many programs pay 2\u20133\u00d7 more for unauthenticated XSS due to exploit ease. Provide separate PoCs: admin PoC could exfiltrate user list; forum PoC could perform account creation or data theft. Avoid combining findings in a single report\u2014separate reports allow independent triage and maximize payout by leveraging each vulnerability's distinct impact profile.",
+    "reasoning_requirement": "Stratify XSS severity by authentication boundary and victim exposure; propose independent reporting to maximize platform-specific payout.",
+    "evaluation_criteria": [
+      "Quantifies admin XSS impact (privilege escalation, token theft) vs forum XSS impact (mass user exposure)",
+      "Provides distinct PoCs for each finding to justify separate reports",
+      "Shows typical P3 vs P2 payout variance ($500\u2013$2K vs $2K\u2013$5K+) by authentication context"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 367,
+    "scenario": "E-commerce platform processes refunds asynchronously via a job queue. When a user submits a refund request for a $200 order, the request is enqueued but not immediately processed. If the user submits a second refund request for the same order within ~300ms (before the first job executes), both jobs may execute in parallel, resulting in two $200 refunds to the user's payment method. The order record is updated after both jobs complete, showing only one refund.",
+    "prompt": "P1 or P2? How does reproduction complexity and detectability affect platform-specific payout?",
+    "expected_answer": "This is a P1/P2 boundary case depending on detectability and automation complexity. The vulnerability directly causes financial loss (duplicate refund = company loss, user gain). Technical severity is high; CVSS would rate as 7.5+ (financial impact via race condition). However, P1 classification depends on reproducibility: (1) Can the race condition be exploited reliably or only occasionally? (2) Does the payment system log concurrent refund attempts, flagging it as suspicious activity? (3) Is exploitation detectable via order audit logs? If the race condition requires precise timing (within 300ms) and only succeeds 1\u201310% of attempts, triage may rate it P2 ($5K\u2013$10K). If reliably exploitable (user loops refund request 10\u00d7 and succeeds 100% of the time), it's P1 ($10K\u2013$25K+). Platform variance: HackerOne emphasizes P1 for high-impact financial vulns; Bugcrowd may downgrade to P2 if fraud detection systems would catch the duplicate refund post-facto. Reproduction: provide logs of the exact request timing, show duplicate refund in payment processor (Stripe/PayPal API responses), and demonstrate the race window. Provide video PoC showing multiple refunds from single order. Quantify potential fraud scale\u2014estimate how many users might exploit if public. Programs with weak async job idempotency controls typically pay higher due to systemic risk.",
+    "reasoning_requirement": "Map race-condition exploitability to P1 vs P2; quantify by reliability and detection delay.",
+    "evaluation_criteria": [
+      "Demonstrates race-condition timing and success rate (reliable vs. probabilistic exploitation)",
+      "Shows duplicate refund in payment processor logs or order audit trail",
+      "Quantifies fraud scale and detection-time impact; compares HackerOne P1 vs Bugcrowd P2 patterns"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 368,
+    "scenario": "Unauthenticated API endpoint /api/validate-email returns HTTP 200 if email exists in system, HTTP 404 if not. No rate limiting is enforced. Attacker can iterate through 100K email patterns (common names + domains) and enumerate all registered users within hours. Program scope states: 'Account enumeration vulnerabilities out of scope.' However, the endpoint is unauthenticated and provides no value to legitimate users\u2014its only purpose appears to be internal verification.",
+    "prompt": "How do you reframe account enumeration as in-scope and P3/P4 despite explicit scope exclusion? What's the business impact multiplier?",
+    "expected_answer": "Account enumeration scope exclusion typically applies to login-page attack vectors (username/password timing differences, account-locked errors). However, a dedicated enumeration endpoint serves no legitimate user purpose and represents a distinct vulnerability from normal authentication boundaries. Reframing strategy: (1) Classify as 'unintended API exposure' or 'information disclosure via API design flaw' rather than 'account enumeration'; (2) Quantify business impact: enumeration enables targeted phishing (attackers know which emails are active), credential-stuffing campaigns, and social engineering; (3) Propose that enumeration + phishing combo raises severity to P3; (4) Provide data showing how enumerated email lists are sold on dark markets and used in subsequent attacks. Evidence: provide logs of 100+ enumeration requests with different emails, show response-time differentials (if present), and quantify the email list you generated. Programs valuing phishing-risk mitigation may classify as P3 ($1K\u2013$3K); programs with strict enumeration exclusions may decline, but pre-disclosure coordination can secure secondary bounties (\"security research\" category: $500\u2013$1K). Some platforms (Bugcrowd's VDP programs) explicitly pay for enumeration if tied to phishing or social engineering risk. Emphasize the lack of rate limiting and the endpoint's apparent lack of legitimate use case as reasons to override the scope exclusion.",
+    "reasoning_requirement": "Distinguish enumeration via design flaw (in-scope) from enumeration via expected API behavior (out-of-scope); quantify phishing and fraud risk.",
+    "evaluation_criteria": [
+      "Reframes enumeration endpoint as 'information disclosure design flaw' with no legitimate use case",
+      "Quantifies phishing-attack chain and dark-market email-list sales as business impact",
+      "Shows rate-limiting absence and response patterns; proposes P3 classification on phishing-risk basis"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 369,
+    "scenario": "GET /api/user/profile/{user_id} endpoint returns full user profile (email, phone, address, payment methods, order history) when any authenticated user changes the user_id in the URL. IDOR (Insecure Direct Object Reference) allows access to any user's profile. Program A explicitly pays for 'IDOR vulnerabilities affecting PII exposure' (P2, $2K\u2013$5K). Program B (sister company, same infrastructure) states: 'User profile endpoints are rate-limited to 10 requests/min per IP; IDOR with rate limiting is P4 ($500\u2013$1K).' Both programs share the same backend database.",
+    "prompt": "Same IDOR, wildly different payout tiers. How do you navigate multi-program reporting and rate-limiting nuance?",
+    "expected_answer": "Rate limiting is not a vulnerability mitigation\u2014it's a detective control that slows exploitation but doesn't eliminate the IDOR. The rate limit (10 req/min) allows enumeration of ~14K user profiles per day, or ~500K profiles per month. The critical question: does Program B's rate limit constitute a valid mitigation? In most bounty frameworks, no\u2014IDOR access to PII remains P2 regardless of rate limiting. However, Program B's triage may classify as P4 due to: (1) slower exploitation timeline reduces immediate risk window, (2) rate-limit logs could alert security teams to enumeration attempts. Strategic approach: (1) Report to Program A first (P2 rating, higher payout: $3K\u2013$5K), (2) Simultaneously report to Program B with emphasis on shared-infrastructure risk\u2014show that the rate limit is implementation detail, not architectural mitigation, and that Program A's acceptance establishes vulnerability legitimacy; (3) Request Program B reconsideration citing infrastructure-sharing precedent; if Program B declines, ask about escalation policy for multi-program vulnerability inconsistency; (4) Document both program responses for responsible-disclosure records. Many platforms have secondary-bounty tracks for findings spanning multiple programs. Emphasize that rate limiting addresses abuse detection, not access control\u2014the IDOR remains P2 per CVSS and industry standards. Some programs will negotiate P2/P3 compromise ($1.5K\u2013$2K) if you present both findings together with infrastructure-sharing evidence.",
+    "reasoning_requirement": "Distinguish rate limiting (detective control) from access control (preventive control); justify P2 classification despite rate limit.",
+    "evaluation_criteria": [
+      "Quantifies monthly enumeration capacity despite rate limit (10 req/min = 500K profiles/month)",
+      "Argues rate limit is detective control, not mitigation; justifies P2 per CVSS standards",
+      "Proposes dual reporting with infrastructure-sharing evidence to secure higher payout on Program B"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 370,
+    "scenario": "Internal API endpoint (api-internal.example.com:8443) uses a self-signed TLS certificate issued 3 years ago, with weak cipher suite (3DES, no HSTS header). The endpoint is accessible via corporate VPN only and authenticates users via mTLS. Program scope states: 'Internal APIs and VPN-restricted systems out of scope; public-facing APIs only.' However, the weak certificate could be leveraged in a phishing attack\u2014if an attacker tricks an employee into visiting a malicious site during VPN session, the weak cipher could enable MITM interception of mTLS tokens.",
+    "prompt": "P4 or P5? How do you quantify 'signal' vs. technical exploitability when scope is ambiguous?",
+    "expected_answer": "VPN-restricted internal APIs are genuinely out-of-scope under most programs' threat models because the attacker must already have network access (VPN). However, weak TLS configuration combined with mTLS token exposure creates a secondary attack surface: employee phishing. Scope-ambiguity navigation: (1) Classify as 'indirect phishing amplifier' rather than 'internal API misconfiguration'\u2014the weak certificate enables MITM token theft if an attacker tricks employee into mixed VPN/internet usage (e.g., visiting attacker site while on VPN); (2) Provide evidence of weak cipher suite (nmap/testssl results), (3) Show how 3DES vulnerability (CVE-2016-2183 Sweet32) could enable MITM attacks on mTLS tokens; (4) Quantify risk: estimate employee VPN users (higher = greater risk), emphasize token reuse across services. Programs with strong internal-security requirements (fintech, defense contractors) may rate as P4 ($1K\u2013$3K) on 'weakened defense-in-depth' basis. Most SaaS programs will decline, citing VPN-scope exclusion. Pre-disclosure strategy: contact CISO or infrastructure team directly before formal submission; frame as 'configuration hardening recommendation' rather than bounty, securing goodwill and potential bug-bounty policy exception. If no bounty possible, document for responsible disclosure\u20143-month remediation window is standard for internal infrastructure. Emphasis: weak TLS is signal of broader hardening gaps; quantify by employee count and token value.",
+    "reasoning_requirement": "Distinguish VPN-scope exclusion from phishing-amplification risk; propose indirect-attack framing.",
+    "evaluation_criteria": [
+      "Shows weak cipher suite via testssl output and maps to CVE (Sweet32) with MITM feasibility",
+      "Frames as employee-phishing amplification rather than direct internal API exploitation",
+      "Quantifies risk by employee VPN population and mTLS token reuse; proposes P4 on defense-in-depth basis"
+    ],
+    "category": "bounty_patterns"
   }
 ]
