@@ -6,6 +6,7 @@ import axios from "axios";
 import logger from "../utils/logger";
 import { runtimeConfig } from "../lib/runtime-config";
 import { ClaudeBridge } from "../lib/claude-bridge";
+import { ClaudeClient } from "../lib/claude-client";
 import { UnifiedReinforcementStore } from "./ReinforcementStore";
 
 type TaskType = "reason" | "code" | "analyze" | "classify" | "chat" | "summarize";
@@ -185,13 +186,12 @@ export class ModelRouter {
     systemPrompt?: string;
     temperature?: number;
     maxTokens?: number;
+    sessionId?: string;
   } = {}): Promise<string> {
-    // Tier 0: Claude Code CLI — used for hard reasoning when available.
-    // Consults the reinforcement store to make a data-driven routing decision
-    // once enough samples exist; defaults to Claude when data is sparse.
+    // Tier 0a: Anthropic SDK — direct API call with mission briefing and per-hunt thread.
+    // Preferred over CLI bridge: no subprocess overhead, proper system role, conversation continuity.
     if (taskType === "reason" || taskType === "analyze") {
-      const claudeAvailable = await ClaudeBridge.isAvailable();
-      if (claudeAvailable) {
+      if (ClaudeClient.isAvailable()) {
         // Check if reinforcement data suggests Ollama is better for this specific task
         let preferClaude = true;
         try {
@@ -204,17 +204,31 @@ export class ModelRouter {
         } catch { /* non-fatal — default to Claude */ }
 
         if (preferClaude) {
-          logger.info("ModelRouter: routing to Claude Code CLI", { taskType });
+          logger.info("ModelRouter: routing to Claude API (SDK)", { taskType });
           try {
-            const fullPrompt = options.systemPrompt
-              ? `${options.systemPrompt}\n\n${prompt}`
-              : prompt;
-            const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+            const sid = options.sessionId ?? "default";
+            const result = await ClaudeClient.reason(sid, prompt);
             this.lastProvider = "claude";
             return result;
           } catch (err) {
-            logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
+            logger.warn("ModelRouter: ClaudeClient failed, falling back to CLI bridge", { err: String(err) });
           }
+        }
+      }
+
+      // Tier 0b: Claude Code CLI — fallback when SDK key is missing.
+      const claudeCliAvailable = await ClaudeBridge.isAvailable();
+      if (claudeCliAvailable) {
+        logger.info("ModelRouter: routing to Claude Code CLI (fallback)", { taskType });
+        try {
+          const fullPrompt = options.systemPrompt
+            ? `${options.systemPrompt}\n\n${prompt}`
+            : prompt;
+          const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+          this.lastProvider = "claude";
+          return result;
+        } catch (err) {
+          logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
         }
       }
     }
@@ -273,10 +287,11 @@ export class ModelRouter {
     throw new Error(`ModelRouter: Generation failed after ${MAX_RETRIES + 1} attempts — ${String(lastErr)}`);
   }
 
-  async reason(prompt: string): Promise<string> {
+  async reason(prompt: string, sessionId?: string): Promise<string> {
     return this.generate(prompt, "reason", {
       systemPrompt: "You are an expert security researcher and bug bounty hunter. Analyze carefully and respond with precise, structured JSON when asked.",
       temperature: 0.05,
+      sessionId,
     });
   }
 

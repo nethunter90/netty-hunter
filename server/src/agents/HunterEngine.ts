@@ -65,6 +65,7 @@ import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe"
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
+import { ClaudeClient } from "../lib/claude-client";
 
 const execFileAsync = promisify(execFile);
 
@@ -710,6 +711,7 @@ export class HunterEngine extends EventEmitter {
       probes: this.state.probes.length,
     });
     observationCompressor.clearSession(this.state.sessionId);
+    ClaudeClient.clearSession(this.state.sessionId);
     // Release the authenticated session so credentials/cookies aren't held after the hunt.
     if (this.authConfig) {
       sessionManager.invalidate(this.state.programId);
@@ -1489,7 +1491,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     const _aiReasoningStart = Date.now();
     try {
-      const response = await this.modelRouter.reason(prompt);
+      const response = await this.modelRouter.reason(prompt, this.state.sessionId);
       const _aiReasoningMs = Date.now() - _aiReasoningStart;
       // Yield after model response so the event loop can process other callbacks
       // before the synchronous JSON.parse (which can be slow for large responses).
