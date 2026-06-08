@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bug bounty dataset expander — 1,785 → ~10,000 entries
-Uses claude CLI with guaranteed process-group kill on timeout.
+Uses Anthropic Python SDK directly (no subprocess) for reliable generation.
 Resume-capable: saves progress to .expand-progress.json after every batch.
 
 Run: python3 scripts/expand-dataset.py
@@ -11,19 +11,22 @@ Run: python3 scripts/expand-dataset.py
 import json
 import os
 import random
-import signal
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
+
+import anthropic
+from dotenv import load_dotenv
+
+# Load API key from server/.env
+load_dotenv(Path(__file__).parent.parent / "server" / ".env")
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 
 ROOT         = Path(__file__).parent.parent
 PROMPTS_DIR  = ROOT / "server" / "data" / "prompts"
 PROGRESS_FILE = ROOT / ".expand-progress.json"
-CLAUDE_BIN   = "/opt/node22/bin/claude"
 
 # ─── Per-file config ──────────────────────────────────────────────────────────
 # target = desired total entry count after expansion
@@ -188,9 +191,10 @@ SYSTEM_PROMPT = (
 )
 
 BATCH_SIZE   = 10   # entries per call
-CALL_TIMEOUT = 150  # seconds — hard kill after this; bumped from 90 for slow API periods
-CALL_DELAY   = 2    # seconds between successful calls
+CALL_TIMEOUT = 120  # seconds — httpx timeout per request
+CALL_DELAY   = 1    # seconds between successful calls
 MAX_RETRIES  = 6    # retries per batch; batch size halves each time
+MODEL        = "claude-haiku-4-5"
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -229,56 +233,19 @@ def max_prompt_id_num(data, prefix):
                 pass
     return m
 
-def call_claude(user_prompt, timeout=CALL_TIMEOUT):
-    """
-    Call the claude CLI with a threading-based hard kill on timeout.
-
-    communicate() can itself block even after TimeoutExpired because the
-    CLI spawns grandchild processes that keep stdout/stderr pipes open.
-    Solution: run communicate() on a daemon thread and kill the process
-    group from the main thread after `timeout` seconds — guaranteed exit.
-    """
-    env = {**os.environ, "SENTINEL_DATAGEN": "1"}
-    proc = subprocess.Popen(
-        [CLAUDE_BIN, "--model", "haiku", "-p", SYSTEM_PROMPT],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        start_new_session=True,
+def call_claude(user_prompt):
+    """Call Claude via Anthropic SDK — no subprocess, clean timeout, proper retries."""
+    client = anthropic.Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        timeout=CALL_TIMEOUT,
     )
-
-    result = {"stdout": "", "stderr": "", "done": False}
-
-    def _communicate():
-        try:
-            result["stdout"], result["stderr"] = proc.communicate(
-                input=user_prompt
-            )
-        except Exception as e:
-            result["stderr"] = str(e)
-        result["done"] = True
-
-    t = threading.Thread(target=_communicate, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-
-    if not result["done"]:
-        # Hard kill the entire process group — no survivors
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
-        t.join(timeout=5)  # brief wait; daemon thread will die with the process
-        raise RuntimeError(f"claude timed out after {timeout}s")
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"exit {proc.returncode}: {result['stderr'][:300]}")
-    return result["stdout"].strip()
+    msg = client.messages.create(
+        model=MODEL,
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return msg.content[0].text.strip()
 
 def extract_json_array(text):
     text = text.strip()
