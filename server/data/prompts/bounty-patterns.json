@@ -6000,5 +6000,135 @@
       "Proposes duplicate-risk mitigation: articulates unique attack angle or endpoint novelty that differentiates from mass-discovered 'unauthenticated spec' findings"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 515,
+    "scenario": "An API endpoint allows JWT tokens with the 'alg' field set to 'none', bypassing signature verification entirely. Tokens generated with alg=none are accepted by the authentication middleware without validation.",
+    "prompt": "How critical is an alg=none JWT bypass, and what determines P1 vs P3 classification?",
+    "expected_answer": "The alg=none JWT attack is a well-documented vulnerability pattern, but severity depends entirely on the scope of access granted by the token. If the token grants admin-level access (can modify user accounts, change roles, access financial data), this is P1 and requires immediate patching. If tokens are limited to user-profile modifications, it may be P3. The critical element is demonstrating: 1) token generation/modification under attacker control, 2) acceptance by the server, 3) access to sensitive operations. Reproduction requires crafting a JWT with alg=none and demonstrating exploitation of a privileged operation. The vulnerability is high-severity because it completely bypasses cryptographic authentication. However, on platforms like HackerOne and Bugcrowd, classification depends on the actual operations accessible via the token. Programs with strict token scoping (limited to read-only operations) may rate this lower. Always provide a full reproduction PoC showing token generation, server acceptance, and subsequent unauthorized operation.",
+    "reasoning_requirement": "Recognize JWT attack patterns and how token scope determines severity classification independent of the technical vulnerability.",
+    "evaluation_criteria": [
+      "Explains alg=none as a known JWT attack pattern",
+      "Connects token scope/operations to P1 vs lower classification decision",
+      "Specifies reproduction steps: token crafting, server acceptance, privileged operation access"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 516,
+    "scenario": "A data exposure vulnerability reveals user PII (email, phone, DOB) through an API endpoint. The finding is discovered on api.partner.company.com, but the program scope document lists only 'company.com' and 'www.company.com'. The API subdomain appears to be a legitimate service endpoint.",
+    "prompt": "Is this in scope? How do you approach ambiguous subdomain scope on different platforms?",
+    "expected_answer": "Subdomain scope ambiguity is a major triage problem. First, verify the subdomain's legitimacy: does it appear in public DNS records, company documentation, or asset registries? If legitimate and operational, it may be implicitly in scope even if not explicitly listed. Platform strategies differ: HackerOne programs often have wildcard scope (*.company.com covers all subdomains) even if not listed; Bugcrowd requires explicit subdomain inclusion; Intigriti programs sometimes exclude third-party-hosted subdomains. Before reporting, check if similar findings already exist on the program (deduplication risk). Best practice: report to the program's security email asking for scope clarification, especially if the subdomain handles sensitive data. If you proceed, frame the report as 'found on api.partner.company.com; please advise if out-of-scope' to reduce rejection risk. Document the scope ambiguity clearly. Never assume a subdomain is out-of-scope based solely on omission from the scope list; many programs maintain implicit scope for corporate infrastructure.",
+    "reasoning_requirement": "Navigate scope ambiguity across platforms and understand implicit vs explicit scope rules.",
+    "evaluation_criteria": [
+      "Addresses platform-specific scope interpretation (HackerOne wildcard vs Bugcrowd explicit vs Intigriti third-party rules)",
+      "Mentions deduplication risk and scope clarification as best practice",
+      "Explains legitimacy verification and implicit scope concepts"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 517,
+    "scenario": "An SSRF vulnerability allows reading internal metadata endpoints via a file-download feature. The finding is valid and reproducible. However, upon searching HackerOne, you discover that the same program accepted an almost identical SSRF report 8 months ago via a different endpoint.",
+    "prompt": "When is a duplicate not a duplicate? How do you add value when similar findings already exist?",
+    "expected_answer": "A finding that appears similar is not necessarily a duplicate if it represents: 1) a different root cause (e.g., SSRF via file-download vs SSRF via proxy parameter), 2) access to new sensitive endpoints not mentioned in the prior report, or 3) a significantly higher impact chain (e.g., chaining SSRF with application logic to achieve RCE). Before rejecting your own finding, analyze the original report in detail. Did it address this specific endpoint? Did it chain to other vulnerabilities? If your finding accesses qualitatively different data or follows a different code path, differentiate it clearly in your report. Document precisely which endpoints you can reach that the prior report didn't mention. If both findings exploit the same root cause and endpoint, acknowledge the prior report and explain why yours adds value (e.g., 'Updated proof given application changes' or 'Different exploitation vector'). Programs appreciate researchers who deduplicate themselves; it builds trust and avoids wasting triage effort. Some researchers intentionally report variations to demonstrate broader impact.",
+    "reasoning_requirement": "Evaluate duplicate risk by analyzing prior reports and distinguishing genuine new findings from variations.",
+    "evaluation_criteria": [
+      "Explains how to analyze prior reports to assess true duplication",
+      "Identifies differentiation factors: new endpoints, different root cause, impact amplification",
+      "Mentions self-deduplication strategy and impact communication"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 518,
+    "scenario": "An email-change endpoint lacks confirmation on the old email address and doesn't require the user's current password. An attacker can change a user's email instantly via CSRF, and once changed, password reset emails are sent to the attacker's address. CVSS calculates 6.2 (medium), but enables full account takeover.",
+    "prompt": "How do you argue for P1/P2 when CVSS yields P3? What's the business-impact framing?",
+    "expected_answer": "CVSS 6.2 underestimates this vulnerability because it measures technical exploitability but underweights authentication impact. The CVSS vector treats email change as low-impact 'account takeover possibility' rather than guaranteed account loss. The business reality is complete account compromise: attacker changes email, triggers password reset, gains permanent access. This is P1/P2 depending on program context. Argue impact using: 1) full authentication bypass (CVSS impact=3 for Confidentiality, Integrity, Availability all HIGH), 2) attack chain requiring no interaction (CSRF + auto-exploit), 3) account access to all user data and features. Reference precedent from HackerOne: 'Account Takeover' via authentication flaws consistently yields $2,000\u2013$10,000+ bounties regardless of CVSS. Frame the report as 'Unauthenticated Account Takeover via Email Change and Password Reset' rather than 'Missing Email Verification'. Include a reproduction video showing email change \u2192 password reset \u2192 full access. Mention that no attacker interaction is required (CSRF token auto-submitted). This attack chain is so common in bounty programs that programs expect P1/P2 classification.",
+    "reasoning_requirement": "Recognize CVSS limitations in authentication scenarios and reframe findings around business impact.",
+    "evaluation_criteria": [
+      "Explains CVSS vs business impact gap; cites authentication impact weighting",
+      "Provides full attack chain: email change \u2192 password reset \u2192 account takeover",
+      "References HackerOne/Bugcrowd precedent for account takeover payout signals"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 519,
+    "scenario": "You discover a critical RCE vulnerability on legacy.company.com. The scope document explicitly states: 'Out of Scope: legacy.*, deprecated.*, test.* subdomains.' However, the RCE affects core application logic shared between legacy and production.",
+    "prompt": "Should you report this out-of-scope finding? If yes, how? What are the risks?",
+    "expected_answer": "Out-of-scope findings present a dilemma. Generally, do not report findings explicitly marked out-of-scope\u2014most programs will reject them, and some penalize researchers for scope violations. However, if the vulnerability affects shared logic that also exists in in-scope domains, or if legacy infrastructure poses a risk to production, there is a case for escalation. First, verify that the same code path exists in in-scope targets. If yes, report the in-scope version of the vulnerability separately. If the vulnerability is truly isolated to legacy infrastructure, email the program security team directly (before submitting) explaining the situation and asking if they'd accept a report. Many programs appreciate advance notification of shared-logic vulnerabilities. If they decline, do not report. Risk of reporting OOS findings: program rejects it as duplicate/OOS (no bounty), or worse, closes your account for scope violation. Some programs are strict; others are lenient. Intigriti and Bugcrowd tend to be stricter about scope; HackerOne programs vary. When in doubt, ask first.",
+    "reasoning_requirement": "Navigate out-of-scope findings and determine when to report, when to escalate, and when to abandon.",
+    "evaluation_criteria": [
+      "Explains risks of OOS reporting and platform-specific policies",
+      "Mentions shared-logic verification and escalation via security email",
+      "Provides decision framework: in-scope equivalent, shared code, or abandon"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 520,
+    "scenario": "A user can modify their 'user_role' field from 'user' to 'admin' via an API parameter (CVSS 6.1, privilege escalation). Alone, this is P3/P4. However, the admin role also bypasses an access control check that protects the 'application_settings' feature, allowing the attacker to modify system-wide configurations affecting all users.",
+    "prompt": "Why is this P1 when each component is lower severity? How do you structure the report?",
+    "expected_answer": "Privilege escalation combined with downstream access control flaws creates impact amplification. Individually: role-modification is P4 (privilege escalation), and access control bypass is P3 (authorization). Together, they enable full platform compromise. CVSS treats vulnerabilities atomically, but real exploitation chains compound impacts. Your report must demonstrate the full chain: 1) modify role via API, 2) access admin panel, 3) change application settings affecting all users. This escalates to P1 because: business impact is platform-wide (all users affected), attacker gains complete administrative control, and damage is permanent (config changes persist). Structure the report as a single finding with chained exploitation rather than two separate bugs. Title it 'Privilege Escalation to Admin + Unprotected Application Settings = Full Platform Control'. Provide a video or detailed steps showing each step of the chain. Quantify impact: 'All 50,000+ users affected by unauthorized config changes.' Programs weight chained exploits higher than the sum of individual severities. HackerOne specifically values exploitation chains\u2014they demonstrate realistic attacker capability, not just technical flaws. Budgets for privilege-escalation-leading-to-admin findings often reach $3,000\u2013$10,000+.",
+    "reasoning_requirement": "Recognize impact amplification through vulnerability chaining and argue P1 severity.",
+    "evaluation_criteria": [
+      "Demonstrates full exploitation chain: role change \u2192 admin access \u2192 config impact",
+      "Quantifies downstream impact affecting all platform users",
+      "Frames as single finding rather than separate bugs; mentions chaining as P1 signal"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 521,
+    "scenario": "An XXE vulnerability exists in the application, but exploitation requires: 1) uploading a file with XML content, 2) custom XML parser configured to handle only .xml extension, 3) specific DOCTYPE declaration matching a whitelist, 4) parsing triggered by admin-only feature. Each step is achievable, but requires precise conditions.",
+    "prompt": "How do you prove exploitability of complex multi-step vulnerabilities? What do programs expect?",
+    "expected_answer": "Complex reproduction chains are common in real applications\u2014access controls, file-type checks, and conditional parsing all add friction. Proof must address each step. Best practice: build an automated PoC that demonstrates the full chain without manual intervention. For XXE: create a Python script that 1) generates a properly formatted XML with valid DOCTYPE, 2) uploads it with the correct extension, 3) triggers the admin-only parser, 4) exfiltrates data via XXE (e.g., reading /etc/passwd). Automated PoCs demonstrate real exploitability and reduce triage overhead. Programs differ: HackerOne prefers minimal, focused PoCs that show the vulnerability clearly; Bugcrowd expects more thorough documentation; Intigriti values creative exploitation demonstrations. If full automation is impossible, provide detailed step-by-step instructions with screenshots and explicit timing (e.g., 'Wait 5 seconds for async processing'). Include conditional logic explanations: 'XXE processing only occurs on .xml files because the parser is instantiated conditionally.' Explain why the whitelist doesn't prevent exploitation. Programs evaluate complex findings on two axes: 1) reproducibility (can we verify it?), 2) realism (is this a likely exploitation path?). If a condition is artificial or forced, mention it.",
+    "reasoning_requirement": "Structure complex exploitation chains and build PoCs that prove reproducibility.",
+    "evaluation_criteria": [
+      "Provides step-by-step or automated PoC covering all required conditions",
+      "Explains why each condition is necessary and how to satisfy it",
+      "Mentions platform-specific documentation expectations (HackerOne minimal vs Bugcrowd thorough)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 522,
+    "scenario": "You discover an SQL injection vulnerability. After searching, you find the same SQL injection already reported to three different HackerOne programs (all owned by the parent company). One program marked it P1 and paid $5,000. Another marked it P2 and paid $1,500. The third hasn't triaged yet. Should you report to the untriaged program?",
+    "prompt": "How do program-specific policies and parent-company relationships affect duplicate and payout decisions?",
+    "expected_answer": "Program scope and duplicate policies vary significantly even within the same corporate family. If three programs under the same parent have different scope boundaries (e.g., different services/subdomains), the same vulnerability can legitimately be reported separately\u2014it's not a duplicate; it's a shared infrastructure issue affecting multiple targets. However, if all three programs explicitly cover the same asset, reporting to a fourth is unethical. Check: 1) Do the programs have separate scope? 2) Is the vulnerability in a shared library or service affecting all? Research the existing reports: if one program paid $5,000 and another $1,500, this suggests different payout philosophies or vulnerability contexts (e.g., one program values data exposure higher, another values code execution). Reporting to an untriaged program is acceptable if its scope genuinely includes the affected asset and prior reports don't explicitly cover it. Contact the untriaged program proactively: 'This vulnerability also affects [other program], which paid $X; wanted to ensure you're aware.' This demonstrates professionalism and increases trust. Avoid reporting the exact same finding to all three simultaneously\u2014stagger reports and acknowledge prior disclosures.",
+    "reasoning_requirement": "Navigate parent-company programs and duplicate policies across related bounty initiatives.",
+    "evaluation_criteria": [
+      "Addresses scope differences across related programs and legitimate multi-program reporting",
+      "Explains payout divergence signals and program-specific context",
+      "Mentions proactive disclosure and staggered reporting strategy"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 523,
+    "scenario": "A user can retrieve another user's payment invoice history via an unsecured API endpoint (data exposure, P2). Further investigation reveals the same endpoint allows modifying invoice amounts before they are processed for payment, enabling the attacker to reduce the amount owed (financial fraud). The application logs nothing about invoice modifications.",
+    "prompt": "What's the severity? How do you highlight the financial impact and avoid getting marked as a duplicate?",
+    "expected_answer": "This is a compound vulnerability: data exposure + financial fraud. Severity is P1 because of the financial impact chain. Individually, data exposure might be P2/P3 and invoice modification might be P3. Combined, they enable theft of funds without trace. Payout signals: presence of payment processing, no audit logging, amount modification (not just read access), affects all users. Report this as a single P1 finding titled 'Unauthorized Invoice Modification + Unlogged Financial Transactions = Potential Theft.' Frame it as: 'Users can read other users' invoices and modify invoice amounts before payment processing, enabling financial fraud without audit trail.' Quantify impact: estimate revenue loss if 10% of invoices are modified (or use the program's user count). Mention compliance implications: PCI-DSS requires audit logging of payment modifications. The lack of logging is the multiplier\u2014it prevents detection and recovery. Structure the report to emphasize the financial-fraud angle, not just data exposure. Programs with payment processing consistently rate financial vulnerabilities as P1, often paying $2,000\u2013$20,000+. The audit-trail absence is critical; mention it prominently. Avoid splitting this into two reports (data exposure + fraud)\u2014they're part of one attack chain, and splitting risks duplicate rejection.",
+    "reasoning_requirement": "Recognize financial-impact chains and how missing audit trails amplify severity.",
+    "evaluation_criteria": [
+      "Frames finding as financial fraud chain, not separate data/modification issues",
+      "Highlights audit-trail absence as the enabler of undetected theft",
+      "Quantifies financial impact and cites PCI-DSS compliance as severity signal"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 524,
+    "scenario": "A parameter appears to execute code when injected with ${...} syntax, suggesting Server-Side Template Injection (SSTI) or RCE. Upon testing, code execution occurs, but only within a sandboxed environment that: blocks file system access, blocks network access, enforces a 100ms timeout, and filters dangerous functions. The attacker can execute arbitrary code but cannot exfiltrate data or interact with the system.",
+    "prompt": "Is this RCE (P1) or a false positive? How do you verify the sandbox and report responsibly?",
+    "expected_answer": "This appears to be RCE initially but is actually SSTI in a restricted environment. The sandbox significantly reduces impact. Before reporting as RCE, verify the sandbox genuinely prevents exploitation: test file system access (attempt to read /etc/passwd), network access (attempt to make HTTP requests), and resource limits (can code execution be weaponized for DoS?). If all are properly blocked and enforced, this is a lower-severity finding\u2014perhaps P3/P4 depending on sandbox escape risk. Determine if the sandbox can be bypassed: certain Python/Node.js sandboxes have known escapes (e.g., prototype pollution in Node, __import__ in Python). If bypasses exist, the severity escalates to P2 at minimum. Responsible reporting: don't claim 'RCE' if the sandbox prevents it. Title it 'Server-Side Template Injection in Sandboxed Environment' and document what the sandbox prevents. Provide a PoC that demonstrates code execution within the sandbox (e.g., simple math evaluation or accessing sandbox-safe APIs) rather than claiming system compromise. Programs appreciate accurate threat modeling\u2014over-claiming RCE can result in rejection or reduced bounty. If you discover a sandbox escape, that's a separate P1 finding: 'SSTI + Sandbox Escape = RCE.' Test thoroughly before reporting.",
+    "reasoning_requirement": "Distinguish genuine RCE from restricted code execution and verify sandbox effectiveness.",
+    "evaluation_criteria": [
+      "Tests sandbox effectiveness: file system, network, timeouts, function blacklists",
+      "Identifies potential sandbox-escape vectors (Python import, Node prototype pollution, etc.)",
+      "Frames report accurately: SSTI vs RCE vs restricted execution; separates sandbox-escape as distinct P1"
+    ],
+    "category": "bounty_patterns"
   }
 ]
