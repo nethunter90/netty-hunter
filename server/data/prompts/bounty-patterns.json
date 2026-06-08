@@ -6260,5 +6260,70 @@
       "Quantifies credential-theft impact (IAM role revocation + credential rotation cost \u2248$3.2k); requests P1 payout ($20k-$30k) based on exploitation-chain completeness; documents each stage's CVSS and corresponding severity tier"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 535,
+    "scenario": "A rate-limiting bypass on a password reset endpoint allows 10,000 requests/hour instead of enforced 5/hour. Attacker can enumerate valid email addresses via timing analysis (valid emails respond in 200ms, invalid in 50ms). However, the password reset token is cryptographically strong (256-bit), expires in 15 minutes, and is single-use. Brute-force token attacks are mathematically infeasible.",
+    "prompt": "Should this be classified P3 or P2? How does token strength vs. enumeration impact severity on HackerOne?",
+    "expected_answer": "This is P3 (CVSS 5.3\u20135.9, medium). While rate-limit bypass is typically P2, the exploitation chain is incomplete: token brute-force is infeasible, leaving only email enumeration. HackerOne classifies email enumeration as low-to-medium impact unless combined with account takeover. The finding has legitimate security value (defense-in-depth), but payout reflects constrained impact (~$300\u2013$800). On Bugcrowd, this may rank higher (P2 threshold) if the program values privacy of user database. Intigriti tends toward P3 for enumeration-only findings. Submission strategy: lead with enumeration risk, quantify affected user base, propose mitigation (exponential backoff), but acknowledge token strength limits severity. Request program clarification on their policy: do they penalize enumeration separately from auth bypass?",
+    "reasoning_requirement": "Distinguish between vulnerability presence (rate-limit bypass) and practical exploitability (token strength); map program-specific severity thresholds; understand payout signals for partial-chain findings.",
+    "evaluation_criteria": [
+      "Correctly identifies P3 and explains why rate-limit bypass alone (without token compromise) limits severity below P2 threshold",
+      "Compares program-specific policies: HackerOne's email enumeration guidance vs. Bugcrowd's privacy emphasis vs. Intigriti's impact-first model",
+      "Provides submission framing: emphasize enumeration + bypass combination, quantify user exposure, acknowledge token strength, and propose stacking with other findings"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 536,
+    "scenario": "A third-party analytics library (loaded via CDN) has a known RCE vulnerability (CVE-2024-XXXXX, CVSS 9.8). The library is only used in staging environment analytics dashboard, never reaches production. Developers loaded it via unversioned script tag; update to patched version is a one-line change. No user data flows through staging analytics.",
+    "prompt": "Is this P5, out-of-scope, or a valid submission? How do you determine staging vs. production severity?",
+    "expected_answer": "This is P5 (or out-of-scope depending on program policy). Known vulnerabilities in non-production environments score low because: (1) no user data exposure, (2) no business impact, (3) staging environment is not part of attack surface for external threats. However, submission merit depends on program scope. HackerOne and Bugcrowd explicitly exclude known CVEs in staging; Intigriti may accept if reporter can chain it to production access or lateral movement. Best practice: before submitting, check program scope document. If staging is explicitly covered, frame as supply-chain risk (RCE foothold enabling lateral movement to prod), not as direct user impact. Provide patch recommendation. If staging is excluded, verify you haven't discovered the vulnerability in production under different version/context. Common duplicate risk: multiple researchers report same staging CVE; differentiate by demonstrating novel exploitation vector or production pathway. Payout signal: out-of-scope findings receive $0; if accepted, expect $100\u2013$300 for supply-chain upgrade recommendation.",
+    "reasoning_requirement": "Distinguish scope boundaries (production vs. staging vs. development); evaluate known vulnerability reporting policies; identify duplicate risk in CVE-heavy submissions.",
+    "evaluation_criteria": [
+      "Correctly identifies this as P5/out-of-scope and explains why staging environment RCE lacks user/business impact",
+      "Articulates program-specific scope policies and identifies conditions where staging findings become valuable (lateral movement, supply-chain chaining)",
+      "Provides pre-submission validation steps: scope document verification, duplicate risk assessment, alternative framing for edge cases"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 537,
+    "scenario": "A REST API endpoint /api/v1/users/{id}/documents accepts user-supplied IDs in URL. Attacker can retrieve documents for any user ID via simple integer enumeration (1, 2, 3, ..., 99999). Authentication is required (must have valid JWT). However, authorization check is missing: any authenticated user can read any other user's documents, including financial records, contracts, and PII.",
+    "prompt": "This is clearly P1\u2013P2, but what makes it P1 vs. P2? How do payout signals and reproduction complexity influence HackerOne triage?",
+    "expected_answer": "This is P1 (CVSS 7.5\u20138.8, high). Broken authorization on PII/financial documents is the most impactful vulnerability class. P1 vs. P2 distinction: P1 requires minimal exploitation complexity (automated enumeration in seconds), direct user impact (immediate data exposure), and no chaining required. This finding meets all three. Payout signal on HackerOne: $5k\u2013$25k for wholesale authorization bypass affecting multiple sensitive data types. Reproduction simplicity amplifies payout: providing a PoC script that demonstrates access to 10+ documents boosts reward. Impact quantification matters: calculate affected user base (if endpoint serves 100k users, potential exposure is massive). Do NOT over-claim: specify exactly which data types are exposed (contracts, invoices, health data). Avoid P0 claims unless RCE/account takeover is chained. On Bugcrowd, same classification but potentially higher payout if program has critical data classifications. Intigriti's severity matrix emphasizes affected user count and data sensitivity, potentially pushing this to \u20ac5k\u2013\u20ac15k. Duplicate risk: authorization bypass findings are common; differentiate by demonstrating novel data access (not just user enumeration) and providing complete PoC.",
+    "reasoning_requirement": "Articulate P1 vs. P2 boundary (complexity + impact + chaining); map payout signals to reproducibility and data sensitivity; identify impact amplification through affected user quantification.",
+    "evaluation_criteria": [
+      "Correctly identifies P1 and distinguishes from P2 by emphasizing minimal exploitation complexity, direct impact, and no chaining requirement",
+      "Quantifies affected user base, identifies specific sensitive data types (financial, PII, contracts), and links to payout expectations ($5k\u2013$25k on HackerOne)",
+      "Provides PoC strategy: automated enumeration script, sample exposed records, and duplicate differentiation through novel access patterns or data types"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 538,
+    "scenario": "A web application uses OAuth 2.0 with implicit flow (deprecated). Attacker can obtain access tokens via redirect-uri manipulation, but the tokens are scoped to read-only operations on public data only. Token expires in 1 hour. Attacker intercepts token in browser history or logs, but can only read already-public information (user profiles, posts). No state modification possible. The application explicitly documents implicit flow as intentional for single-page app legacy support.",
+    "prompt": "Is this a valid P4 finding or does explicit documentation make it out-of-scope? How do program intent and business decision affect severity?",
+    "expected_answer": "This is P5 or out-of-scope, not P4. Implicit flow is deprecated but not exploitable if: (1) scope is limited to read-only public data, (2) application explicitly accepts token interception risk, (3) no sensitive operations are authorized via this flow. HackerOne's policy: deprecated OAuth flows are only actionable if they enable unauthorized state change or private data access. Program intent is critical: if security team documented the decision and accepted the risk, reporting it as P4 risks rejection and damages researcher reputation. However, valid angles exist: (1) Check if private data is inadvertently exposed via scope creep (common in legacy systems). (2) Verify token leakage attack surface (localStorage, sessionStorage, URL history). (3) Assess if implicit-flow tokens can be replayed in other endpoints. If any chaining to sensitive operations succeeds, escalate to P3. Submission strategy: before reporting, ask program via HackerOne private program message: 'Is implicit flow OAuth scope limited to public data intentionally?' If yes, don't submit. If no, document scope creep and report P3\u2013P4. Duplicate risk: implicit flow OAuth findings are saturated; differentiation requires novel scope-leakage or chaining discovery.",
+    "reasoning_requirement": "Distinguish between vulnerable-by-design (program intent) vs. vulnerable-by-accident (unintended scope); assess scope-creep risk; evaluate program risk acceptance as severity mitigant.",
+    "evaluation_criteria": [
+      "Correctly identifies this as P5/out-of-scope when scope is limited to public read-only data and risk is intentional",
+      "Articulates program-intent validation: how to verify whether deprecated patterns are accepted or overlooked via private inquiry",
+      "Provides scope-creep investigation strategy: verify no private data exposure, no state modification, no cross-endpoint token reuse; distinguishes valid from invalid submissions"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 539,
+    "scenario": "A SaaS dashboard allows CSV export of user data. The export is rate-limited to 100 requests/hour per IP. However, attacker can bypass rate-limiting by rotating User-Agent headers (each User-Agent is counted as separate request quota). By rotating 100 different User-Agents, attacker can export 10,000 user records/hour (instead of intended 100/hour) containing email, phone, billing address. Exported data is for the attacker's own account's associated users, so it's not direct authorization bypass\u2014but scope is amplified 100x beyond intended.",
+    "prompt": "Rate-limit bypass usually P3, but does request-amplification (100x) and data volume escalate this to P2? How do you classify amplification attacks?",
+    "expected_answer": "This is P3 (CVSS 6.5\u20137.5, medium-high), with P2 potential if chained. Rate-limit bypass alone is P3\u2013P4. However, 100x amplification + aggregated PII export tips toward P2 if: (1) attacker extracts 10,000+ user records in short window, (2) data is resold or leaked, (3) scope extends to other users' accounts (not just own). Here, data is self-scoped, so it's abuse-of-intended-functionality (P3). Payout signal: $1k\u2013$2k on HackerOne for rate-limit bypass with amplification. On Bugcrowd, data volume matters more; potentially $2k\u2013$3k if bulk export is not rate-limited per-user. Intigriti emphasizes impact: if researcher demonstrates downstream risk (CSV can be scrapped for 10k PII records), expect \u20ac1.5k\u2013\u20ac2.5k. Key distinction: User-Agent rotation is a low-effort bypass (no authentication chaining), but impact is high due to volume. Reproduction chain simplicity: script that rotates User-Agent, fires 100 requests, aggregates results. Submission framing: quantify data volume, demonstrate timeline (1 hour to export entire customer base), propose fix (per-account rate limit, not per-IP). Duplicate risk: rate-limit bypass using header rotation is common; differentiate by demonstrating data aggregation impact or chaining to secondary data leakage.",
+    "reasoning_requirement": "Distinguish rate-limit bypass (P3\u2013P4) from amplification attacks (volume-driven P2 elevation); map request-multiplication to data extraction timeline; evaluate scope-limitation (own account) vs. multi-account escalation.",
+    "evaluation_criteria": [
+      "Correctly identifies P3 with P2-potential and explains why self-scoped data volume is medium vs. high severity; articulates 100x amplification as exploitability multiplier, not scope expansion",
+      "Quantifies data extraction capability: timeline to export 10k records, resale value, and downstream leak risk; maps to payout expectations ($1k\u2013$3k depending on platform)",
+      "Provides PoC strategy: User-Agent rotation script, aggregation demonstration, and duplicate differentiation through chaining to cross-account scope or secondary PII exposure"
+    ],
+    "category": "bounty_patterns"
   }
 ]
