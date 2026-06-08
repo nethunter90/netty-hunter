@@ -204,7 +204,7 @@ export class ModelRouter {
         } catch { /* non-fatal — default to Claude */ }
 
         if (preferClaude) {
-          logger.info("ModelRouter: routing to Claude API (SDK)", { taskType });
+          logger.info("ModelRouter: routing to Claude API (Sonnet)", { taskType });
           try {
             const sid = options.sessionId ?? "default";
             const result = await ClaudeClient.reason(sid, prompt);

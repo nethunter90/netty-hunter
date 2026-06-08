@@ -4,6 +4,10 @@
  * Replaces the ClaudeBridge subprocess approach with direct API calls.
  * Maintains per-hunt conversation threads so Claude has memory across
  * observe→hypothesize→probe iterations within the same hunt session.
+ *
+ * Model tiering:
+ *   reason()  → claude-sonnet-4-6  (hypothesis generation, multi-step attack reasoning)
+ *   oneShot() → claude-haiku-4-5   (classification, chat, structured extraction)
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
@@ -89,6 +93,9 @@ export class ClaudeClient {
   /**
    * Reason about a hunt task with full conversation continuity.
    *
+   * Uses claude-sonnet-4-6 — the workhorse for hypothesis generation,
+   * multi-step attack chain reasoning, and graph reconciliation decisions.
+   *
    * Messages accumulate per sessionId so Claude remembers everything observed,
    * hypothesized, and probed across all iterations of the same hunt.
    */
@@ -111,7 +118,7 @@ export class ClaudeClient {
 
     try {
       const response = await client.messages.create({
-        model: "claude-haiku-4-5",
+        model: "claude-sonnet-4-6",
         max_tokens: 4096,
         system: MISSION_BRIEFING,
         messages: thread,
@@ -151,6 +158,8 @@ export class ClaudeClient {
   /**
    * One-shot call without conversation thread — for classify/chat tasks
    * that don't need hunt continuity.
+   *
+   * Uses claude-haiku-4-5 — fast and cheap for high-volume structured tasks.
    */
   static async oneShot(systemPrompt: string, userPrompt: string): Promise<string> {
     const client = this.getClient();
