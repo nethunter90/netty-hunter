@@ -188,7 +188,7 @@ SYSTEM_PROMPT = (
 )
 
 BATCH_SIZE   = 10   # entries per call
-CALL_TIMEOUT = 90   # seconds — hard kill after this; 90s is plenty for 10 entries
+CALL_TIMEOUT = 150  # seconds — hard kill after this; bumped from 90 for slow API periods
 CALL_DELAY   = 2    # seconds between successful calls
 MAX_RETRIES  = 6    # retries per batch; batch size halves each time
 
