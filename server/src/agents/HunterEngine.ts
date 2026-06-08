@@ -66,6 +66,8 @@ import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 import { ClaudeClient } from "../lib/claude-client";
+import { synthesisAgent } from "./SynthesisAgent";
+import { logicExploitAgent } from "./LogicExploitAgent";
 
 const execFileAsync = promisify(execFile);
 
@@ -116,6 +118,7 @@ export interface Hypothesis {
   createdAt: number;
   retryCount?: number;
   toolHint?: string;
+  chainedFrom?: string[];
   /** Which model generated this hypothesis — used to score model performance in RL store. */
   modelSource?: "claude" | "ollama" | "default";
 }
@@ -656,6 +659,7 @@ export class HunterEngine extends EventEmitter {
             break;
           case "update":
             await this.update();
+            await this.runSynthesis();
             // Determine next phase based on state
             if (this.state.hypotheses.filter(h => h.status === "pending").length > 0) {
               this.state.phase = "probe";
@@ -1546,6 +1550,43 @@ Return ONLY valid JSON array of hypothesis objects.`;
     }
   }
 
+  // ── Chain synthesis ──────────────────────────────────────────────────────────
+  private async runSynthesis(): Promise<void> {
+    if (this.state.confirmedFindings.length < 1) return;
+    try {
+      const discoveredUrls = this.state.observations
+        .map(o => (o as unknown as Record<string, unknown>).url as string)
+        .filter(Boolean);
+      const testedClasses = this.state.hypotheses.map(h => h.vulnClass);
+
+      const chains = await synthesisAgent.synthesize(
+        this.state.sessionId,
+        this.state.confirmedFindings,
+        discoveredUrls,
+        testedClasses,
+      );
+
+      if (chains.length > 0) {
+        const deduped = chains.filter(c =>
+          !this.state.hypotheses.some(
+            h => h.vulnClass === c.vulnClass && h.targetUrl === c.targetUrl
+          )
+        );
+        this.state.hypotheses.push(...deduped);
+        if (deduped.length > 0) {
+          this.emit("hunt:chain_hypotheses", {
+            sessionId: this.state.sessionId,
+            count: deduped.length,
+            chains: deduped.map(c => ({ vulnClass: c.vulnClass, targetUrl: c.targetUrl, chainedFrom: c.chainedFrom })),
+          });
+          logger.info("[HunterEngine] Chain hypotheses injected", { count: deduped.length });
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Synthesis skipped", { err: String(err) });
+    }
+  }
+
   private isBudgetExhausted(): boolean {
     return this.state.budget.requestsMade >= this.state.budget.maxRequests;
   }
@@ -1625,6 +1666,43 @@ Return ONLY valid JSON array of hypothesis objects.`;
           (hypothesis as unknown as Record<string, unknown>)._deserialProbeHit = true;
           (hypothesis as unknown as Record<string, unknown>)._deserialOutput = deserialResult.output;
           continue;
+        }
+      }
+
+      // Logic exploit agent — Claude-directed Playwright for stateful/chained exploits.
+      // Handles business_logic, idor, auth_bypass where standard tools can't confirm impact.
+      if (
+        ["business_logic", "idor", "auth_bypass"].includes(hypothesis.vulnClass) &&
+        ClaudeClient.isAvailable()
+      ) {
+        try {
+          const logicResult = await logicExploitAgent.probe(
+            hypothesis,
+            this.state.sessionId,
+            this.authHeaders,
+          );
+          const result: ProbeResult = {
+            hypothesisId: hypothesis.id,
+            tool: "logic_exploit_agent",
+            command: `claude-sonnet:${hypothesis.vulnClass}`,
+            output: logicResult.evidence || "No evidence collected",
+            parsed: { found: logicResult.confirmed, payload: logicResult.payload, rawOutput: logicResult.evidence },
+            success: logicResult.confirmed,
+            duration: logicResult.duration,
+          };
+          this.state.probes.push(result);
+          if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
+          this.state.budget.requestsMade += 1;
+          this.rlWiring.onToolResult("logic_exploit_agent", hypothesis.vulnClass, logicResult.confirmed, hypothesis.confidence);
+          failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, logicResult.confirmed);
+          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
+          if (!logicResult.confirmed) {
+            hypothesis.status = "inconclusive";
+          }
+          // Confirmed or inconclusive — either way skip the standard tool for these classes
+          continue;
+        } catch (err) {
+          logger.warn("[HunterEngine] LogicExploitAgent failed, falling through to standard tool", { err: String(err) });
         }
       }
 

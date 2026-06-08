@@ -192,7 +192,6 @@ export class ModelRouter {
     // Preferred over CLI bridge: no subprocess overhead, proper system role, conversation continuity.
     if (taskType === "reason" || taskType === "analyze") {
       if (ClaudeClient.isAvailable()) {
-        // Check if reinforcement data suggests Ollama is better for this specific task
         let preferClaude = true;
         try {
           const rl = UnifiedReinforcementStore.getInstance();
