@@ -64,6 +64,12 @@ import("./lib/intelligence/learning-schema").then(({ initLearningSchema }) => {
   initLearningSchema().catch(() => {});
 }).catch(() => {});
 
+// ─── Tool availability check ──────────────────────────────────────────────────
+// Logs which Kali binaries are present so degraded coverage is visible at boot.
+import("./lib/hunter/binary-check").then(({ checkBinariesAtStartup }) => {
+  checkBinariesAtStartup().catch(() => {});
+}).catch(() => {});
+
 // ─── Autonomous Brain ─────────────────────────────────────────────────────────
 initializeAutonomousBrain();
 logger.info("Autonomous brain initialized");
