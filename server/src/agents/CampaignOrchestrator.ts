@@ -587,8 +587,16 @@ export class CampaignOrchestrator extends EventEmitter {
 
     // 4b. Supplement with SolverPool for high-ROI vuln classes if findings are sparse
     const targetHostname = (() => { try { return new URL(params.targetUrl).hostname; } catch { return ''; } })();
-    if (rawFindings.length < 2 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
-      this.audit(4, "solver_supplement_start", { reason: "sparse findings" });
+    // Compute the budget the engine actually consumed so the supplement draws
+    // from the REMAINING quota rather than a fresh full allowance — previously
+    // the supplement reset requestsMade to 0, silently doubling total spend.
+    const totalBudget = params.budget?.maxRequests ?? 2000;
+    const engineSpent = (() => {
+      try { return engine.getState()?.budget?.requestsMade ?? 0; } catch { return 0; }
+    })();
+    const remainingBudget = Math.max(0, totalBudget - engineSpent);
+    if (rawFindings.length < 2 && remainingBudget > 0 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
+      this.audit(4, "solver_supplement_start", { reason: "sparse findings", remainingBudget, engineSpent });
       try {
         const pool = new SolverPool(4);
         pool.on("solver:finding", (d) => {
@@ -602,14 +610,16 @@ export class CampaignOrchestrator extends EventEmitter {
           {
             programId: params.programId,
             sessionId: 0,
-            // Bound the supplement to the campaign request budget so it can't
-            // run unbounded and overrun the quota (was previously omitted).
-            budget: { maxRequests: params.budget?.maxRequests ?? 2000, requestsMade: 0 },
+            // Draw from the remaining campaign budget, pre-charged with what the
+            // engine already spent so total spend stays within maxRequests.
+            budget: { maxRequests: totalBudget, requestsMade: engineSpent },
           }
         );
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
       }
+    } else if (rawFindings.length < 2 && remainingBudget <= 0) {
+      this.audit(4, "solver_supplement_skipped", { reason: "budget exhausted by engine", engineSpent });
     }
 
     // 4c. Run abbreviated hunts on additional discovered subdomains (concurrency limit 2)
@@ -860,9 +870,15 @@ export class CampaignOrchestrator extends EventEmitter {
                     submittedAt: new Date(),
                   }).where(eq(findings.id, dbFinding.id)).catch(() => {});
                 } else if (!result.draftOnly) {
-                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, error: result.error });
+                  // Surface submission failure to the operator instead of only logging —
+                  // a 401/403 from the platform should be visible, not silent.
+                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, findingId: dbFinding.id, error: result.error });
+                  this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: result.error });
                 }
-              }).catch(() => {});
+              }).catch((err) => {
+                logger.error("[CampaignOrchestrator] Report submission threw", { platform, findingId: dbFinding.id, err: String(err) });
+                this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: String(err) });
+              });
             }
           }
 
@@ -1006,13 +1022,28 @@ export class CampaignOrchestrator extends EventEmitter {
     // 6c. Update autonomy maturity tracker
     let autonomyScore = 0;
     try {
+      // Derive real tool-usage metrics from finding evidence instead of hardcoding.
+      // Each finding's evidence array carries the probes that produced it, each
+      // tagged with the tool name. Tools that appear in a VERIFIED finding are
+      // "correct"; the union across verified+rejected is the full selected set.
+      const rejectedFindings = (verifData.rejected as Array<{ finding?: typeof findings.$inferSelect }>) || [];
+      const extractTools = (f?: typeof findings.$inferSelect): string[] => {
+        const ev = (f?.evidence as Array<Record<string, unknown>>) || [];
+        return ev.map(e => (e?.tool as string) || "").filter(Boolean);
+      };
+      const correctTools = new Set<string>();
+      verifiedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => correctTools.add(t)));
+      const selectedTools = new Set<string>(correctTools);
+      rejectedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => selectedTools.add(t)));
+
+      const totalProcessed = (verifData.totalProcessed as number) || 0;
       const huntMetrics = {
-        hypothesesGenerated: Math.max(5, this.state.findingsCount),
+        hypothesesGenerated: Math.max(totalProcessed, this.state.findingsCount),
         hypothesesCorrect: this.state.verifiedCount,
-        toolsSelected: 3,
-        toolsCorrect: this.state.verifiedCount > 0 ? 2 : 1,
+        toolsSelected: Math.max(selectedTools.size, 1),
+        toolsCorrect: correctTools.size,
         outOfScopeAttempts: 0,
-        falsePositives: Math.max(0, (verifData.totalProcessed as number || 0) - this.state.verifiedCount),
+        falsePositives: Math.max(0, totalProcessed - this.state.verifiedCount),
         confirmedFindings: this.state.verifiedCount,
         chainDepth: this.state.verifiedCount > 0 ? 1 : 0,
         reportQualityScore: reports.length > 0 ? 0.8 : 0,

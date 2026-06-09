@@ -268,6 +268,7 @@ class Layer4AIConfirmation {
   async confirm(result: SolverResult, previousLayers: {
     layer2: { confirmed: boolean; statusCode: number; responseSnippet: string };
     layer3: { confirmed: boolean; consoleAlerts: string[] };
+    layer3Available?: boolean;
     screenshot?: string;
   }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean }> {
 
@@ -335,10 +336,20 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
       logger.warn("VerifierAgent: Layer 4 AI confirmation failed — degrading to L2/L3 consensus", {
         err: String(err), endpoint: result.endpoint, vulnClass: result.vulnClass,
       });
-      const aiConfirmed = previousLayers.layer2.confirmed && previousLayers.layer3.confirmed;
+      // Fallback when the AI layer is down. If Layer 3 actually ran, require
+      // both HTTP reprobe AND browser replay to agree (conservative consensus).
+      // If Layer 3 was UNAVAILABLE (worker failed to launch), it reports
+      // confirmed:false by default — so don't let its absence veto a solid L2
+      // confirmation; fall back to the HTTP reprobe alone.
+      const l3Ran = previousLayers.layer3Available !== false;
+      const aiConfirmed = l3Ran
+        ? previousLayers.layer2.confirmed && previousLayers.layer3.confirmed
+        : previousLayers.layer2.confirmed;
       return {
         confirmed: aiConfirmed,
-        reasoning: "AI analysis unavailable – verdict based on L2 HTTP re-probe + L3 browser replay",
+        reasoning: l3Ran
+          ? "AI analysis unavailable – verdict based on L2 HTTP re-probe + L3 browser replay consensus"
+          : "AI analysis unavailable and L3 browser replay offline – verdict based on L2 HTTP re-probe alone",
         confidenceAdjustment: aiConfirmed ? 0 : -0.2,
         visionUsed: false,
       };
@@ -396,13 +407,27 @@ export class VerifierAgent {
     logger.info("VerifierAgent: L3 browser replay complete", { confirmed: l3.confirmed });
 
     // Layer 4: AI Confirmation (includes vision analysis if screenshot available)
-    const l4 = await this.layer4.confirm(result, { layer2: l2, layer3: l3, screenshot: l3.screenshot });
+    const l4 = await this.layer4.confirm(result, {
+      layer2: l2,
+      layer3: l3,
+      layer3Available: this.layer3.layer3Available,
+      screenshot: l3.screenshot,
+    });
     logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed, visionUsed: l4.visionUsed });
 
     // Final Verdict Logic
     const l2l3Consensus = l2.confirmed && l3.confirmed;
     const l2l4Consensus = l2.confirmed && l4.confirmed;
+    // Mandatory browser gate stays fail-closed: high-severity findings MUST pass
+    // Layer 3 browser replay. This is an immutable governance contract — when
+    // Playwright is offline, high-severity findings are intentionally NOT
+    // auto-confirmed (operator must install the browser to verify them).
     const mandatoryGatePassed = !mustPassBrowser || l3.confirmed;
+    if (mustPassBrowser && this.layer3.layer3Available === false) {
+      logger.warn("VerifierAgent: high-severity finding cannot pass mandatory browser gate — Playwright Layer 3 offline", {
+        endpoint: result.endpoint, vulnClass: result.vulnClass,
+      });
+    }
 
     let finalVerdict: "confirmed" | "rejected" | "inconclusive";
     let finalConfidence = result.confidence + l4.confidenceAdjustment;
