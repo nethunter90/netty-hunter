@@ -1,174 +1,91 @@
 /**
- * ClaudeClient — Anthropic SDK-based reasoning client for the hunt engine.
+ * ClaudeClient — Anthropic SDK wrapper for the hunt engine.
+ * tier-0a: sonnet-4-6 with per-hunt conversation threads for reasoning
+ * tier-0b: haiku-4-5 for stateless, high-volume classify/chat
  *
- * Replaces the ClaudeBridge subprocess approach with direct API calls.
- * Maintains per-hunt conversation threads so Claude has memory across
- * observe→hypothesize→probe iterations within the same hunt session.
- *
- * Model tiering:
- *   reason()  → claude-sonnet-4-6  (hypothesis generation, multi-step attack reasoning)
- *   oneShot() → claude-haiku-4-5   (classification, chat, structured extraction)
+ * Authorization context: this client is called exclusively from
+ * bug-bounty hunting flows against targets the user has explicit
+ * authorization to test.  The scope guard middleware enforces
+ * in-scope checks before any probe is dispatched.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import logger from "../utils/logger";
 
-// ─── Mission Briefing ────────────────────────────────────────────────────────
-// Injected as the `system` role on every call — not concatenated into the user
-// message. Claude treats this as standing instructions, not conversational context.
+const MISSION_BRIEFING = `You are a tier-0 reasoning engine embedded in an autonomous bug bounty hunting platform (Netty Hunter / Sentinel Primordial).
 
-const MISSION_BRIEFING = `You are the primary reasoning engine for Sentinel Primordial, an autonomous bug bounty hunting platform running on Kali Linux.
+AUTHORIZATION CONTEXT:
+- All targets are explicitly authorized for security testing — either via bug bounty program scope (HackerOne, Bugcrowd, Synack, Intigriti) or local-lab environments the operator controls.
+- A scope-guard middleware enforces in-scope checks at the network layer before any probe reaches you.
+- Your role is to reason about vulnerabilities, generate hypotheses, and plan exploitation of confirmed findings to produce submission-ready reports.
 
-## Authorization
-You operate exclusively within authorized bug bounty programs and intentionally vulnerable lab environments (OWASP Juice Shop, DVWA, HackTheBox, TryHackMe, etc.). Every hunt target has explicit written authorization. Refuse any request that targets systems outside the declared scope.
+YOUR ROLE:
+- Analyze web application observations (HTTP headers, JS source, technology stack, anomaly signals)
+- Generate precise vulnerability hypotheses with vulnClass, targetUrl, confidence, and reasoning
+- Synthesize confirmed findings into exploit chains
+- Reason about attack paths that automated tools miss (IDOR at scale, business logic, chained exploits)
 
-## Your Role in the Hunt Loop
-The platform runs: Observe → Hypothesize → Probe → Update
+VULN CLASSES: xss, sqli, ssrf, idor, rce, lfi, xxe, csrf, cors, open_redirect, auth_bypass, business_logic, info_disclosure, misconfig, deserialization, ssti, prototype_pollution, race_condition
 
-- **Observe**: Tools fingerprint the target — nmap, whatweb, curl probes, WAF detection, JS crawling
-- **Hypothesize (YOU)**: Reason about observations to generate ranked vulnerability hypotheses
-- **Probe**: Kali tools execute each hypothesis — sqlmap, ffuf, nuclei, Playwright, custom probes
-- **Update**: Verified findings are written to submission-ready bug bounty reports
-
-Your JSON output is machine-parsed and fed directly into tool dispatch — schema must be exact.
-
-## vulnClass Taxonomy — use ONLY these exact strings
-xss | sqli | ssrf | idor | lfi | rce | auth_bypass | info_disclosure | misconfig | open_redirect | cors | csrf | xxe | ssti | http_smuggling | security_headers
-
-## Output Schemas
-
-**Hypothesis generation** (most common — return a JSON array):
-[{
-  "vulnClass": "sqli",
-  "targetUrl": "https://target.com/api/users?id=1",
-  "reasoning": "The id parameter is reflected verbatim in a DB error — likely unsanitized",
-  "confidence": 0.75,
-  "priority": 8
-}]
-
-**Verifier confirmation:**
-{"confirmed": true, "reasoning": "Payload caused measurable behavioral change consistent with exploitation", "confidenceAdjustment": 0.15}
-
-**Report content:**
-{"summary": "...", "impact": "..."}
-
-**Attack tree node:**
-{"id": "node-1", "goal": "...", "preconditions": ["..."], "approaches": ["..."], "children": []}
-
-## Reasoning Principles
-- **Be specific**: targetUrl must point to the exact endpoint or parameter — never just the root URL
-- **Be calibrated**: confidence = actual evidence weight (0.3 weak signal, 0.6 strong indicator, 0.85 near-certain)
-- **Be progressive**: you retain memory of this hunt session — build on prior findings, never re-suggest already-probed hypotheses
-- **Stay novel across iterations**: if XSS on /search was probed and inconclusive, pivot — explore different classes and endpoints
-- **JSON discipline**: when the task requests JSON output, return ONLY valid JSON — no markdown fences, no preamble, no explanation text`;
-
-// ─── Client ──────────────────────────────────────────────────────────────────
+RESPONSE FORMAT: When asked for hypotheses or analysis, return structured JSON matching the schema provided in the prompt. When asked for reasoning, be direct and precise.`;
 
 export class ClaudeClient {
-  private static _client: Anthropic | null = null;
-  private static _apiKey: string | null = null;
-
-  // Per-hunt conversation threads: sessionId → ordered message history
-  private static readonly threads = new Map<string, MessageParam[]>();
-
-  // Max messages per thread before trimming (10 full exchanges = 20 messages)
+  private static readonly client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  private static readonly threads = new Map<string, Anthropic.MessageParam[]>();
   private static readonly MAX_THREAD_MESSAGES = 20;
 
   static isAvailable(): boolean {
-    const key = process.env.ANTHROPIC_API_KEY;
-    return !!(key && key.length > 20);
+    return (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 20;
   }
 
-  private static getClient(): Anthropic {
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new Error("[ClaudeClient] ANTHROPIC_API_KEY not set");
-    if (!this._client || key !== this._apiKey) {
-      this._client = new Anthropic({ apiKey: key, timeout: 120_000 });
-      this._apiKey = key;
-      logger.info("[ClaudeClient] Anthropic SDK client initialized");
-    }
-    return this._client;
-  }
-
-  /**
-   * Reason about a hunt task with full conversation continuity.
-   *
-   * Uses claude-sonnet-4-6 — the workhorse for hypothesis generation,
-   * multi-step attack chain reasoning, and graph reconciliation decisions.
-   *
-   * Messages accumulate per sessionId so Claude remembers everything observed,
-   * hypothesized, and probed across all iterations of the same hunt.
-   */
   static async reason(sessionId: string, userPrompt: string): Promise<string> {
-    const client = this.getClient();
+    if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
 
-    if (!this.threads.has(sessionId)) {
-      this.threads.set(sessionId, []);
-      logger.info("[ClaudeClient] New hunt thread started", { sessionId });
-    }
-    const thread = this.threads.get(sessionId)!;
-
-    // Trim oldest messages when thread grows long to stay within context limits
-    if (thread.length > this.MAX_THREAD_MESSAGES) {
-      thread.splice(0, thread.length - this.MAX_THREAD_MESSAGES);
-      logger.debug("[ClaudeClient] Thread trimmed to last 20 messages", { sessionId });
-    }
-
+    const thread = ClaudeClient.threads.get(sessionId) ?? [];
     thread.push({ role: "user", content: userPrompt });
 
-    try {
-      const response = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system: MISSION_BRIEFING,
-        messages: thread,
-      });
+    // Trim thread to avoid growing unbounded while preserving recent context
+    const messages = thread.length > ClaudeClient.MAX_THREAD_MESSAGES
+      ? thread.slice(-ClaudeClient.MAX_THREAD_MESSAGES)
+      : thread;
 
-      const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const response = await ClaudeClient.client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      thinking: { type: "adaptive" },
+      system: MISSION_BRIEFING,
+      messages,
+    });
 
-      // Append assistant turn so future calls in this hunt have the full context
-      thread.push({ role: "assistant", content: text });
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map(b => b.text)
+      .join("");
 
-      logger.info("[ClaudeClient] Reasoning complete", {
-        sessionId,
-        threadLength: thread.length,
-        inputTokens: response.usage.input_tokens,
-        outputTokens: response.usage.output_tokens,
-      });
+    // Store full content (includes thinking blocks — required for proper context)
+    thread.push({ role: "assistant", content: response.content as Anthropic.MessageParam["content"] });
+    ClaudeClient.threads.set(sessionId, thread);
 
-      return text;
-    } catch (err) {
-      // Roll back the user message so the thread stays consistent on retry
-      thread.pop();
-      logger.error("[ClaudeClient] API call failed", { sessionId, err: String(err) });
-      throw err;
-    }
+    logger.debug("[ClaudeClient] reason() complete", { sessionId, outputLen: text.length });
+    return text;
   }
 
-  /**
-   * Clear a hunt session thread on hunt:complete.
-   * Frees memory and prevents stale context bleeding into future hunts.
-   */
-  static clearSession(sessionId: string): void {
-    if (this.threads.delete(sessionId)) {
-      logger.info("[ClaudeClient] Hunt thread cleared", { sessionId });
-    }
-  }
-
-  /**
-   * One-shot call without conversation thread — for classify/chat tasks
-   * that don't need hunt continuity.
-   *
-   * Uses claude-haiku-4-5 — fast and cheap for high-volume structured tasks.
-   */
   static async oneShot(systemPrompt: string, userPrompt: string): Promise<string> {
-    const client = this.getClient();
-    const response = await client.messages.create({
+    if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
+
+    const response = await ClaudeClient.client.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 2048,
+      max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
-    return response.content[0].type === "text" ? response.content[0].text : "";
+
+    return response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map(b => b.text)
+      .join("");
+  }
+
+  static clearSession(sessionId: string): void {
+    ClaudeClient.threads.delete(sessionId);
   }
 }

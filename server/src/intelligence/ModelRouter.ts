@@ -1,6 +1,8 @@
 /**
- * ModelRouter – Intelligent task-type-aware model routing for Ollama.
- * Routes requests to the best available model based on task type.
+ * ModelRouter – Intelligent task-type-aware model routing.
+ * Tier 0a: Claude SDK (Sonnet) for reason/analyze — per-hunt conversation threads
+ * Tier 0b: Claude CLI bridge — fallback when SDK unavailable
+ * Tier 1:  Ollama — local model for lower-cost tasks
  */
 import axios from "axios";
 import logger from "../utils/logger";
@@ -188,10 +190,26 @@ export class ModelRouter {
     maxTokens?: number;
     sessionId?: string;
   } = {}): Promise<string> {
-    // Tier 0a: Anthropic SDK — direct API call with mission briefing and per-hunt thread.
-    // Preferred over CLI bridge: no subprocess overhead, proper system role, conversation continuity.
+    // Tier 0a: Claude SDK (Sonnet) — per-hunt conversation thread, best quality
     if (taskType === "reason" || taskType === "analyze") {
       if (ClaudeClient.isAvailable()) {
+        try {
+          logger.info("ModelRouter: routing to Claude API (SDK)", { taskType });
+          const sid = options.sessionId ?? "default";
+          const fullPrompt = options.systemPrompt
+            ? `${options.systemPrompt}\n\n${prompt}`
+            : prompt;
+          const result = await ClaudeClient.reason(sid, fullPrompt);
+          this.lastProvider = "claude";
+          return result;
+        } catch (err) {
+          logger.warn("ModelRouter: Claude SDK failed, trying CLI bridge", { err: String(err) });
+        }
+      }
+
+      // Tier 0b: Claude CLI bridge — fallback when SDK key unavailable
+      const claudeAvailable = await ClaudeBridge.isAvailable();
+      if (claudeAvailable) {
         let preferClaude = true;
         try {
           const rl = UnifiedReinforcementStore.getInstance();
@@ -203,31 +221,17 @@ export class ModelRouter {
         } catch { /* non-fatal — default to Claude */ }
 
         if (preferClaude) {
-          logger.info("ModelRouter: routing to Claude API (Sonnet)", { taskType });
+          logger.info("ModelRouter: routing to Claude Code CLI", { taskType });
           try {
-            const sid = options.sessionId ?? "default";
-            const result = await ClaudeClient.reason(sid, prompt);
+            const fullPrompt = options.systemPrompt
+              ? `${options.systemPrompt}\n\n${prompt}`
+              : prompt;
+            const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
             this.lastProvider = "claude";
             return result;
           } catch (err) {
-            logger.warn("ModelRouter: ClaudeClient failed, falling back to CLI bridge", { err: String(err) });
+            logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
           }
-        }
-      }
-
-      // Tier 0b: Claude Code CLI — fallback when SDK key is missing.
-      const claudeCliAvailable = await ClaudeBridge.isAvailable();
-      if (claudeCliAvailable) {
-        logger.info("ModelRouter: routing to Claude Code CLI (fallback)", { taskType });
-        try {
-          const fullPrompt = options.systemPrompt
-            ? `${options.systemPrompt}\n\n${prompt}`
-            : prompt;
-          const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
-          this.lastProvider = "claude";
-          return result;
-        } catch (err) {
-          logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
         }
       }
     }

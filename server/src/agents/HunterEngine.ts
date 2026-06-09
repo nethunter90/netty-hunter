@@ -118,9 +118,10 @@ export interface Hypothesis {
   createdAt: number;
   retryCount?: number;
   toolHint?: string;
-  chainedFrom?: string[];
   /** Which model generated this hypothesis — used to score model performance in RL store. */
   modelSource?: "claude" | "ollama" | "default";
+  /** Finding IDs this hypothesis chains from (set by SynthesisAgent). */
+  chainedFrom?: string[];
 }
 
 export interface ProbeResult {
@@ -131,6 +132,8 @@ export interface ProbeResult {
   parsed: Record<string, unknown>;
   success: boolean;
   duration: number;
+  rawHttpLog?: string;
+  videoPath?: string;
 }
 
 export interface HuntState {
@@ -153,6 +156,8 @@ export interface HypothesisConfirmed {
   severity: string;
   cvssScore: number;
   exploitPayload: string;
+  rawEvidence?: string;
+  videoPath?: string;
 }
 
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
@@ -659,7 +664,6 @@ export class HunterEngine extends EventEmitter {
             break;
           case "update":
             await this.update();
-            await this.runSynthesis();
             // Determine next phase based on state
             if (this.state.hypotheses.filter(h => h.status === "pending").length > 0) {
               this.state.phase = "probe";
@@ -1550,43 +1554,6 @@ Return ONLY valid JSON array of hypothesis objects.`;
     }
   }
 
-  // ── Chain synthesis ──────────────────────────────────────────────────────────
-  private async runSynthesis(): Promise<void> {
-    if (this.state.confirmedFindings.length < 1) return;
-    try {
-      const discoveredUrls = this.state.observations
-        .map(o => (o as unknown as Record<string, unknown>).url as string)
-        .filter(Boolean);
-      const testedClasses = this.state.hypotheses.map(h => h.vulnClass);
-
-      const chains = await synthesisAgent.synthesize(
-        this.state.sessionId,
-        this.state.confirmedFindings,
-        discoveredUrls,
-        testedClasses,
-      );
-
-      if (chains.length > 0) {
-        const deduped = chains.filter(c =>
-          !this.state.hypotheses.some(
-            h => h.vulnClass === c.vulnClass && h.targetUrl === c.targetUrl
-          )
-        );
-        this.state.hypotheses.push(...deduped);
-        if (deduped.length > 0) {
-          this.emit("hunt:chain_hypotheses", {
-            sessionId: this.state.sessionId,
-            count: deduped.length,
-            chains: deduped.map(c => ({ vulnClass: c.vulnClass, targetUrl: c.targetUrl, chainedFrom: c.chainedFrom })),
-          });
-          logger.info("[HunterEngine] Chain hypotheses injected", { count: deduped.length });
-        }
-      }
-    } catch (err) {
-      logger.debug("[HunterEngine] Synthesis skipped", { err: String(err) });
-    }
-  }
-
   private isBudgetExhausted(): boolean {
     return this.state.budget.requestsMade >= this.state.budget.maxRequests;
   }
@@ -1669,8 +1636,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         }
       }
 
-      // Logic exploit agent — Claude-directed Playwright for stateful/chained exploits.
-      // Handles business_logic, idor, auth_bypass where standard tools can't confirm impact.
+      // LogicExploitAgent — Claude-directed Playwright for stateful/chained probes
       if (
         ["business_logic", "idor", "auth_bypass"].includes(hypothesis.vulnClass) &&
         ClaudeClient.isAvailable()
@@ -1685,24 +1651,26 @@ Return ONLY valid JSON array of hypothesis objects.`;
             hypothesisId: hypothesis.id,
             tool: "logic_exploit_agent",
             command: `claude-sonnet:${hypothesis.vulnClass}`,
-            output: logicResult.evidence || "No evidence collected",
-            parsed: { found: logicResult.confirmed, payload: logicResult.payload, rawOutput: logicResult.evidence },
+            output: logicResult.evidence || logicResult.rawHttpLog || "No evidence collected",
+            parsed: {
+              found: logicResult.confirmed,
+              payload: logicResult.payload,
+              rawOutput: logicResult.evidence,
+            },
             success: logicResult.confirmed,
             duration: logicResult.duration,
+            rawHttpLog: logicResult.rawHttpLog,
+            videoPath: logicResult.videoPath,
           };
           this.state.probes.push(result);
-          if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
-          this.state.budget.requestsMade += 1;
+          this.state.budget.requestsMade++;
           this.rlWiring.onToolResult("logic_exploit_agent", hypothesis.vulnClass, logicResult.confirmed, hypothesis.confidence);
           failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, logicResult.confirmed);
-          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
-          if (!logicResult.confirmed) {
-            hypothesis.status = "inconclusive";
-          }
-          // Confirmed or inconclusive — either way skip the standard tool for these classes
+          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "logic_agent" });
+          if (!logicResult.confirmed) hypothesis.status = "inconclusive";
           continue;
         } catch (err) {
-          logger.warn("[HunterEngine] LogicExploitAgent failed, falling through to standard tool", { err: String(err) });
+          logger.warn("[HunterEngine] LogicExploitAgent error — falling through to standard tool", { err: String(err) });
         }
       }
 
@@ -1930,6 +1898,42 @@ Return ONLY valid JSON array of hypothesis objects.`;
       phase: "decision",
       summary: `Iteration ${this.state.iteration} complete. Confirmed: ${this.state.confirmedFindings.length}, Pending: ${pending}, Rejected: ${rejected}.`,
     });
+
+    // Cross-finding synthesis — runs after first confirmed finding
+    await this.runSynthesis();
+  }
+
+  private async runSynthesis(): Promise<void> {
+    if (this.state.confirmedFindings.length < 1) return;
+    try {
+      const discoveredUrls = this.state.observations
+        .map(o => (o as unknown as Record<string, unknown>).url as string)
+        .filter(Boolean);
+      const testedClasses = [...new Set(this.state.hypotheses.map(h => h.vulnClass))];
+      const chains = await synthesisAgent.synthesize(
+        this.state.sessionId,
+        this.state.confirmedFindings,
+        discoveredUrls,
+        testedClasses,
+      );
+      if (chains.length > 0) {
+        const deduped = chains.filter(c =>
+          !this.state.hypotheses.some(
+            h => h.vulnClass === c.vulnClass && h.targetUrl === c.targetUrl
+          )
+        );
+        if (deduped.length > 0) {
+          this.state.hypotheses.push(...deduped as unknown as Hypothesis[]);
+          this.emit("hunt:chain_hypotheses", {
+            sessionId: this.state.sessionId,
+            count: deduped.length,
+            chains: deduped.map(c => ({ vulnClass: c.vulnClass, chainedFrom: c.chainedFrom })),
+          });
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Synthesis skipped (non-fatal)", { err: String(err) });
+    }
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -2349,6 +2353,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       severity,
       cvssScore,
       exploitPayload: bestProbe?.output?.slice(0, 500) || "",
+      rawEvidence: bestProbe?.rawHttpLog ?? undefined,
+      videoPath: bestProbe?.videoPath ?? undefined,
     };
   }
 
@@ -2387,7 +2393,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
         confidence: confirmed.hypothesis.confidence,
         cvssScore: confirmed.cvssScore,
         description: confirmed.hypothesis.reasoning,
-        evidence: confirmed.proof as unknown as Record<string, unknown>[],
+        evidence: [
+          ...confirmed.proof as unknown as Record<string, unknown>[],
+          ...(confirmed.rawEvidence ? [{ type: "raw_http", data: confirmed.rawEvidence }] : []),
+          ...(confirmed.videoPath ? [{ type: "video_poc", path: confirmed.videoPath }] : []),
+        ],
         reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
         verificationStatus: "pending",

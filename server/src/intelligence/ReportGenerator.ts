@@ -23,6 +23,7 @@ export interface BugBountyReport {
   references: string[];
   timeline: string;
   reportMarkdown: string;
+  videoPath?: string;
 }
 
 const SEVERITY_TO_CVSS: Record<string, { score: number; vector: string }> = {
@@ -77,6 +78,8 @@ export class DraftReportGenerator {
       programName: string;
       targetUrl: string;
       huntDate: string;
+      rawEvidence?: string;
+      videoPath?: string;
     }
   ): Promise<BugBountyReport> {
     const vulnInfo = VULN_DESCRIPTIONS[finding.vulnClass] || {
@@ -91,7 +94,7 @@ export class DraftReportGenerator {
     // AI-enhanced impact and summary generation
     const aiEnhanced = await this.generateAIContent(finding, verification, metadata, vulnInfo);
 
-    const stepsToReproduce = this.buildReproductionSteps(finding, verification);
+    const stepsToReproduce = this.buildReproductionSteps(finding, verification, metadata.rawEvidence);
     const evidence = this.buildEvidence(finding, verification);
 
     const report: BugBountyReport = {
@@ -103,13 +106,14 @@ export class DraftReportGenerator {
       vulnerability: vulnInfo.description,
       impact: aiEnhanced.impact,
       stepsToReproduce,
-      proofOfConcept: this.buildPoC(finding, verification),
+      proofOfConcept: this.buildPoC(finding, verification, metadata.rawEvidence, metadata.videoPath),
       evidence,
       affectedAssets: [finding.endpoint],
       remediation: vulnInfo.remediation,
       references: vulnInfo.refs,
       timeline: `**Discovered**: ${metadata.huntDate}\n**Verified**: ${new Date().toISOString().split("T")[0]}\n**Status**: Ready for submission`,
       reportMarkdown: "",
+      videoPath: metadata.videoPath,
     };
 
     report.reportMarkdown = this.renderMarkdown(report, metadata.programName);
@@ -129,15 +133,18 @@ export class DraftReportGenerator {
     metadata: { programName: string; targetUrl: string },
     vulnInfo: { name: string; description: string }
   ): Promise<{ summary: string; impact: string }> {
+    const rawEvidenceContext = (metadata as { rawEvidence?: string }).rawEvidence
+      ? `\nRaw HTTP Evidence (first 1500 chars):\n${(metadata as { rawEvidence?: string }).rawEvidence!.slice(0, 1500)}`
+      : "";
     const prompt = `Write a professional bug bounty report section for:
 Vulnerability: ${vulnInfo.name}
 Endpoint: ${finding.endpoint}
 Program: ${metadata.programName}
 Verification: ${JSON.stringify(verification.layer3_playwright, null, 2)}
-Payload: ${finding.payload}
+Payload: ${finding.payload}${rawEvidenceContext}
 
 Generate:
-1. "summary": A 2-3 sentence executive summary for the security team (professional, factual)
+1. "summary": A 2-3 sentence executive summary for the security team (professional, factual, specific to the evidence)
 2. "impact": A paragraph describing the business/security impact of this vulnerability
 
 Return JSON: { "summary": "...", "impact": "..." }`;
@@ -163,7 +170,7 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     }
   }
 
-  private buildReproductionSteps(finding: SolverResult, verification: VerificationResult): string[] {
+  private buildReproductionSteps(finding: SolverResult, verification: VerificationResult, rawEvidence?: string): string[] {
     const steps = [
       `Navigate to the affected endpoint: \`${finding.endpoint}\``,
       `Intercept the request using a proxy (e.g., Burp Suite)`,
@@ -172,9 +179,17 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     if (finding.payload) {
       steps.push(`Inject the following payload: \`${finding.payload}\``);
     }
-    if (finding.request) {
+
+    if (rawEvidence) {
+      // Extract the first request line for a specific reproduction step
+      const firstReqLine = rawEvidence.split("\n").find(l => /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s/.test(l));
+      if (firstReqLine) {
+        steps.push(`Send the following request: \`${firstReqLine}\``);
+      }
+    } else if (finding.request) {
       steps.push(`Send the modified request: \`${finding.request}\``);
     }
+
     steps.push(`Observe the response for evidence of the vulnerability`);
 
     if (verification.layer3_playwright.consoleAlerts.length > 0) {
@@ -184,11 +199,19 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     return steps;
   }
 
-  private buildPoC(finding: SolverResult, verification: VerificationResult): string {
-    let poc = `**Tool Used**: ${finding.toolsUsed.join(", ")}\n\n`;
-    poc += `**Request**:\n\`\`\`\n${finding.request || "N/A"}\n\`\`\`\n\n`;
-    poc += `**Response**:\n\`\`\`\n${finding.response?.slice(0, 500) || "N/A"}\n\`\`\`\n\n`;
+  private buildPoC(finding: SolverResult, verification: VerificationResult, rawEvidence?: string, videoPath?: string): string {
+    let poc = `**Tool Used**: ${finding.toolsUsed.join(", ") || "automated probe"}\n\n`;
 
+    if (rawEvidence) {
+      poc += `**Raw HTTP Evidence**:\n\`\`\`http\n${rawEvidence.slice(0, 3000)}\n\`\`\`\n\n`;
+    } else {
+      poc += `**Request**:\n\`\`\`\n${finding.request || "N/A"}\n\`\`\`\n\n`;
+      poc += `**Response**:\n\`\`\`\n${finding.response?.slice(0, 500) || "N/A"}\n\`\`\`\n\n`;
+    }
+
+    if (videoPath) {
+      poc += `**Video PoC**: Recorded exploitation session — \`${videoPath}\`\n\n`;
+    }
     if (verification.layer3_playwright.screenshot) {
       poc += `**Screenshot**: [Attached – base64 encoded screenshot available]\n\n`;
     }
@@ -217,6 +240,10 @@ Return JSON: { "summary": "...", "impact": "..." }`;
   }
 
   private renderMarkdown(report: BugBountyReport, programName: string): string {
+    const videoSection = report.videoPath
+      ? `\n## Video Proof of Concept\n**Recording**: \`${report.videoPath}\`\n> Submit this video file alongside the report for platforms requiring video PoC (Synack, Intigriti P1/P2).\n`
+      : "";
+
     return `# ${report.title}
 
 ## Summary
@@ -240,8 +267,7 @@ ${report.affectedAssets.map(a => `- \`${a}\``).join("\n")}
 ${report.stepsToReproduce.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
 ## Proof of Concept
-${report.proofOfConcept}
-
+${report.proofOfConcept}${videoSection}
 ## Evidence
 ${report.evidence.map(e => `- ${e}`).join("\n")}
 

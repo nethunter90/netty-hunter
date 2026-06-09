@@ -1,24 +1,13 @@
 /**
- * SynthesisAgent — cross-finding correlation pass.
- *
- * Runs after each update() phase to find attack chains that combine
- * two or more confirmed findings for higher-impact exploitation.
- * Operates on the same ClaudeClient conversation thread as the hunt
- * so it has full context of everything discovered so far.
+ * SynthesisAgent — Cross-finding exploit chain synthesis.
+ * After each hunt update, synthesizes confirmed findings into
+ * chained hypotheses that automated single-vuln probes miss.
  */
 import { ClaudeClient } from "../lib/claude-client";
 import logger from "../utils/logger";
-import { v4 as uuidv4 } from "uuid";
 
-// Minimal local types to avoid circular import with HunterEngine
 interface ConfirmedFinding {
-  hypothesis: {
-    id: string;
-    vulnClass: string;
-    targetUrl: string;
-    reasoning: string;
-    confidence: number;
-  };
+  hypothesis: { id: string; vulnClass: string; targetUrl: string; reasoning: string };
   severity: string;
   exploitPayload: string;
 }
@@ -30,11 +19,10 @@ export interface ChainedHypothesis {
   reasoning: string;
   confidence: number;
   priority: number;
-  chainedFrom: string[];
-  evidence: never[];
+  evidence: unknown[];
   status: "pending";
   createdAt: number;
-  modelSource: "claude";
+  chainedFrom: string[];
 }
 
 export class SynthesisAgent {
@@ -45,75 +33,68 @@ export class SynthesisAgent {
     testedVulnClasses: string[],
   ): Promise<ChainedHypothesis[]> {
     if (confirmedFindings.length < 1) return [];
+    if (!ClaudeClient.isAvailable()) return [];
 
-    const findingSummary = confirmedFindings.map(f => ({
-      id: f.hypothesis.id,
-      vulnClass: f.hypothesis.vulnClass,
-      url: f.hypothesis.targetUrl,
-      severity: f.severity,
-      reasoning: f.hypothesis.reasoning.slice(0, 300),
-    }));
+    const prompt = `You are analyzing confirmed vulnerability findings to identify exploit chains.
 
-    const prompt = `Cross-finding synthesis pass.
+CONFIRMED FINDINGS:
+${confirmedFindings.map((f, i) => `${i + 1}. ${f.hypothesis.vulnClass.toUpperCase()} at ${f.hypothesis.targetUrl} (${f.severity}) — ${f.hypothesis.reasoning.slice(0, 200)}`).join("\n")}
 
-Confirmed findings so far:
-${JSON.stringify(findingSummary, null, 2)}
+ALREADY TESTED: ${testedVulnClasses.join(", ")}
 
-Discovered endpoints (${discoveredUrls.length} total, showing first 30):
-${discoveredUrls.slice(0, 30).join('\n')}
+KNOWN URLS (sample): ${discoveredUrls.slice(0, 20).join(", ")}
 
-Already tested vulnerability classes: ${[...new Set(testedVulnClasses)].join(', ')}
+Identify exploit chains by combining these findings. Common patterns:
+- XSS + CORS → exfiltrate authenticated data
+- IDOR + info_disclosure → enumerate and extract all user records
+- open_redirect + XSS → phishing + cookie theft
+- auth_bypass + IDOR → full account takeover
+- SSRF + internal → cloud metadata credential theft
+- CSRF + auth_bypass → persistent account compromise
+- SQLi + info_disclosure → credential dump
 
-Your task: identify attack CHAINS — combinations of 2 or more confirmed findings that together enable higher-impact exploitation than any individual finding alone.
-
-Chain patterns to look for:
-- XSS + CORS misconfiguration = cross-origin account takeover
-- IDOR (ID enumeration) + info_disclosure (email/PII leak) = targeted attack at scale
-- Open redirect + XSS = phishing with payload delivery
-- Auth_bypass + IDOR = horizontal privilege escalation to any account
-- SSRF + info_disclosure (internal IPs/services) = targeted internal service probing
-- CSRF + auth_bypass = forced privileged action without user interaction
-- SQLi (blind/error) + info_disclosure (table names/schema) = accelerated data extraction
-
-For each chain you identify:
-- targetUrl: the endpoint where the chain EXECUTES (the final impact step)
-- reasoning: the full sequence — "Step 1: Use [finding A] to obtain X. Step 2: Use X with [finding B] to achieve Y."
-- chainedFrom: array of finding IDs being combined
-- confidence: higher than either individual finding if the chain is clearly executable
-- priority: 8-10 — chains are high value
-
-Return a JSON array (max 3 chains). Same schema as hypothesis generation plus chainedFrom:
+For each chain worth pursuing, generate a chained hypothesis. Return JSON array:
 [{
-  "vulnClass": "auth_bypass",
-  "targetUrl": "https://...",
-  "reasoning": "...",
-  "confidence": 0.8,
-  "priority": 9,
-  "chainedFrom": ["finding-id-1", "finding-id-2"]
+  "vulnClass": "string",
+  "targetUrl": "string (most relevant endpoint from the finding URLs)",
+  "reasoning": "string (specific chain logic — exactly how the two vulnerabilities combine)",
+  "confidence": number (0.0-1.0),
+  "priority": number (1-10),
+  "chainedFrom": ["findingId1", "findingId2"]
 }]
 
-If no meaningful chains exist, return [].`;
+Return [] if no meaningful chains exist. Only include chains with confidence > 0.6.`;
 
     try {
       const response = await ClaudeClient.reason(sessionId, prompt);
-      const raw = response.match(/\[[\s\S]*\]/)?.[0]?.slice(0, 32768) ?? "[]";
-      const parsed = JSON.parse(raw) as Record<string, unknown>[];
+      const match = response.match(/\[[\s\S]*\]/);
+      if (!match) return [];
 
-      return parsed.slice(0, 3).map(h => ({
-        id: uuidv4(),
-        vulnClass: String(h.vulnClass ?? "info_disclosure"),
-        targetUrl: String(h.targetUrl ?? ""),
-        reasoning: String(h.reasoning ?? ""),
-        confidence: Math.min(1, Math.max(0, Number(h.confidence) || 0.6)),
-        priority: Math.min(10, Math.max(1, Number(h.priority) || 8)),
-        chainedFrom: Array.isArray(h.chainedFrom) ? (h.chainedFrom as string[]) : [],
-        evidence: [] as never[],
-        status: "pending" as const,
-        createdAt: Date.now(),
-        modelSource: "claude" as const,
-      }));
+      const raw = JSON.parse(match[0]) as Array<{
+        vulnClass: string;
+        targetUrl: string;
+        reasoning: string;
+        confidence: number;
+        priority: number;
+        chainedFrom: string[];
+      }>;
+
+      return raw
+        .filter(c => c.confidence > 0.6 && c.vulnClass && c.targetUrl)
+        .map(c => ({
+          id: `chain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          vulnClass: c.vulnClass,
+          targetUrl: c.targetUrl,
+          reasoning: c.reasoning,
+          confidence: c.confidence,
+          priority: c.priority ?? 7,
+          evidence: [],
+          status: "pending" as const,
+          createdAt: Date.now(),
+          chainedFrom: c.chainedFrom ?? [],
+        }));
     } catch (err) {
-      logger.warn("[SynthesisAgent] Chain synthesis failed", { err: String(err) });
+      logger.debug("[SynthesisAgent] Chain synthesis failed (non-fatal)", { err: String(err) });
       return [];
     }
   }
