@@ -91,10 +91,11 @@ export class DraftReportGenerator {
 
     const cvssData = SEVERITY_TO_CVSS[metadata.severity] || SEVERITY_TO_CVSS.medium;
 
-    // AI-enhanced impact and summary generation
+    // AI-enhanced impact, summary, and steps generation
     const aiEnhanced = await this.generateAIContent(finding, verification, metadata, vulnInfo);
 
-    const stepsToReproduce = this.buildReproductionSteps(finding, verification, metadata.rawEvidence);
+    // Use AI-generated steps when raw HTTP evidence is available — they reference actual captured requests
+    const stepsToReproduce = aiEnhanced.steps ?? this.buildReproductionSteps(finding, verification, metadata.rawEvidence);
     const evidence = this.buildEvidence(finding, verification);
 
     const report: BugBountyReport = {
@@ -130,34 +131,45 @@ export class DraftReportGenerator {
   private async generateAIContent(
     finding: SolverResult,
     verification: VerificationResult,
-    metadata: { programName: string; targetUrl: string },
+    metadata: { programName: string; targetUrl: string; rawEvidence?: string; videoPath?: string },
     vulnInfo: { name: string; description: string }
-  ): Promise<{ summary: string; impact: string }> {
-    const rawEvidenceContext = (metadata as { rawEvidence?: string }).rawEvidence
-      ? `\nRaw HTTP Evidence (first 1500 chars):\n${(metadata as { rawEvidence?: string }).rawEvidence!.slice(0, 1500)}`
+  ): Promise<{ summary: string; impact: string; steps?: string[] }> {
+    const hasRawHttp = !!metadata.rawEvidence;
+    const rawSection = hasRawHttp
+      ? `\n\nRAW HTTP EVIDENCE (captured during exploitation):\n\`\`\`\n${metadata.rawEvidence!.slice(0, 2500)}\n\`\`\``
       : "";
-    const prompt = `Write a professional bug bounty report section for:
+
+    const stepsInstruction = hasRawHttp
+      ? `3. "steps": Array of exact, copy-paste reproduction steps derived from the raw HTTP evidence above. Each step should be a complete instruction a triager can follow — e.g. "Send POST /api/basket/add with body: {\\"ProductId\\":1,\\"quantity\\":-100}" or "Observe the 200 OK response containing another user's data". Reference specific endpoint paths, headers, and body values from the captured requests.`
+      : `3. "steps": Array of specific reproduction steps for this vulnerability class. Be concrete — include the endpoint path, parameter names, and a realistic payload.`;
+
+    const prompt = `Write professional bug bounty report content for the following confirmed vulnerability:
+
 Vulnerability: ${vulnInfo.name}
 Endpoint: ${finding.endpoint}
+Target: ${metadata.targetUrl}
 Program: ${metadata.programName}
-Verification: ${JSON.stringify(verification.layer3_playwright, null, 2)}
-Payload: ${finding.payload}${rawEvidenceContext}
+Payload: ${finding.payload || "N/A"}
+Verification confidence: ${Math.round(verification.finalConfidence * 100)}%
+Browser alerts triggered: ${verification.layer3_playwright.consoleAlerts.join(", ") || "none"}${rawSection}
 
 Generate:
-1. "summary": A 2-3 sentence executive summary for the security team (professional, factual, specific to the evidence)
-2. "impact": A paragraph describing the business/security impact of this vulnerability
+1. "summary": 2-3 sentence executive summary. Professional, factual, specific. If raw HTTP is provided, reference the actual endpoint and method observed.
+2. "impact": A focused paragraph on the business/security impact — what an attacker gains, what data is exposed, what invariants are broken.
+${stepsInstruction}
 
-Return JSON: { "summary": "...", "impact": "..." }`;
+Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "...", "steps": ["step1", "step2", ...] }`;
 
     try {
       const response = await this.modelRouter.generate(prompt, "analyze");
-      const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
+      const match = response.match(/\{[\s\S]+\}/);
+      const parsed = JSON.parse(match?.[0] || "{}");
       return {
         summary: parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint}.`,
         impact: parsed.impact || `This vulnerability poses a significant security risk to ${metadata.programName} and its users.`,
+        steps: Array.isArray(parsed.steps) && parsed.steps.length > 0 ? parsed.steps as string[] : undefined,
       };
     } catch (err) {
-      // Non-critical: report polish fails gracefully with template text — hunt result is not lost
       logger.warn("ReportGenerator: AI content generation failed — using template fallback", {
         err: String(err),
         vulnClass: finding.vulnClass,

@@ -425,6 +425,7 @@ export class HunterEngine extends EventEmitter {
   private banCheckDone = false;
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
+  private secondaryAuthHeaders: Record<string, string> = {};
   private mergedTools: typeof TOOL_KNOWLEDGE = TOOL_KNOWLEDGE;
   private reconContext: ReconContext | null = null;
   private reconPromise: Promise<ReconContext | null> | null = null;
@@ -504,6 +505,7 @@ export class HunterEngine extends EventEmitter {
     budget?: Partial<HuntState["budget"]>;
     focusVulnClasses?: string[];
     goal?: string;
+    secondaryAuthHeaders?: Record<string, string>;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -555,6 +557,14 @@ export class HunterEngine extends EventEmitter {
           createdAt: Date.now(),
         });
       }
+    }
+
+    // Store secondary auth for dual-context IDOR probes
+    if (params.secondaryAuthHeaders && Object.keys(params.secondaryAuthHeaders).length > 0) {
+      this.secondaryAuthHeaders = params.secondaryAuthHeaders;
+      logger.info("[HunterEngine] Secondary auth configured for dual-context IDOR", {
+        headerCount: Object.keys(params.secondaryAuthHeaders).length,
+      });
     }
 
     // Load auth config for this program and establish session if configured
@@ -1646,6 +1656,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             hypothesis,
             this.state.sessionId,
             this.authHeaders,
+            Object.keys(this.secondaryAuthHeaders).length > 0 ? this.secondaryAuthHeaders : undefined,
           );
           const result: ProbeResult = {
             hypothesisId: hypothesis.id,
