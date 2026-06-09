@@ -57,6 +57,13 @@ import("./db").then(({ db: _db }) => {
   });
 }).catch(() => {});
 
+// ─── Cross-hunt learning tables ───────────────────────────────────────────────
+// Must run before the autonomous brain / hunts so the journal, threshold, and
+// cortex tables exist when the learning subsystems first read/write them.
+import("./lib/intelligence/learning-schema").then(({ initLearningSchema }) => {
+  initLearningSchema().catch(() => {});
+}).catch(() => {});
+
 // ─── Autonomous Brain ─────────────────────────────────────────────────────────
 initializeAutonomousBrain();
 logger.info("Autonomous brain initialized");

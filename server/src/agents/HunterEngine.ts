@@ -587,6 +587,16 @@ export class HunterEngine extends EventEmitter {
     }).returning();
     this.dbSessionId = session.id;
 
+    // Register this session with the meta-reasoner so its decision journal,
+    // health evaluation, and strategy-weight learning actually fire. Without
+    // this, evaluateEnriched() aborts immediately and the learning loop never
+    // records a single entry for engine-driven hunts.
+    try {
+      metaReasoner.initializeHuntState(sessionUuid);
+    } catch (err) {
+      logger.debug("[HunterEngine] meta-reasoner init skipped (non-fatal)", { err: String(err) });
+    }
+
     // Pre-seed hypotheses from template focus classes if provided
     if (params.focusVulnClasses?.length) {
       for (const vc of params.focusVulnClasses) {
@@ -733,34 +743,48 @@ export class HunterEngine extends EventEmitter {
         contextWriter.alert("error", { phase: this.state.phase, iteration: this.state.iteration, msg: msg.slice(0, 200) });
       }
 
-      // Every 3 iterations check hunt health and trigger meta-reasoner pivot if degraded
+      // Feed live progress into the meta-reasoner so its decision journal and
+      // health evaluation carry real findings/confidence signal each iteration.
+      try {
+        const avgConfidence = this.state.hypotheses.length > 0
+          ? this.state.hypotheses.reduce((s, h) => s + h.confidence, 0) / this.state.hypotheses.length
+          : 0.5;
+        metaReasoner.syncHuntProgress(this.state.sessionId, {
+          findingsCount: this.state.confirmedFindings.length,
+          confidence: avgConfidence,
+        });
+      } catch { /* non-fatal */ }
+
+      // Every 3 iterations run a meta-reasoner evaluation. This is called
+      // unconditionally (not only when degraded) so the decision journal records
+      // an entry each cycle — the strategy-weight learner needs that data to
+      // close the cross-hunt learning loop. The pivot action is still gated on
+      // the meta-reasoner's own decision.
       if (this.state.iteration % 3 === 0) {
         try {
           const health = huntCortex.computeHuntHealth(this.state.sessionId);
-          if (health.health < 0.4) {
-            const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
-            if (decision.action === 'pivot') {
-              const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
-              const pivotHypotheses = paths.slice(0, 2).map(p => ({
-                id: uuidv4(),
-                vulnClass: p.path.vulnerability,
-                targetUrl: this.state.targetUrl,
-                reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
-                confidence: Math.min(0.85, p.adjustedLikelihood),
-                priority: Math.min(10, Math.round(p.path.priority)),
-                evidence: [],
-                status: 'pending' as const,
-                createdAt: Date.now(),
-              }));
-              this.state.hypotheses.push(...pivotHypotheses);
-              if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-                this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
-                this.state.hypotheses.splice(MAX_HYPOTHESES);
-              }
-              this.state.phase = 'probe';
-              this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
-              logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
+          const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
+          if (decision.action === 'pivot') {
+            const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
+            const pivotHypotheses = paths.slice(0, 2).map(p => ({
+              id: uuidv4(),
+              vulnClass: p.path.vulnerability,
+              targetUrl: this.state.targetUrl,
+              reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
+              confidence: Math.min(0.85, p.adjustedLikelihood),
+              priority: Math.min(10, Math.round(p.path.priority)),
+              evidence: [],
+              status: 'pending' as const,
+              createdAt: Date.now(),
+            }));
+            this.state.hypotheses.push(...pivotHypotheses);
+            if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+              this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+              this.state.hypotheses.splice(MAX_HYPOTHESES);
             }
+            this.state.phase = 'probe';
+            this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
+            logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
           }
         } catch { /* non-critical — health check failure must not stop the hunt */ }
       }
@@ -1861,7 +1885,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             (async () => {
               try {
                 const ssrfParam = ssrfChainProber.detectSSRFParam(hypothesis.targetUrl);
-                const pivot = await ssrfChainProber.probe(hypothesis.targetUrl, ssrfParam, this.authHeaders);
+                const pivot = await ssrfChainProber.probe(hypothesis.targetUrl, ssrfParam, this.authHeaders, this.state.programId);
                 for (const ph of pivot.pivotHypotheses) {
                   this.state.hypotheses.push({
                     id: uuidv4(), vulnClass: ph.vulnClass, targetUrl: hypothesis.targetUrl,
