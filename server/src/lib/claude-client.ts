@@ -28,10 +28,43 @@ VULN CLASSES: xss, sqli, ssrf, idor, rce, lfi, xxe, csrf, cors, open_redirect, a
 
 RESPONSE FORMAT: When asked for hypotheses or analysis, return structured JSON matching the schema provided in the prompt. When asked for reasoning, be direct and precise.`;
 
+export class LLMBudgetExceededError extends Error {
+  constructor(sessionId: string, limit: number) {
+    super(`LLM call budget exceeded for hunt ${sessionId} (limit ${limit})`);
+    this.name = "LLMBudgetExceededError";
+  }
+}
+
 export class ClaudeClient {
   private static readonly client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   private static readonly threads = new Map<string, Anthropic.MessageParam[]>();
   private static readonly MAX_THREAD_MESSAGES = 20;
+
+  // ── Per-hunt LLM call budget ────────────────────────────────────────────────
+  // Caps total Claude API calls per hunt session so a runaway hunt (e.g. many
+  // business_logic hypotheses each driving the 16-call LogicExploitAgent loop)
+  // can't silently burn the weekly quota. Configurable via MAX_LLM_CALLS_PER_HUNT.
+  private static readonly callCounts = new Map<string, number>();
+  private static readonly MAX_CALLS_PER_HUNT =
+    parseInt(process.env.MAX_LLM_CALLS_PER_HUNT || "150", 10);
+
+  /**
+   * Reserve one LLM call against the session budget. Returns false when the
+   * hunt has exhausted its allowance. Callers that make direct Anthropic calls
+   * (e.g. LogicExploitAgent) consult this before each request so all Claude
+   * spend for a hunt is counted in one place.
+   */
+  static tryConsumeBudget(sessionId: string): boolean {
+    const used = ClaudeClient.callCounts.get(sessionId) ?? 0;
+    if (used >= ClaudeClient.MAX_CALLS_PER_HUNT) return false;
+    ClaudeClient.callCounts.set(sessionId, used + 1);
+    return true;
+  }
+
+  /** Remaining LLM calls for a hunt (for logging / UI). */
+  static budgetRemaining(sessionId: string): number {
+    return Math.max(0, ClaudeClient.MAX_CALLS_PER_HUNT - (ClaudeClient.callCounts.get(sessionId) ?? 0));
+  }
 
   static isAvailable(): boolean {
     return (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 20;
@@ -39,6 +72,10 @@ export class ClaudeClient {
 
   static async reason(sessionId: string, userPrompt: string): Promise<string> {
     if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
+    if (!ClaudeClient.tryConsumeBudget(sessionId)) {
+      logger.warn("[ClaudeClient] reason() blocked — hunt LLM budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
+      throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
+    }
 
     const thread = ClaudeClient.threads.get(sessionId) ?? [];
     thread.push({ role: "user", content: userPrompt });
@@ -69,8 +106,17 @@ export class ClaudeClient {
     return text;
   }
 
-  static async oneShot(systemPrompt: string, userPrompt: string): Promise<string> {
+  /**
+   * Stateless, high-volume task path — uses Haiku (cheap/fast) for classify,
+   * chat, summarize, and structured extraction. Optionally counts against the
+   * per-hunt budget when a sessionId is supplied.
+   */
+  static async oneShot(systemPrompt: string, userPrompt: string, sessionId?: string): Promise<string> {
     if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
+    if (sessionId && !ClaudeClient.tryConsumeBudget(sessionId)) {
+      logger.warn("[ClaudeClient] oneShot() blocked — hunt LLM budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
+      throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
+    }
 
     const response = await ClaudeClient.client.messages.create({
       model: "claude-haiku-4-5",
@@ -87,5 +133,6 @@ export class ClaudeClient {
 
   static clearSession(sessionId: string): void {
     ClaudeClient.threads.delete(sessionId);
+    ClaudeClient.callCounts.delete(sessionId);
   }
 }

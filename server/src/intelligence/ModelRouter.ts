@@ -236,6 +236,25 @@ export class ModelRouter {
       }
     }
 
+    // Tier 0c: Claude Haiku for high-volume, low-complexity tasks. This is the
+    // cheap tier of the model split — classify/chat/summarize never need Sonnet's
+    // depth, so route them to Haiku when the SDK is available (falls back to
+    // Ollama on error or budget exhaustion).
+    if (taskType === "classify" || taskType === "chat" || taskType === "summarize") {
+      if (ClaudeClient.isAvailable()) {
+        try {
+          const sys = options.systemPrompt
+            || "You are a precise security analysis assistant. Answer concisely and return valid JSON when asked.";
+          const result = await ClaudeClient.oneShot(sys, prompt, options.sessionId);
+          this.lastProvider = "claude";
+          logger.debug("ModelRouter: routed to Claude Haiku", { taskType });
+          return result;
+        } catch (err) {
+          logger.warn("ModelRouter: Claude Haiku failed/over-budget, falling back to Ollama", { err: String(err), taskType });
+        }
+      }
+    }
+
     if (!this.isHealthy()) {
       throw new Error("ModelRouter: Circuit OPEN — Ollama is unavailable (will retry after recovery timeout)");
     }

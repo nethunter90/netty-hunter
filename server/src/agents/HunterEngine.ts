@@ -1754,8 +1754,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
         }
       }
 
-      // Select appropriate tool — honour retry hint if set, otherwise auto-select
-      const toolName = hypothesis.toolHint || this.selectTool(hypothesis.vulnClass);
+      // Select appropriate tool — honour retry hint if set, otherwise let the
+      // RL store pick the best-performing tool for this vuln class.
+      const toolName = hypothesis.toolHint || await this.selectToolRL(hypothesis.vulnClass);
       delete hypothesis.toolHint;
 
       // On gray-zone retries (retryCount > 0), inject WAF-bypass payload mutations
@@ -2152,6 +2153,38 @@ Return ONLY valid JSON array of hypothesis objects.`;
       hidden_params: "ffuf",
     };
     return vulnToolMap[vulnClass] || "nuclei";
+  }
+
+  // Candidate tool sets per vuln class — the realistic options the engine can
+  // pick among. Used by selectToolRL to let learned success rates choose the
+  // best performer rather than always firing the hardcoded default.
+  private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
+    sqli:             ["sqlmap", "nuclei", "curl_probe"],
+    xss:              ["dalfox", "nuclei", "curl_probe"],
+    ssrf:             ["nuclei", "curl_probe"],
+    lfi:              ["nuclei", "curl_probe"],
+    rce:              ["nuclei", "curl_probe"],
+    cors:             ["curl_probe", "nuclei"],
+    csrf:             ["curl_probe", "nuclei"],
+    idor:             ["curl_probe", "nuclei"],
+    info_disclosure:  ["curl_probe", "nuclei"],
+    auth_bypass:      ["jwt_tool", "nuclei", "curl_probe"],
+    misconfig:        ["nikto", "nuclei"],
+    xxe:              ["nuclei", "curl_probe"],
+    security_headers: ["curl_probe", "nuclei"],
+    open_redirect:    ["nuclei", "curl_probe"],
+  };
+
+  /**
+   * RL-aware tool selection. Consults learned per-(tool,vulnClass) success rates
+   * to pick the best candidate, falling back to the hardcoded selectTool default
+   * on cold start or when no candidate clearly beats it.
+   */
+  private async selectToolRL(vulnClass: string): Promise<string> {
+    const fallback = this.selectTool(vulnClass);
+    const candidates = HunterEngine.TOOL_CANDIDATES[vulnClass];
+    if (!candidates || candidates.length <= 1) return fallback;
+    return this.rlWiring.getBestTool(candidates, vulnClass, fallback);
   }
 
   private getAlternateTool(hypothesis: Hypothesis): string {

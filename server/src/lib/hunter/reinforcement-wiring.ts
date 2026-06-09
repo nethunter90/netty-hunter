@@ -45,6 +45,39 @@ export class ReinforcementWiring {
     return this.rl.getVulnsForFramework(framework).then(vulns => vulns.map(v => v.vulnClass));
   }
 
+  /**
+   * Pick the best-performing tool for a vuln class from a candidate list using
+   * learned success rates. Closes the tool-selection RL loop — these rates were
+   * recorded every hunt via onToolResult() but never read back.
+   *
+   * Cold-start safe: getToolSuccessRate returns 0.5 for tools with no data, so
+   * on a fresh store every candidate ties and we return the caller's default
+   * (preserving current behavior). As data accumulates, a tool that beats the
+   * default by a clear margin wins. Untried tools keep their 0.5 prior so they
+   * still get explored rather than being permanently shut out.
+   */
+  async getBestTool(candidates: string[], vulnClass: string, fallback: string): Promise<string> {
+    if (candidates.length <= 1) return fallback;
+    try {
+      const rates = await Promise.all(
+        candidates.map(async t => [t, await this.rl.getToolSuccessRate(t, vulnClass)] as const)
+      );
+      const fallbackRate = rates.find(([t]) => t === fallback)?.[1] ?? 0.5;
+      let best = fallback;
+      let bestRate = fallbackRate;
+      for (const [tool, rate] of rates) {
+        // Require a clear margin over the default to switch — avoids churn on noise.
+        if (rate > bestRate + 0.05) { best = tool; bestRate = rate; }
+      }
+      if (best !== fallback) {
+        logger.debug('[RL] Tool selection override', { vulnClass, fallback, chosen: best, rate: bestRate });
+      }
+      return best;
+    } catch {
+      return fallback;
+    }
+  }
+
   onHuntComplete(config: WiringConfig & {
     confirmedFindings: number;
     totalProbes: number;
