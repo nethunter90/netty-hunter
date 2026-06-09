@@ -7,7 +7,7 @@
 import { EventEmitter } from "events";
 import PQueue from "p-queue";
 import { v4 as uuidv4 } from "uuid";
-import { exec } from "child_process";
+import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import axios from "axios";
 import logger from "../utils/logger";
@@ -21,6 +21,23 @@ import { dynamicRateLimiter } from "../lib/stealth";
 import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Validate a target URL before passing it to an external tool.
+ * Returns the normalized URL string, or null if it is not a safe http(s) URL.
+ * This prevents attacker-controlled endpoint values from injecting tool
+ * arguments or pointing tools at non-HTTP schemes (file://, gopher://, etc.).
+ */
+function safeHttpUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface SolverTask {
@@ -215,31 +232,41 @@ class SQLiSolver extends BaseSolver {
     let bestPayload = "";
     let lastResp = { status: 0, headers: {} as Record<string, string>, body: "" };
 
-    // Try sqlmap first if available
-    try {
-      const { stdout } = await execAsync(
-        `sqlmap -u "${task.endpoint}?id=1" --batch --level=1 --risk=1 --timeout=10 --disable-coloring 2>&1 | tail -20`,
-        { timeout: 30000 }
-      );
-      if (/is vulnerable|parameter .* is vulnerable/i.test(stdout)) {
-        found = true;
-        bestPayload = "sqlmap detected SQLi";
-        return {
-          taskId: task.id,
-          solverId: `sqli-solver-${uuidv4().slice(0, 8)}`,
-          endpoint: task.endpoint,
-          vulnClass: "sqli",
-          found: true,
-          confidence: 0.92,
-          evidence: { sqlmapOutput: stdout.slice(0, 1000) },
-          payload: bestPayload,
-          request: `sqlmap -u "${task.endpoint}?id=1"`,
-          response: stdout.slice(0, 500),
-          duration: Date.now() - start,
-          toolsUsed: ["sqlmap"],
-        };
-      }
-    } catch { /* sqlmap not available or timed out – fall through to manual */ }
+    // Try sqlmap first if available. The endpoint is validated and passed as a
+    // single execFile argument (no shell), so a hostile endpoint string cannot
+    // inject additional sqlmap flags or shell metacharacters.
+    const sqlmapTarget = safeHttpUrl(task.endpoint);
+    if (sqlmapTarget) {
+      const targetWithParam = sqlmapTarget.includes("?")
+        ? sqlmapTarget
+        : `${sqlmapTarget}${sqlmapTarget.endsWith("/") ? "" : ""}?id=1`;
+      try {
+        const { stdout } = await execFileAsync(
+          "sqlmap",
+          ["-u", targetWithParam, "--batch", "--level=1", "--risk=1", "--timeout=10", "--disable-coloring"],
+          { timeout: 30000, maxBuffer: 4 * 1024 * 1024 }
+        );
+        const tail = stdout.split("\n").slice(-20).join("\n");
+        if (/is vulnerable|parameter .* is vulnerable/i.test(tail)) {
+          found = true;
+          bestPayload = "sqlmap detected SQLi";
+          return {
+            taskId: task.id,
+            solverId: `sqli-solver-${uuidv4().slice(0, 8)}`,
+            endpoint: task.endpoint,
+            vulnClass: "sqli",
+            found: true,
+            confidence: 0.92,
+            evidence: { sqlmapOutput: tail.slice(0, 1000) },
+            payload: bestPayload,
+            request: `sqlmap -u ${targetWithParam}`,
+            response: tail.slice(0, 500),
+            duration: Date.now() - start,
+            toolsUsed: ["sqlmap"],
+          };
+        }
+      } catch { /* sqlmap not available or timed out – fall through to manual */ }
+    }
 
     // Manual probing
     for (const probe of this.probes) {

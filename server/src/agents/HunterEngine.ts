@@ -386,9 +386,20 @@ let customToolsCache: typeof TOOL_KNOWLEDGE = {};
 const binaryCache = new Map<string, string | null>();
 function checkBinarySync(binary: string): string | null {
   if (binaryCache.has(binary)) return binaryCache.get(binary) ?? null;
+  // Only ever resolve plain binary names — reject anything with path separators
+  // or shell metacharacters so a malicious catalog/tool name can't reach a shell.
+  if (!/^[A-Za-z0-9._-]+$/.test(binary)) {
+    binaryCache.set(binary, null);
+    return null;
+  }
   try {
-    const { execSync } = require("child_process");
-    const path = execSync(`which ${binary} 2>/dev/null`, { encoding: "utf8", timeout: 2000 }).trim();
+    const { execFileSync } = require("child_process");
+    // execFile with an args array — no shell, stderr discarded via stdio.
+    const path = execFileSync("which", [binary], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     const result = path || null;
     binaryCache.set(binary, result);
     return result;
@@ -396,6 +407,38 @@ function checkBinarySync(binary: string): string | null {
     binaryCache.set(binary, null);
     return null;
   }
+}
+
+/**
+ * Build a { bin, args } command from a whitespace-delimited template, safely
+ * substituting {url} and {domain} placeholders.
+ *
+ * The template is tokenized FIRST, then placeholders are replaced within each
+ * token. This guarantees the URL stays a single argument even if it contains
+ * spaces — preventing argument injection (e.g. a URL like
+ * "http://x/ --output=/etc/passwd" can no longer add a flag to the tool).
+ * Returns null if the URL is not a safe http(s) URL.
+ */
+function buildCommandFromTemplate(
+  template: string,
+  url: string,
+): { bin: string; args: string[] } | null {
+  let safeUrl: string;
+  let domain: string;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    safeUrl = u.toString();
+    domain = u.hostname;
+  } catch {
+    return null;
+  }
+  const tokens = template.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const substituted = tokens.map(tok =>
+    tok.replace(/\{url\}/g, safeUrl).replace(/\{domain\}/g, domain)
+  );
+  return { bin: substituted[0], args: substituted.slice(1) };
 }
 
 function makeCustomParser(parserType: string): (output: string) => Record<string, unknown> {
@@ -449,9 +492,11 @@ export class HunterEngine extends EventEmitter {
           description: t.description,
           vulnClasses: (t.vulnClasses as string[]) || [],
           command: (url: string) => {
-            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
-            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
-            return { bin: parts[0], args: parts.slice(1) };
+            const cmd = buildCommandFromTemplate(template, url);
+            // Reject unsafe/invalid URLs by yielding a no-op /bin/true invocation
+            // rather than firing the tool with attacker-influenced arguments.
+            if (!cmd) return { bin: "true", args: [] };
+            return cmd;
           },
           parser: makeCustomParser(t.parserType),
           rateLimit: t.rateLimit,
@@ -470,9 +515,9 @@ export class HunterEngine extends EventEmitter {
           description: entry.description,
           vulnClasses: entry.vulnClasses,
           command: (url: string) => {
-            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
-            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
-            return { bin: parts[0], args: parts.slice(1) };
+            const cmd = buildCommandFromTemplate(template, url);
+            if (!cmd) return { bin: "true", args: [] };
+            return cmd;
           },
           parser: makeCustomParser(entry.parserType),
           rateLimit: entry.rateLimit,

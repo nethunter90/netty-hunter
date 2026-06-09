@@ -103,8 +103,10 @@ if (!process.env.SESSION_SECRET) {
   logger.warn("SESSION_SECRET not set — using insecure development default");
 }
 
-// Session – PostgreSQL-backed (survives restarts)
-app.use(session({
+// Session – PostgreSQL-backed (survives restarts). Extracted to a shared
+// reference so Socket.IO can reuse the exact same session parser and
+// authenticate websocket connections against the same session store.
+const sessionMiddleware = session({
   store: new PgSession({
     conString: process.env.DATABASE_URL,
     tableName: "sessions",
@@ -118,7 +120,27 @@ app.use(session({
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
-}));
+});
+app.use(sessionMiddleware);
+
+// Share the session parser with Socket.IO's underlying Engine.IO transport so
+// socket.request.session is populated on every connection (same cookie, same store).
+io.engine.use(sessionMiddleware);
+
+// ─── Socket.IO Authentication Gate ───────────────────────────────────────────
+// Without this, any client reaching the port could spawn PTY shells, start
+// hunts, and stream live state — all of the HTTP API's privileged actions are
+// also reachable over the websocket. Reject any connection lacking a valid
+// authenticated session before a single event handler is wired.
+io.use((socket, next) => {
+  const req = socket.request as unknown as { session?: { userId?: string | number } };
+  if (req.session?.userId) {
+    next();
+    return;
+  }
+  logger.warn("Socket.IO connection rejected — unauthenticated", { id: socket.id });
+  next(new Error("unauthorized"));
+});
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
