@@ -958,7 +958,7 @@ export class CampaignOrchestrator extends EventEmitter {
           layer3_playwright: { confirmed: true, consoleAlerts: [], networkRequests: [] },
           layer4_ai: { confirmed: true, reasoning: "", confidenceAdjustment: 0 },
           finalVerdict: (verification.finalVerdict as "confirmed") || "confirmed",
-          finalConfidence: finding.confidence,
+          finalConfidence: (verification.finalConfidence as number | undefined) ?? finding.confidence,
           dedupHash: finding.dedupHash || "",
         };
 
@@ -1062,10 +1062,12 @@ export class CampaignOrchestrator extends EventEmitter {
     // Phase 2: extract operational chains from multi-finding sessions
     // Phase 3: emit cross-hunt pattern stats
     try {
-      for (const { finding } of verifiedFindings) {
+      for (const { finding, verification } of verifiedFindings) {
+        const calibratedConfidence =
+          (verification.finalConfidence as number | undefined) ?? finding.confidence ?? 0.5;
         await this.rlStore.recordConfidenceCalibration(
           finding.vulnType,
-          finding.confidence ?? 0.5,
+          calibratedConfidence,
           true
         );
       }
