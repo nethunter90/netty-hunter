@@ -1852,6 +1852,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
           hypothesis.status = "confirmed";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
+          // Credit the chain synthesis if this hypothesis was born from one.
+          // Without this, the RL only sees the closing tool and never learns that
+          // the synthesis pass that found the opening was the load-bearing step.
+          if (hypothesis.chainedFrom?.length) {
+            this.rlWiring.onToolResult("chain_synthesis", hypothesis.vulnClass, true, hypothesis.confidence);
+            this.emit("hunt:chain_credited", {
+              hypothesisId: hypothesis.id,
+              vulnClass: hypothesis.vulnClass,
+              parentFindingIds: hypothesis.chainedFrom,
+            });
+          }
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
@@ -2650,6 +2661,7 @@ Only include chains that genuinely increase severity beyond individual findings.
               reasoning: `[Chain synthesis] ${chain.name}: ${nh.reasoning}`,
               confidence: 0.72, priority: 9,
               evidence: [], status: "pending", createdAt: Date.now(),
+              chainedFrom: findings.map(f => f.hypothesis.id),
             });
             logger.info("[HunterEngine] Synthesis seeded hypothesis", { vulnClass: nh.vulnClass, chain: chain.name });
           }
