@@ -1957,6 +1957,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
     }
 
+    // Cross-finding synthesis — ask Claude what chained attack is now possible
+    // given all confirmed findings in combination. Async, non-blocking.
+    if (this.state.confirmedFindings.length >= 2) {
+      this.synthesizeChainedAttack().catch(() => {});
+    }
+
     const pending = this.state.hypotheses.filter(h => h.status === "pending").length;
     const rejected = this.state.hypotheses.filter(h => h.status === "rejected").length;
     this.emit("hunt:update", {
@@ -2572,6 +2578,86 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
     } catch (err) {
       logger.error("Failed to persist hunt results", { err });
+    }
+  }
+
+  /** Cross-finding synthesis: given all confirmed findings, ask Claude what
+   *  chained exploit is now possible that wasn't before. Seeds new hypotheses. */
+  private lastSynthesisCount = 0;
+  private async synthesizeChainedAttack(): Promise<void> {
+    const findings = this.state.confirmedFindings;
+    if (findings.length <= this.lastSynthesisCount) return;
+    this.lastSynthesisCount = findings.length;
+
+    const summary = findings.map(f => ({
+      vulnClass: f.hypothesis.vulnClass,
+      severity:  f.severity,
+      url:       f.hypothesis.targetUrl,
+      payload:   f.exploitPayload.slice(0, 100),
+      reasoning: f.hypothesis.reasoning.slice(0, 200),
+    }));
+
+    const prompt = `You are reviewing confirmed vulnerabilities from an authorized bug bounty hunt on ${this.state.targetUrl}.
+
+Confirmed findings:
+${JSON.stringify(summary, null, 2)}
+
+Answer in JSON only:
+{
+  "chains": [{
+    "name": "short chain name",
+    "steps": ["finding A → finding B"],
+    "combined_impact": "what attacker achieves",
+    "severity": "critical|high|medium",
+    "next_hypothesis": { "vulnClass": "string", "targetUrl": "string", "reasoning": "string" } | null
+  }],
+  "key_insight": "one-sentence most important cross-finding relationship"
+}
+
+Only include chains that genuinely increase severity beyond individual findings.`;
+
+    try {
+      const { ClaudeClient } = await import("./LogicExploitAgent").then(() =>
+        import("../lib/claude-client")
+      );
+      const raw = await ClaudeClient.oneShot(
+        "You are an expert security analyst. Return only valid JSON.",
+        prompt,
+        this.state.sessionId
+      );
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return;
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        chains: Array<{ name: string; steps: string[]; combined_impact: string; severity: string; next_hypothesis: { vulnClass: string; targetUrl: string; reasoning: string } | null }>;
+        key_insight: string;
+      };
+      if (!parsed?.chains?.length) return;
+
+      this.emit("hunt:chain_synthesized", {
+        sessionId: this.state.sessionId,
+        chains: parsed.chains.map(c => ({ name: c.name, steps: c.steps, impact: c.combined_impact, severity: c.severity })),
+        insight: parsed.key_insight,
+      });
+      logger.info("[HunterEngine] Chain synthesis", { chains: parsed.chains.length, insight: parsed.key_insight?.slice(0, 120) });
+
+      // Seed the best next hypothesis from the highest-severity chain
+      for (const chain of parsed.chains) {
+        if (chain.next_hypothesis && (chain.severity === "critical" || chain.severity === "high")) {
+          const nh = chain.next_hypothesis;
+          if (!this.state.hypotheses.some(h => h.vulnClass === nh.vulnClass && h.targetUrl === nh.targetUrl)) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: nh.vulnClass, targetUrl: nh.targetUrl,
+              reasoning: `[Chain synthesis] ${chain.name}: ${nh.reasoning}`,
+              confidence: 0.72, priority: 9,
+              evidence: [], status: "pending", createdAt: Date.now(),
+            });
+            logger.info("[HunterEngine] Synthesis seeded hypothesis", { vulnClass: nh.vulnClass, chain: chain.name });
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Chain synthesis non-fatal", { err: String(err) });
     }
   }
 
