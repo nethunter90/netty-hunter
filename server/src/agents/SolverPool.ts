@@ -908,7 +908,7 @@ Only include vuln classes with confidence > 0.3. Maximum 5 tasks.
 Return ONLY the JSON array.`;
 
     try {
-      const response = await this.modelRouter.reason(prompt);
+      const response = await this.modelRouter.reason(prompt, huntId);
       const tasks = JSON.parse(response.match(/\[[\s\S]+\]/)?.[0] || "[]");
       return tasks.map((t: Record<string, unknown>) => ({
         id: uuidv4(),
