@@ -926,6 +926,11 @@ export class CampaignOrchestrator extends EventEmitter {
       verification: Record<string, unknown>;
     }>) || [];
 
+    const rejectedFindings = (verifData.rejected as Array<{
+      finding?: typeof findings.$inferSelect;
+      verification?: Record<string, unknown>;
+    }>) || [];
+
     this.audit(6, "harvest_start", { verifiedCount: verifiedFindings.length });
 
     const reports: string[] = [];
@@ -1026,7 +1031,6 @@ export class CampaignOrchestrator extends EventEmitter {
       // Each finding's evidence array carries the probes that produced it, each
       // tagged with the tool name. Tools that appear in a VERIFIED finding are
       // "correct"; the union across verified+rejected is the full selected set.
-      const rejectedFindings = (verifData.rejected as Array<{ finding?: typeof findings.$inferSelect }>) || [];
       const extractTools = (f?: typeof findings.$inferSelect): string[] => {
         const ev = (f?.evidence as Array<Record<string, unknown>>) || [];
         return ev.map(e => (e?.tool as string) || "").filter(Boolean);
@@ -1070,6 +1074,21 @@ export class CampaignOrchestrator extends EventEmitter {
           calibratedConfidence,
           true
         );
+      }
+
+      // Calibrate the false-positive arm so Brier scoring has both sides of the curve.
+      // inconclusive is excluded — forcing it to a pole would penalise L5 replay limitations
+      // rather than the hypothesis quality, which is what we're calibrating.
+      for (const { finding, verification } of rejectedFindings) {
+        if (!finding || !verification) continue;
+        if ((verification.finalVerdict as string) === "inconclusive") continue;
+        const calibratedConfidence =
+          (verification.finalConfidence as number | undefined) ?? finding.confidence ?? 0.5;
+        await this.rlStore.recordConfidenceCalibration(
+          finding.vulnType,
+          calibratedConfidence,
+          false
+        ).catch(() => {});
       }
 
       if (verifiedFindings.length >= 2) {
