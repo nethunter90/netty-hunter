@@ -1,4 +1,5 @@
 import { pool } from '../../db';
+import logger from '../../utils/logger';
 
 const LEARNING_RATE = 0.1;
 const DOMAIN = 'strategy_transitions';
@@ -56,7 +57,9 @@ class StrategyWeightLearner {
           ]
         );
       }
-    } catch (_err) {}
+    } catch (err) {
+      logger.warn("[StrategyWeightLearner] learn() failed — strategy weights not updated", { err });
+    }
   }
 
   async loadWeights(): Promise<Map<string, number>> {
@@ -69,7 +72,9 @@ class StrategyWeightLearner {
       for (const row of result.rows) {
         weights.set(row.key as string, row.weight as number);
       }
-    } catch (_err) {}
+    } catch (err) {
+      logger.warn("[StrategyWeightLearner] loadWeights() failed — using hardcoded graph weights", { err });
+    }
     return weights;
   }
 }

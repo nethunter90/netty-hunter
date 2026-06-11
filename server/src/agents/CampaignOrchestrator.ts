@@ -1007,7 +1007,9 @@ export class CampaignOrchestrator extends EventEmitter {
     for (const { finding } of verifiedFindings) {
       try {
         await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true);
-      } catch { /* non-critical */ }
+      } catch (err) {
+        logger.warn("[L6] rlStore.recordToolOutcome failed", { vulnType: finding.vulnType, err });
+      }
       // Feed verified finding into bounty intelligence so duplicate detection and
       // payout estimation improve over time
       try {
@@ -1088,7 +1090,7 @@ export class CampaignOrchestrator extends EventEmitter {
           finding.vulnType,
           calibratedConfidence,
           false
-        ).catch(() => {});
+        );
       }
 
       if (verifiedFindings.length >= 2) {

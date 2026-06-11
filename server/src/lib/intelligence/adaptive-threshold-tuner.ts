@@ -1,4 +1,5 @@
 import { pool } from '../../db';
+import logger from '../../utils/logger';
 
 export interface ThresholdSet {
   noveltyFloor: number;
@@ -31,7 +32,8 @@ class AdaptiveThresholdTuner {
       }
 
       return { ...DEFAULT_THRESHOLDS };
-    } catch (_err) {
+    } catch (err) {
+      logger.debug("[AdaptiveThresholdTuner] getThresholds() failed — using defaults", { targetType, err });
       return { ...DEFAULT_THRESHOLDS };
     }
   }
@@ -72,7 +74,9 @@ class AdaptiveThresholdTuner {
          SET thresholds = $2, hunt_count = threshold_history.hunt_count + 1, updated_at = now()`,
         [targetType, JSON.stringify(thresholds)]
       );
-    } catch (_err) {}
+    } catch (err) {
+      logger.warn("[AdaptiveThresholdTuner] learnFromHunt() failed — thresholds not updated", { huntId, targetType, err });
+    }
   }
 
   async getTargetStats(): Promise<Array<{
@@ -92,7 +96,8 @@ class AdaptiveThresholdTuner {
         huntCount: row.hunt_count,
         updatedAt: new Date(row.updated_at).getTime(),
       }));
-    } catch (_err) {
+    } catch (err) {
+      logger.debug("[AdaptiveThresholdTuner] getTargetStats() failed", { err });
       return [];
     }
   }
@@ -103,7 +108,9 @@ class AdaptiveThresholdTuner {
         `DELETE FROM threshold_history WHERE target_type = $1`,
         [targetType]
       );
-    } catch (_err) {}
+    } catch (err) {
+      logger.debug("[AdaptiveThresholdTuner] resetThresholds() failed", { targetType, err });
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import { pool } from '../../db';
+import logger from '../../utils/logger';
 
 export interface JournalEntry {
   id: string;
@@ -34,7 +35,9 @@ class DecisionJournal {
           entry.outcomeScore,
         ]
       );
-    } catch (_err) {}
+    } catch (err) {
+      logger.warn("[DecisionJournal] log() failed — journal entry lost", { err });
+    }
   }
 
   async findSimilar(
@@ -80,7 +83,8 @@ class DecisionJournal {
       }
 
       return bestEntry;
-    } catch (_err) {
+    } catch (err) {
+      logger.debug("[DecisionJournal] findSimilar() failed", { err });
       return null;
     }
   }
@@ -115,7 +119,9 @@ class DecisionJournal {
           [score, entry.id]
         );
       }
-    } catch (_err) {}
+    } catch (err) {
+      logger.warn("[DecisionJournal] backfillOutcomes() failed — outcome scores not written", { huntId, err });
+    }
   }
 
   contextToVector(
@@ -189,7 +195,8 @@ class DecisionJournal {
         outcomeScore: row.outcome_score,
         createdAt: new Date(row.created_at).getTime(),
       }));
-    } catch (_err) {
+    } catch (err) {
+      logger.debug("[DecisionJournal] getRecentEntries() failed", { err });
       return [];
     }
   }
@@ -220,7 +227,8 @@ class DecisionJournal {
         pivotCount: row.pivot_count,
         huntCount: row.hunt_count,
       };
-    } catch (_err) {
+    } catch (err) {
+      logger.debug("[DecisionJournal] getStats() failed", { err });
       return {
         totalEntries: 0,
         scoredEntries: 0,
