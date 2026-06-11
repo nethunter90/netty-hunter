@@ -57,6 +57,31 @@ pool.connect().then(client => {
       banned_until TIMESTAMP,
       CONSTRAINT egress_proxy_target_uniq UNIQUE (proxy_id, target)
     );
+    CREATE TABLE IF NOT EXISTS decision_journal (
+      id BIGSERIAL PRIMARY KEY,
+      hunt_id VARCHAR(128) NOT NULL,
+      strategy_before TEXT,
+      strategy_after TEXT,
+      action VARCHAR(32) NOT NULL,
+      rationale TEXT,
+      health_snapshot JSONB NOT NULL DEFAULT '{}',
+      context_vector REAL[] NOT NULL DEFAULT '{}',
+      findings_count INTEGER NOT NULL DEFAULT 0,
+      cycle_number INTEGER NOT NULL DEFAULT 0,
+      outcome_score REAL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS decision_journal_hunt_id_idx ON decision_journal (hunt_id);
+    CREATE INDEX IF NOT EXISTS decision_journal_created_at_idx ON decision_journal (created_at);
+    CREATE INDEX IF NOT EXISTS decision_journal_transition_idx
+      ON decision_journal (strategy_before, strategy_after)
+      WHERE outcome_score IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS threshold_history (
+      target_type VARCHAR(128) PRIMARY KEY,
+      thresholds JSONB NOT NULL,
+      hunt_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
   `).catch(() => { /* non-critical: table may already exist */ })
     .finally(() => client.release());
 }).catch(() => { /* DB not yet available; pool will retry on first real query */ });
