@@ -113,7 +113,7 @@ Pattern to follow:
 - Never modify `server/src/middleware/scopeGuard.ts` to weaken scope validation
 - Never remove the budget guard in `CampaignOrchestrator.ts`
 - Never bypass the Playwright verification gate in `VerifierAgent.ts`
-- The governance pillars in `server/src/lib/governance/` are immutable contracts
+- The governance system lives in `server/src/governance/` — do not remove or weaken the immunizer, drift detector, or decision logger
 
 ## Error Patterns and Fixes
 
@@ -151,7 +151,7 @@ netty-hunter/
     lib/
       claude-bridge.ts    # YOU are invoked from here
       context-writer.ts   # writes live state for you to read
-      governance/         # immutable governance contracts
+      governance/         # governance monitoring and audit trail (lib/governance/ is the immunizer)
       shell/              # command execution sandbox
     routes/          # Express routes (hunt, chat, orchestration, etc.)
     db/              # Drizzle schema + migrations

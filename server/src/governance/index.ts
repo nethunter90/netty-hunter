@@ -3,9 +3,7 @@ import { CoreGovernance } from './core-governance';
 import { DecisionLogger } from './decision-logger';
 import { SelfAttestationService } from './self-attestation';
 import { DriftDetector } from './drift-detector';
-import { DesktopAgentGovernance } from './enforcement/desktop-agent-governance';
 import { PromptInjectionDetector } from './enforcement/prompt-injection-detector';
-import { GovernanceProxy } from './enforcement/governance-proxy';
 import { governanceImmunizer } from '../lib/governance/governance-immunizer';
 import { pool } from '../db';
 
@@ -13,9 +11,7 @@ export const coreGovernance = new CoreGovernance();
 export const decisionLogger = new DecisionLogger();
 export const selfAttestationService = new SelfAttestationService();
 export const driftDetector = new DriftDetector();
-export const desktopAgentGovernance = new DesktopAgentGovernance(coreGovernance);
 export const promptInjectionDetector = new PromptInjectionDetector(coreGovernance);
-export const governanceProxy = new GovernanceProxy(coreGovernance);
 
 driftDetector.setSnapshotProvider(() => {
   const stats = coreGovernance.getStats();
@@ -61,9 +57,7 @@ export {
   DecisionLogger,
   SelfAttestationService,
   DriftDetector,
-  DesktopAgentGovernance,
   PromptInjectionDetector,
-  GovernanceProxy
 };
 
 export * from './types';
