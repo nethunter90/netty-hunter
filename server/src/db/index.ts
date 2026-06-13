@@ -22,6 +22,7 @@ pool.connect().then(client => {
     CREATE UNIQUE INDEX IF NOT EXISTS mission_memory_hunt_id_idx
       ON mission_memory_snapshots (hunt_id);
     ALTER TABLE programs ADD COLUMN IF NOT EXISTS schedule_interval INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE findings ADD COLUMN IF NOT EXISTS affected_url TEXT;
     CREATE TABLE IF NOT EXISTS governance_baselines (
       id VARCHAR(64) PRIMARY KEY,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),

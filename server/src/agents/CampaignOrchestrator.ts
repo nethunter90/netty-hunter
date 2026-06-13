@@ -678,6 +678,32 @@ export class CampaignOrchestrator extends EventEmitter {
     };
   }
 
+  // Resolve the real URL a finding targets so the verifier re-probes the actual
+  // endpoint instead of a numeric target FK. `affected_url` is authoritative for
+  // findings created after this fix; for older rows we recover the URL from the
+  // evidence trail or the title ("<VULN> found at <url>") before falling back to
+  // the hunt's base target URL.
+  private deriveVerificationUrl(
+    dbFinding: typeof findings.$inferSelect,
+    fallbackUrl: string
+  ): string {
+    const affected = (dbFinding as { affectedUrl?: string | null }).affectedUrl;
+    if (affected && /^https?:\/\//i.test(affected)) return affected;
+
+    const host = (() => { try { return new URL(fallbackUrl).host; } catch { return ""; } })();
+    try {
+      const blob = JSON.stringify(dbFinding.evidence ?? "");
+      const urls = blob.match(/https?:\/\/[^\s"'\\]+/g) || [];
+      const onHost = host ? urls.find(u => u.includes(host)) : urls[0];
+      if (onHost) return onHost;
+    } catch { /* evidence not serialisable — fall through */ }
+
+    const fromTitle = dbFinding.title?.match(/https?:\/\/\S+/)?.[0];
+    if (fromTitle) return fromTitle;
+
+    return fallbackUrl;
+  }
+
   // ── Layer 5: Verification Gate ─────────────────────────────────────────────
   private async layer5_verificationGate(
     params: OrchestrateParams,
@@ -723,10 +749,11 @@ export class CampaignOrchestrator extends EventEmitter {
     for (const dbFinding of dbFindings) {
       this.emit("l5:verifying", { findingId: dbFinding.id });
       try {
+        const verificationUrl = this.deriveVerificationUrl(dbFinding, params.targetUrl);
         const mockResult = {
           taskId: String(dbFinding.id),
           solverId: "orchestrator",
-          endpoint: String(dbFinding.targetId || ""),
+          endpoint: verificationUrl,
           vulnClass: dbFinding.vulnType as Parameters<typeof this.verifierAgent.verify>[0]["vulnClass"],
           found: true,
           confidence: dbFinding.confidence,
@@ -885,7 +912,7 @@ export class CampaignOrchestrator extends EventEmitter {
           // Reconcile graph node verification status
           eventBus.publish('finding_verified', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,
-            endpoint: String(dbFinding.targetId || ''),
+            endpoint: verificationUrl,
             findingId: dbFinding.id,
             finalConfidence: verification.finalConfidence,
           });
@@ -894,7 +921,7 @@ export class CampaignOrchestrator extends EventEmitter {
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
           eventBus.publish('finding_rejected', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,
-            endpoint: String(dbFinding.targetId || ''),
+            endpoint: verificationUrl,
             findingId: dbFinding.id,
             verdict: verification.finalVerdict,
           });

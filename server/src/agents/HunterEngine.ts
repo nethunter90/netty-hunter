@@ -2530,6 +2530,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         ],
         reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
+        affectedUrl: confirmed.hypothesis.targetUrl,
         verificationStatus: "pending",
         status: "new",
       });
