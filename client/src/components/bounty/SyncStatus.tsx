@@ -46,9 +46,8 @@ const featureDefinitions: CategoryStatus[] = [
     icon: Zap,
     color: 'text-cyan-400',
     features: [
-      { name: 'Desktop Agent', status: 'fully_wired', endpoint: '/api/desktop-agent/status' },
       { name: 'Hunt Orchestrator', status: 'fully_wired', endpoint: '/api/bounty/hunts' },
-      { name: 'WebSocket Bridge', status: 'fully_wired', endpoint: '/api/desktop-agent/status' },
+      { name: 'WebSocket Bridge', status: 'fully_wired', endpoint: '/api/orchestration/stats/summary' },
     ]
   },
   {

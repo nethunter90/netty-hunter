@@ -553,6 +553,7 @@ export class CampaignOrchestrator extends EventEmitter {
     });
     engine.on("hunt:update", d => this.emit("l4:strategy_update", d));
     engine.on("hunt:error", d => this.emit("l4:error", d));
+    engine.on("hunt:ai_reasoning", d => this.emit("l4:ai_reasoning", d));
     engine.on("hunt:cve_seeded", d => this.emit("hunt:cve_seeded", d));
     engine.on("hunt:graphql_schema", d => this.emit("hunt:graphql_schema", d));
     engine.on("hunt:oob_hit", d => this.emit("hunt:oob_hit", d));

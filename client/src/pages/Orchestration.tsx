@@ -91,6 +91,27 @@ export default function Orchestration() {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     axios.get("/api/orchestration/layers").then(r => setLayerMeta(r.data?.layers || [])).catch(() => {});
     hunterAPI.getCampaigns().then(r => setCampaigns((r.data || []).slice(0, 20))).catch(() => {});
+
+    // Reconnect to any orchestration already running when this panel opens.
+    axios.get("/api/orchestration").then(r => {
+      const liveList: Array<{ orchestrationId: string; state: any }> = r.data?.live || [];
+      if (liveList.length === 0) return;
+      const { orchestrationId: id, state } = liveList[0];
+      setOrchestrationId(id);
+      socket.emit("subscribe:orchestration", { orchestrationId: id });
+      setPhase("running");
+      setLoading(true);
+      if (state?.findingsCount != null) setFindings(state.findingsCount);
+      if (state?.verifiedCount != null) setVerified(state.verifiedCount);
+      if (Array.isArray(state?.layers)) {
+        setLayers(prev => prev.map((l, i) => {
+          const s = state.layers[i];
+          return s ? { ...l, phase: s.phase, startedAt: s.startedAt, completedAt: s.completedAt, durationMs: s.durationMs, error: s.error } : l;
+        }));
+      }
+      pushEvent({ type: "phase", ts: now(), phase: "reconnected", iteration: 0 });
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Socket.IO wiring ───────────────────────────────────────────────────────
@@ -243,7 +264,7 @@ export default function Orchestration() {
       // no visual needed — kept for completeness
     });
 
-    socket.on("hunt:ai_reasoning", (data: any) => {
+    const pushAIReasoning = (data: any) => {
       pushEvent({
         type: "ai_reasoning",
         ts: now(),
@@ -256,7 +277,12 @@ export default function Orchestration() {
         durationMs: Number(data.durationMs ?? 0),
         generatedCount: Number(data.generatedCount ?? 0),
       });
-    });
+    };
+
+    // l4:ai_reasoning — from hunts started via the Orchestration panel (room-scoped)
+    socket.on("l4:ai_reasoning", pushAIReasoning);
+    // hunt:ai_reasoning — from hunts started directly via the Hunt panel (global)
+    socket.on("hunt:ai_reasoning", pushAIReasoning);
 
     return () => {
       [
@@ -264,7 +290,7 @@ export default function Orchestration() {
         "orchestration:layer_complete", "orchestration:layer_error",
         "orchestration:complete", "orchestration:aborted", "orchestration:error",
         "l4:phase", "l4:hypotheses", "l4:probing", "l4:probe_result",
-        "l4:finding_raw", "l4:solver_finding", "l4:error",
+        "l4:finding_raw", "l4:solver_finding", "l4:error", "l4:ai_reasoning",
         "l5:verified", "l5:rejected", "l5:public_duplicate",
         "l6:report_generated", "l6:autonomy_updated",
         "hunt:ai_reasoning",
