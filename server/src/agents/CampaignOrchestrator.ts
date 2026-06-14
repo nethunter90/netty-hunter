@@ -1053,6 +1053,22 @@ export class CampaignOrchestrator extends EventEmitter {
       } catch { /* non-critical */ }
     }
 
+    // 6b.2. Correct programType heuristics with verifier-authoritative verdicts.
+    // HunterEngine fires these optimistically with inline-confirmed count before
+    // the verification gate runs. Re-recording with the verified count pulls the
+    // RL rate toward ground truth — each hunt adds one authoritative data point.
+    try {
+      const verifiedCount = verifiedFindings.length;
+      const totalProcessed = (verifData.totalProcessed as number) || 0;
+      const strategy = verifiedCount > 0 ? 'found_vulns' : 'no_vulns';
+      await this.rlStore.recordProgramTypeHeuristic('web_app', strategy, verifiedCount > 0);
+      if (totalProcessed > 0) {
+        await this.rlStore.recordProgramTypeHeuristic('web_app', 'efficient_hunt', verifiedCount / totalProcessed > 0.1);
+      }
+    } catch (err) {
+      logger.debug('[L6] programType heuristic ground-truth correction failed', { err });
+    }
+
     // 6c. Update autonomy maturity tracker
     let autonomyScore = 0;
     try {
