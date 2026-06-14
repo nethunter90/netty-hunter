@@ -26,6 +26,12 @@ import xbowRoutes from "./routes/xbow";
 import settingsRoutes from "./routes/settings";
 import chatRoutes from "./routes/chat";
 import toolsRoutes from "./routes/tools";
+import ctfRoutes from "./routes/ctf";
+import adaptiveScanRoutes from "./routes/adaptive-scan";
+import findingsRoutes from "./routes/findings";
+import evidenceRoutes from "./routes/evidence";
+import reportExportRoutes from "./routes/report-export";
+import desktopAgentRoutes from "./routes/desktop-agent";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -214,6 +220,12 @@ app.use("/api/xbow", requireAuth, xbowRoutes);
 app.use("/api/settings", requireAuth, settingsRoutes);
 app.use("/api/chat", requireAuth, chatRoutes);
 app.use("/api/tools", requireAuth, toolsRoutes);
+app.use("/api/ctf", requireAuth, ctfRoutes);
+app.use("/api/adaptive-scan", requireAuth, adaptiveScanRoutes);
+app.use("/api/findings", requireAuth, findingsRoutes);
+app.use("/api/evidence", requireAuth, evidenceRoutes);
+app.use("/api/report-export", requireAuth, reportExportRoutes);
+app.use("/api/desktop-agent", requireAuth, desktopAgentRoutes);
 
 // OOB callback receiver — no auth required (external targets call this).
 // Per-IP rate limit caps beacon-flooding abuse on this public endpoint.

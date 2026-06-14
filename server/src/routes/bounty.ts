@@ -4,8 +4,9 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { db } from "../db";
-import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings } from "../db/schema";
-import { eq, desc, like, or } from "drizzle-orm";
+import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
+import { eq, desc, like, or, inArray } from "drizzle-orm";
+import { KALI_CATALOG, KaliCategory } from "../lib/hunter/kali-catalog";
 import { z } from "zod";
 import TargetSelectionIntelligence from "../intelligence/TargetSelection";
 import ROIModel from "../intelligence/ROIModel";
@@ -29,6 +30,8 @@ const STORE_DIRS: Record<string, string> = {
   workflows:   path.join(WS, "workflows"),
   payloads:    path.join(WS, "payloads"),
   audit:       path.join(WS, "audit"),
+  reports:     path.join(WS, "reports"),
+  poc:         path.join(WS, "poc"),
 };
 
 async function wsEnsure(dir: string) {
@@ -120,6 +123,12 @@ router.post("/programs", async (req: Request, res: Response) => {
 
   const [program] = await db.insert(programs).values(parsed.data).returning();
   return res.status(201).json(program);
+});
+
+// NOTE: must be registered before "/programs/:id" so the literal path wins (ScopeManager.tsx).
+router.get("/programs/list", async (_req: Request, res: Response) => {
+  const rows = await db.select().from(programs).orderBy(desc(programs.roiScore));
+  return res.json({ programs: rows.map(shapeProgramForScopeUI) });
 });
 
 router.get("/programs/:id", async (req: Request, res: Response) => {
@@ -477,26 +486,16 @@ router.delete("/payloads/:id", async (req: Request, res: Response) => {
 });
 
 // ── PoC Lab ───────────────────────────────────────────────────────────────────
-router.get("/poc/results", (_req: Request, res: Response) => {
-  return res.json([]);
+router.get("/poc/results", async (_req: Request, res: Response) => {
+  const results = await wsReadAll("poc");
+  results.sort((a: any, b: any) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+  return res.json({ success: true, results });
 });
 
 router.post("/poc/run", async (req: Request, res: Response) => {
   try {
-    const { findingId, target } = req.body;
-    let finding = null;
-    if (findingId) {
-      const [row] = await db.select().from(findings).where(eq(findings.id, parseInt(findingId))).limit(1);
-      finding = row || null;
-    }
-    return res.json({
-      executed: true,
-      findingId,
-      target: target || finding?.exploitPayload?.split('\n')[0] || 'unknown',
-      result: "mock PoC execution completed",
-      output: finding ? `PoC for ${finding.vulnType}` : "Generic PoC",
-      timestamp: new Date().toISOString(),
-    });
+    const result = await runPoc(req.body);
+    return res.json({ success: true, result });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
@@ -598,11 +597,11 @@ const TOOL_READINESS_LIST = [
 let toolReadinessCache: { at: number; tools: unknown[] } | null = null;
 const TOOL_READINESS_TTL = 5 * 60 * 1000; // 5 min
 
-router.get("/tools/readiness", async (_req: Request, res: Response) => {
+async function computeToolReadiness(): Promise<unknown[]> {
   if (toolReadinessCache && Date.now() - toolReadinessCache.at < TOOL_READINESS_TTL) {
-    return res.json({ tools: toolReadinessCache.tools });
+    return toolReadinessCache.tools;
   }
-  // Async + parallel so the 14 lookups don't block the event loop. Tool names
+  // Async + parallel so the lookups don't block the event loop. Tool names
   // are a fixed allowlist (not user input), and execFile uses an args array.
   const tools = await Promise.all(TOOL_READINESS_LIST.map(async (name) => {
     try {
@@ -619,7 +618,94 @@ router.get("/tools/readiness", async (_req: Request, res: Response) => {
     }
   }));
   toolReadinessCache = { at: Date.now(), tools };
+  return tools;
+}
+
+router.get("/tools/readiness", async (_req: Request, res: Response) => {
+  const tools = await computeToolReadiness();
   return res.json({ tools });
+});
+
+// ── Full Tool Arsenal (ToolReadiness.tsx) ───────────────────────────────────────
+// Backed by the real KALI_CATALOG metadata + live `which` detection of every binary.
+// The client buckets tools into 8 UI categories — map the catalog's categories onto them.
+const KALI_CATEGORY_TO_UI: Record<KaliCategory, string> = {
+  recon: "recon",
+  scanning: "vuln",
+  fuzzing: "enum",
+  exploitation: "exploit",
+  web: "recon",
+  credential: "secrets",
+  network: "enum",
+  reporting: "util",
+};
+const RISK_TO_STEALTH: Record<string, string> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+let toolArsenalCache: { at: number; payload: any } | null = null;
+
+async function computeToolArsenal(): Promise<any> {
+  if (toolArsenalCache && Date.now() - toolArsenalCache.at < TOOL_READINESS_TTL) {
+    return toolArsenalCache.payload;
+  }
+  // Detect every catalog binary in parallel (fixed allowlist, execFile args array).
+  const detected = await Promise.all(KALI_CATALOG.map(async (entry) => {
+    try {
+      const { stdout } = await execFileAsync("which", [entry.binary]);
+      const toolPath = stdout.trim();
+      let version: string | undefined;
+      if (toolPath) {
+        try {
+          const v = await execFileAsync(entry.binary, ["--version"], { timeout: 3000 });
+          version = (v.stdout || "").split("\n")[0].trim() || undefined;
+        } catch { /* version not available */ }
+      }
+      return { entry, installed: !!toolPath, path: toolPath || undefined, version };
+    } catch {
+      return { entry, installed: false, path: undefined, version: undefined };
+    }
+  }));
+
+  const tools = detected.map(({ entry, installed, path: toolPath, version }) => ({
+    name: entry.name,
+    installed,
+    path: toolPath,
+    version,
+    category: KALI_CATEGORY_TO_UI[entry.category] || "util",
+    critical: entry.riskLevel === "high" || ["nmap", "nuclei", "sqlmap", "ffuf", "httpx"].includes(entry.name),
+    description: entry.description,
+    stealthImpact: RISK_TO_STEALTH[entry.riskLevel] || "unknown",
+    useCases: entry.vulnClasses || [],
+    commandCount: entry.commandTemplate ? 1 : 0,
+    requiresRoot: entry.category === "network" && entry.name === "nmap",
+  }));
+
+  const categories: Record<string, number> = {};
+  const categoriesInstalled: Record<string, number> = {};
+  for (const t of tools) {
+    categories[t.category] = (categories[t.category] || 0) + 1;
+    if (t.installed) categoriesInstalled[t.category] = (categoriesInstalled[t.category] || 0) + 1;
+  }
+  const installed = tools.filter(t => t.installed).length;
+  const summary = {
+    total: tools.length,
+    installed,
+    missing: tools.length - installed,
+    criticalMissing: tools.filter(t => t.critical && !t.installed).length,
+    categories,
+    categoriesInstalled,
+  };
+
+  const payload = { success: true, tools, summary };
+  toolArsenalCache = { at: Date.now(), payload };
+  return payload;
+}
+
+router.get("/tools", async (_req: Request, res: Response) => {
+  const payload = await computeToolArsenal();
+  return res.json(payload);
 });
 
 // ── Workflows ─────────────────────────────────────────────────────────────────
@@ -687,6 +773,687 @@ router.get("/advisor/hints", (_req: Request, res: Response) => {
       "Check for GraphQL introspection and batch query attacks",
     ],
   });
+});
+
+// ── Hunts (BackwardHunt.tsx / Analysis.tsx / AIAdvisor.tsx) ──────────────────────
+// Backed by real DB rows: hunt_sessions joined to their campaign (goal/status) and
+// target (url). A hunt's stable id is its sessionUuid. Creating a hunt here records
+// real campaign + target + hunt_session rows; it does not spawn the heavy
+// HunterEngine (that lives behind POST /api/hunt/start with full socket wiring).
+async function shapeHunts(): Promise<any[]> {
+  const sessions = await db.select().from(huntSessions).orderBy(desc(huntSessions.startedAt)).limit(200);
+  if (sessions.length === 0) return [];
+
+  const campaignIds = Array.from(new Set(sessions.map(s => s.campaignId)));
+  const targetIds = Array.from(new Set(sessions.map(s => s.targetId)));
+  const campaignRows = campaignIds.length
+    ? await db.select().from(campaigns).where(inArray(campaigns.id, campaignIds))
+    : [];
+  const targetRows = targetIds.length
+    ? await db.select().from(targets).where(inArray(targets.id, targetIds))
+    : [];
+  const campaignMap = new Map(campaignRows.map(c => [c.id, c]));
+  const targetMap = new Map(targetRows.map(t => [t.id, t]));
+
+  // Map a hunt_session status onto the lifecycle the client renders.
+  const statusFor = (s: typeof sessions[number], camp: any): string => {
+    if (s.status === "running" && camp?.status === "running") return "active";
+    if (s.status === "completed" || camp?.status === "completed") return "completed";
+    if (s.status === "stopped" || camp?.status === "stopped") return "stopped";
+    return s.status;
+  };
+
+  return sessions.map(s => {
+    const camp = campaignMap.get(s.campaignId);
+    const tgt = targetMap.get(s.targetId);
+    const hyps = Array.isArray(s.hypotheses) ? (s.hypotheses as any[]) : [];
+    return {
+      id: s.sessionUuid,
+      target: tgt?.url || camp?.name || "unknown",
+      goal: camp?.goal || "",
+      status: statusFor(s, camp),
+      currentStep: hyps.length,
+      findings: [] as any[],
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+    };
+  });
+}
+
+router.get("/hunts", async (_req: Request, res: Response) => {
+  try {
+    const hunts = await shapeHunts();
+    return res.json({ success: true, hunts });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/hunts", async (req: Request, res: Response) => {
+  try {
+    const { target, goal, scope } = req.body as {
+      target?: string; goal?: string; scope?: { inScope?: string[]; outOfScope?: string[] };
+    };
+    if (!target || typeof target !== "string") {
+      return res.status(400).json({ success: false, error: "target required" });
+    }
+
+    // Normalise the target into a URL the rest of the pipeline can consume.
+    const targetUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+
+    // Find-or-create a local-lab program for these ad-hoc hunts so FK constraints
+    // are satisfied (mirrors POST /api/hunt/start's programId === -1 path).
+    let [program] = await db.select().from(programs).where(eq(programs.platform, "local")).limit(1);
+    if (!program) {
+      [program] = await db.insert(programs).values({
+        name: "Custom / Local Lab",
+        platform: "local",
+        scope: (scope?.inScope && scope.inScope.length ? scope.inScope : ["*"]),
+        outOfScope: scope?.outOfScope || [],
+      }).returning();
+    }
+
+    const [campaign] = await db.insert(campaigns).values({
+      programId: program.id,
+      name: `Hunt: ${targetUrl}`,
+      goal: goal || `Hunt for vulnerabilities on ${targetUrl}`,
+      status: "running",
+      huntMode: "backward",
+      startedAt: new Date(),
+    }).returning();
+
+    const [tgt] = await db.insert(targets).values({
+      programId: program.id,
+      url: targetUrl,
+      type: "web",
+      status: "scanning",
+    }).returning();
+
+    const sessionUuid = `bh-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const [session] = await db.insert(huntSessions).values({
+      campaignId: campaign.id,
+      targetId: tgt.id,
+      sessionUuid,
+      status: "running",
+      phase: "observe",
+    }).returning();
+
+    await appendAudit({
+      id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      action: "hunt.start",
+      details: { sessionUuid, target: targetUrl, goal },
+      timestamp: new Date().toISOString(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      hunt: {
+        id: sessionUuid,
+        target: targetUrl,
+        goal: campaign.goal,
+        status: "active",
+        currentStep: 0,
+        findings: [],
+        startedAt: session.startedAt,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/hunts/:id/stop", async (req: Request, res: Response) => {
+  try {
+    const [session] = await db.select().from(huntSessions)
+      .where(eq(huntSessions.sessionUuid, req.params.id)).limit(1);
+    if (!session) return res.status(404).json({ success: false, error: "Hunt not found" });
+
+    await db.update(huntSessions)
+      .set({ status: "stopped", completedAt: new Date() })
+      .where(eq(huntSessions.sessionUuid, req.params.id));
+    await db.update(campaigns)
+      .set({ status: "stopped", completedAt: new Date() })
+      .where(eq(campaigns.id, session.campaignId));
+
+    return res.json({ success: true, id: req.params.id, status: "stopped" });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── PoC Lab extensions (PoCLab.tsx) ─────────────────────────────────────────────
+// Persist every run to the `poc` workspace store so history + detail lookups work.
+async function runPoc(body: any): Promise<any> {
+  const { findingId, target, payload, vulnerability_type } = body || {};
+  let finding: any = null;
+  if (findingId && !Number.isNaN(parseInt(findingId))) {
+    const [row] = await db.select().from(findings).where(eq(findings.id, parseInt(findingId))).limit(1);
+    finding = row || null;
+  }
+
+  let executed = false;
+  let success = false;
+  let output: string;
+  if (process.env.REAL_TOOLS && target) {
+    // Best-effort live probe: fetch the target with the payload appended and look
+    // for reflection (real signal, not a hardcoded verdict).
+    try {
+      const u = new URL(String(target));
+      if (payload) u.searchParams.set("poc", String(payload));
+      const resp = await fetch(u.toString());
+      const text = await resp.text();
+      executed = true;
+      success = payload ? text.includes(String(payload)) : resp.ok;
+      output = `HTTP ${resp.status} — ${text.length} bytes${success ? " — payload reflected in response" : ""}`;
+    } catch (err: any) {
+      executed = true;
+      success = false;
+      output = `Probe error: ${err.message}`;
+    }
+  } else {
+    output = finding ? `PoC harness for ${finding.vulnType} (set REAL_TOOLS to execute)` : "PoC harness ready (set REAL_TOOLS to execute)";
+  }
+
+  const id = `poc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const result = {
+    id,
+    vulnerability_type: vulnerability_type || finding?.vulnType || "unknown",
+    target: target || finding?.affectedUrl || "unknown",
+    payload: payload || finding?.exploitPayload || "",
+    success,
+    executed,
+    output,
+    evidence: finding ? `Linked finding #${finding.id}: ${finding.title}` : undefined,
+    timestamp: new Date().toISOString(),
+  };
+  await wsWrite("poc", id, result);
+  return result;
+}
+
+router.post("/poc/test", async (req: Request, res: Response) => {
+  try {
+    const result = await runPoc(req.body);
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get("/poc/results/:id", async (req: Request, res: Response) => {
+  const result = await wsFind("poc", req.params.id);
+  if (!result) return res.status(404).json({ success: false, error: "Result not found" });
+  return res.json({ success: true, result });
+});
+
+// ── Draft Reports (DraftReports.tsx) ────────────────────────────────────────────
+// File-backed `reports` store, mirroring the other workspace stores.
+router.get("/reports", async (_req: Request, res: Response) => {
+  const reports = await wsReadAll("reports");
+  reports.sort((a: any, b: any) =>
+    String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  return res.json({ reports });
+});
+
+router.post("/reports", async (req: Request, res: Response) => {
+  const body = req.body || {};
+  // Client may send its own client-generated id; sanitize to a safe store key.
+  const rawId = typeof body.id === "string" ? body.id.replace(/[^A-Za-z0-9_-]/g, "") : "";
+  const id = rawId || `report_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const entry = {
+    id,
+    title: body.title || "Untitled Report",
+    severity: body.severity || "medium",
+    status: body.status || "draft",
+    content: body.content || "",
+    huntId: body.huntId,
+    savedOnce: true,
+    createdAt: body.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await wsWrite("reports", id, entry);
+  return res.status(201).json(entry);
+});
+
+router.put("/reports/:id", async (req: Request, res: Response) => {
+  const existing = await wsFind("reports", req.params.id);
+  const body = req.body || {};
+  const merged = {
+    ...(existing || {}),
+    ...body,
+    id: req.params.id,
+    savedOnce: true,
+    createdAt: existing?.createdAt || body.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await wsWrite("reports", req.params.id, merged);
+  return res.json(merged);
+});
+
+router.get("/reports/:id/export", async (req: Request, res: Response) => {
+  const report = await wsFind("reports", req.params.id);
+  if (!report) return res.status(404).json({ error: "Report not found" });
+  const format = String(req.query.format || "markdown").toLowerCase();
+
+  let exported: string;
+  if (format === "json") {
+    exported = JSON.stringify(report, null, 2);
+  } else if (format === "html") {
+    const esc = (s: string) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    exported = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(report.title)}</title></head>` +
+      `<body><h1>${esc(report.title)}</h1>` +
+      `<p><strong>Severity:</strong> ${esc(report.severity)} | <strong>Status:</strong> ${esc(report.status)}</p>` +
+      `<pre>${esc(report.content)}</pre></body></html>`;
+  } else {
+    // markdown (default)
+    exported = `# ${report.title}\n\n` +
+      `**Severity:** ${report.severity}\n\n` +
+      `**Status:** ${report.status}\n\n` +
+      `${report.content || ""}\n`;
+  }
+  return res.json({ exported, format });
+});
+
+// ── Browser extensions (BrowserView.tsx) ────────────────────────────────────────
+// Back DOM/links/forms with a real HTTP fetch + parse (same gating + technique as
+// the existing /browser/navigate). Screenshot uses Playwright when REAL_TOOLS is set.
+function validateHttpUrl(raw: any): URL | null {
+  try {
+    const u = new URL(String(raw));
+    return ["http:", "https:"].includes(u.protocol) ? u : null;
+  } catch { return null; }
+}
+
+async function fetchPageSource(u: URL): Promise<{ status: number; html: string }> {
+  const resp = await fetch(u.toString());
+  const html = await resp.text();
+  return { status: resp.status, html };
+}
+
+router.post("/browser/dom", async (req: Request, res: Response) => {
+  const u = validateHttpUrl(req.body?.url);
+  if (!u) return res.status(400).json({ error: "Invalid url — must be an http(s) URL" });
+  if (!process.env.REAL_TOOLS) {
+    return res.json({ url: u.toString(), source: "", mock: true });
+  }
+  try {
+    const { status, html } = await fetchPageSource(u);
+    return res.json({ url: u.toString(), statusCode: status, source: html, content: html });
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
+router.post("/browser/links", async (req: Request, res: Response) => {
+  const u = validateHttpUrl(req.body?.url);
+  if (!u) return res.status(400).json({ error: "Invalid url — must be an http(s) URL" });
+  if (!process.env.REAL_TOOLS) {
+    return res.json({ url: u.toString(), links: [], mock: true });
+  }
+  try {
+    const { html } = await fetchPageSource(u);
+    const links = new Set<string>();
+    const re = /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      try { links.add(new URL(m[1], u.toString()).toString()); }
+      catch { links.add(m[1]); }
+    }
+    return res.json({ url: u.toString(), links: Array.from(links) });
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
+router.post("/browser/forms", async (req: Request, res: Response) => {
+  const u = validateHttpUrl(req.body?.url);
+  if (!u) return res.status(400).json({ error: "Invalid url — must be an http(s) URL" });
+  if (!process.env.REAL_TOOLS) {
+    return res.json({ url: u.toString(), forms: [], mock: true });
+  }
+  try {
+    const { html } = await fetchPageSource(u);
+    const forms: any[] = [];
+    const formRe = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+    const attr = (s: string, name: string) => {
+      const a = new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, "i").exec(s);
+      return a ? a[1] : undefined;
+    };
+    let fm: RegExpExecArray | null;
+    while ((fm = formRe.exec(html)) !== null) {
+      const formAttrs = fm[1];
+      const inner = fm[2];
+      const inputs: any[] = [];
+      const inputRe = /<(input|select|textarea)\b([^>]*)>/gi;
+      let im: RegExpExecArray | null;
+      while ((im = inputRe.exec(inner)) !== null) {
+        inputs.push({
+          tag: im[1].toLowerCase(),
+          name: attr(im[2], "name"),
+          type: attr(im[2], "type") || (im[1].toLowerCase() === "input" ? "text" : im[1].toLowerCase()),
+        });
+      }
+      const action = attr(formAttrs, "action");
+      forms.push({
+        action: action ? (() => { try { return new URL(action, u.toString()).toString(); } catch { return action; } })() : u.toString(),
+        method: (attr(formAttrs, "method") || "GET").toUpperCase(),
+        inputs,
+      });
+    }
+    return res.json({ url: u.toString(), forms });
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
+router.post("/browser/screenshot", async (req: Request, res: Response) => {
+  const u = validateHttpUrl(req.body?.url);
+  if (!u) return res.status(400).json({ error: "Invalid url — must be an http(s) URL" });
+  if (!process.env.REAL_TOOLS) {
+    return res.json({ url: u.toString(), screenshot: null, mock: true });
+  }
+  try {
+    const { chromium } = require("playwright") as typeof import("playwright");
+    const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+    try {
+      const page = await browser.newPage();
+      await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 20000 });
+      const buf = await page.screenshot({ type: "png" });
+      return res.json({ url: u.toString(), screenshot: `data:image/png;base64,${buf.toString("base64")}` });
+    } finally {
+      await browser.close();
+    }
+  } catch (err: any) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
+// ── Scope Manager (ScopeManager.tsx) ────────────────────────────────────────────
+// Reshape DB programs into the structure the Program Manager UI renders.
+function shapeProgramForScopeUI(p: any) {
+  const inScope = (p.scope as string[]) || [];
+  const outOfScope = (p.outOfScope as string[]) || [];
+  const meta = (p.metadata as Record<string, any>) || {};
+  return {
+    id: String(p.id),
+    name: p.name,
+    platform: p.platform,
+    stealthProfile: meta.stealthProfile || "balanced",
+    noveltyFloor: typeof meta.noveltyFloor === "number" ? meta.noveltyFloor : 0.5,
+    maxScanRate: typeof meta.maxScanRate === "number" ? meta.maxScanRate : 10,
+    scope: { inScope, outOfScope, restrictions: meta.restrictions || [] },
+    status: p.active ? "active" : "inactive",
+    domainCount: inScope.length,
+  };
+}
+
+// Lightweight scope-guard telemetry. ScopeGuard itself is governance-protected and
+// must not be modified, so we record allow/block stats here as targets are validated.
+const scopeGuardStats = { totalChecks: 0, allowed: 0, blocked: 0 };
+
+router.get("/scope-guard/stats", (_req: Request, res: Response) => {
+  const blockRate = scopeGuardStats.totalChecks > 0
+    ? scopeGuardStats.blocked / scopeGuardStats.totalChecks
+    : 0;
+  return res.json({ stats: { ...scopeGuardStats, blockRate } });
+});
+
+router.get("/scope-guard/audit", async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt(String(req.query.limit || "10")) || 10, 200);
+  const log = await readAudit();
+  const entries = log
+    .filter((e: any) => e.action === "scope.block" || e.action === "scope.validate")
+    .slice(-limit)
+    .reverse()
+    .map((e: any) => ({
+      timestamp: e.timestamp,
+      target: e.details?.target || "",
+      action: e.details?.allowed ? "allowed" : "blocked",
+      reason: e.details?.reason || "",
+    }));
+  return res.json(entries);
+});
+
+router.post("/programs/import", async (req: Request, res: Response) => {
+  try {
+    const { handle, platform, stealthProfile, noveltyFloor, maxScanRate, scope, outOfScope } = req.body || {};
+    if (!handle || typeof handle !== "string") {
+      return res.status(400).json({ error: "handle required" });
+    }
+    const validPlatforms = ["hackerone", "bugcrowd", "intigriti", "synack", "yeswehack", "custom", "other"];
+    const plat = validPlatforms.includes(platform) ? platform : "other";
+
+    // Accept pasted scope as an array or newline/comma-separated text.
+    const toList = (v: any): string[] => {
+      if (Array.isArray(v)) return v.map(String).map(s => s.trim()).filter(Boolean);
+      if (typeof v === "string") return v.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+
+    const [program] = await db.insert(programs).values({
+      name: handle,
+      platform: plat,
+      programHandle: handle,
+      scope: toList(scope),
+      outOfScope: toList(outOfScope),
+      metadata: {
+        stealthProfile: stealthProfile || "balanced",
+        noveltyFloor: typeof noveltyFloor === "number" ? noveltyFloor : 0.5,
+        maxScanRate: typeof maxScanRate === "number" ? maxScanRate : 10,
+      },
+    }).returning();
+
+    return res.status(201).json({
+      message: `Imported ${handle}`,
+      program: shapeProgramForScopeUI(program),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/programs/validate-target", async (req: Request, res: Response) => {
+  try {
+    const { target, programId } = req.body || {};
+    if (!target || typeof target !== "string") {
+      return res.status(400).json({ error: "target required" });
+    }
+    const targetUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+
+    // Resolve a program to validate against: explicit id, else first active program.
+    let pid = programId ? parseInt(String(programId)) : NaN;
+    if (Number.isNaN(pid)) {
+      const [active] = await db.select().from(programs)
+        .where(eq(programs.active, true)).orderBy(desc(programs.roiScore)).limit(1);
+      pid = active?.id ?? NaN;
+    }
+    if (Number.isNaN(pid)) {
+      return res.json({ allowed: false, reason: "No program available to validate against — import a program first." });
+    }
+
+    const result = await ScopeGuard.getInstance().isInScope(targetUrl, pid);
+
+    scopeGuardStats.totalChecks++;
+    if (result.allowed) scopeGuardStats.allowed++; else scopeGuardStats.blocked++;
+    await appendAudit({
+      id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      action: result.allowed ? "scope.validate" : "scope.block",
+      details: { target: targetUrl, allowed: result.allowed, reason: result.reason, programId: pid },
+      timestamp: new Date().toISOString(),
+    });
+
+    return res.json({ allowed: result.allowed, valid: result.allowed, reason: result.reason });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/programs/:id/update", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid program id" });
+    const [existing] = await db.select().from(programs).where(eq(programs.id, id)).limit(1);
+    if (!existing) return res.status(404).json({ error: "Program not found" });
+
+    const body = req.body || {};
+    const updateData: any = { updatedAt: new Date() };
+    if (body.name !== undefined) updateData.name = body.name;
+    if (Array.isArray(body.scope)) updateData.scope = body.scope;
+    if (Array.isArray(body.outOfScope)) updateData.outOfScope = body.outOfScope;
+
+    // stealthProfile / noveltyFloor / maxScanRate live in metadata.
+    const meta = { ...((existing.metadata as Record<string, any>) || {}) };
+    if (body.stealthProfile !== undefined) meta.stealthProfile = body.stealthProfile;
+    if (body.noveltyFloor !== undefined) meta.noveltyFloor = body.noveltyFloor;
+    if (body.maxScanRate !== undefined) meta.maxScanRate = body.maxScanRate;
+    updateData.metadata = meta;
+
+    const [updated] = await db.update(programs).set(updateData).where(eq(programs.id, id)).returning();
+    if (Array.isArray(body.scope) || Array.isArray(body.outOfScope)) {
+      ScopeGuard.getInstance().invalidateCache(id);
+    }
+    return res.json(shapeProgramForScopeUI(updated));
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Task Planning generator (TaskPlanning.tsx) ───────────────────────────────────
+// Build a phase-based task plan from the real Kali catalog (which tools map to which
+// phase) and persist each task to the tasks workspace store.
+router.post("/tasks/generate", async (req: Request, res: Response) => {
+  try {
+    const { hunt_id, goal, target } = req.body || {};
+    if (!target) return res.status(400).json({ success: false, error: "target required" });
+
+    const phasePlan: { phase: string; titles: { title: string; description: string; priority: string; estimated_time: string }[] }[] = [
+      { phase: "reconnaissance", titles: [
+        { title: "Passive subdomain enumeration", description: `Enumerate subdomains of ${target} via subfinder/amass/assetfinder`, priority: "high", estimated_time: "30m" },
+        { title: "Gather historical URLs", description: `Collect known URLs for ${target} (gau, waybackurls)`, priority: "medium", estimated_time: "20m" },
+      ]},
+      { phase: "enumeration", titles: [
+        { title: "Probe live hosts & fingerprint tech", description: `Run httpx + whatweb across discovered hosts for ${target}`, priority: "high", estimated_time: "30m" },
+        { title: "Content discovery", description: `Fuzz directories/files with ffuf/feroxbuster on ${target}`, priority: "medium", estimated_time: "45m" },
+      ]},
+      { phase: "vulnerability_discovery", titles: [
+        { title: "Automated vuln scan", description: `Run nuclei templates against ${target}`, priority: "high", estimated_time: "40m" },
+        { title: `Targeted testing for goal: ${goal || "vulnerabilities"}`, description: `Manual + tool-assisted testing toward "${goal || "high-impact findings"}"`, priority: "critical", estimated_time: "2h" },
+      ]},
+      { phase: "exploitation", titles: [
+        { title: "Confirm & exploit candidates", description: `Validate promising findings on ${target} with PoC payloads`, priority: "critical", estimated_time: "2h" },
+      ]},
+      { phase: "reporting", titles: [
+        { title: "Draft bug bounty report", description: `Write up confirmed findings for ${target}`, priority: "high", estimated_time: "1h" },
+      ]},
+    ];
+
+    const created: any[] = [];
+    for (const group of phasePlan) {
+      for (const t of group.titles) {
+        const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const entry = {
+          id,
+          hunt_id: hunt_id || "",
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          phase: group.phase,
+          status: "pending",
+          estimated_time: t.estimated_time,
+          dependencies: [] as string[],
+          notes: "",
+          createdAt: new Date().toISOString(),
+        };
+        await wsWrite("tasks", id, entry);
+        created.push(entry);
+      }
+    }
+
+    return res.status(201).json({ success: true, tasks: created, count: created.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Nuclei template detail (NucleiTemplates.tsx) ─────────────────────────────────
+// Reuse the same source as GET /nuclei/templates (findings that carry a nucleiTemplate)
+// and return the matching template's full content.
+router.get("/nuclei/templates/:id", async (req: Request, res: Response) => {
+  try {
+    const idParam = decodeURIComponent(req.params.id);
+    const rows = await db.select().from(findings);
+    const candidates = rows.filter((r: any) => r.nucleiTemplate);
+
+    // Match by finding id, or by template text containing the id/name token.
+    let match = candidates.find((r: any) => String(r.id) === idParam);
+    if (!match) match = candidates.find((r: any) => r.nucleiTemplate && r.nucleiTemplate.includes(idParam));
+
+    if (!match) return res.status(404).json({ error: "Template not found", content: "" });
+    return res.json({
+      id: match.id,
+      name: match.nucleiTemplate ? String(match.nucleiTemplate).split("\n")[0] : idParam,
+      severity: match.severity,
+      content: match.nucleiTemplate,
+      yaml: match.nucleiTemplate,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Platform status (SyncStatus.tsx) ─────────────────────────────────────────────
+// Derive bug-bounty platform connection status from configured programs: a platform
+// is "fully_wired" if at least one program with a handle exists for it, else "partial".
+router.get("/platform/status", async (_req: Request, res: Response) => {
+  try {
+    const rows = await db.select().from(programs);
+    const platformList = ["hackerone", "bugcrowd", "intigriti", "synack", "yeswehack"];
+    const labels: Record<string, string> = {
+      hackerone: "HackerOne", bugcrowd: "Bugcrowd", intigriti: "Intigriti",
+      synack: "Synack", yeswehack: "YesWeHack",
+    };
+
+    const features = platformList.map(plat => {
+      const progs = rows.filter(r => r.platform === plat);
+      const configured = progs.some(r => r.programHandle);
+      return {
+        name: labels[plat],
+        status: configured ? "fully_wired" : "inactive",
+        details: configured
+          ? `${progs.length} program(s) configured`
+          : "No program handle configured for this platform",
+        lastChecked: new Date().toISOString(),
+      };
+    });
+
+    const localPrograms = rows.filter(r => r.platform === "local" || r.platform === "custom" || r.platform === "other");
+    const categories = [
+      {
+        name: "Bug Bounty Platforms",
+        icon: "shield",
+        color: "cyan",
+        features,
+      },
+      {
+        name: "Local / Custom Targets",
+        icon: "target",
+        color: "green",
+        features: [{
+          name: "Custom Programs",
+          status: localPrograms.length > 0 ? "fully_wired" : "inactive",
+          details: `${localPrograms.length} custom/local program(s)`,
+          lastChecked: new Date().toISOString(),
+        }],
+      },
+    ];
+
+    return res.json({
+      success: true,
+      mode: process.env.NODE_ENV === "production" ? "production" : "web",
+      categories,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default router;
