@@ -2312,6 +2312,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
           }
           break;
         case "corsy":
+          // corsy parses --headers as JSON
           args.push("--headers", JSON.stringify({ [key]: value }));
           break;
         case "jwt_tool":
@@ -2321,7 +2322,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
           args.push("--headers", `${key}: ${value}`);
           break;
         case "ssrfmap":
-          args.push("--uagent", "Mozilla/5.0");
+          // -H passes a custom header; --uagent was wrong (ignored key/value entirely)
+          args.push("-H", `${key}: ${value}`);
+          break;
+        case "nosqlmap":
+          if (key.toLowerCase() === "cookie") {
+            args.push("--cookie", value);
+          } else {
+            args.push("--header", `${key}: ${value}`);
+          }
           break;
       }
     }
