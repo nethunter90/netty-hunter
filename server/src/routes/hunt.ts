@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { execSync } from "child_process";
 import { db } from "../db";
 import { campaigns, huntSessions, findings, targets, programs } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
@@ -454,6 +455,49 @@ router.post("/solve", async (req: Request, res: Response) => {
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
+});
+
+// Tool preflight — check which hunt engine binaries are installed
+const HUNT_TOOLS: Array<{ name: string; binary: string; tier: "critical" | "important" | "optional" }> = [
+  { name: "nmap",      binary: "nmap",      tier: "critical"  },
+  { name: "nuclei",    binary: "nuclei",    tier: "critical"  },
+  { name: "ffuf",      binary: "ffuf",      tier: "critical"  },
+  { name: "sqlmap",    binary: "sqlmap",    tier: "critical"  },
+  { name: "nikto",     binary: "nikto",     tier: "important" },
+  { name: "gobuster",  binary: "gobuster",  tier: "important" },
+  { name: "whatweb",   binary: "whatweb",   tier: "important" },
+  { name: "dalfox",    binary: "dalfox",    tier: "important" },
+  { name: "tplmap",    binary: "tplmap",    tier: "important" },
+  { name: "jwt_tool",  binary: "jwt_tool",  tier: "optional"  },
+  { name: "xsser",     binary: "xsser",     tier: "optional"  },
+  { name: "ssrfmap",   binary: "ssrfmap",   tier: "optional"  },
+  { name: "nosqlmap",  binary: "nosqlmap",  tier: "optional"  },
+  { name: "corsy",     binary: "corsy",     tier: "optional"  },
+  { name: "smuggler",  binary: "smuggler",  tier: "optional"  },
+];
+
+router.get("/tools/preflight", (_req: Request, res: Response) => {
+  const results = HUNT_TOOLS.map(t => {
+    try {
+      const path = execSync(`which ${t.binary} 2>/dev/null`, { encoding: "utf8", timeout: 2000 }).trim();
+      return { ...t, available: Boolean(path), path: path || undefined };
+    } catch {
+      return { ...t, available: false };
+    }
+  });
+
+  const missing = results.filter(r => !r.available);
+  const missingCritical = missing.filter(r => r.tier === "critical");
+
+  return res.json({
+    tools: results,
+    summary: {
+      total: results.length,
+      available: results.filter(r => r.available).length,
+      missingCritical: missingCritical.map(r => r.name),
+      ready: missingCritical.length === 0,
+    },
+  });
 });
 
 // Hunt strategy builder

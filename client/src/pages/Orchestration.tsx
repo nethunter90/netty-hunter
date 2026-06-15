@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   Layers, Play, Square, Shield, Target, Brain, Cpu, CheckCircle2,
   XCircle, Clock, AlertTriangle, BarChart3, Zap, RefreshCw, Lock, ChevronDown, ChevronUp,
+  Wrench,
 } from "lucide-react";
 import { bountyAPI, hunterAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
@@ -61,6 +62,11 @@ export default function Orchestration() {
   const [authCookie, setAuthCookie] = useState("");
   const [authBearer, setAuthBearer] = useState("");
 
+  type ToolStatus = { name: string; binary: string; tier: "critical" | "important" | "optional"; available: boolean };
+  const [toolStatus, setToolStatus] = useState<ToolStatus[]>([]);
+  const [toolStatusExpanded, setToolStatusExpanded] = useState(false);
+  const [toolStatusLoading, setToolStatusLoading] = useState(false);
+
   const [orchestrationId, setOrchestrationId] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerStatus[]>(
     Array.from({ length: 6 }, (_, i) => ({
@@ -93,6 +99,13 @@ export default function Orchestration() {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     axios.get("/api/orchestration/layers").then(r => setLayerMeta(r.data?.layers || [])).catch(() => {});
     hunterAPI.getCampaigns().then(r => setCampaigns((r.data || []).slice(0, 20))).catch(() => {});
+
+    // Tool preflight
+    setToolStatusLoading(true);
+    axios.get("/api/hunt/tools/preflight")
+      .then(r => setToolStatus(r.data?.tools || []))
+      .catch(() => {})
+      .finally(() => setToolStatusLoading(false));
 
     // Reconnect to any orchestration already running when this panel opens.
     axios.get("/api/orchestration").then(r => {
@@ -497,6 +510,60 @@ export default function Orchestration() {
               onChange={e => setMaxRequests(Number(e.target.value))}
               disabled={isRunning}
             />
+
+            {/* Tool preflight status */}
+            {toolStatus.length > 0 && (() => {
+              const available = toolStatus.filter(t => t.available).length;
+              const missingCritical = toolStatus.filter(t => !t.available && t.tier === "critical");
+              const allReady = missingCritical.length === 0;
+              return (
+                <div className="border-t border-hack-border/40 pt-3 mb-3">
+                  <button
+                    className="w-full flex items-center justify-between text-left"
+                    onClick={() => setToolStatusExpanded(x => !x)}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Wrench className="w-3 h-3 text-hack-dim" />
+                      <span className="text-[9px] text-hack-dim tracking-widest">TOOLS</span>
+                      <span className={`text-[9px] font-mono px-1 rounded ${allReady ? "text-hack-accent" : "text-hack-yellow"}`}>
+                        {available}/{toolStatus.length}
+                      </span>
+                      {!allReady && (
+                        <span className="text-[8px] text-hack-red font-mono">
+                          {missingCritical.length} critical missing
+                        </span>
+                      )}
+                    </div>
+                    {toolStatusExpanded
+                      ? <ChevronUp className="w-3 h-3 text-hack-dim" />
+                      : <ChevronDown className="w-3 h-3 text-hack-dim" />
+                    }
+                  </button>
+                  {toolStatusExpanded && (
+                    <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
+                      {toolStatus.map(t => (
+                        <div key={t.name} className="flex items-center gap-1 text-[9px] font-mono">
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                            t.available ? "bg-hack-accent" :
+                            t.tier === "critical" ? "bg-hack-red" :
+                            t.tier === "important" ? "bg-hack-yellow" :
+                            "bg-hack-dim"
+                          }`} />
+                          <span className={t.available ? "text-hack-dim" : t.tier === "critical" ? "text-hack-red" : "text-hack-yellow"}>
+                            {t.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {toolStatusLoading && toolStatus.length === 0 && (
+              <div className="text-[9px] text-hack-dim font-mono mb-3 flex items-center gap-1">
+                <RefreshCw className="w-3 h-3 animate-spin" /> checking tools…
+              </div>
+            )}
 
             <div className="border-t border-hack-border/40 pt-3 mb-3">
               <div className="text-[9px] text-hack-dim tracking-widest mb-2">AUTH (OPTIONAL)</div>
