@@ -29,7 +29,10 @@ const completedResults = new Map<string, {
 
 // ── Schema ─────────────────────────────────────────────────────────────────────
 const RunOrchestrationSchema = z.object({
-  programId: z.number().int().positive(),
+  // -1 signals a custom/local-lab target — the orchestrator's L1 governance gate
+  // find-or-creates a synthetic "Custom / Local Lab" program (scope ["*"]) so a
+  // bare URL can run the full 6-layer pipeline without a real bug-bounty program.
+  programId: z.number().int().min(-1),
   targetUrl: z.string().url(),
   mode: z.enum(["forward", "backward"]).default("forward"),
   goal: z.string().min(5).max(500).optional(),
