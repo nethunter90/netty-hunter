@@ -76,7 +76,7 @@ export default function FloatingChat() {
       const r = await api.post<{ response: string; model: string; executed?: ExecutionResult | null }>("/chat", {
         message: text,
         history: messages.slice(-6),
-      }, { timeout: 120000 }); // 2 min — models can take >30s to load on first request
+      }, { timeout: 330000 }); // 5.5 min — covers package installs (5 min server cap) + model warmup
       setMessages(prev => [
         ...prev.slice(-49),
         { role: "assistant", content: r.data.response, executed: r.data.executed ?? null },

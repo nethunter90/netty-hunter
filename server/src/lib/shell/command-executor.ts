@@ -55,7 +55,22 @@ const GUI_APPS = new Set([
 // Output caps (per step) so chat doesn't get drowned in giant output
 const STDOUT_CAP = 8 * 1024;  // 8 KB
 const STDERR_CAP = 2 * 1024;  // 2 KB
-const STEP_TIMEOUT_MS = 30_000;
+const STEP_TIMEOUT_MS = 30_000;       // default — fine for recon/exploit tools
+const INSTALL_TIMEOUT_MS = 300_000;   // 5 min — package installs download + compile
+
+// Package managers / fetchers whose steps need a longer timeout than the
+// 30s default, otherwise apt/pip/go installs get killed mid-download.
+const LONG_RUNNING_BINS = new Set([
+  "apt", "apt-get", "aptitude", "dpkg",
+  "pip", "pip3", "pipx",
+  "go", "cargo", "gem", "npm", "pnpm", "yarn",
+  "git", "wget", "curl", "make", "cmake",
+]);
+
+/** Pick the timeout for a step — longer for installs/fetches, default otherwise. */
+function timeoutForStep(step: CommandStep): number {
+  return LONG_RUNNING_BINS.has(step.bin.toLowerCase()) ? INSTALL_TIMEOUT_MS : STEP_TIMEOUT_MS;
+}
 
 const CMD_BLOCK_RE = /\[CMD:\s*(\{[\s\S]*?\})\s*\]/;
 
@@ -174,7 +189,7 @@ export async function executeCommandPlan(plan: CommandPlan): Promise<ExecutionRe
     const display = `${step.bin} ${(step.args || []).join(" ")}`.trim();
     try {
       const { stdout, stderr } = await execFileAsync(step.bin, step.args || [], {
-        timeout: STEP_TIMEOUT_MS,
+        timeout: timeoutForStep(step),
         maxBuffer: 4 * 1024 * 1024,
       });
       outputs.push({
