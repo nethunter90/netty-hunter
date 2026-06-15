@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { aiBridge } from './layer6-ai-bridge';
 import { agentRegistry } from './agent-registry';
+import { interactshManager } from '../oob/interactsh-manager';
 import {
   parseTargetUrl,
   parseNmapOutput, nmapToFindings,
@@ -582,7 +583,10 @@ export class ScannerAgent extends MetaAgent {
         concurrency = '-c 1';
       }
 
-      let baseCmd = `nuclei -u ${target} -t http/technologies/ -t http/exposures/ -t http/misconfiguration/ -t http/vulnerabilities/ -severity ${severity} -jsonl -silent -timeout 5 -retries 0 -rate-limit ${rateLimit} ${concurrency} -no-interactsh 2>/dev/null`;
+      // Use interactsh for OOB template detection when the client is running;
+      // otherwise disable it to avoid nuclei hanging waiting for a server.
+      const interactshFlag = interactshManager.getDomain() ? "" : "-no-interactsh";
+      let baseCmd = `nuclei -u ${target} -t http/technologies/ -t http/exposures/ -t http/misconfiguration/ -t http/vulnerabilities/ -severity ${severity} -jsonl -silent -timeout 5 -retries 0 -rate-limit ${rateLimit} ${concurrency} ${interactshFlag} 2>/dev/null`.trimEnd();
       if (stealthMode && stealthMode !== 'aggressive') {
         console.log(`[ScannerAgent] Stealth nuclei: rate-limit=${rateLimit}, mode=${stealthMode}`);
       }
@@ -597,7 +601,7 @@ export class ScannerAgent extends MetaAgent {
       if (!stdout.trim()) {
         try {
           stdout = await this.exec(
-            `nuclei -u ${target} -severity medium,high,critical -jsonl -silent -timeout 5 -retries 0 -no-interactsh 2>/dev/null`,
+            `nuclei -u ${target} -severity medium,high,critical -jsonl -silent -timeout 5 -retries 0 ${interactshFlag} 2>/dev/null`.trimEnd(),
             180000
           );
         } catch (e: any) {

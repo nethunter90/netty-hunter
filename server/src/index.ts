@@ -42,8 +42,8 @@ import { egressAllocator } from "./lib/stealth/egress-route-allocator";
 import { wireHuntEngineToSocket } from "./lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "./lib/state/hunt-sessions";
 import { db } from "./db";
-import { programs } from "./db/schema";
-import { gt } from "drizzle-orm";
+import { programs, findings } from "./db/schema";
+import { gt, eq } from "drizzle-orm";
 
 const PgSession = connectPg(session);
 
@@ -236,8 +236,18 @@ const callbackLimiter = rateLimit({
 });
 app.all("/api/callback/:beaconId", callbackLimiter, (req, res) => {
   const { beaconId } = req.params;
-  callbackServer.recordHit(beaconId, req.ip || "", JSON.stringify(req.body || req.query || {}));
-  io.emit("oob:hit", { beaconId, ip: req.ip, ts: new Date().toISOString() });
+  const ip = req.ip || "";
+  const body = JSON.stringify(req.body || req.query || {});
+  callbackServer.recordHit(beaconId, ip, body);
+  const hitAt = new Date();
+  io.emit("oob:hit", { beaconId, ip, ts: hitAt.toISOString() });
+
+  // Persist OOB confirmation to any finding that owns this beacon
+  db.update(findings)
+    .set({ oobBeaconId: beaconId, oobHitReceived: true, oobHitAt: hitAt })
+    .where(eq(findings.oobBeaconId, beaconId))
+    .catch(() => {});
+
   res.status(200).send("ok");
 });
 
