@@ -3,7 +3,6 @@ import {
   coreGovernance,
   decisionLogger,
   driftDetector,
-  governanceProxy,
   promptInjectionDetector,
   selfAttestationService
 } from '../governance';
@@ -92,23 +91,6 @@ router.get('/drift', (req, res) => {
 router.get('/drift/snapshots', (req, res) => {
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
   res.json(driftDetector.getSnapshots(limit));
-});
-
-router.get('/proxy/requests', (req, res) => {
-  const { agentId, status, limit } = req.query;
-  res.json(governanceProxy.getRequestLog({
-    agentId: agentId as string | undefined,
-    status: status as 'allowed' | 'blocked' | undefined,
-    limit: limit ? parseInt(limit as string, 10) : undefined
-  }));
-});
-
-router.get('/proxy/stats', (_req, res) => {
-  res.json(governanceProxy.getStats());
-});
-
-router.get('/proxy/contracts', (_req, res) => {
-  res.json(governanceProxy.getAgentContracts());
 });
 
 router.get('/injection/stats', (_req, res) => {

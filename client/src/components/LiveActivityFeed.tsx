@@ -45,10 +45,13 @@ export type ActivityEvent =
   | { type: "jwt_vulns"; ts: string; count: number; techniques: string[] }
   | { type: "open_redirect"; ts: string; count: number; chained: number }
   | { type: "xxe_found"; ts: string; count: number; oobConfirmed: boolean }
+  | { type: "zap_scan"; ts: string; alertCount: number; hypothesesSeeded: number; endpointsDiscovered: number; duration: number }
   | { type: "ai_reasoning"; ts: string; task: string; phase: "thinking" | "complete" | "decision";
       context?: { observations: number; hypotheses: number; iteration: number };
       promptPreview?: string; rawResponse?: string; summary?: string;
-      durationMs?: number; generatedCount?: number };
+      durationMs?: number; generatedCount?: number }
+  | { type: "recon_start";    ts: string; domain: string }
+  | { type: "recon_complete"; ts: string; subdomains: number; alive: number; interestingUrls: number; historicalPathCount: number };
 
 export interface LiveActivityFeedProps {
   events: ActivityEvent[];
@@ -884,6 +887,32 @@ function OpenRedirectRow({ ev }: { ev: ActivityEvent & { type: "open_redirect" }
   );
 }
 
+function ZapScanRow({ ev }: { ev: ActivityEvent & { type: "zap_scan" } }) {
+  return (
+    <div className="border border-hack-green/30 bg-hack-green/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Shield className="w-3.5 h-3.5 text-hack-green flex-shrink-0" />
+        <span className="text-hack-green font-bold">ZAP passive scan</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-green/30 text-hack-green bg-hack-green/10">
+          {ev.alertCount} alert{ev.alertCount !== 1 ? "s" : ""}
+        </span>
+        {ev.hypothesesSeeded > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-blue/30 text-hack-blue bg-hack-blue/10">
+            +{ev.hypothesesSeeded} hypothesis{ev.hypothesesSeeded !== 1 ? "es" : ""}
+          </span>
+        )}
+        {ev.endpointsDiscovered > 0 && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-dim/30 text-hack-dim">
+            {ev.endpointsDiscovered} endpoints
+          </span>
+        )}
+        <span className="text-hack-dim ml-auto text-[9px]">{(ev.duration / 1000).toFixed(1)}s</span>
+        <span className="text-hack-dim">{ev.ts}</span>
+      </div>
+    </div>
+  );
+}
+
 function XXEFoundRow({ ev }: { ev: ActivityEvent & { type: "xxe_found" } }) {
   return (
     <div className="border border-hack-red/40 bg-hack-red/5 rounded p-2 my-1">
@@ -1080,8 +1109,31 @@ export function LiveActivityFeed({
               return <OpenRedirectRow key={key} ev={ev} />;
             case "xxe_found":
               return <XXEFoundRow key={key} ev={ev} />;
+            case "zap_scan":
+              return <ZapScanRow key={key} ev={ev} />;
             case "ai_reasoning":
               return <AIReasoningRowMemo key={key} ev={ev} />;
+            case "recon_start":
+              return (
+                <div key={key} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                  <Globe className="w-3 h-3 text-hack-cyan shrink-0" />
+                  <span className="text-hack-dim">Phase 0 OSINT</span>
+                  <span className="text-hack-cyan">{ev.domain}</span>
+                  <span className="text-hack-dim">— crt.sh + Wayback CDX running…</span>
+                </div>
+              );
+            case "recon_complete":
+              return (
+                <div key={key} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                  <CheckCircle2 className="w-3 h-3 text-hack-accent shrink-0" />
+                  <span className="text-hack-dim">Recon complete —</span>
+                  <span className="text-hack-accent">{ev.alive}/{ev.subdomains} subdomains alive</span>
+                  {ev.interestingUrls > 0 && (
+                    <span className="text-hack-orange">{ev.interestingUrls} interesting paths</span>
+                  )}
+                  <span className="text-hack-dim">{ev.historicalPathCount.toLocaleString()} historical URLs</span>
+                </div>
+              );
             case "error":
               return <ErrorRow key={key} ev={ev} />;
             default:

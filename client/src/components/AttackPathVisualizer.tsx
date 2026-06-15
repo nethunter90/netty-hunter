@@ -172,6 +172,14 @@ function ToolBadge({ tool }: { tool: string }) {
     gobuster: "text-hack-green border-hack-green/30",
     curl_probe: "text-hack-dim border-hack-border",
     manual: "text-hack-text border-hack-border",
+    corsy: "text-hack-cyan border-hack-cyan/30",
+    ssrfmap: "text-hack-orange border-hack-orange/30",
+    nosqlmap: "text-hack-red border-hack-red/30",
+    xsser: "text-hack-yellow border-hack-yellow/30",
+    jwt_tool: "text-hack-purple border-hack-purple/30",
+    smuggler: "text-hack-blue border-hack-blue/30",
+    tplmap: "text-hack-red border-hack-red/30",
+    dalfox: "text-hack-yellow border-hack-yellow/30",
   };
   const c = colors[tool.toLowerCase()] || "text-hack-dim border-hack-border";
   return (

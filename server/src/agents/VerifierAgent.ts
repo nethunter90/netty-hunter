@@ -18,6 +18,7 @@ import { findings } from "../db/schema";
 import { eq, desc, isNotNull } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
+import { ClaudeClient } from "../lib/claude-client";
 import type { SolverResult } from "./SolverPool";
 import { SimHashDedup } from "../lib/intelligence/simhash";
 
@@ -26,7 +27,7 @@ export interface VerificationResult {
   layer1_dedup: { isDuplicate: boolean; existingHash?: string };
   layer2_reprobe: { confirmed: boolean; statusCode: number; responseSnippet: string };
   layer3_playwright: { confirmed: boolean; screenshot?: string; consoleAlerts: string[]; networkRequests: string[] };
-  layer4_ai: { confirmed: boolean; reasoning: string; confidenceAdjustment: number };
+  layer4_ai: { confirmed: boolean; reasoning: string; confidenceAdjustment: number; errored?: boolean };
   finalVerdict: "confirmed" | "rejected" | "inconclusive";
   finalConfidence: number;
   dedupHash: string;
@@ -104,13 +105,25 @@ class Layer1Dedup {
 // ─── Layer 2: Dynamic Re-probe ────────────────────────────────────────────────
 class Layer2Reprobe {
   async reprobe(result: SolverResult): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
-    if (!result.request) {
-      return { confirmed: false, statusCode: 0, responseSnippet: "No request to replay" };
+    // result.request is sometimes a campaign/finding ID (numeric string) rather than
+    // a URL — e.g. for LogicExploitAgent-confirmed findings. Fall back to result.endpoint
+    // so L2 still reaches the target instead of bailing immediately.
+    const isHttpUrl = (u: unknown): u is string => {
+      if (typeof u !== "string" || !u) return false;
+      try { const p = new URL(u); return p.protocol === "http:" || p.protocol === "https:"; }
+      catch { return false; }
+    };
+    const reprobeUrl = isHttpUrl(result.request) ? result.request
+      : isHttpUrl(result.endpoint) ? result.endpoint
+      : null;
+
+    if (!reprobeUrl) {
+      return { confirmed: false, statusCode: 0, responseSnippet: "No replayable URL" };
     }
 
     try {
       const { default: axios } = await import("axios");
-      const resp = await axios.get(result.request, {
+      const resp = await axios.get(reprobeUrl, {
         timeout: 10000,
         validateStatus: () => true,
         headers: { "User-Agent": getRandomUserAgent() },
@@ -268,13 +281,56 @@ class Layer4AIConfirmation {
   async confirm(result: SolverResult, previousLayers: {
     layer2: { confirmed: boolean; statusCode: number; responseSnippet: string };
     layer3: { confirmed: boolean; consoleAlerts: string[] };
-  }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number }> {
+    layer3Available?: boolean;
+    screenshot?: string;
+  }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean; errored?: boolean }> {
+
+    // Vision analysis — fire in parallel with text prompt construction if screenshot available
+    let visionDescription = '';
+    let visionUsed = false;
+    if (previousLayers.screenshot) {
+      try {
+        const visionPrompt =
+          `Security vulnerability verification screenshot. ` +
+          `Payload sent: "${result.payload}" to ${result.endpoint} testing for ${result.vulnClass}. ` +
+          `Does the screenshot show evidence of a successful exploit? ` +
+          `Look for: JavaScript alerts, injected content, error messages revealing internals, ` +
+          `unexpected redirects, or any sign the payload executed. ` +
+          `Reply in 2-3 sentences only.`;
+        const desc = await this.modelRouter.describeScreenshot(previousLayers.screenshot, visionPrompt);
+        if (desc) {
+          visionDescription = desc.trim();
+          visionUsed = true;
+          logger.info('VerifierAgent: Vision analysis complete', { vulnClass: result.vulnClass, desc: visionDescription.slice(0, 100) });
+        }
+      } catch { /* non-critical — degrade silently */ }
+    }
+
+    // Truncate original evidence for the prompt — long tool outputs inflate context fast.
+    const origEvidence = result.evidence
+      ? (typeof result.evidence === "string" ? result.evidence : JSON.stringify(result.evidence)).slice(0, 600)
+      : null;
+    const origResponse = result.response ? String(result.response).slice(0, 300) : null;
+
+    const authBypassNote = result.vulnClass === "auth_bypass"
+      ? `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
+        `RESTRICTED endpoint (returning 401/403 for unauthenticated requests) became\n` +
+        `accessible after a bypass technique was applied. A public endpoint that returns\n` +
+        `200 without any auth is NOT an auth bypass — it is expected behaviour.\n`
+      : "";
+
     const prompt = `You are a senior security researcher reviewing a potential vulnerability finding.
 
 Endpoint: ${result.endpoint}
 Vulnerability Class: ${result.vulnClass}
 Payload Used: ${result.payload}
 Original Confidence: ${result.confidence}
+${authBypassNote}
+Original Probe Evidence (what the scanner captured during discovery):
+${origEvidence ?? "Not available"}
+
+Original Solver Response:
+${origResponse ?? "Not available"}
 
 Layer 2 (HTTP Reprobe):
 - Confirmed: ${previousLayers.layer2.confirmed}
@@ -284,7 +340,7 @@ Layer 2 (HTTP Reprobe):
 Layer 3 (Browser Replay):
 - Confirmed: ${previousLayers.layer3.confirmed}
 - Console/Dialog alerts: ${JSON.stringify(previousLayers.layer3.consoleAlerts)}
-
+${visionDescription ? `\nVision Model Analysis:\n${visionDescription}\n` : ""}
 Based on ALL the evidence above, determine:
 1. Is this a genuine vulnerability (not a false positive)?
 2. What is the confidence adjustment (-0.5 to +0.3)?
@@ -292,9 +348,13 @@ Based on ALL the evidence above, determine:
 
 Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment": number }`;
 
+    // Stateless per-finding session: L4 is a self-contained judgment, so it gets
+    // a fresh thread. Sharing the "default" thread across concurrent verifications
+    // races the message list into an assistant-terminated array (the "must end
+    // with a user message" 400) and bleeds unrelated findings together.
+    const l4Session = `verify-${result.taskId}`;
     try {
-      const response = await this.modelRouter.reason(prompt);
-      // Scan L4 AI output for prompt injection before trusting the parsed result
+      const response = await this.modelRouter.reason(prompt, l4Session);
       try {
         const { promptInjectionDetector } = await import('../governance');
         const check = promptInjectionDetector.detect(response, 'verifier-l4', 'Layer4AIConfirmation');
@@ -302,26 +362,62 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
           logger.warn('[VerifierAgent] Prompt injection in L4 response', { score: check.score, reasons: check.reasons });
         }
       } catch { /* non-critical */ }
-      const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
+
+      const parsed = this.extractJson(response);
+      if (!parsed) {
+        // Unrecoverable structured output is "unknown", not "false". errored lets
+        // the verdict route to inconclusive (needs review) rather than rejecting a
+        // possibly-real finding via a broken parse.
+        logger.warn("VerifierAgent: L4 output unparseable — marking needs-review", {
+          endpoint: result.endpoint, vulnClass: result.vulnClass, sample: response.slice(0, 160),
+        });
+        return { confirmed: false, reasoning: "L4 output unparseable — needs review", confidenceAdjustment: 0, visionUsed, errored: true };
+      }
       return {
         confirmed: Boolean(parsed.confirmed),
         reasoning: String(parsed.reasoning || "AI analysis complete"),
         confidenceAdjustment: Math.min(0.3, Math.max(-0.5, Number(parsed.confidenceAdjustment) || 0)),
+        visionUsed,
       };
     } catch (err) {
-      // Non-critical: AI confirmation failure degrades to L2/L3 consensus rather than killing the pipeline
-      logger.warn("VerifierAgent: Layer 4 AI confirmation failed — degrading to L2/L3 consensus", {
-        err: String(err),
-        endpoint: result.endpoint,
-        vulnClass: result.vulnClass,
+      logger.warn("VerifierAgent: Layer 4 AI confirmation failed — needs review (not auto-rejected)", {
+        err: String(err), endpoint: result.endpoint, vulnClass: result.vulnClass,
       });
-      const aiConfirmed = previousLayers.layer2.confirmed && previousLayers.layer3.confirmed;
-      return {
-        confirmed: aiConfirmed,
-        reasoning: "AI analysis unavailable – verdict based on L2 HTTP re-probe + L3 browser replay",
-        confidenceAdjustment: aiConfirmed ? 0 : -0.2,
-      };
+      // L4 is the reasoning backstop. When it's down we do NOT hand the verdict to
+      // the other layers' raw booleans — that was the fail-into-worst-default the
+      // old code did. errored routes the verdict to inconclusive.
+      return { confirmed: false, reasoning: "L4 AI analysis unavailable — needs review", confidenceAdjustment: 0, visionUsed: false, errored: true };
+    } finally {
+      ClaudeClient.clearSession(l4Session);
     }
+  }
+
+  /** Extract the first balanced JSON object from a model response, tolerating
+   *  ``` fences and surrounding prose. Returns null if nothing parses. */
+  private extractJson(raw: string): Record<string, unknown> | null {
+    if (!raw) return null;
+    const unfenced = raw.replace(/```(?:json)?/gi, "");
+    const start = unfenced.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < unfenced.length; i++) {
+      const ch = unfenced[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        if (--depth === 0) {
+          try { return JSON.parse(unfenced.slice(start, i + 1)) as Record<string, unknown>; }
+          catch { return null; }
+        }
+      }
+    }
+    return null;
   }
 }
 
@@ -368,35 +464,76 @@ export class VerifierAgent {
     const l2 = await this.layer2.reprobe(result);
     logger.info("VerifierAgent: L2 reprobe complete", { confirmed: l2.confirmed });
 
-    // Layer 3: Browser Replay (Mandatory Gate for confirmed hypotheses)
-    // If confidence > 0.7 or vulnClass is high-severity, MUST pass browser validation
-    const mustPassBrowser = result.confidence > 0.7 || ["xss", "sqli", "rce", "ssrf"].includes(result.vulnClass);
+    // Layer 3: Browser Replay.
+    // Browser-verifiable classes are those a real browser can PROVE by observing
+    // execution (DOM XSS et al). For these, L3 is the authoritative oracle and
+    // remains a mandatory gate below. HTTP-observable classes (auth_bypass, sqli
+    // row-deltas, cors headers, idor, info_disclosure, ssrf via OOB…) cannot be
+    // proven or disproven by a browser — for them L3 is n/a and must not vote.
+    const browserVerifiable = ["xss", "dom_xss"].includes(result.vulnClass);
     const l3 = await this.layer3.replay(result);
     logger.info("VerifierAgent: L3 browser replay complete", { confirmed: l3.confirmed });
 
-    // Layer 4: AI Confirmation
-    const l4 = await this.layer4.confirm(result, { layer2: l2, layer3: l3 });
-    logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed });
+    // Layer 4: AI Confirmation (includes vision analysis if screenshot available)
+    const l4 = await this.layer4.confirm(result, {
+      layer2: l2,
+      layer3: l3,
+      layer3Available: this.layer3.layer3Available,
+      screenshot: l3.screenshot,
+    });
+    logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed, visionUsed: l4.visionUsed });
 
-    // Final Verdict Logic
-    const l2l3Consensus = l2.confirmed && l3.confirmed;
-    const l2l4Consensus = l2.confirmed && l4.confirmed;
-    const mandatoryGatePassed = !mustPassBrowser || l3.confirmed;
-
+    // ── Final verdict: per-class oracle authority ────────────────────────────
+    // Fixes the structural bug where confirmation hard-required L2 and the reject
+    // branch fired on (!L2 && !L3) while ignoring L4 — so a correct L4 "confirmed"
+    // was discarded whenever the HTTP/browser oracles were unreachable or simply
+    // inapplicable to the vuln class. Now each oracle votes only where it has a
+    // real test, and a positive proof is never vetoed by an oracle that is n/a.
     let finalVerdict: "confirmed" | "rejected" | "inconclusive";
     let finalConfidence = result.confidence + l4.confidenceAdjustment;
 
-    if (l2l3Consensus && l4.confirmed && mandatoryGatePassed) {
-      finalVerdict = "confirmed";
-      finalConfidence = Math.min(0.98, finalConfidence + 0.1);
-    } else if (l2l4Consensus && mandatoryGatePassed) {
-      finalVerdict = "confirmed";
-      finalConfidence = Math.min(0.9, finalConfidence);
-    } else if (!l2.confirmed && !l3.confirmed) {
-      finalVerdict = "rejected";
-      finalConfidence = Math.max(0, finalConfidence - 0.3);
+    if (browserVerifiable) {
+      // Mandatory browser gate (governance contract — preserved and made STRICTER):
+      // a browser-verifiable finding MUST be proven by a real L3 execution oracle.
+      // No L2-reflection substitute, no rubber-stamp. When Playwright is offline
+      // the finding is never auto-confirmed.
+      if (this.layer3.layer3Available === false) {
+        logger.warn("VerifierAgent: browser-verifiable finding cannot pass mandatory gate — Playwright Layer 3 offline", {
+          endpoint: result.endpoint, vulnClass: result.vulnClass,
+        });
+        finalVerdict = l4.confirmed ? "inconclusive" : "rejected";
+        if (finalVerdict === "rejected") finalConfidence = Math.max(0, finalConfidence - 0.3);
+      } else if (l3.confirmed) {
+        finalVerdict = "confirmed";
+        finalConfidence = Math.min(0.98, finalConfidence + (l4.confirmed ? 0.1 : 0.05));
+      } else if (l4.confirmed) {
+        // Model believes it but execution was not proven in the browser —
+        // needs a human look, never a silent rejection.
+        finalVerdict = "inconclusive";
+      } else {
+        finalVerdict = "rejected";
+        finalConfidence = Math.max(0, finalConfidence - 0.3);
+      }
     } else {
+      // HTTP-observable class: L2 (live reprobe) is authoritative, L4 corroborates,
+      // L3 is n/a and does not vote.
+      if (l2.confirmed && l4.confirmed) {
+        finalVerdict = "confirmed";
+        finalConfidence = Math.min(0.95, finalConfidence + 0.05);
+      } else if (l2.confirmed || l4.confirmed) {
+        // One authoritative signal, the other silent or dissenting → needs review.
+        finalVerdict = "inconclusive";
+      } else {
+        finalVerdict = "rejected";
+        finalConfidence = Math.max(0, finalConfidence - 0.3);
+      }
+    }
+
+    // L4 is the reasoning backstop; if it errored, a missing oracle is "unknown",
+    // which is needs-review, never a refutation. Never hard-reject on a dead L4.
+    if (l4.errored && finalVerdict === "rejected") {
       finalVerdict = "inconclusive";
+      finalConfidence = result.confidence + l4.confidenceAdjustment;
     }
 
     logger.info("VerifierAgent: Verification complete", { findingId, finalVerdict, finalConfidence });

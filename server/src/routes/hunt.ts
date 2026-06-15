@@ -12,6 +12,7 @@ import { HuntStrategyBuilder } from "./huntStrategy";
 import { wireHuntEngineToSocket } from "../lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "../lib/state/hunt-sessions";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
+import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -128,6 +129,7 @@ router.post("/start", async (req: Request, res: Response) => {
         const d = data as Record<string, unknown> | null;
         const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
         metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
+        strategyWeightLearner.learn().catch(() => {});
         setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
 
@@ -166,6 +168,7 @@ router.post("/start", async (req: Request, res: Response) => {
       const d = data as Record<string, unknown> | null;
       const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
       metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
+      strategyWeightLearner.learn().catch(() => {});
       setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
 
@@ -388,11 +391,18 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
     dedupHash: finding.dedupHash || "",
   };
 
+  // Extract raw HTTP evidence and video PoC path stored by the hunt engine
+  const evidenceArr = (finding.evidence as Array<Record<string, unknown>>) ?? [];
+  const rawHttpEntry = evidenceArr.find(e => e.type === "raw_http");
+  const videoEntry = evidenceArr.find(e => e.type === "video_poc");
+
   const report = await generator.generate(mockSolverResult, mockVerification, {
     severity: finding.severity,
     programName: req.body.programName || "Target Program",
     targetUrl: String(finding.targetId || ""),
     huntDate: finding.createdAt.toISOString().split("T")[0],
+    rawEvidence: rawHttpEntry ? String(rawHttpEntry.data ?? "") : undefined,
+    videoPath: videoEntry ? String(videoEntry.path ?? "") : undefined,
   });
 
   // Save report draft

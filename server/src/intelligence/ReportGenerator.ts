@@ -23,6 +23,7 @@ export interface BugBountyReport {
   references: string[];
   timeline: string;
   reportMarkdown: string;
+  videoPath?: string;
 }
 
 const SEVERITY_TO_CVSS: Record<string, { score: number; vector: string }> = {
@@ -77,6 +78,8 @@ export class DraftReportGenerator {
       programName: string;
       targetUrl: string;
       huntDate: string;
+      rawEvidence?: string;
+      videoPath?: string;
     }
   ): Promise<BugBountyReport> {
     const vulnInfo = VULN_DESCRIPTIONS[finding.vulnClass] || {
@@ -88,10 +91,11 @@ export class DraftReportGenerator {
 
     const cvssData = SEVERITY_TO_CVSS[metadata.severity] || SEVERITY_TO_CVSS.medium;
 
-    // AI-enhanced impact and summary generation
+    // AI-enhanced impact, summary, and steps generation
     const aiEnhanced = await this.generateAIContent(finding, verification, metadata, vulnInfo);
 
-    const stepsToReproduce = this.buildReproductionSteps(finding, verification);
+    // Use AI-generated steps when raw HTTP evidence is available — they reference actual captured requests
+    const stepsToReproduce = aiEnhanced.steps ?? this.buildReproductionSteps(finding, verification, metadata.rawEvidence);
     const evidence = this.buildEvidence(finding, verification);
 
     const report: BugBountyReport = {
@@ -103,13 +107,14 @@ export class DraftReportGenerator {
       vulnerability: vulnInfo.description,
       impact: aiEnhanced.impact,
       stepsToReproduce,
-      proofOfConcept: this.buildPoC(finding, verification),
+      proofOfConcept: this.buildPoC(finding, verification, metadata.rawEvidence, metadata.videoPath),
       evidence,
       affectedAssets: [finding.endpoint],
       remediation: vulnInfo.remediation,
       references: vulnInfo.refs,
       timeline: `**Discovered**: ${metadata.huntDate}\n**Verified**: ${new Date().toISOString().split("T")[0]}\n**Status**: Ready for submission`,
       reportMarkdown: "",
+      videoPath: metadata.videoPath,
     };
 
     report.reportMarkdown = this.renderMarkdown(report, metadata.programName);
@@ -126,31 +131,45 @@ export class DraftReportGenerator {
   private async generateAIContent(
     finding: SolverResult,
     verification: VerificationResult,
-    metadata: { programName: string; targetUrl: string },
+    metadata: { programName: string; targetUrl: string; rawEvidence?: string; videoPath?: string },
     vulnInfo: { name: string; description: string }
-  ): Promise<{ summary: string; impact: string }> {
-    const prompt = `Write a professional bug bounty report section for:
+  ): Promise<{ summary: string; impact: string; steps?: string[] }> {
+    const hasRawHttp = !!metadata.rawEvidence;
+    const rawSection = hasRawHttp
+      ? `\n\nRAW HTTP EVIDENCE (captured during exploitation):\n\`\`\`\n${metadata.rawEvidence!.slice(0, 2500)}\n\`\`\``
+      : "";
+
+    const stepsInstruction = hasRawHttp
+      ? `3. "steps": Array of exact, copy-paste reproduction steps derived from the raw HTTP evidence above. Each step should be a complete instruction a triager can follow — e.g. "Send POST /api/basket/add with body: {\\"ProductId\\":1,\\"quantity\\":-100}" or "Observe the 200 OK response containing another user's data". Reference specific endpoint paths, headers, and body values from the captured requests.`
+      : `3. "steps": Array of specific reproduction steps for this vulnerability class. Be concrete — include the endpoint path, parameter names, and a realistic payload.`;
+
+    const prompt = `Write professional bug bounty report content for the following confirmed vulnerability:
+
 Vulnerability: ${vulnInfo.name}
 Endpoint: ${finding.endpoint}
+Target: ${metadata.targetUrl}
 Program: ${metadata.programName}
-Verification: ${JSON.stringify(verification.layer3_playwright, null, 2)}
-Payload: ${finding.payload}
+Payload: ${finding.payload || "N/A"}
+Verification confidence: ${Math.round(verification.finalConfidence * 100)}%
+Browser alerts triggered: ${verification.layer3_playwright.consoleAlerts.join(", ") || "none"}${rawSection}
 
 Generate:
-1. "summary": A 2-3 sentence executive summary for the security team (professional, factual)
-2. "impact": A paragraph describing the business/security impact of this vulnerability
+1. "summary": 2-3 sentence executive summary. Professional, factual, specific. If raw HTTP is provided, reference the actual endpoint and method observed.
+2. "impact": A focused paragraph on the business/security impact — what an attacker gains, what data is exposed, what invariants are broken.
+${stepsInstruction}
 
-Return JSON: { "summary": "...", "impact": "..." }`;
+Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "...", "steps": ["step1", "step2", ...] }`;
 
     try {
       const response = await this.modelRouter.generate(prompt, "analyze");
-      const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
+      const match = response.match(/\{[\s\S]+\}/);
+      const parsed = JSON.parse(match?.[0] || "{}");
       return {
         summary: parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint}.`,
         impact: parsed.impact || `This vulnerability poses a significant security risk to ${metadata.programName} and its users.`,
+        steps: Array.isArray(parsed.steps) && parsed.steps.length > 0 ? parsed.steps as string[] : undefined,
       };
     } catch (err) {
-      // Non-critical: report polish fails gracefully with template text — hunt result is not lost
       logger.warn("ReportGenerator: AI content generation failed — using template fallback", {
         err: String(err),
         vulnClass: finding.vulnClass,
@@ -163,7 +182,7 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     }
   }
 
-  private buildReproductionSteps(finding: SolverResult, verification: VerificationResult): string[] {
+  private buildReproductionSteps(finding: SolverResult, verification: VerificationResult, rawEvidence?: string): string[] {
     const steps = [
       `Navigate to the affected endpoint: \`${finding.endpoint}\``,
       `Intercept the request using a proxy (e.g., Burp Suite)`,
@@ -172,9 +191,17 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     if (finding.payload) {
       steps.push(`Inject the following payload: \`${finding.payload}\``);
     }
-    if (finding.request) {
+
+    if (rawEvidence) {
+      // Extract the first request line for a specific reproduction step
+      const firstReqLine = rawEvidence.split("\n").find(l => /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s/.test(l));
+      if (firstReqLine) {
+        steps.push(`Send the following request: \`${firstReqLine}\``);
+      }
+    } else if (finding.request) {
       steps.push(`Send the modified request: \`${finding.request}\``);
     }
+
     steps.push(`Observe the response for evidence of the vulnerability`);
 
     if (verification.layer3_playwright.consoleAlerts.length > 0) {
@@ -184,11 +211,19 @@ Return JSON: { "summary": "...", "impact": "..." }`;
     return steps;
   }
 
-  private buildPoC(finding: SolverResult, verification: VerificationResult): string {
-    let poc = `**Tool Used**: ${finding.toolsUsed.join(", ")}\n\n`;
-    poc += `**Request**:\n\`\`\`\n${finding.request || "N/A"}\n\`\`\`\n\n`;
-    poc += `**Response**:\n\`\`\`\n${finding.response?.slice(0, 500) || "N/A"}\n\`\`\`\n\n`;
+  private buildPoC(finding: SolverResult, verification: VerificationResult, rawEvidence?: string, videoPath?: string): string {
+    let poc = `**Tool Used**: ${finding.toolsUsed.join(", ") || "automated probe"}\n\n`;
 
+    if (rawEvidence) {
+      poc += `**Raw HTTP Evidence**:\n\`\`\`http\n${rawEvidence.slice(0, 3000)}\n\`\`\`\n\n`;
+    } else {
+      poc += `**Request**:\n\`\`\`\n${finding.request || "N/A"}\n\`\`\`\n\n`;
+      poc += `**Response**:\n\`\`\`\n${finding.response?.slice(0, 500) || "N/A"}\n\`\`\`\n\n`;
+    }
+
+    if (videoPath) {
+      poc += `**Video PoC**: Recorded exploitation session — \`${videoPath}\`\n\n`;
+    }
     if (verification.layer3_playwright.screenshot) {
       poc += `**Screenshot**: [Attached – base64 encoded screenshot available]\n\n`;
     }
@@ -217,6 +252,10 @@ Return JSON: { "summary": "...", "impact": "..." }`;
   }
 
   private renderMarkdown(report: BugBountyReport, programName: string): string {
+    const videoSection = report.videoPath
+      ? `\n## Video Proof of Concept\n**Recording**: \`${report.videoPath}\`\n> Submit this video file alongside the report for platforms requiring video PoC (Synack, Intigriti P1/P2).\n`
+      : "";
+
     return `# ${report.title}
 
 ## Summary
@@ -240,8 +279,7 @@ ${report.affectedAssets.map(a => `- \`${a}\``).join("\n")}
 ${report.stepsToReproduce.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
 ## Proof of Concept
-${report.proofOfConcept}
-
+${report.proofOfConcept}${videoSection}
 ## Evidence
 ${report.evidence.map(e => `- ${e}`).join("\n")}
 

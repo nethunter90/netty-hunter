@@ -56,6 +56,9 @@ export interface HuntState {
   findingsTimeline: { cycle: number; count: number }[];
   pivotCount: number;
   startedAt: number;
+  /** Findings count pushed directly by HunterEngine (engine-driven hunts don't
+   *  register with huntOrchestrator, so this is the authoritative source). */
+  externalFindingsCount?: number;
 }
 
 interface StrategyEdge {
@@ -858,6 +861,10 @@ export class MetaReasoner extends EventEmitter {
   }
 
   private getCurrentFindingsCount(huntId: string): number {
+    // Engine-driven hunts push their authoritative count directly — prefer it.
+    const state = this.huntStates.get(huntId);
+    if (state?.externalFindingsCount !== undefined) return state.externalFindingsCount;
+
     let count = 0;
     const memory = missionMemory.get(huntId);
     if (memory) {
@@ -872,6 +879,26 @@ export class MetaReasoner extends EventEmitter {
       count += reasoningMemory.discoveredTechnologies.size;
     }
     return count;
+  }
+
+  /**
+   * Push live hunt progress from an engine-driven hunt so the decision journal
+   * and health computations carry real signal. Safe no-op if the hunt state was
+   * never initialized.
+   */
+  syncHuntProgress(huntId: string, update: { findingsCount?: number; confidence?: number; strategy?: string }): void {
+    const state = this.huntStates.get(huntId);
+    if (!state) return;
+    state.cycleCount++;
+    if (update.findingsCount !== undefined) {
+      state.externalFindingsCount = update.findingsCount;
+      state.findingsTimeline.push({ cycle: state.cycleCount, count: update.findingsCount });
+    }
+    if (update.confidence !== undefined) state.hypothesisConfidence = update.confidence;
+    if (update.strategy && update.strategy !== state.currentStrategy) {
+      state.strategyHistory.push(update.strategy);
+      state.currentStrategy = update.strategy;
+    }
   }
 
   private buildHuntContext(huntId: string, state: HuntState): HuntContext {
@@ -1099,6 +1126,8 @@ export class MetaReasoner extends EventEmitter {
       reasoning: `Hunt completed with score ${(finalScore * 100).toFixed(1)}%`,
     });
     this.stopMonitoring(huntId);
+    // Free per-hunt state so the map doesn't grow unbounded across hunts.
+    this.huntStates.delete(huntId);
   }
 
   getStats(): {

@@ -155,9 +155,12 @@ export class EvasionLibrary {
     comment_insertion: (p) => [`${p.slice(0, 3)}/**/` + p.slice(3), p.replace(/ /g, "/**/")],
     null_byte: (p) => [`${p}\x00`, `\x00${p}`],
     whitespace_variants: (p) => [p.replace(/ /g, "\t"), p.replace(/ /g, "\r\n"), p.replace(/ /g, "+")],
-    chunked_transfer: (p) => [p], // handled at transport level
-    header_manipulation: (p) => [p], // rotate User-Agent, X-Forwarded-For, etc.
     json_unicode: (p) => [JSON.stringify(p).slice(1, -1)],
+    // NOTE: chunked_transfer and header_manipulation were removed — they are
+    // transport/header-level techniques, not payload transforms. As string
+    // mutations they returned the payload unchanged, which fired raw payloads
+    // while falsely reporting an evasion variant. Header rotation is handled in
+    // the request layer (BypassExecutor); chunked transfer is not yet supported.
   };
 
   generateVariants(payload: string, techniques: string[]): Array<{ technique: string; payload: string }> {
@@ -228,9 +231,12 @@ export class BypassExecutor {
       "curl/7.88.1",
       "python-requests/2.31.0",
     ];
+    // Generate a plausible public IPv4: all four octets randomized (1–254),
+    // avoiding the tell-tale fixed ".0.1" suffix that flags spoofed traffic.
+    const octet = () => 1 + Math.floor(Math.random() * 254);
     return {
       "User-Agent": agents[Math.floor(Math.random() * agents.length)],
-      "X-Forwarded-For": `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.0.1`,
+      "X-Forwarded-For": `${octet()}.${octet()}.${octet()}.${octet()}`,
       "Accept": "text/html,application/xhtml+xml,*/*",
     };
   }

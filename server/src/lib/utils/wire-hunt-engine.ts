@@ -40,6 +40,9 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   fwd('hunt:chain_seeded');
   fwd('hunt:pivot');
   fwd('hunt:ai_reasoning');
+  fwd('recon:start');
+  fwd('recon:subdomains_raw');
+  fwd('recon:complete');
   fwd('hunt:solver_finding');
   fwd('hunt:solver_started');
   fwd('hunt:solver_complete');

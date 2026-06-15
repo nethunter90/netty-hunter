@@ -553,6 +553,7 @@ export class CampaignOrchestrator extends EventEmitter {
     });
     engine.on("hunt:update", d => this.emit("l4:strategy_update", d));
     engine.on("hunt:error", d => this.emit("l4:error", d));
+    engine.on("hunt:ai_reasoning", d => this.emit("l4:ai_reasoning", d));
     engine.on("hunt:cve_seeded", d => this.emit("hunt:cve_seeded", d));
     engine.on("hunt:graphql_schema", d => this.emit("hunt:graphql_schema", d));
     engine.on("hunt:oob_hit", d => this.emit("hunt:oob_hit", d));
@@ -587,8 +588,16 @@ export class CampaignOrchestrator extends EventEmitter {
 
     // 4b. Supplement with SolverPool for high-ROI vuln classes if findings are sparse
     const targetHostname = (() => { try { return new URL(params.targetUrl).hostname; } catch { return ''; } })();
-    if (rawFindings.length < 2 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
-      this.audit(4, "solver_supplement_start", { reason: "sparse findings" });
+    // Compute the budget the engine actually consumed so the supplement draws
+    // from the REMAINING quota rather than a fresh full allowance — previously
+    // the supplement reset requestsMade to 0, silently doubling total spend.
+    const totalBudget = params.budget?.maxRequests ?? 2000;
+    const engineSpent = (() => {
+      try { return engine.getState()?.budget?.requestsMade ?? 0; } catch { return 0; }
+    })();
+    const remainingBudget = Math.max(0, totalBudget - engineSpent);
+    if (rawFindings.length < 2 && remainingBudget > 0 && !dynamicRateLimiter.isHardBanned(targetHostname)) {
+      this.audit(4, "solver_supplement_start", { reason: "sparse findings", remainingBudget, engineSpent });
       try {
         const pool = new SolverPool(4);
         pool.on("solver:finding", (d) => {
@@ -602,14 +611,16 @@ export class CampaignOrchestrator extends EventEmitter {
           {
             programId: params.programId,
             sessionId: 0,
-            // Bound the supplement to the campaign request budget so it can't
-            // run unbounded and overrun the quota (was previously omitted).
-            budget: { maxRequests: params.budget?.maxRequests ?? 2000, requestsMade: 0 },
+            // Draw from the remaining campaign budget, pre-charged with what the
+            // engine already spent so total spend stays within maxRequests.
+            budget: { maxRequests: totalBudget, requestsMade: engineSpent },
           }
         );
       } catch (err) {
         logger.warn("Solver supplement failed (non-critical)", { err });
       }
+    } else if (rawFindings.length < 2 && remainingBudget <= 0) {
+      this.audit(4, "solver_supplement_skipped", { reason: "budget exhausted by engine", engineSpent });
     }
 
     // 4c. Run abbreviated hunts on additional discovered subdomains (concurrency limit 2)
@@ -668,6 +679,32 @@ export class CampaignOrchestrator extends EventEmitter {
     };
   }
 
+  // Resolve the real URL a finding targets so the verifier re-probes the actual
+  // endpoint instead of a numeric target FK. `affected_url` is authoritative for
+  // findings created after this fix; for older rows we recover the URL from the
+  // evidence trail or the title ("<VULN> found at <url>") before falling back to
+  // the hunt's base target URL.
+  private deriveVerificationUrl(
+    dbFinding: typeof findings.$inferSelect,
+    fallbackUrl: string
+  ): string {
+    const affected = (dbFinding as { affectedUrl?: string | null }).affectedUrl;
+    if (affected && /^https?:\/\//i.test(affected)) return affected;
+
+    const host = (() => { try { return new URL(fallbackUrl).host; } catch { return ""; } })();
+    try {
+      const blob = JSON.stringify(dbFinding.evidence ?? "");
+      const urls = blob.match(/https?:\/\/[^\s"'\\]+/g) || [];
+      const onHost = host ? urls.find(u => u.includes(host)) : urls[0];
+      if (onHost) return onHost;
+    } catch { /* evidence not serialisable — fall through */ }
+
+    const fromTitle = dbFinding.title?.match(/https?:\/\/\S+/)?.[0];
+    if (fromTitle) return fromTitle;
+
+    return fallbackUrl;
+  }
+
   // ── Layer 5: Verification Gate ─────────────────────────────────────────────
   private async layer5_verificationGate(
     params: OrchestrateParams,
@@ -713,10 +750,11 @@ export class CampaignOrchestrator extends EventEmitter {
     for (const dbFinding of dbFindings) {
       this.emit("l5:verifying", { findingId: dbFinding.id });
       try {
+        const verificationUrl = this.deriveVerificationUrl(dbFinding, params.targetUrl);
         const mockResult = {
           taskId: String(dbFinding.id),
           solverId: "orchestrator",
-          endpoint: String(dbFinding.targetId || ""),
+          endpoint: verificationUrl,
           vulnClass: dbFinding.vulnType as Parameters<typeof this.verifierAgent.verify>[0]["vulnClass"],
           found: true,
           confidence: dbFinding.confidence,
@@ -860,16 +898,22 @@ export class CampaignOrchestrator extends EventEmitter {
                     submittedAt: new Date(),
                   }).where(eq(findings.id, dbFinding.id)).catch(() => {});
                 } else if (!result.draftOnly) {
-                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, error: result.error });
+                  // Surface submission failure to the operator instead of only logging —
+                  // a 401/403 from the platform should be visible, not silent.
+                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, findingId: dbFinding.id, error: result.error });
+                  this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: result.error });
                 }
-              }).catch(() => {});
+              }).catch((err) => {
+                logger.error("[CampaignOrchestrator] Report submission threw", { platform, findingId: dbFinding.id, err: String(err) });
+                this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: String(err) });
+              });
             }
           }
 
           // Reconcile graph node verification status
           eventBus.publish('finding_verified', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,
-            endpoint: String(dbFinding.targetId || ''),
+            endpoint: verificationUrl,
             findingId: dbFinding.id,
             finalConfidence: verification.finalConfidence,
           });
@@ -878,7 +922,7 @@ export class CampaignOrchestrator extends EventEmitter {
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
           eventBus.publish('finding_rejected', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,
-            endpoint: String(dbFinding.targetId || ''),
+            endpoint: verificationUrl,
             findingId: dbFinding.id,
             verdict: verification.finalVerdict,
           });
@@ -908,6 +952,11 @@ export class CampaignOrchestrator extends EventEmitter {
     const verifiedFindings = (verifData.verified as Array<{
       finding: typeof findings.$inferSelect;
       verification: Record<string, unknown>;
+    }>) || [];
+
+    const rejectedFindings = (verifData.rejected as Array<{
+      finding?: typeof findings.$inferSelect;
+      verification?: Record<string, unknown>;
     }>) || [];
 
     this.audit(6, "harvest_start", { verifiedCount: verifiedFindings.length });
@@ -942,7 +991,7 @@ export class CampaignOrchestrator extends EventEmitter {
           layer3_playwright: { confirmed: true, consoleAlerts: [], networkRequests: [] },
           layer4_ai: { confirmed: true, reasoning: "", confidenceAdjustment: 0 },
           finalVerdict: (verification.finalVerdict as "confirmed") || "confirmed",
-          finalConfidence: finding.confidence,
+          finalConfidence: (verification.finalConfidence as number | undefined) ?? finding.confidence,
           dedupHash: finding.dedupHash || "",
         };
 
@@ -986,7 +1035,9 @@ export class CampaignOrchestrator extends EventEmitter {
     for (const { finding } of verifiedFindings) {
       try {
         await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true);
-      } catch { /* non-critical */ }
+      } catch (err) {
+        logger.warn("[L6] rlStore.recordToolOutcome failed", { vulnType: finding.vulnType, err });
+      }
       // Feed verified finding into bounty intelligence so duplicate detection and
       // payout estimation improve over time
       try {
@@ -1003,16 +1054,46 @@ export class CampaignOrchestrator extends EventEmitter {
       } catch { /* non-critical */ }
     }
 
+    // 6b.2. Correct programType heuristics with verifier-authoritative verdicts.
+    // HunterEngine fires these optimistically with inline-confirmed count before
+    // the verification gate runs. Re-recording with the verified count pulls the
+    // RL rate toward ground truth — each hunt adds one authoritative data point.
+    try {
+      const verifiedCount = verifiedFindings.length;
+      const totalProcessed = (verifData.totalProcessed as number) || 0;
+      const strategy = verifiedCount > 0 ? 'found_vulns' : 'no_vulns';
+      await this.rlStore.recordProgramTypeHeuristic('web_app', strategy, verifiedCount > 0);
+      if (totalProcessed > 0) {
+        await this.rlStore.recordProgramTypeHeuristic('web_app', 'efficient_hunt', verifiedCount / totalProcessed > 0.1);
+      }
+    } catch (err) {
+      logger.debug('[L6] programType heuristic ground-truth correction failed', { err });
+    }
+
     // 6c. Update autonomy maturity tracker
     let autonomyScore = 0;
     try {
+      // Derive real tool-usage metrics from finding evidence instead of hardcoding.
+      // Each finding's evidence array carries the probes that produced it, each
+      // tagged with the tool name. Tools that appear in a VERIFIED finding are
+      // "correct"; the union across verified+rejected is the full selected set.
+      const extractTools = (f?: typeof findings.$inferSelect): string[] => {
+        const ev = (f?.evidence as Array<Record<string, unknown>>) || [];
+        return ev.map(e => (e?.tool as string) || "").filter(Boolean);
+      };
+      const correctTools = new Set<string>();
+      verifiedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => correctTools.add(t)));
+      const selectedTools = new Set<string>(correctTools);
+      rejectedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => selectedTools.add(t)));
+
+      const totalProcessed = (verifData.totalProcessed as number) || 0;
       const huntMetrics = {
-        hypothesesGenerated: Math.max(5, this.state.findingsCount),
+        hypothesesGenerated: Math.max(totalProcessed, this.state.findingsCount),
         hypothesesCorrect: this.state.verifiedCount,
-        toolsSelected: 3,
-        toolsCorrect: this.state.verifiedCount > 0 ? 2 : 1,
+        toolsSelected: Math.max(selectedTools.size, 1),
+        toolsCorrect: correctTools.size,
         outOfScopeAttempts: 0,
-        falsePositives: Math.max(0, (verifData.totalProcessed as number || 0) - this.state.verifiedCount),
+        falsePositives: Math.max(0, totalProcessed - this.state.verifiedCount),
         confirmedFindings: this.state.verifiedCount,
         chainDepth: this.state.verifiedCount > 0 ? 1 : 0,
         reportQualityScore: reports.length > 0 ? 0.8 : 0,
@@ -1031,11 +1112,28 @@ export class CampaignOrchestrator extends EventEmitter {
     // Phase 2: extract operational chains from multi-finding sessions
     // Phase 3: emit cross-hunt pattern stats
     try {
-      for (const { finding } of verifiedFindings) {
+      for (const { finding, verification } of verifiedFindings) {
+        const calibratedConfidence =
+          (verification.finalConfidence as number | undefined) ?? finding.confidence ?? 0.5;
         await this.rlStore.recordConfidenceCalibration(
           finding.vulnType,
-          finding.confidence ?? 0.5,
+          calibratedConfidence,
           true
+        );
+      }
+
+      // Calibrate the false-positive arm so Brier scoring has both sides of the curve.
+      // inconclusive is excluded — forcing it to a pole would penalise L5 replay limitations
+      // rather than the hypothesis quality, which is what we're calibrating.
+      for (const { finding, verification } of rejectedFindings) {
+        if (!finding || !verification) continue;
+        if ((verification.finalVerdict as string) === "inconclusive") continue;
+        const calibratedConfidence =
+          (verification.finalConfidence as number | undefined) ?? finding.confidence ?? 0.5;
+        await this.rlStore.recordConfidenceCalibration(
+          finding.vulnType,
+          calibratedConfidence,
+          false
         );
       }
 

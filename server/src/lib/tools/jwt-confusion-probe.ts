@@ -247,11 +247,13 @@ class JWTConfusionProber {
               severity: "high",
               detail: `Server accepted JWT signed with weak secret "${secret}" (status ${res.status})`,
             });
-            logger.warn(`[JWT] weak_secret vuln confirmed with secret: ${secret}`);
+            // The cracked secret is retained in the structured finding (detail above)
+            // for the report, but kept out of app logs to avoid secret sprawl.
+            logger.warn(`[JWT] weak_secret vuln confirmed (secret length ${secret.length})`);
             break;
           }
         } catch (err) {
-          logger.debug(`[JWT] weak_secret test error (secret=${secret}): ${err}`);
+          logger.debug(`[JWT] weak_secret test error (secret length ${secret.length}): ${err}`);
         }
       }
     }

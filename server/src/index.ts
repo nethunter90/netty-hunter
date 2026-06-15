@@ -26,6 +26,11 @@ import xbowRoutes from "./routes/xbow";
 import settingsRoutes from "./routes/settings";
 import chatRoutes from "./routes/chat";
 import toolsRoutes from "./routes/tools";
+import ctfRoutes from "./routes/ctf";
+import adaptiveScanRoutes from "./routes/adaptive-scan";
+import findingsRoutes from "./routes/findings";
+import evidenceRoutes from "./routes/evidence";
+import reportExportRoutes from "./routes/report-export";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -55,6 +60,19 @@ import("./db").then(({ db: _db }) => {
       }).catch(() => {});
     });
   });
+}).catch(() => {});
+
+// ─── Cross-hunt learning tables ───────────────────────────────────────────────
+// Must run before the autonomous brain / hunts so the journal, threshold, and
+// cortex tables exist when the learning subsystems first read/write them.
+import("./lib/intelligence/learning-schema").then(({ initLearningSchema }) => {
+  initLearningSchema().catch(() => {});
+}).catch(() => {});
+
+// ─── Tool availability check ──────────────────────────────────────────────────
+// Logs which Kali binaries are present so degraded coverage is visible at boot.
+import("./lib/hunter/binary-check").then(({ checkBinariesAtStartup }) => {
+  checkBinariesAtStartup().catch(() => {});
 }).catch(() => {});
 
 // ─── Autonomous Brain ─────────────────────────────────────────────────────────
@@ -103,8 +121,10 @@ if (!process.env.SESSION_SECRET) {
   logger.warn("SESSION_SECRET not set — using insecure development default");
 }
 
-// Session – PostgreSQL-backed (survives restarts)
-app.use(session({
+// Session – PostgreSQL-backed (survives restarts). Extracted to a shared
+// reference so Socket.IO can reuse the exact same session parser and
+// authenticate websocket connections against the same session store.
+const sessionMiddleware = session({
   store: new PgSession({
     conString: process.env.DATABASE_URL,
     tableName: "sessions",
@@ -118,7 +138,27 @@ app.use(session({
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
-}));
+});
+app.use(sessionMiddleware);
+
+// Share the session parser with Socket.IO's underlying Engine.IO transport so
+// socket.request.session is populated on every connection (same cookie, same store).
+io.engine.use(sessionMiddleware);
+
+// ─── Socket.IO Authentication Gate ───────────────────────────────────────────
+// Without this, any client reaching the port could spawn PTY shells, start
+// hunts, and stream live state — all of the HTTP API's privileged actions are
+// also reachable over the websocket. Reject any connection lacking a valid
+// authenticated session before a single event handler is wired.
+io.use((socket, next) => {
+  const req = socket.request as unknown as { session?: { userId?: string | number } };
+  if (req.session?.userId) {
+    next();
+    return;
+  }
+  logger.warn("Socket.IO connection rejected — unauthenticated", { id: socket.id });
+  next(new Error("unauthorized"));
+});
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -179,6 +219,11 @@ app.use("/api/xbow", requireAuth, xbowRoutes);
 app.use("/api/settings", requireAuth, settingsRoutes);
 app.use("/api/chat", requireAuth, chatRoutes);
 app.use("/api/tools", requireAuth, toolsRoutes);
+app.use("/api/ctf", requireAuth, ctfRoutes);
+app.use("/api/adaptive-scan", requireAuth, adaptiveScanRoutes);
+app.use("/api/findings", requireAuth, findingsRoutes);
+app.use("/api/evidence", requireAuth, evidenceRoutes);
+app.use("/api/report-export", requireAuth, reportExportRoutes);
 
 // OOB callback receiver — no auth required (external targets call this).
 // Per-IP rate limit caps beacon-flooding abuse on this public endpoint.
@@ -259,7 +304,7 @@ io.on("connection", (socket) => {
       "l4:hunt_started", "l4:phase", "l4:observations", "l4:hypotheses",
       "l4:probing", "l4:probe_result", "l4:finding_raw", "l4:strategy_update",
       "l4:solver_finding", "l4:error",
-      "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate", "l5:report_submitted",
+      "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate", "l5:report_submitted", "l5:report_submit_failed",
       "l6:report_generated", "l6:autonomy_updated",
       "orchestration:targets_expanded", "orchestration:takeover_found",
       "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",

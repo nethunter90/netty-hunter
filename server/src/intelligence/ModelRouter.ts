@@ -1,11 +1,14 @@
 /**
- * ModelRouter – Intelligent task-type-aware model routing for Ollama.
- * Routes requests to the best available model based on task type.
+ * ModelRouter – Intelligent task-type-aware model routing.
+ * Tier 0a: Claude SDK (Sonnet) for reason/analyze — per-hunt conversation threads
+ * Tier 0b: Claude CLI bridge — fallback when SDK unavailable
+ * Tier 1:  Ollama — local model for lower-cost tasks
  */
 import axios from "axios";
 import logger from "../utils/logger";
 import { runtimeConfig } from "../lib/runtime-config";
 import { ClaudeBridge } from "../lib/claude-bridge";
+import { ClaudeClient } from "../lib/claude-client";
 import { UnifiedReinforcementStore } from "./ReinforcementStore";
 
 type TaskType = "reason" | "code" | "analyze" | "classify" | "chat" | "summarize";
@@ -203,14 +206,28 @@ export class ModelRouter {
     systemPrompt?: string;
     temperature?: number;
     maxTokens?: number;
+    sessionId?: string;
   } = {}): Promise<string> {
-    // Tier 0: Claude Code CLI — used for hard reasoning when available.
-    // Consults the reinforcement store to make a data-driven routing decision
-    // once enough samples exist; defaults to Claude when data is sparse.
+    // Tier 0a: Claude SDK (Sonnet) — per-hunt conversation thread, best quality
     if (taskType === "reason" || taskType === "analyze") {
+      if (ClaudeClient.isAvailable()) {
+        try {
+          logger.info("ModelRouter: routing to Claude API (SDK)", { taskType });
+          const sid = options.sessionId ?? "default";
+          const fullPrompt = options.systemPrompt
+            ? `${options.systemPrompt}\n\n${prompt}`
+            : prompt;
+          const result = await ClaudeClient.reason(sid, fullPrompt);
+          this.lastProvider = "claude";
+          return result;
+        } catch (err) {
+          logger.warn("ModelRouter: Claude SDK failed, trying CLI bridge", { err: String(err) });
+        }
+      }
+
+      // Tier 0b: Claude CLI bridge — fallback when SDK key unavailable
       const claudeAvailable = await ClaudeBridge.isAvailable();
       if (claudeAvailable) {
-        // Check if reinforcement data suggests Ollama is better for this specific task
         let preferClaude = true;
         try {
           const rl = UnifiedReinforcementStore.getInstance();
@@ -234,6 +251,25 @@ export class ModelRouter {
           } catch (err) {
             logger.warn("ModelRouter: Claude bridge failed, falling back to Ollama", { err: String(err) });
           }
+        }
+      }
+    }
+
+    // Tier 0c: Claude Haiku for high-volume, low-complexity tasks. This is the
+    // cheap tier of the model split — classify/chat/summarize never need Sonnet's
+    // depth, so route them to Haiku when the SDK is available (falls back to
+    // Ollama on error or budget exhaustion).
+    if (taskType === "classify" || taskType === "chat" || taskType === "summarize") {
+      if (ClaudeClient.isAvailable()) {
+        try {
+          const sys = options.systemPrompt
+            || "You are a precise security analysis assistant. Answer concisely and return valid JSON when asked.";
+          const result = await ClaudeClient.oneShot(sys, prompt, options.sessionId);
+          this.lastProvider = "claude";
+          logger.debug("ModelRouter: routed to Claude Haiku", { taskType });
+          return result;
+        } catch (err) {
+          logger.warn("ModelRouter: Claude Haiku failed/over-budget, falling back to Ollama", { err: String(err), taskType });
         }
       }
     }
@@ -292,10 +328,11 @@ export class ModelRouter {
     throw new Error(`ModelRouter: Generation failed after ${MAX_RETRIES + 1} attempts — ${String(lastErr)}`);
   }
 
-  async reason(prompt: string): Promise<string> {
+  async reason(prompt: string, sessionId?: string): Promise<string> {
     return this.generate(prompt, "reason", {
       systemPrompt: "You are an expert security researcher and bug bounty hunter. Analyze carefully and respond with precise, structured JSON when asked.",
       temperature: 0.05,
+      sessionId,
     });
   }
 
@@ -305,6 +342,69 @@ export class ModelRouter {
 
   async code(prompt: string): Promise<string> {
     return this.generate(prompt, "code", { temperature: 0.1 });
+  }
+
+  // ── Model type classification ──────────────────────────────────────────────
+  private static readonly EMBED_PATTERNS   = /embed|minilm|bge-|e5-|sentence/i;
+  private static readonly VISION_PATTERNS  = /vision|llava|bakllava|moondream|minicpm-v|cogvlm|internvl|qwen.*vl|llama.*vision/i;
+
+  /** LLM-only models — excludes embed and vision models. */
+  async getLLMModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m =>
+      !ModelRouter.EMBED_PATTERNS.test(m) &&
+      !ModelRouter.VISION_PATTERNS.test(m)
+    );
+  }
+
+  /** Embedding models only. */
+  async getEmbedModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m => ModelRouter.EMBED_PATTERNS.test(m));
+  }
+
+  /** Vision/multimodal models only. */
+  async getVisionModels(): Promise<string[]> {
+    const all = await this.getAvailableModels();
+    return all.filter(m => ModelRouter.VISION_PATTERNS.test(m));
+  }
+
+  /** Returns the best available embed model, or null if none installed. */
+  async getBestEmbedModel(): Promise<string | null> {
+    const embeds = await this.getEmbedModels();
+    if (embeds.length === 0) return null;
+    // Prefer well-known high-quality embed models
+    const preferred = ['nomic-embed-text', 'mxbai-embed-large', 'bge-large', 'all-minilm', 'e5-'];
+    for (const p of preferred) {
+      const match = embeds.find(m => m.toLowerCase().startsWith(p));
+      if (match) return match;
+    }
+    return embeds[0];
+  }
+
+  /**
+   * Describe a screenshot using the best available vision model.
+   * Returns null if no vision model is installed or the call fails.
+   * @param base64Image - PNG/JPEG image encoded as base64 string
+   * @param prompt      - Instruction for the vision model
+   */
+  async describeScreenshot(base64Image: string, prompt: string): Promise<string | null> {
+    const visionModels = await this.getVisionModels();
+    if (visionModels.length === 0) return null;
+    if (!this.isHealthy()) return null;
+
+    try {
+      const resp = await axios.post(
+        `${this.baseUrl}/api/generate`,
+        { model: visionModels[0], prompt, images: [base64Image], stream: false },
+        { timeout: 30_000 }
+      );
+      this.recordSuccess();
+      return (resp.data as OllamaResponse).response ?? null;
+    } catch (err) {
+      logger.debug("ModelRouter: Vision model call failed", { model: visionModels[0], err: String(err) });
+      return null;
+    }
   }
 
   async chat(prompt: string): Promise<string> {

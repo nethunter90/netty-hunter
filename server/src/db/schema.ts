@@ -115,6 +115,7 @@ export const findings = pgTable("findings", {
   cweId: integer("cwe_id"),
   cveId: text("cve_id"),
   exploitPayload: text("exploit_payload"),
+  affectedUrl: text("affected_url"),  // full URL the finding targets — used by the verifier to re-probe
   verificationStatus: varchar("verification_status", { length: 32 }).notNull().default("pending"),
   verificationLog: jsonb("verification_log").notNull().default([]),
   dedupHash: text("dedup_hash").unique(),

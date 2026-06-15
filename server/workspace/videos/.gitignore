@@ -1,0 +1,4 @@
+# Ignore all video files but keep the directory tracked
+*.webm
+*.mp4
+*.mkv

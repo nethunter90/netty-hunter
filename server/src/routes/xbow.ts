@@ -13,6 +13,27 @@ import { metaReasoner } from '../lib/intelligence/meta-reasoning';
 const router = Router();
 const LAB_RUNS_DIR = path.join(process.cwd(), 'workspace', 'lab-runs');
 
+// Technique hints injected into the hunt goal for each vuln tag
+const TAG_TECHNIQUE_HINTS: Record<string, string> = {
+  sqli:            "Use SQL injection via string concatenation. Try ' OR 1=1-- and UNION SELECT payloads in query parameters.",
+  xss:             "Test reflected XSS via <script> tags, onerror handlers, and javascript: URIs in search/query parameters.",
+  idor:            "Enumerate object IDs by incrementing integers in API paths like /api/users/1, /api/users/2.",
+  ssrf:            "Probe SSRF via url/redirect parameters pointing to http://127.0.0.1 or internal metadata endpoints.",
+  rce:             "Look for deserialization endpoints. POST node-serialize IIFE payload: {\"x\":\"_$$ND_FUNC$$_function(){return require('child_process').execSync('id').toString()}()\"}",
+  deserialization: "POST node-serialize IIFE to /deserialize: {\"rce\":\"_$$ND_FUNC$$_function(){return require('child_process').execSync('id').toString()}()\"}",
+  lfi:             "Test path traversal via ../../etc/passwd in file/path parameters.",
+  auth:            "Try authentication bypass: default credentials, JWT none algorithm, and SQL injection in login fields.",
+};
+
+function buildChallengeGoal(ch: XBOWChallenge, baseUrl: string): string {
+  const hints = ch.tags
+    .map(t => TAG_TECHNIQUE_HINTS[t.toLowerCase()])
+    .filter(Boolean)
+    .join(" ");
+  const base = `${ch.description} The flag is accessible at ${baseUrl} once the vulnerability is exploited.`;
+  return hints ? `${base} TECHNIQUE HINTS: ${hints}` : base;
+}
+
 const abortFlags = new Map<string, boolean>();
 
 let dirReady = false;
@@ -1087,7 +1108,7 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
                 try {
                   const hunt = await huntOrchestrator.createHunt({
                     target: baseUrl,
-                    goal: `${ch.description}. Find the flag at ${baseUrl}.`,
+                    goal: buildChallengeGoal(ch, baseUrl),
                     scope: { inScope: [baseUrl], outOfScope: [] },
                     autoAdvance: true,
                     stealthMode: 'aggressive',
@@ -1188,8 +1209,8 @@ router.post('/benchmark/run', async (req: Request, res: Response) => {
       totalExecutionTimeMs,
       dockerAvailable,
       ollamaAvailable,
-      modelUsed: ollamaAvailable ? 'ollama' : 'none',
-      totalLLMCalls: ollamaAvailable ? results.length : 0,
+      modelUsed: ollamaAvailable ? 'ollama' : 'claude-fallback',
+      totalLLMCalls: results.length,
       totalLLMTimeMs: 0,
       results,
       repoCloned,

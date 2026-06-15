@@ -1,5 +1,6 @@
 import axios from "axios";
 import logger from "../../utils/logger";
+import { scopedHttp } from "../net/scoped-http";
 
 export interface SSRFPivotResult {
   reachableEndpoints: string[];
@@ -39,7 +40,8 @@ class SSRFChainProber {
   async probe(
     ssrfVectorUrl: string,
     ssrfParam: string,
-    authHeaders: Record<string, string> = {}
+    authHeaders: Record<string, string> = {},
+    programId?: number
   ): Promise<SSRFPivotResult> {
     const result: SSRFPivotResult = {
       reachableEndpoints: [],
@@ -49,7 +51,7 @@ class SSRFChainProber {
     };
 
     // 1. Cloud metadata probe
-    result.cloudMetadata = await this.probeCloudMetadata(ssrfVectorUrl, ssrfParam, authHeaders);
+    result.cloudMetadata = await this.probeCloudMetadata(ssrfVectorUrl, ssrfParam, authHeaders, programId);
     if (result.cloudMetadata) {
       result.pivotHypotheses.push({
         vulnClass: "rce",
@@ -63,7 +65,7 @@ class SSRFChainProber {
     // 2. Internal port scan via SSRF
     const portResults = await Promise.allSettled(
       INTERNAL_PORTS.map(({ port, service }) =>
-        this.probeInternalPort(ssrfVectorUrl, ssrfParam, "127.0.0.1", port, service, authHeaders)
+        this.probeInternalPort(ssrfVectorUrl, ssrfParam, "127.0.0.1", port, service, authHeaders, programId)
       )
     );
 
@@ -87,12 +89,15 @@ class SSRFChainProber {
   private async probeCloudMetadata(
     vectorUrl: string,
     ssrfParam: string,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<Record<string, unknown> | null> {
     for (const metaUrl of CLOUD_METADATA_URLS) {
       try {
         const probeUrl = this.injectSSRFTarget(vectorUrl, ssrfParam, metaUrl);
-        const resp = await axios.get(probeUrl, {
+        // probeUrl targets the in-scope vector host (the internal URL is carried
+        // as a parameter value); scopedHttp re-validates as defense-in-depth.
+        const resp = await scopedHttp.get(probeUrl, {
           headers: {
             ...authHeaders,
             // Azure requires this header
@@ -101,7 +106,7 @@ class SSRFChainProber {
           timeout: 5000,
           validateStatus: () => true,
           maxRedirects: 3,
-        });
+        }, programId);
         if (resp.status === 200 && resp.data) {
           const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
           if (this.isMetadataResponse(body)) {
@@ -120,16 +125,17 @@ class SSRFChainProber {
     host: string,
     port: number,
     service: string,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<{ port: number; service: string; open: boolean }> {
     try {
       const target = `http://${host}:${port}/`;
       const probeUrl = this.injectSSRFTarget(vectorUrl, ssrfParam, target);
-      const resp = await axios.get(probeUrl, {
+      const resp = await scopedHttp.get(probeUrl, {
         headers: authHeaders,
         timeout: 4000,
         validateStatus: () => true,
-      });
+      }, programId);
       // Any non-connection-refused response indicates port is open
       const open = resp.status > 0;
       return { port, service, open };

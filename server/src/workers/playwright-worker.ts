@@ -64,7 +64,33 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
   const consoleAlerts: string[] = [];
   const networkRequests: string[] = [];
 
+  // Execution oracle: resolves the first time injected JS actually runs (sentinel
+  // callback or a dialog sink). This is proof of execution — distinct from the
+  // payload merely being present in the DOM, which proves nothing about XSS.
+  let executed = false;
+  let resolveExecution!: (source: string) => void;
+  const executionSignal = new Promise<string>(resolve => { resolveExecution = resolve; });
+  const markExecuted = (source: string) => {
+    if (executed) return;
+    executed = true;
+    consoleAlerts.push(`XSS_EXECUTED:${source}`);
+    resolveExecution(source);
+  };
+
   try {
+    // Sentinel binding: any payload that calls window.__xssOracle() proves execution.
+    await page.exposeFunction('__xssOracle', () => markExecuted('sentinel'));
+    // Bridge the classic dialog sinks into the sentinel so legacy alert(1)-style
+    // payloads still register as execution without blocking on a native dialog.
+    await page.addInitScript(() => {
+      const w = globalThis as unknown as Record<string, unknown> & { __xssOracle?: () => void };
+      const fire = () => { try { w.__xssOracle?.(); } catch { /* ignore */ } };
+      w.alert = () => fire();
+      w.confirm = () => { fire(); return true; };
+      w.prompt = () => { fire(); return ''; };
+      w.print = () => fire();
+    });
+
     page.on('console', msg => {
       if (msg.type() === 'warning' || msg.type() === 'error' || msg.text().includes('alert')) {
         consoleAlerts.push(msg.text());
@@ -72,6 +98,7 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
     });
     page.on('dialog', async dialog => {
       consoleAlerts.push(`DIALOG:${dialog.type()}:${dialog.message()}`);
+      markExecuted('dialog');
       await dialog.accept();
     });
     page.on('request', req => {
@@ -81,7 +108,9 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
     });
 
     const url = result.request || `${result.endpoint}?q=${encodeURIComponent(result.payload)}`;
-    await page.goto(url, { timeout: 15000, waitUntil: 'domcontentloaded' });
+    // 'load' (not domcontentloaded) so subresource error handlers — <img onerror=…>
+    // and friends — have actually fired by the time goto resolves.
+    await page.goto(url, { timeout: 15000, waitUntil: 'load' });
 
     const bodyText = ((await page.textContent('body').catch(() => '')) ?? '').toLowerCase();
     const captchaInText = bodyText.includes('captcha') ||
@@ -98,17 +127,30 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
       return { confirmed: false, consoleAlerts: ['CAPTCHA_DETECTED'], networkRequests: [] };
     }
 
-    await page.waitForTimeout(2000);
+    // For XSS, await the execution signal against a bounded deadline instead of
+    // sleeping a fixed interval and snapshotting — event-driven on actual execution,
+    // so the DCL/subresource timing race disappears. If the payload ran during load,
+    // executionSignal is already resolved and this returns immediately.
+    let xssExecuted = false;
+    if (result.vulnClass === 'xss') {
+      const EXEC_DEADLINE_MS = 4000;
+      const outcome = await Promise.race([
+        executionSignal.then(() => 'executed' as const),
+        page.waitForTimeout(EXEC_DEADLINE_MS).then(() => 'timeout' as const),
+      ]);
+      xssExecuted = outcome === 'executed';
+    } else {
+      await page.waitForTimeout(2000);
+    }
+
     const screenshotBuffer = await page.screenshot({ type: 'png' });
     const screenshot = screenshotBuffer.toString('base64');
 
     let confirmed = false;
     if (result.vulnClass === 'xss') {
-      confirmed = consoleAlerts.some(a => a.includes('DIALOG:alert') || a.includes('alert('));
-      if (!confirmed) {
-        const content = await page.content();
-        confirmed = content.includes(result.payload);
-      }
+      // Execution-only oracle. Presence of the payload in the DOM is NOT confirmation —
+      // it conflates reflection with execution and is wrong in both directions.
+      confirmed = xssExecuted;
     } else if (result.vulnClass === 'ssrf') {
       confirmed = networkRequests.length > 0;
     } else if (result.vulnClass === 'open_redirect') {
