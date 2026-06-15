@@ -105,13 +105,25 @@ class Layer1Dedup {
 // ─── Layer 2: Dynamic Re-probe ────────────────────────────────────────────────
 class Layer2Reprobe {
   async reprobe(result: SolverResult): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
-    if (!result.request) {
-      return { confirmed: false, statusCode: 0, responseSnippet: "No request to replay" };
+    // result.request is sometimes a campaign/finding ID (numeric string) rather than
+    // a URL — e.g. for LogicExploitAgent-confirmed findings. Fall back to result.endpoint
+    // so L2 still reaches the target instead of bailing immediately.
+    const isHttpUrl = (u: unknown): u is string => {
+      if (typeof u !== "string" || !u) return false;
+      try { const p = new URL(u); return p.protocol === "http:" || p.protocol === "https:"; }
+      catch { return false; }
+    };
+    const reprobeUrl = isHttpUrl(result.request) ? result.request
+      : isHttpUrl(result.endpoint) ? result.endpoint
+      : null;
+
+    if (!reprobeUrl) {
+      return { confirmed: false, statusCode: 0, responseSnippet: "No replayable URL" };
     }
 
     try {
       const { default: axios } = await import("axios");
-      const resp = await axios.get(result.request, {
+      const resp = await axios.get(reprobeUrl, {
         timeout: 10000,
         validateStatus: () => true,
         headers: { "User-Agent": getRandomUserAgent() },
@@ -294,12 +306,31 @@ class Layer4AIConfirmation {
       } catch { /* non-critical — degrade silently */ }
     }
 
+    // Truncate original evidence for the prompt — long tool outputs inflate context fast.
+    const origEvidence = result.evidence
+      ? (typeof result.evidence === "string" ? result.evidence : JSON.stringify(result.evidence)).slice(0, 600)
+      : null;
+    const origResponse = result.response ? String(result.response).slice(0, 300) : null;
+
+    const authBypassNote = result.vulnClass === "auth_bypass"
+      ? `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
+        `RESTRICTED endpoint (returning 401/403 for unauthenticated requests) became\n` +
+        `accessible after a bypass technique was applied. A public endpoint that returns\n` +
+        `200 without any auth is NOT an auth bypass — it is expected behaviour.\n`
+      : "";
+
     const prompt = `You are a senior security researcher reviewing a potential vulnerability finding.
 
 Endpoint: ${result.endpoint}
 Vulnerability Class: ${result.vulnClass}
 Payload Used: ${result.payload}
 Original Confidence: ${result.confidence}
+${authBypassNote}
+Original Probe Evidence (what the scanner captured during discovery):
+${origEvidence ?? "Not available"}
+
+Original Solver Response:
+${origResponse ?? "Not available"}
 
 Layer 2 (HTTP Reprobe):
 - Confirmed: ${previousLayers.layer2.confirmed}
@@ -309,7 +340,7 @@ Layer 2 (HTTP Reprobe):
 Layer 3 (Browser Replay):
 - Confirmed: ${previousLayers.layer3.confirmed}
 - Console/Dialog alerts: ${JSON.stringify(previousLayers.layer3.consoleAlerts)}
-${visionDescription ? `\nVision Model Analysis:\n${visionDescription}\n` : ''}
+${visionDescription ? `\nVision Model Analysis:\n${visionDescription}\n` : ""}
 Based on ALL the evidence above, determine:
 1. Is this a genuine vulnerability (not a false positive)?
 2. What is the confidence adjustment (-0.5 to +0.3)?
