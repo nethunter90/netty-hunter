@@ -36,7 +36,15 @@ export class LLMBudgetExceededError extends Error {
 }
 
 export class ClaudeClient {
-  private static readonly client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  // Lazy client so keys set via runtimeConfig after startup are picked up.
+  private static _client: Anthropic | null = null;
+  private static get client(): Anthropic {
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!ClaudeClient._client || ClaudeClient._client.apiKey !== key) {
+      ClaudeClient._client = new Anthropic({ apiKey: key });
+    }
+    return ClaudeClient._client;
+  }
   private static readonly threads = new Map<string, Anthropic.MessageParam[]>();
   private static readonly MAX_THREAD_MESSAGES = 20;
 

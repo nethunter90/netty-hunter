@@ -340,20 +340,16 @@ export const TOOL_KNOWLEDGE: Record<string, {
     rateLimit: 15,
   },
   jwt_tool: {
-    description: "JWT/auth vulnerability detection via nuclei",
-    vulnClasses: ["auth_bypass"],
+    description: "JWT security testing — alg:none, RS/HS confusion, key injection",
+    vulnClasses: ["auth_bypass", "jwt_confusion"],
     command: (url) => ({
-      bin: "nuclei",
-      args: ["-u", url, "-tags", "jwt,auth", "-severity", "medium,high,critical", "-json", "-silent", "-timeout", "15"],
+      bin: "jwt_tool",
+      args: ["-t", url, "-M", "at", "-np"],
     }),
     parser: (output) => {
-      const findings: unknown[] = [];
-      output.split("\n").filter(l => l.trim()).forEach(line => {
-        try { findings.push(JSON.parse(line)); } catch { /* skip */ }
-      });
-      const vulnerable = findings.length > 0;
-      const technique = findings.length > 0 ? JSON.stringify(findings[0]).slice(0, 100) : "";
-      return { vulnerable, found: vulnerable, technique, count: findings.length, rawOutput: output.slice(0, 600) };
+      const vulnerable = /EXPLOIT|Claim misuse|alg: none|RS256.*HS256|Key injection|\[CRITICAL\]/i.test(output);
+      const technique = output.match(/(alg: none|RS256.*HS256|[Kk]ey injection)/)?.[1] ?? "";
+      return { vulnerable, found: vulnerable, technique, rawOutput: output.slice(0, 600) };
     },
     rateLimit: 20,
   },
@@ -361,8 +357,8 @@ export const TOOL_KNOWLEDGE: Record<string, {
     description: "HTTP request smuggling detection (CL.TE and TE.CL)",
     vulnClasses: ["http_smuggling"],
     command: (url) => ({
-      bin: "python3",
-      args: ["/usr/local/bin/smuggler.py", "-u", url, "--no-color"],
+      bin: "smuggler",
+      args: ["-u", url, "--no-color"],
     }),
     parser: (output) => {
       const vulnerable = /Issue found|CL\.TE|TE\.CL|TE\.TE/i.test(output);
@@ -370,6 +366,62 @@ export const TOOL_KNOWLEDGE: Record<string, {
       return { vulnerable, type: vulnerable ? type : null, rawOutput: output.slice(0, 500) };
     },
     rateLimit: 60,
+  },
+  corsy: {
+    description: "CORS misconfiguration scanner — detects all known CORS bypasses",
+    vulnClasses: ["cors"],
+    command: (url) => ({
+      bin: "corsy",
+      args: ["-u", url, "-t", "10"],
+    }),
+    parser: (output) => {
+      const found = /CORS misconfiguration|\[FOUND\]|Origin reflection|Null origin|Wildcard/i.test(output);
+      const misconfigs = output.match(/\[FOUND\].+/gi) ?? [];
+      return { found, misconfigurations: misconfigs, count: misconfigs.length, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 15,
+  },
+  nosqlmap: {
+    description: "NoSQL injection scanner for MongoDB and CouchDB",
+    vulnClasses: ["nosqli", "sqli"],
+    command: (url) => ({
+      bin: "nosqlmap",
+      args: ["-u", url, "--attack", "2", "--noInteractive"],
+    }),
+    parser: (output) => {
+      const injectable = /injection found|vulnerable|extracting data/i.test(output);
+      const dbms = output.match(/(?:MongoDB|CouchDB|Cassandra)/i)?.[0] ?? "unknown";
+      return { injectable, found: injectable, dbms, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 60,
+  },
+  ssrfmap: {
+    description: "SSRF scanner and chaining exploiter",
+    vulnClasses: ["ssrf"],
+    command: (url) => ({
+      bin: "ssrfmap",
+      args: ["-u", url, "-p", "url", "--level", "2"],
+    }),
+    parser: (output) => {
+      const found = /SSRF|vulnerable|Request forgery|ssrf/i.test(output);
+      const param = output.match(/Vulnerable parameter: (.+)/i)?.[1];
+      return { found, param, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 30,
+  },
+  xsser: {
+    description: "Automated XSS detection and exploitation framework",
+    vulnClasses: ["xss"],
+    command: (url) => ({
+      bin: "xsser",
+      args: ["--url", url, "--auto", "--silent"],
+    }),
+    parser: (output) => {
+      const found = /XSS FOUND|Total injections: [1-9]/i.test(output);
+      const count = parseInt(output.match(/Total injections: (\d+)/i)?.[1] ?? "0", 10);
+      return { found, count, rawOutput: output.slice(0, 600) };
+    },
+    rateLimit: 30,
   },
 };
 
@@ -2136,7 +2188,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const vulnToolMap: Record<string, string> = {
       xss: "dalfox",
       sqli: "sqlmap",
-      ssrf: "nuclei",
+      ssrf: "ssrfmap",
       lfi: "nuclei",
       rce: "nuclei",
       ssti: "tplmap",
@@ -2149,7 +2201,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       security_headers: "curl_probe",
       tech_stack: "whatweb",
       open_redirect: "nuclei",
-      cors: "curl_probe",
+      cors: "corsy",
+      nosqli: "nosqlmap",
       csrf: "curl_probe",
       info_disclosure: "curl_probe",
       xxe: "nuclei",
@@ -2178,10 +2231,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
   private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
     sqli:             ["sqlmap", "nuclei", "curl_probe"],
     xss:              ["dalfox", "nuclei", "curl_probe"],
-    ssrf:             ["nuclei", "curl_probe"],
+    ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
     lfi:              ["nuclei", "curl_probe"],
     rce:              ["nuclei", "curl_probe"],
-    cors:             ["curl_probe", "nuclei"],
+    cors:             ["corsy", "curl_probe", "nuclei"],
+    nosqli:           ["nosqlmap", "nuclei"],
     csrf:             ["curl_probe", "nuclei"],
     idor:             ["curl_probe", "nuclei"],
     info_disclosure:  ["curl_probe", "nuclei"],
@@ -2209,10 +2263,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const TOOL_ROTATION: Record<string, string[]> = {
       sqli:             ["sqlmap", "nuclei", "curl_probe"],
       xss:              ["nuclei", "curl_probe"],
-      ssrf:             ["nuclei", "curl_probe"],
+      ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
       lfi:              ["nuclei", "curl_probe"],
       rce:              ["nuclei", "curl_probe"],
-      cors:             ["curl_probe", "nuclei"],
+      cors:             ["corsy", "curl_probe", "nuclei"],
+      nosqli:           ["nosqlmap", "nuclei"],
       csrf:             ["curl_probe", "nuclei"],
       idor:             ["curl_probe", "nuclei"],
       info_disclosure:  ["curl_probe", "nuclei"],
@@ -2255,6 +2310,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
           if (key.toLowerCase() === "cookie") {
             args.push("-c", value);
           }
+          break;
+        case "corsy":
+          args.push("--headers", JSON.stringify({ [key]: value }));
+          break;
+        case "jwt_tool":
+          args.push("-rh", `${key}: ${value}`);
+          break;
+        case "xsser":
+          args.push("--headers", `${key}: ${value}`);
+          break;
+        case "ssrfmap":
+          args.push("--uagent", "Mozilla/5.0");
           break;
       }
     }
