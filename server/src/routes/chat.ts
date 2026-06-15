@@ -1,5 +1,8 @@
 import { Router, Request, Response } from "express";
+import { promises as fs } from "fs";
+import path from "path";
 import ModelRouter from "../intelligence/ModelRouter";
+import { ClaudeClient } from "../lib/claude-client";
 import {
   extractCommandPlan,
   executeCommandPlan,
@@ -52,62 +55,82 @@ interface ChatMessage {
   content: string;
 }
 
-// POST /chat — send a message, get a response from the active local model
+async function loadHuntContext(): Promise<string> {
+  try {
+    const [live, findings] = await Promise.allSettled([
+      fs.readFile(path.join(process.cwd(), "context/hunt-live.json"), "utf-8"),
+      fs.readFile(path.join(process.cwd(), "context/hunt-findings.json"), "utf-8"),
+    ]);
+    const liveStr = live.status === "fulfilled" ? live.value.slice(0, 900) : null;
+    const findingsStr = findings.status === "fulfilled" ? findings.value.slice(0, 700) : null;
+    if (!liveStr && !findingsStr) return "";
+    const parts: string[] = [];
+    if (liveStr) parts.push(`Live hunt state:\n${liveStr}`);
+    if (findingsStr) parts.push(`Current findings:\n${findingsStr}`);
+    return `\n\n--- LIVE HUNT CONTEXT ---\n${parts.join("\n\n")}\n--- END CONTEXT ---`;
+  } catch {
+    return "";
+  }
+}
+
+// POST /chat — send a message, get a response
 router.post("/", async (req: Request, res: Response) => {
   const { message, history = [] } = req.body as { message: string; history?: ChatMessage[] };
   if (!message || typeof message !== "string" || message.trim().length === 0) {
     return res.status(400).json({ error: "message required" });
   }
 
-  try {
-    // Build a context-aware prompt prefixed with the system rules so the model
-    // knows about the CMD sentinel.
-    const historyContext = (history as ChatMessage[])
-      .slice(-6) // last 3 exchanges
-      .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-      .join("\n");
+  // Build conversation context string from recent history
+  const historyText = (history as ChatMessage[])
+    .slice(-6)
+    .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .join("\n");
+  const userMsg = historyText
+    ? `${historyText}\n\nUser: ${message.trim()}`
+    : message.trim();
 
-    const prompt = [
-      SYSTEM_PROMPT,
-      historyContext,
-      `User: ${message.trim()}`,
-      `Assistant:`,
-    ].filter(Boolean).join("\n\n");
-
-    const capped = prompt.length > 8000 ? prompt.slice(-8000) : prompt;
-    const raw = await modelRouter.chat(capped);
-
-    // Parse + execute any [CMD: {...}] sentinel the model produced.
+  // Parse + execute any [CMD: {...}] sentinel the model produced.
+  async function withExecution(raw: string): Promise<{ display: string; executed: ExecutionResult | null }> {
     let executed: ExecutionResult | null = null;
     let executionError: string | null = null;
     const plan = extractCommandPlan(raw);
     if (plan) {
       try {
         executed = await executeCommandPlan(plan);
-      } catch (e: any) {
-        executionError = String(e?.message || e).slice(0, 200);
+      } catch (e: unknown) {
+        executionError = String((e as Error)?.message || e).slice(0, 200);
         logger.warn("[Chat] command execution failed", { err: executionError });
       }
     }
+    const clean = stripCommandBlock(raw);
+    const display = executionError ? `${clean}\n\n⚠ Command blocked: ${executionError}`.trim() : clean;
+    return { display, executed };
+  }
 
-    const cleanResponse = stripCommandBlock(raw);
-    const display = executionError
-      ? `${cleanResponse}\n\n⚠ Command blocked: ${executionError}`.trim()
-      : cleanResponse;
+  // Primary: Claude SDK (Haiku) with live hunt context — doesn't count against
+  // per-hunt budget (no sessionId) since this is operator chat, not engine calls.
+  if (ClaudeClient.isAvailable()) {
+    try {
+      const huntCtx = await loadHuntContext();
+      const sys = SYSTEM_PROMPT + huntCtx;
+      const raw = await ClaudeClient.oneShot(sys, userMsg);
+      const { display, executed } = await withExecution(raw);
+      logger.debug("[Chat] Claude Haiku responded", { msgLen: message.length, huntCtx: huntCtx.length > 0 });
+      return res.json({ response: display, model: "claude-haiku-4-5", executed });
+    } catch (err) {
+      logger.warn("[Chat] Claude SDK failed, falling back to Ollama", { err: String(err) });
+    }
+  }
 
-    // Return which model answered
+  // Fallback: Ollama
+  try {
+    const prompt = [SYSTEM_PROMPT, historyText, `User: ${message.trim()}`, `Assistant:`]
+      .filter(Boolean).join("\n\n");
+    const capped = prompt.length > 8000 ? prompt.slice(-8000) : prompt;
+    const raw = await modelRouter.chat(capped);
+    const { display, executed } = await withExecution(raw);
     const models = await modelRouter.getModels();
-    logger.debug("[Chat] response generated", {
-      models: models.length,
-      executed: executed ? executed.outputs.length : 0,
-      blocked: Boolean(executionError),
-    });
-
-    return res.json({
-      response: display,
-      model: models[0] ?? "unknown",
-      executed,
-    });
+    return res.json({ response: display, model: models[0] ?? "ollama", executed });
   } catch (err) {
     const msg = String(err);
     logger.warn("[Chat] model error", { err: msg });
@@ -120,8 +143,11 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// GET /chat/status — check if a model is reachable
+// GET /chat/status — check if any model is reachable
 router.get("/status", async (_req: Request, res: Response) => {
+  if (ClaudeClient.isAvailable()) {
+    return res.json({ available: true, models: ["claude-haiku-4-5"] });
+  }
   try {
     const models = await modelRouter.getModels();
     return res.json({ available: models.length > 0, models });
