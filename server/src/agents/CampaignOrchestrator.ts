@@ -68,6 +68,15 @@ export type OrchestratorPhase =
   | "complete"
   | "aborted";
 
+export interface HuntAuth {
+  /** Raw Cookie header value — e.g. "session=abc123; csrf=xyz" */
+  cookie?: string;
+  /** Bearer token — injected as Authorization: Bearer <token> */
+  bearerToken?: string;
+  /** Arbitrary extra headers passed verbatim to every tool and HTTP probe */
+  headers?: Record<string, string>;
+}
+
 export interface OrchestrateParams {
   programId: number;
   targetUrl: string;
@@ -79,6 +88,8 @@ export interface OrchestrateParams {
   focusVulnClasses?: string[];
   /** Resume an interrupted campaign instead of creating a new one */
   resumeCampaignId?: number;
+  /** Auth credentials/tokens injected into every tool invocation and HTTP probe */
+  auth?: HuntAuth;
 }
 
 export interface LayerStatus {
@@ -566,6 +577,7 @@ export class CampaignOrchestrator extends EventEmitter {
         campaignId: this.state.campaignId!,
         maxIterations: params.maxIterations || 10,
         budget: params.budget,
+        auth: params.auth,
       });
       this.state.sessionUuid = sessionUuid;
 

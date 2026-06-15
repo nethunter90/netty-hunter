@@ -42,6 +42,11 @@ const RunOrchestrationSchema = z.object({
     maxRequests: z.number().int().min(10).max(50000).default(2000),
     maxTime: z.number().int().min(60).max(86400).default(3600),
   }).optional(),
+  auth: z.object({
+    cookie: z.string().optional(),
+    bearerToken: z.string().optional(),
+    headers: z.record(z.string()).optional(),
+  }).optional(),
 });
 
 // ── Layer metadata endpoint ────────────────────────────────────────────────────

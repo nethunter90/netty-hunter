@@ -603,6 +603,7 @@ export class HunterEngine extends EventEmitter {
     focusVulnClasses?: string[];
     goal?: string;
     secondaryAuthHeaders?: Record<string, string>;
+    auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -686,6 +687,17 @@ export class HunterEngine extends EventEmitter {
       }
     } catch (err) {
       logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });
+    }
+
+    // Direct auth from hunt params — overrides DB-stored session for the same keys.
+    if (params.auth) {
+      if (params.auth.cookie) this.authHeaders["Cookie"] = params.auth.cookie;
+      if (params.auth.bearerToken) this.authHeaders["Authorization"] = `Bearer ${params.auth.bearerToken}`;
+      if (params.auth.headers) Object.assign(this.authHeaders, params.auth.headers);
+      if (Object.keys(this.authHeaders).length > 0) {
+        logger.info("[HunterEngine] Direct auth headers injected from hunt params",
+          { keys: Object.keys(this.authHeaders) });
+      }
     }
 
     this.rlWiring.onHuntStart({

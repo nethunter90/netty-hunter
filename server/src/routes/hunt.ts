@@ -35,6 +35,11 @@ const StartHuntSchema = z.object({
     maxRequests: z.number().int().min(10).max(10000).default(2000),
     maxTime: z.number().int().min(60).max(86400).default(3600),
   }).optional(),
+  auth: z.object({
+    cookie: z.string().optional(),
+    bearerToken: z.string().optional(),
+    headers: z.record(z.string()).optional(),
+  }).optional(),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -44,7 +49,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId } = parsed.data;
+  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth } = parsed.data;
 
   // Resolve effective program — for custom/local-lab hunts (programId === -1) we
   // find-or-create a synthetic "Custom Lab" program so FK constraints are satisfied.
@@ -118,6 +123,7 @@ router.post("/start", async (req: Request, res: Response) => {
         budget,
         // Use approach vuln classes as focus; fall back to template if provided
         focusVulnClasses: approaches.map(a => a.vulnClass).slice(0, 6),
+        auth,
       });
 
       const io = req.app.get("io") as SocketServer;
@@ -155,6 +161,7 @@ router.post("/start", async (req: Request, res: Response) => {
       maxIterations,
       budget,
       focusVulnClasses,
+      auth,
     });
 
     const io = req.app.get("io") as SocketServer;

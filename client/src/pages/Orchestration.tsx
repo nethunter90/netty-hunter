@@ -58,6 +58,8 @@ export default function Orchestration() {
   const [goal, setGoal] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
   const [maxRequests, setMaxRequests] = useState(2000);
+  const [authCookie, setAuthCookie] = useState("");
+  const [authBearer, setAuthBearer] = useState("");
 
   const [orchestrationId, setOrchestrationId] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerStatus[]>(
@@ -312,6 +314,10 @@ export default function Orchestration() {
     setLoading(true);
     setOrchestrationId(null);
 
+    const auth: Record<string, string> = {};
+    if (authCookie.trim()) auth.cookie = authCookie.trim();
+    if (authBearer.trim()) auth.bearerToken = authBearer.trim();
+
     socket.emit("orchestration:run", {
       programId: selectedProgram,
       targetUrl,
@@ -319,6 +325,7 @@ export default function Orchestration() {
       goal: goal || undefined,
       maxIterations,
       budget: { maxRequests, maxTime: 3600 },
+      auth: Object.keys(auth).length > 0 ? auth : undefined,
     });
   };
 
@@ -490,6 +497,28 @@ export default function Orchestration() {
               onChange={e => setMaxRequests(Number(e.target.value))}
               disabled={isRunning}
             />
+
+            <div className="border-t border-hack-border/40 pt-3 mb-3">
+              <div className="text-[9px] text-hack-dim tracking-widest mb-2">AUTH (OPTIONAL)</div>
+              <label className="hack-label">Session Cookie</label>
+              <input
+                type="text"
+                className="hack-input w-full mb-2 font-mono text-[10px]"
+                placeholder="session=abc123; csrf=xyz"
+                value={authCookie}
+                onChange={e => setAuthCookie(e.target.value)}
+                disabled={isRunning}
+              />
+              <label className="hack-label">Bearer Token</label>
+              <input
+                type="text"
+                className="hack-input w-full mb-0 font-mono text-[10px]"
+                placeholder="eyJhbGciOiJIUzI1NiJ9..."
+                value={authBearer}
+                onChange={e => setAuthBearer(e.target.value)}
+                disabled={isRunning}
+              />
+            </div>
 
             {!isRunning ? (
               <button
