@@ -14,6 +14,7 @@ import { wireHuntEngineToSocket } from "../lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "../lib/state/hunt-sessions";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
+import { verifyAndPersistFinding, verifyPendingForSession } from "../lib/verification/verify-finding";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -177,6 +178,19 @@ router.post("/start", async (req: Request, res: Response) => {
       const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
       metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
       strategyWeightLearner.learn().catch(() => {});
+      // Auto-verify: console-launched hunts don't pass through CampaignOrchestrator
+      // Layer 5, so run the 4-layer pipeline on every pending finding here. This is
+      // what removes the need to click "verify" on each finding by hand.
+      (async () => {
+        try {
+          io.to(`hunt:${sessionUuid}`).emit("hunt:verifying", { sessionUuid });
+          const { verified, confirmed } = await verifyPendingForSession(verifierAgent, sessionUuid, targetUrl);
+          io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
+          logger.info("Auto-verification complete", { sessionUuid, verified, confirmed });
+        } catch (err) {
+          logger.warn("Auto-verification pass failed", { sessionUuid, err: String(err) });
+        }
+      })();
       setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
 
@@ -294,34 +308,21 @@ router.post("/findings/:id/verify", async (req: Request, res: Response) => {
     .where(eq(findings.id, parseInt(req.params.id))).limit(1);
   if (!finding) return res.status(404).json({ error: "Finding not found" });
 
+  // Resolve the real target URL for this finding so L2 reprobe / L3 replay
+  // have a valid host to hit (used as fallback when the finding's own
+  // evidence/title don't already carry a URL).
+  let fallbackUrl = "";
+  if (finding.targetId) {
+    const [tgt] = await db.select({ url: targets.url })
+      .from(targets).where(eq(targets.id, finding.targetId)).limit(1);
+    fallbackUrl = tgt?.url ?? "";
+  }
+
   try {
-    // Build a mock SolverResult from the finding for verification
-    const mockResult = {
-      taskId: String(finding.id),
-      solverId: "manual",
-      endpoint: finding.targetId ? String(finding.targetId) : "",
-      vulnClass: finding.vulnType as Parameters<typeof verifierAgent.verify>[0]["vulnClass"],
-      found: true,
-      confidence: finding.confidence,
-      evidence: (finding.evidence as Record<string, unknown>[])[0] || {},
-      payload: finding.exploitPayload || "",
-      request: "",
-      response: "",
-      duration: 0,
-      toolsUsed: [],
-    };
-
-    const verification = await verifierAgent.verify(mockResult);
-
-    // Update finding with verification result
-    await db.update(findings).set({
-      verificationStatus: verification.finalVerdict,
-      verificationLog: [verification] as unknown as Record<string, unknown>[],
-      confidence: verification.finalConfidence,
-      dedupHash: verification.dedupHash,
-      updatedAt: new Date(),
-    }).where(eq(findings.id, parseInt(req.params.id)));
-
+    const verification = await verifyAndPersistFinding(verifierAgent, finding, fallbackUrl);
+    if (!verification) {
+      return res.status(422).json({ error: "No usable URL to verify this finding against" });
+    }
     return res.json(verification);
   } catch (err) {
     return res.status(500).json({ error: "Verification failed", details: String(err) });
