@@ -122,7 +122,8 @@ class NVDClient {
     });
 
     if (!resp.ok) {
-      logger.warn('[NVDClient] API error', { status: resp.status, params });
+      const level = resp.status === 503 ? 'debug' : 'warn';
+      logger[level]('[NVDClient] API error', { status: resp.status, params });
       return [];
     }
 
