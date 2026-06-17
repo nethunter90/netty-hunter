@@ -11,6 +11,9 @@ coverage/
 *.tsbuildinfo
 .turbo/
 
+# Live hunt state (runtime-generated, changes on every run)
+server/context/
+
 # Generated fine-tune dataset files (large, regenerate locally)
 scripts/finetune-dataset.jsonl
 scripts/hf-supplement.jsonl
