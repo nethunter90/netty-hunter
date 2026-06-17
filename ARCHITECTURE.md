@@ -141,22 +141,32 @@ periodically shrinks them to keep AI context bounded.
 Entry: `hypothesize()` (~line 1533 after observe completes)
 
 ```
-observations[] → ModelRouter.generateHypotheses(prompt)
+observations[] → ModelRouter.generate(prompt, "reason")
                       ↓
-              If Ollama healthy (circuit CLOSED):
-                  POST http://localhost:11434/api/generate
-                  ─ recordSuccess() → circuit stays CLOSED
-              Else (circuit OPEN or failure):
-                  ClaudeBridge.reason(prompt)
-                  ─ execFile("claude", ["--print", "-p", prompt])
+              Tier 0a — Claude SDK (ANTHROPIC_API_KEY set):
+                  ClaudeClient.reason(sessionId, prompt)
+                  ─ messages.create(claude-sonnet-4-6, timeout: 90s)
+                  ─ per-hunt conversation thread (maintains context)
+                  ─ per-hunt call-count budget cap enforced
+              Else Tier 0b — Claude CLI bridge:
+                  ClaudeBridge.reasonWithHuntContext(prompt)
+                  ─ execFile("claude", ["--print", "-p", prompt], { timeout: 120s })
                   ─ logs to context/claude-tasks.jsonl
-              Else (neither available):
-                  Built-in fallback model
+                  ─ RL store can override to Ollama if historical data favors it
+              Else Tier 1 — Ollama (circuit CLOSED):
+                  POST http://localhost:11434/api/generate
+                  ─ model selected by taskType priority (deepseek-r1 → llama3.2 → ...)
+                  ─ circuit breaker gates ONLY this path (not Claude)
+              Else → throw "Circuit OPEN — Ollama unavailable"
                       ↓
               Parse JSON → Hypothesis[] with confidence scores
               Push to state.hypotheses[]
               Emit hunt:hypothesis_generated per hypothesis
 ```
+
+NOTE: For `reason`/`analyze` tasks the routing order is **Claude SDK → Claude CLI → Ollama**,
+not Ollama-first. The circuit breaker applies only to the Ollama tier. If the Claude API
+is slow the call blocks for up to 90s — there is no circuit breaker on Claude.
 
 #### Phase 3 — PROBE
 
@@ -293,41 +303,52 @@ Each layer emits: `layer:status { layer, phase, startedAt, completedAt }` via So
 
 ---
 
-### VerifierAgent.ts — 4-Layer Anti-Hallucination Gate
+### VerifierAgent.ts — 4-Layer Per-Class Oracle
 
-Called from `update()`. **No finding is confirmed without passing this gate.**
+**POSITION: Layer 5 of CampaignOrchestrator only.**
+NOT called from HunterEngine.update(). Findings are persisted to the DB as
+`verificationStatus:"pending"` by HunterEngine, then verified post-hoc at L5.
+Hunts run via `/api/hunt/start` standalone (no orchestrator) receive no verification.
 
 ```
 Layer 1 — Static Dedup
   SHA-256 hash of (endpoint + vulnClass + payload)
   SimHash near-duplicate check (locality-sensitive)
   Pre-loaded last 500 hashes from DB on init
-  If duplicate → return { verdict: "rejected" }
+  If duplicate → return { verdict: "rejected" } immediately
 
-Layer 2 — Dynamic Reprobe
-  HTTP re-request the exploit URL
-  Check response code + body for vulnerability signals
-  vuln-class-specific logic (sqli: error strings, xss: payload reflection, etc.)
+Layer 2 — Dynamic Reprobe (HTTP-observable classes only)
+  Raw axios.get() to the exploit URL — same WAF/stealth path as original probe
+  Authoritative oracle for: sqli, auth_bypass, cors, idor, info_disclosure, ssrf
 
-Layer 3 — Playwright Browser Replay  ← MANDATORY GATE
-  Worker thread (playwright-worker.ts) with fingerprint hardening
-  Navigate to endpoint, inject payload
-  Monitor: console alerts, DOM mutations, network requests
-  Capture screenshot
-  35s timeout — if unavailable, verdict degrades to L2+L4 consensus only
-  If confidence > 0.7 OR vulnClass in [xss, sqli, rce, ssrf] → MUST pass
+Layer 3 — Playwright Browser Replay (browser-verifiable classes only)
+  Worker thread with fingerprint hardening; 35s timeout
+  Authoritative oracle for: xss, dom_xss ONLY
+  If Playwright offline → browser-verifiable findings → inconclusive (never auto-confirmed)
+  Does NOT vote on HTTP-observable classes
 
 Layer 4 — AI Confirmation
-  Sends L2+L3 evidence to ModelRouter.reason()
-  Screens AI output for prompt injection (promptInjectionDetector)
-  Returns: { confirmed, reasoning, confidenceAdjustment }
-  Failure degrades gracefully to L2+L3 consensus
+  Uses ClaudeClient (SDK) with vision analysis when screenshot available
+  If L4 errors → verdict routes to "inconclusive", never auto-rejected
+  Screens output for prompt injection before trusting parsed result
 
-Final verdict:
-  L2+L3+L4 all confirmed → "confirmed",  confidence += 0.1  (max 0.98)
-  L2+L4 confirmed        → "confirmed",  confidence unchanged (max 0.90)
-  L2+L3 both rejected    → "rejected",   confidence -= 0.3
-  Otherwise              → "inconclusive"
+Final verdict — PER-CLASS ORACLE AUTHORITY (not 4-way consensus):
+
+  Browser-verifiable (xss, dom_xss):
+    L3 confirmed              → "confirmed"  (+ L4 bonus if also confirmed)
+    L3 not confirmed, L4 yes  → "inconclusive"  (needs human review)
+    L3 not confirmed, L4 no   → "rejected"
+    Playwright offline        → "inconclusive" (never auto-confirmed)
+
+  HTTP-observable (everything else):
+    L2 && L4 confirmed        → "confirmed"
+    L2 || L4 confirmed        → "inconclusive"  (one signal, needs review)
+    neither confirmed         → "rejected"
+    L4 errored                → "inconclusive"  (dead L4 never forces reject)
+
+Rejection writes verificationStatus:"rejected" to the DB row.
+Inconclusive writes verificationStatus:"inconclusive" to the DB row.
+Both states are queryable — neither is left as the default "pending".
 ```
 
 ---
@@ -401,34 +422,50 @@ Per-class probes:
 
 ## INTELLIGENCE LAYER: server/src/intelligence/
 
-### ModelRouter.ts — Circuit Breaker + Tier Routing
+### ModelRouter.ts — Tier Routing (Claude-first for reasoning)
 
 ```
-Task arrives (taskType: reason | classify | code | chat | generate)
+Task arrives (taskType: reason | analyze | classify | chat | summarize | code)
     ↓
-Check circuit breaker state:
-    CLOSED  → try Ollama first
-    OPEN    → skip Ollama, go to Claude
-    HALF_OPEN → send one probe request to Ollama
+reason / analyze tasks:
+    Tier 0a — Claude SDK (ANTHROPIC_API_KEY present):
+        ClaudeClient.reason(sessionId, prompt)
+        ─ claude-sonnet-4-6, 90s timeout (SDK RequestOptions)
+        ─ per-hunt conversation thread, extended thinking adaptive
+        ─ per-hunt LLM call budget; throws LLMBudgetExceededError when exhausted
+        On success → return result
+        On failure → fall through to Tier 0b
 
-Ollama path:
+    Tier 0b — Claude CLI bridge (ANTHROPIC_API_KEY absent):
+        RL store consulted — if Ollama historically better, skip to Tier 1
+        ClaudeBridge.reasonWithHuntContext(prompt)
+        ─ execFile("claude", ["--print", "-p", ...], { timeout: 120_000 })
+        ─ logs to context/claude-tasks.jsonl
+        On failure → fall through to Tier 1
+
+classify / chat / summarize tasks:
+    Tier 0c — Claude Haiku (ANTHROPIC_API_KEY present):
+        ClaudeClient.oneShot(systemPrompt, prompt)
+        ─ claude-haiku-4-5, stateless, cheap
+        On failure → fall through to Tier 1
+
+All tasks — Tier 1 — Ollama:
+    Check circuit breaker:
+        CLOSED / HALF_OPEN → proceed
+        OPEN               → throw "Circuit OPEN — Ollama unavailable"
     Select model by taskType priority:
-        deepseek-r1:7b → deepseek-r1:1.5b → llama3.2:3b → llama3.2
-        → llama3.1:8b → mistral:7b → codellama:7b → phi3:mini
+        reason/analyze: deepseek-r1:7b → deepseek-r1:1.5b → llama3.1:8b → mistral:7b
+        chat/classify:  llama3.2:3b → llama3.2 → phi3:mini
+        code:           codellama:7b → mistral:7b
+        User override (OLLAMA_DEFAULT_MODEL) always wins if installed
     POST http://localhost:11434/api/generate
-    On success → recordSuccess() → circuit CLOSED
+    On success → recordSuccess()
     On failure → recordFailure()
         3 consecutive failures → circuit OPEN
-        Recovery after 30s → HALF_OPEN
+        Recovery probe after 30s → HALF_OPEN
 
-Claude path (circuit OPEN or Ollama failure):
-    ClaudeBridge.isAvailable() → check `claude` CLI on PATH
-    execFile("claude", ["--print", "-p", prompt], { timeout })
-    Log to context/claude-tasks.jsonl
-    On failure → fall back to built-in model
-
-Filtering: embedding models (nomic-embed-text, mxbai-embed-large) are excluded
-from routing — never used for reasoning tasks.
+Filtering: embedding models excluded from all routing (nomic-embed-text, mxbai-embed-large).
+Circuit breaker gates ONLY Tier 1 (Ollama). There is no circuit breaker on Claude.
 ```
 
 ### PromptKnowledgeBase.ts
@@ -824,28 +861,34 @@ It only executes what HunterEngine dispatches. Strategy is centralized in
 HunterEngine (Single-Brain Architecture). SolverPool is a parallel executor, not
 an autonomous agent.
 
-**3. VerifierAgent Layer 3 (Playwright) is MANDATORY for high-confidence findings.**
-If `confidence > 0.7` OR `vulnClass in [xss, sqli, rce, ssrf]`, the finding
-MUST pass browser replay. If Playwright worker is unavailable, the verdict
-degrades — it does NOT skip the gate.
+**3. VerifierAgent Layer 3 (Playwright) is MANDATORY — but only for `xss`/`dom_xss`.**
+The mandatory browser gate applies only to browser-verifiable classes. HTTP-observable
+classes (sqli, ssrf, idor, auth_bypass, etc.) are verified by L2 (reprobe) + L4 (AI),
+not Playwright. The old "confidence > 0.7 OR vulnClass in [xss, sqli, rce, ssrf]" rule
+was removed when the per-class oracle system replaced the 4-way consensus.
 
 **4. `programId: -1` is a valid special value.**
 It auto-creates a local lab program with `scope: ["*"]`. It is NOT an error.
 Used for local Juice Shop / XBOW / custom targets.
 
-**5. ModelRouter falls back gracefully — hunts never hard-fail on model unavailability.**
-Ollama down → Claude CLI → built-in fallback. The hunt continues under degraded
-reasoning quality, not a crash.
+**5. ModelRouter routes reasoning to Claude FIRST, not Ollama.**
+For `reason`/`analyze` tasks: Claude SDK → Claude CLI bridge → Ollama (in that order).
+Ollama is the last resort, not the primary. The circuit breaker gates only Ollama.
+If the Claude SDK call hangs, it will block for up to 90s (hard timeout added to
+`ClaudeClient.reason()`). There is no circuit breaker on Claude — a slow API stalls
+the loop until timeout.
 
 **6. ScopeGuard is called twice for post-exploit probes.**
 Once in HunterEngine before the original probe, and again inside PostExploitAgent
 for each impact demonstration URL. Both are fail-closed. This is intentional
 double-validation, not a bug.
 
-**7. The circuit breaker is on Ollama, not on Claude.**
-Claude (via CLI or SDK) has no circuit breaker — it is the fallback, not the
-primary. If Claude is slow, the hunt blocks. If Ollama is slow, the circuit
-breaker trips and routes around it.
+**7. VerifierAgent is post-hoc (Layer 5 orchestrator), NOT an inline gate in HunterEngine.**
+HunterEngine.update() persists findings to the DB as `verificationStatus:"pending"` with
+no verification. VerifierAgent.verify() runs only when CampaignOrchestrator reaches Layer 5,
+AFTER the entire hunt completes. Hunts started via `/api/hunt/start` standalone (without
+the orchestrator) receive NO verification at all. "Rejected" and "inconclusive" verdicts
+now write back to the DB row — they no longer leave the finding silently as "pending".
 
 **8. `context/` files are written at runtime, not committed to git.**
 They are ephemeral state. Reading them gives current hunt status. They do NOT

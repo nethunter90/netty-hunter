@@ -932,6 +932,16 @@ export class CampaignOrchestrator extends EventEmitter {
         } else {
           rejected.push({ finding: dbFinding, verification });
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          // Persist the rejection so the finding is never left as status:"new"/verificationStatus:"pending"
+          // — without this update a rejected finding is indistinguishable from an unverified one.
+          await db.update(findings).set({
+            verificationStatus: verification.finalVerdict, // "rejected" or "inconclusive"
+            verificationLog: [verification] as unknown as Record<string, unknown>[],
+            confidence: verification.finalConfidence,
+            updatedAt: new Date(),
+          }).where(eq(findings.id, dbFinding.id)).catch(e =>
+            logger.warn("[CampaignOrchestrator] L5 reject DB update failed", { findingId: dbFinding.id, err: String(e) })
+          );
           eventBus.publish('finding_rejected', 'orchestrator', String(this.state.campaignId || ''), {
             vulnType: dbFinding.vulnType,
             endpoint: verificationUrl,

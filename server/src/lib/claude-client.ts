@@ -99,7 +99,7 @@ export class ClaudeClient {
       thinking: { type: "adaptive" },
       system: MISSION_BRIEFING,
       messages,
-    });
+    }, { timeout: 90_000 }); // 90s hard cap — prevents indefinite loop stall if API hangs
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
