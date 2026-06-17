@@ -1953,7 +1953,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             endpoint: confirmed.hypothesis.targetUrl,
             confidence: confirmed.hypothesis.confidence,
           });
-          await this.persistFinding(confirmed);
+          const dbFindingId = await this.persistFinding(confirmed);
 
           // Non-blocking: demonstrate impact scope for the report without
           // holding up the hunt loop. Failures are fully isolated.
@@ -1972,7 +1972,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
                 confirmed.severity,
                 confirmed.cvssScore,
               );
-              if (assessment.impactProven) {
+              if (assessment.impactProven && dbFindingId > 0) {
                 this.emit("hunt:impact_demonstrated", {
                   sessionId: this.state.sessionId,
                   findingId: confirmed.hypothesis.id,
@@ -1989,7 +1989,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
                     impact: assessment.businessImpact,
                     updatedAt: new Date(),
                   })
-                  .where(eq(findings.dedupHash, confirmed.hypothesis.id))
+                  .where(eq(findings.id, dbFindingId))
                   .catch(() => {});
               }
             } catch (err) {
@@ -2673,9 +2673,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
     return steps;
   }
 
-  private async persistFinding(confirmed: HypothesisConfirmed): Promise<void> {
+  private async persistFinding(confirmed: HypothesisConfirmed): Promise<number> {
     try {
-      await db.insert(findings).values({
+      const [row] = await db.insert(findings).values({
         huntSessionId: this.dbSessionId,
         campaignId: this.campaignId,
         targetId: this.targetId,
@@ -2695,11 +2695,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
         affectedUrl: confirmed.hypothesis.targetUrl,
         verificationStatus: "pending",
         status: "new",
-      });
+      }).returning({ id: findings.id });
       // Update ROI model with confirmed finding
       await this.roiModel.updateSuccessRate(confirmed.hypothesis.vulnClass, true);
+      return row?.id ?? 0;
     } catch (err) {
       logger.error("Failed to persist finding", { err });
+      return 0;
     }
   }
 

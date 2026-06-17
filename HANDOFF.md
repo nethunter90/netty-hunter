@@ -43,8 +43,12 @@ Findings get verified, disclosure-checked, CVE-enriched, and reported **automati
 **Historic gap (now fixed in this branch):** Path B never ran Layer 5, so console-
 launched hunts left every finding at `verificationStatus: "pending"` and the operator
 had to click "Verify" on each one manually. We fixed this by adding an **auto-verify
-pass** to *both* `hunt:complete` handlers in `hunt.ts` (forward + backward), using a
-shared helper `verifyPendingForSession()`. See §11.
+pass** to **both** `hunt:complete` handlers (forward and backward) in `hunt.ts`, using
+a shared helper `verifyPendingForSession()`. See §11.
+
+Note: the backward hunt handler was initially missed in the first fix pass — it only
+had `metaReasoner` + `strategyWeightLearner` calls, no verify IIFE. That gap is now
+closed.
 
 **Takeaway for the next engineer:** if you change verification behavior, you must
 touch it in **two** places — `CampaignOrchestrator.layer5_verificationGate` AND the
@@ -514,8 +518,9 @@ curl http://localhost:11434/api/tags | jq '.models[].name'
 2. **ARCHITECTURE.md** authored, then corrected (Claude-first routing; verifier only at L5; L5 reject now writes DB).
 3. **ClaudeClient.reason** got a 90s hard timeout.
 4. **CampaignOrchestrator L5 rejection** now persists the verdict to the DB row (was in-memory only).
-5. **Verification pipeline fixed:** shared `verify-finding.ts` helper; Path B auto-verify on `hunt:complete`; manual verify endpoint now uses a real URL (was passing numeric `targetId`); `request` field populated so L2 actually replays.
-6. **Layer-1 self-dedup fix (latest):** `verify(result, { skipDedupHash })` so re-verifying a finding isn't rejected as its own duplicate.
-
-**Suggested next step:** fix gotcha #8 (post-exploit severity escalation never persists in
-Path B because the DB patch keys on a null/mismatched `dedupHash`).
+5. **Verification pipeline fixed:** shared `verify-finding.ts` helper; Path B (forward + backward) auto-verify on `hunt:complete`; manual verify endpoint now uses a real URL (was passing numeric `targetId`); `request` field populated so L2 actually replays.
+6. **Layer-1 self-dedup fix:** `verify(result, { skipDedupHash })` so re-verifying a finding isn't rejected as its own duplicate.
+7. **Post-exploit severity escalation fixed:** `persistFinding()` now returns the DB row id; the non-blocking impact patch uses `eq(findings.id, dbFindingId)` instead of the former `eq(findings.dedupHash, hypothesis.id)` which was a UUID against a null column — a silent no-op.
+8. **Backward hunt auto-verify added:** the backward hunt `hunt:complete` handler was missing the auto-verify IIFE that the forward hunt had — backward-mode console hunts never ran the 4-layer pipeline.
+9. **Nuclei template + report URL fields fixed:** `POST /findings/:id/nuclei-template` and `POST /findings/:id/report` were passing `String(finding.targetId)` (e.g. "5") as the `endpoint` and `targetUrl` for the mock `SolverResult`. Templates were targeting a numeric DB id rather than the actual URL. Fixed to `finding.affectedUrl`.
+10. **CLAUDE.md port corrected:** server defaults to 3001, not 3000. The Juice Shop `targetUrl` in the curl example remains `:3000` (Juice Shop's own port).

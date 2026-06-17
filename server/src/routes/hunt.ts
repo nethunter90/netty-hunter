@@ -138,6 +138,16 @@ router.post("/start", async (req: Request, res: Response) => {
         const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
         metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
         strategyWeightLearner.learn().catch(() => {});
+        (async () => {
+          try {
+            io.to(`hunt:${sessionUuid}`).emit("hunt:verifying", { sessionUuid });
+            const { verified, confirmed } = await verifyPendingForSession(verifierAgent, sessionUuid, targetUrl);
+            io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
+            logger.info("Auto-verification complete", { sessionUuid, verified, confirmed });
+          } catch (err) {
+            logger.warn("Auto-verification pass failed", { sessionUuid, err: String(err) });
+          }
+        })();
         setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
 
@@ -340,13 +350,13 @@ router.post("/findings/:id/nuclei-template", async (req: Request, res: Response)
   const mockSolverResult = {
     taskId: String(finding.id),
     solverId: "manual",
-    endpoint: String(finding.targetId || ""),
+    endpoint: finding.affectedUrl || "",
     vulnClass: finding.vulnType as Parameters<typeof generator.generateTemplate>[0]["vulnClass"],
     found: true,
     confidence: finding.confidence,
     evidence: {},
     payload: finding.exploitPayload || "",
-    request: "",
+    request: finding.affectedUrl || "",
     response: "",
     duration: 0,
     toolsUsed: [],
@@ -384,9 +394,9 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
   const generator = new DraftReportGenerator();
   const mockSolverResult = {
     taskId: String(finding.id), solverId: "manual",
-    endpoint: String(finding.targetId || ""), vulnClass: finding.vulnType as Parameters<typeof generator.generate>[0]["vulnClass"],
+    endpoint: finding.affectedUrl || "", vulnClass: finding.vulnType as Parameters<typeof generator.generate>[0]["vulnClass"],
     found: true, confidence: finding.confidence, evidence: {},
-    payload: finding.exploitPayload || "", request: "", response: "",
+    payload: finding.exploitPayload || "", request: finding.affectedUrl || "", response: "",
     duration: 0, toolsUsed: [],
   };
   const mockVerification = {
@@ -408,7 +418,7 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
   const report = await generator.generate(mockSolverResult, mockVerification, {
     severity: finding.severity,
     programName: req.body.programName || "Target Program",
-    targetUrl: String(finding.targetId || ""),
+    targetUrl: finding.affectedUrl || "",
     huntDate: finding.createdAt.toISOString().split("T")[0],
     rawEvidence: rawHttpEntry ? String(rawHttpEntry.data ?? "") : undefined,
     videoPath: videoEntry ? String(videoEntry.path ?? "") : undefined,

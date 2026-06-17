@@ -87,7 +87,7 @@ tail -100 server/logs/app.log 2>/dev/null || echo "no log file — check termina
 
 ### Start a hunt against Juice Shop
 ```bash
-curl -X POST http://localhost:3000/api/hunt/start \
+curl -X POST http://localhost:3001/api/hunt/start \
   -H "Content-Type: application/json" \
   -d '{"programId":-1,"targetUrl":"http://localhost:3000","mode":"forward","maxIterations":10}'
 ```
@@ -136,7 +136,7 @@ Pattern to follow:
 
 ```bash
 npm run dev          # start both server + client
-npm run dev:server   # server only (port 3000)
+npm run dev:server   # server only (port 3001)
 npm run dev:client   # client only (port 5173)
 cd server && npx tsc --noEmit  # type check
 ```
