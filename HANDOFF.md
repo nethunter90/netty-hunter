@@ -78,7 +78,7 @@ netty-hunter/
       core-governance.ts, pillars.ts, drift-detector.ts, self-attestation.ts,
       decision-logger.ts, types.ts, enforcement/prompt-injection-detector.ts
     lib/
-      claude-client.ts           # Anthropic SDK wrapper (tier 0a Sonnet / 0b... no, 0c Haiku). Budgeted.
+      claude-client.ts           # Anthropic SDK wrapper (Sonnet for reason, Haiku for classify/chat). Budgeted.
       claude-bridge.ts           # `claude --print -p` CLI bridge (tier 0b). 120s timeout.
       context-writer.ts          # Writes context/*.json live state for the CLI-invoked Claude.
       verification/verify-finding.ts   # SHARED verify helper (auto + manual). NEW this session.
@@ -331,7 +331,7 @@ weaken it.**
 **Governance subsystem** — import the singletons from `server/src/governance` (the index):
 - `coreGovernance` — central decision/audit recorder; broadcasts `governance:event` over Socket.IO.
 - `decisionLogger` — crash-safe WAL → daily NDJSON.
-- `selfAttestation Service` — records *why* each agent acted.
+- `selfAttestationService` — records *why* each agent acted.
 - `driftDetector` — rolling snapshots; `analyze()` compares recent vs baseline windows for behavioral drift.
 - `promptInjectionDetector` — `detect(input)`; **safe = score < 40**; 4 detector layers
   (keywords/patterns/semantic/structural). Used on LLM *output* in HunterEngine + VerifierAgent.
