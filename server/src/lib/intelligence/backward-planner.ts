@@ -113,13 +113,40 @@ export class BackwardPlanner {
     return plan;
   }
 
+  // Canonical goal names used by ATTACK_PATHS in seed-knowledge.ts. Callers
+  // (HunterEngine, CampaignOrchestrator) use short snake_case aliases that
+  // wouldn't match without this map.
+  private static readonly GOAL_ALIASES: Record<string, string> = {
+    "account_compromise":    "Account Takeover",
+    "account_takeover":      "Account Takeover",
+    "ato":                   "Account Takeover",
+    "data_exfil":            "Data Exfiltration",
+    "data_exfiltration":     "Data Exfiltration",
+    "exfiltration":          "Data Exfiltration",
+    "rce":                   "Remote Code Execution",
+    "remote_code_execution": "Remote Code Execution",
+    "code_execution":        "Remote Code Execution",
+    "xss":                   "Cross-Site Scripting",
+    "cross_site_scripting":  "Cross-Site Scripting",
+    "sqli":                  "SQL Injection",
+    "sql_injection":         "SQL Injection",
+    "ssrf":                  "Server-Side Request Forgery",
+    "idor":                  "Insecure Direct Object Reference",
+    "broken_access_control": "Insecure Direct Object Reference",
+  };
+
+  private normalizeGoal(goal: string): string {
+    return BackwardPlanner.GOAL_ALIASES[goal.toLowerCase()] ?? goal;
+  }
+
   getOptimalPath(
     goal: string,
     targetProfile?: { complexity: number; wafDetected: boolean; cloudHosted: boolean; authRequired: boolean },
     programContext?: ProgramContext
   ): RankedAttackPath[] {
+    const canonical = this.normalizeGoal(goal);
     const paths = ATTACK_PATHS.filter(
-      (p) => p.goal.toLowerCase() === goal.toLowerCase()
+      (p) => p.goal.toLowerCase() === canonical.toLowerCase()
     );
 
     const ranked: RankedAttackPath[] = [];

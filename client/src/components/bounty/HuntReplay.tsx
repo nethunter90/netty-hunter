@@ -442,7 +442,10 @@ export function HuntReplay() {
                         className="text-[10px] text-gray-400 border-[#3e3e3e] bg-[#1e1e1e]"
                         data-testid={`event-data-${idx}-${key}`}
                       >
-                        {key}: {String(event.data[key]).slice(0, 30)}
+                        {key}: {(typeof event.data[key] === 'object' && event.data[key] !== null
+                          ? JSON.stringify(event.data[key])
+                          : String(event.data[key])
+                        ).slice(0, 30)}
                       </Badge>
                     ))}
                   </div>

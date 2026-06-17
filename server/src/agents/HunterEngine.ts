@@ -1193,7 +1193,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const plan = backwardPlanner.planHunt(
             this.state.sessionId,
-            "account_compromise",
+            "Account Takeover",
             { complexity: 0.5, wafDetected: false, cloudHosted: false, authRequired: !!this.authConfig },
             { programId: String(this.state.programId), programAge: 180, reportCount: 50, noveltyFloor: 0.2 }
           );

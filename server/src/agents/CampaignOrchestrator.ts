@@ -481,9 +481,32 @@ export class CampaignOrchestrator extends EventEmitter {
           objective: params.goal,
           targetUrl: params.targetUrl,
         });
-        attackPlan = plan as unknown as Record<string, unknown>;
-        strategy = { mode: "backward", attackPlan };
-        this.audit(3, "backward_plan_created", { planId: (plan as { planId: string }).planId });
+
+        // Count total approaches across all nodes to detect an empty tree.
+        const countApproaches = (node: { approaches?: unknown[]; children?: unknown[] }): number => {
+          const own = (node.approaches ?? []).length;
+          const childSum = (node.children ?? []).reduce(
+            (acc: number, c) => acc + countApproaches(c as { approaches?: unknown[]; children?: unknown[] }),
+            0 as number
+          );
+          return own + childSum;
+        };
+        const totalApproaches = countApproaches(plan.rootNode as { approaches?: unknown[]; children?: unknown[] });
+
+        if (totalApproaches === 0) {
+          logger.warn("Backward plan has 0 viable approaches — degrading to forward", {
+            goal: params.goal,
+            planId: plan.planId,
+            strategy: "backward → forward",
+            reason: "no_viable_paths",
+          });
+          this.audit(3, "backward_degraded_to_forward", { planId: plan.planId, reason: "no_viable_paths" });
+          params.mode = "forward";
+        } else {
+          attackPlan = plan as unknown as Record<string, unknown>;
+          strategy = { mode: "backward", attackPlan };
+          this.audit(3, "backward_plan_created", { planId: (plan as { planId: string }).planId, totalApproaches });
+        }
       } catch (err) {
         logger.warn("Backward plan failed, falling back to forward", { err });
         params.mode = "forward";
