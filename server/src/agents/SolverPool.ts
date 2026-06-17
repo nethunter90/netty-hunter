@@ -70,6 +70,14 @@ export interface SolverResult {
   response: string;
   duration: number;
   toolsUsed: string[];
+  /**
+   * The agent/tool that DISCOVERED this finding, when it differs from a plain
+   * stateless HTTP probe. Set to "logic_exploit_agent" for findings produced by
+   * the Claude-directed stateful Playwright agent (multi-identity / multi-step
+   * flows). The verifier uses this to decide oracle authority: a stateless L2
+   * reprobe cannot reproduce a stateful finding, so it must not vote on one.
+   */
+  discoveryTool?: string;
 }
 
 // ─── Per-domain behavioral mimicry sessions ──────────────────────────────────

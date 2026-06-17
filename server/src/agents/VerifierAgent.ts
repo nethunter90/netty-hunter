@@ -33,6 +33,11 @@ export interface VerificationResult {
   dedupHash: string;
 }
 
+// Tools whose findings are STATEFUL — only reproducible inside a live
+// multi-step/multi-identity browser session. A stateless L2 HTTP reprobe cannot
+// replay these, so it is barred from voting on their verdict (see verify()).
+const STATEFUL_ORACLE_TOOLS = new Set<string>(["logic_exploit_agent"]);
+
 // ─── Layer 1: Static Deduplication ───────────────────────────────────────────
 class Layer1Dedup {
   private hashCache = new Set<string>();
@@ -474,6 +479,21 @@ export class VerifierAgent {
     const l2 = await this.layer2.reprobe(result);
     logger.info("VerifierAgent: L2 reprobe complete", { confirmed: l2.confirmed });
 
+    // ── Discovery-oracle classification ──────────────────────────────────────
+    // A finding discovered by the Claude-directed stateful Playwright agent
+    // (LogicExploitAgent) only exists INSIDE a multi-step, often multi-identity
+    // session: forged session state, mid-flight request interception, dual-context
+    // BOLA, race windows. A bare stateless L2 GET structurally cannot reproduce
+    // that flow — for auth_bypass it would hit 401/403 (false reject); for idor /
+    // business_logic a 200 on the URL proves nothing about cross-account access
+    // (false confirm). So for these findings L2 must NOT vote. The discovery run
+    // was ITSELF a real browser oracle (Playwright) with hard-evidence
+    // requirements — a stronger oracle than L3's single-page replay — so authority
+    // passes to L4 reasoning over the captured request/response proof.
+    const discoveryTool = result.discoveryTool
+      ?? (result.evidence as { tool?: string } | undefined)?.tool;
+    const statefulOracle = STATEFUL_ORACLE_TOOLS.has(String(discoveryTool ?? ""));
+
     // Layer 3: Browser Replay.
     // Browser-verifiable classes are those a real browser can PROVE by observing
     // execution (DOM XSS et al). For these, L3 is the authoritative oracle and
@@ -523,6 +543,23 @@ export class VerifierAgent {
       } else {
         finalVerdict = "rejected";
         finalConfidence = Math.max(0, finalConfidence - 0.3);
+      }
+    } else if (statefulOracle) {
+      // Stateful agent-discovered finding (idor / auth_bypass / business_logic via
+      // the Claude-directed Playwright agent). L2 is barred — a contextless GET
+      // cannot replay a multi-identity / multi-step flow, so its vote here is noise
+      // (it would falsely reject auth_bypass on a 401 and falsely confirm idor on a
+      // 200). The discovery run was a real browser oracle with hard-evidence
+      // requirements; authority passes to L4 reasoning over the captured proof.
+      // NOTE: this does NOT touch the xss/dom_xss mandatory L3 gate above — those
+      // remain gated exactly as before. (Governance: Playwright gate preserved.)
+      if (l4.confirmed) {
+        finalVerdict = "confirmed";
+        finalConfidence = Math.min(0.95, finalConfidence + 0.05);
+      } else {
+        // L4 dissent or error on a finding a stateful oracle already proved → needs
+        // a human, never an auto-reject driven by an inapplicable stateless reprobe.
+        finalVerdict = "inconclusive";
       }
     } else {
       // HTTP-observable class: L2 (live reprobe) is authoritative, L4 corroborates,

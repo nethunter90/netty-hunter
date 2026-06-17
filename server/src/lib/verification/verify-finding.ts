@@ -58,6 +58,18 @@ export async function verifyAndPersistFinding(
     ? finding.evidence as Record<string, unknown>[]
     : [];
 
+  // Recover the discovery oracle and any captured stateful proof. Findings from
+  // the Claude-directed Playwright agent store the agent ProbeResult (carrying
+  // .tool) plus a { type:"raw_http", data } entry holding the real request/
+  // response pairs. Surfacing those lets the verifier (a) bar the stateless L2
+  // reprobe from voting on a stateful finding and (b) give L4 the actual proof
+  // to reason over instead of an empty response.
+  const discoveryTool = evidenceArr
+    .map(e => (e as { tool?: string }).tool)
+    .find(t => typeof t === "string" && t.length > 0);
+  const rawHttp = evidenceArr.find(e => (e as { type?: string }).type === "raw_http");
+  const capturedProof = rawHttp ? String((rawHttp as { data?: unknown }).data ?? "") : "";
+
   const mockResult = {
     taskId: String(finding.id),
     solverId: "verify",
@@ -68,9 +80,10 @@ export async function verifyAndPersistFinding(
     evidence: evidenceArr[0] || {},
     payload: finding.exploitPayload || "",
     request: endpoint, // L2 reprobe replays this — must be the real URL, not ""
-    response: "",
+    response: capturedProof.slice(0, 4000),
     duration: 0,
     toolsUsed: [],
+    discoveryTool,
   };
 
   // Pass the finding's own stored dedupHash so Layer 1 doesn't reject it as a
