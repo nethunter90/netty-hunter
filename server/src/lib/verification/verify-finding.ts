@@ -119,11 +119,17 @@ export async function verifyAndPersistFinding(
   // hunt-loop escalation from inflating severity on a finding that fails verify.
   const escalation = verification.finalVerdict === "confirmed" ? pendingEscalation(finding) : null;
 
+  // When L1 deduplicates this finding against an existing row, writing the same
+  // dedupHash onto THIS row would violate the unique constraint (the hash already
+  // belongs to the canonical finding). Mark it "duplicate" and persist the log
+  // without touching dedupHash so the canonical row keeps sole ownership.
+  const isDuplicate = verification.finalVerdict === "deduplicated";
+
   await db.update(findings).set({
-    verificationStatus: verification.finalVerdict,
+    verificationStatus: isDuplicate ? "duplicate" : verification.finalVerdict,
     verificationLog: [verification] as unknown as Record<string, unknown>[],
     confidence: verification.finalConfidence,
-    dedupHash: verification.dedupHash,
+    ...(isDuplicate ? {} : { dedupHash: verification.dedupHash }),
     ...(escalation ? {
       severity: escalation.severity,
       cvssScore: escalation.cvssScore,
@@ -161,9 +167,10 @@ export async function verifyPendingForSession(
   let verified = 0;
   for (const finding of pending) {
     if (finding.verificationStatus === "confirmed") continue; // idempotent on resume
+    if (finding.verificationStatus === "duplicate") continue;  // already resolved
     try {
       const result = await verifyAndPersistFinding(verifier, finding, fallbackUrl);
-      if (result) {
+      if (result && result.finalVerdict !== "deduplicated") {
         verified++;
         if (result.finalVerdict === "confirmed") confirmed++;
       }

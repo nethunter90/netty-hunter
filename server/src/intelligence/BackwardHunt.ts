@@ -256,7 +256,14 @@ Return JSON matching AttackTreeNode structure with: id, goal, preconditions, app
 Keep it to 2-3 levels deep with 2-4 approaches per node. Return ONLY the JSON object.`;
 
     try {
-      const response = await this.modelRouter.reason(prompt);
+      // oneShot — attack-tree generation is a single structured JSON extraction,
+      // no conversation thread needed. Previously used reason() without sessionId,
+      // colliding with PostExploitAgent on the shared "default" Sonnet thread.
+      const { ClaudeClient } = await import("../lib/claude-client");
+      const response = await ClaudeClient.oneShot(
+        "You are an expert bug bounty hunter. Return only valid JSON, no markdown.",
+        prompt,
+      );
       const parsed = JSON.parse(response.match(/\{[\s\S]+\}/)?.[0] || "{}");
       return parsed;
     } catch {

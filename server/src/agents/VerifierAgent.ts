@@ -28,7 +28,7 @@ export interface VerificationResult {
   layer2_reprobe: { confirmed: boolean; statusCode: number; responseSnippet: string };
   layer3_playwright: { confirmed: boolean; screenshot?: string; consoleAlerts: string[]; networkRequests: string[] };
   layer4_ai: { confirmed: boolean; reasoning: string; confidenceAdjustment: number; errored?: boolean };
-  finalVerdict: "confirmed" | "rejected" | "inconclusive";
+  finalVerdict: "confirmed" | "rejected" | "inconclusive" | "deduplicated";
   finalConfidence: number;
   dedupHash: string;
 }
@@ -469,7 +469,7 @@ export class VerifierAgent {
         layer2_reprobe: { confirmed: false, statusCode: 0, responseSnippet: "Deduplicated" },
         layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] },
         layer4_ai: { confirmed: false, reasoning: "Duplicate finding", confidenceAdjustment: -1 },
-        finalVerdict: "rejected",
+        finalVerdict: "deduplicated",
         finalConfidence: 0,
         dedupHash,
       };

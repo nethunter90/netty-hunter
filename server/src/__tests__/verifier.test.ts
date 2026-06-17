@@ -391,7 +391,7 @@ describe('VerifierAgent', () => {
       vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
       vi.spyOn((a as any).layer2, 'reprobe').mockImplementation(l2spy);
       const vr = await a.verify(makeSolverResult());
-      expect(vr.finalVerdict).toBe('rejected');
+      expect(vr.finalVerdict).toBe('deduplicated');
       expect(vr.finalConfidence).toBe(0);
       expect(l2spy).not.toHaveBeenCalled();
     });

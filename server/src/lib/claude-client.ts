@@ -56,6 +56,31 @@ export class ClaudeClient {
   private static readonly MAX_CALLS_PER_HUNT =
     parseInt(process.env.MAX_LLM_CALLS_PER_HUNT || "150", 10);
 
+  // ── Input-token rate limiter (token bucket) ─────────────────────────────────
+  // Prevents 429 "rate limit exceeded" errors by pacing input-token spend below
+  // the org's 30k input-tokens-per-minute ceiling. Uses prompt character length
+  // as a proxy (chars / 4 ≈ tokens). Configurable via MAX_INPUT_TOKENS_PER_MIN.
+  private static readonly TOKEN_BUCKET_CEILING =
+    parseInt(process.env.MAX_INPUT_TOKENS_PER_MIN || "25000", 10);
+  private static tokenBucketUsed = 0;
+  private static tokenBucketWindowStart = Date.now();
+
+  private static async paceTokens(estimatedTokens: number): Promise<void> {
+    const now = Date.now();
+    if (now - ClaudeClient.tokenBucketWindowStart >= 60_000) {
+      ClaudeClient.tokenBucketWindowStart = now;
+      ClaudeClient.tokenBucketUsed = 0;
+    }
+    if (ClaudeClient.tokenBucketUsed + estimatedTokens > ClaudeClient.TOKEN_BUCKET_CEILING) {
+      const msLeft = 60_000 - (Date.now() - ClaudeClient.tokenBucketWindowStart) + 500;
+      logger.info("[ClaudeClient] Input-token rate limit approached — pacing", { msLeft, used: ClaudeClient.tokenBucketUsed });
+      await new Promise(r => setTimeout(r, msLeft));
+      ClaudeClient.tokenBucketWindowStart = Date.now();
+      ClaudeClient.tokenBucketUsed = 0;
+    }
+    ClaudeClient.tokenBucketUsed += estimatedTokens;
+  }
+
   /**
    * Reserve one LLM call against the session budget. Returns false when the
    * hunt has exhausted its allowance. Callers that make direct Anthropic calls
@@ -85,13 +110,28 @@ export class ClaudeClient {
       throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
     }
 
-    const thread = ClaudeClient.threads.get(sessionId) ?? [];
-    thread.push({ role: "user", content: userPrompt });
+    // Build a NEW array — never mutate the stored thread. Concurrent calls sharing
+    // the same sessionId previously raced on the same reference, interleaving their
+    // user/assistant pushes and producing an assistant-terminated array on the next
+    // call (→ 400 "assistant message prefill").
+    const base = ClaudeClient.threads.get(sessionId) ?? [];
+    const withUser: Anthropic.MessageParam[] = [
+      ...base,
+      { role: "user", content: userPrompt },
+    ];
 
-    // Trim thread to avoid growing unbounded while preserving recent context
-    const messages = thread.length > ClaudeClient.MAX_THREAD_MESSAGES
-      ? thread.slice(-ClaudeClient.MAX_THREAD_MESSAGES)
-      : thread;
+    // Trim to the rolling window — always ends with the user message we just added
+    const messages = withUser.length > ClaudeClient.MAX_THREAD_MESSAGES
+      ? withUser.slice(-ClaudeClient.MAX_THREAD_MESSAGES)
+      : withUser;
+
+    // Pace input tokens to stay below the org's 30k tokens/min rate limit
+    const estimatedInputTokens = Math.ceil(
+      (MISSION_BRIEFING.length + messages.reduce((n, m) =>
+        n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0)
+      ) / 4
+    );
+    await ClaudeClient.paceTokens(estimatedInputTokens);
 
     const response = await ClaudeClient.client.messages.create({
       model: "claude-sonnet-4-6",
@@ -99,16 +139,18 @@ export class ClaudeClient {
       thinking: { type: "adaptive" },
       system: MISSION_BRIEFING,
       messages,
-    }, { timeout: 90_000 }); // 90s hard cap — prevents indefinite loop stall if API hangs
+    }, { timeout: 90_000 });
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map(b => b.text)
       .join("");
 
-    // Store full content (includes thinking blocks — required for proper context)
-    thread.push({ role: "assistant", content: response.content as Anthropic.MessageParam["content"] });
-    ClaudeClient.threads.set(sessionId, thread);
+    // Store the completed turn atomically — previous stored thread is never mutated
+    ClaudeClient.threads.set(sessionId, [
+      ...withUser,
+      { role: "assistant", content: response.content as Anthropic.MessageParam["content"] },
+    ]);
 
     logger.debug("[ClaudeClient] reason() complete", { sessionId, outputLen: text.length });
     return text;

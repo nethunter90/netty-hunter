@@ -5,8 +5,10 @@ import * as schema from "./schema";
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || "postgresql://postgres:password@localhost:5432/netty_hunter",
   max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  idleTimeoutMillis: 120_000,       // raised from 30s — prevents pool drain during quiet periods mid-hunt
+  connectionTimeoutMillis: 5_000,   // raised from 2s — gives more headroom under burst load
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
 });
 
 // Idempotent DDL for tables added after initial schema creation.
