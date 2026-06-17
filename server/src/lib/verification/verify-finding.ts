@@ -19,6 +19,28 @@ import logger from "../../utils/logger";
 
 type FindingRow = typeof findings.$inferSelect;
 
+/**
+ * Pull a pending impact-escalation out of a finding's evidence. PostExploitAgent
+ * demonstrates impact in the hunt loop (before the finding is verified) and
+ * stashes the proven severity/CVSS/impact here rather than applying it to an
+ * unverified row. Callers apply it ONLY on a "confirmed" verdict so a finding the
+ * verifier rejects never carries inflated severity.
+ */
+export function pendingEscalation(
+  finding: FindingRow
+): { severity: string; cvssScore: number; impact: string } | null {
+  const arr = Array.isArray(finding.evidence) ? finding.evidence as Record<string, unknown>[] : [];
+  const e = arr.find(x => (x as { type?: string }).type === "impact_escalation");
+  if (!e) return null;
+  const severity = String((e as { severity?: unknown }).severity ?? "");
+  if (!severity) return null;
+  return {
+    severity,
+    cvssScore: Number((e as { cvssScore?: unknown }).cvssScore ?? 0),
+    impact: String((e as { impact?: unknown }).impact ?? ""),
+  };
+}
+
 /** Reconstruct a real http(s) URL to re-probe from a stored finding. */
 export function deriveVerificationUrl(finding: FindingRow, fallbackUrl = ""): string {
   const affected = (finding as { affectedUrl?: string | null }).affectedUrl;
@@ -92,11 +114,21 @@ export async function verifyAndPersistFinding(
     skipDedupHash: finding.dedupHash ?? undefined,
   });
 
+  // Apply PostExploitAgent's proven severity/CVSS escalation only now that we have
+  // a verdict — and only if it's "confirmed". This is the gate that keeps the
+  // hunt-loop escalation from inflating severity on a finding that fails verify.
+  const escalation = verification.finalVerdict === "confirmed" ? pendingEscalation(finding) : null;
+
   await db.update(findings).set({
     verificationStatus: verification.finalVerdict,
     verificationLog: [verification] as unknown as Record<string, unknown>[],
     confidence: verification.finalConfidence,
     dedupHash: verification.dedupHash,
+    ...(escalation ? {
+      severity: escalation.severity,
+      cvssScore: escalation.cvssScore,
+      impact: escalation.impact,
+    } : {}),
     updatedAt: new Date(),
   }).where(eq(findings.id, finding.id)).catch(e =>
     logger.warn("[verify-finding] DB update failed", { findingId: finding.id, err: String(e) })

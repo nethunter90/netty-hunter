@@ -1981,16 +1981,30 @@ Return ONLY valid JSON array of hypothesis objects.`;
                   cvssScore: assessment.cvssScore,
                   steps: assessment.steps.length,
                 });
-                // Patch the DB row with escalated severity/CVSS + business impact.
-                await db.update(findings)
-                  .set({
+                // Do NOT apply the severity/CVSS bump now — the finding is still
+                // unverified at this point (Path B verifies at hunt:complete, Path A
+                // at orchestrator L5). Stash the proven escalation in the evidence
+                // trail; it is applied only once the verifier returns "confirmed",
+                // so we never inflate severity on a finding the verifier rejects.
+                try {
+                  const [row] = await db.select({ evidence: findings.evidence })
+                    .from(findings).where(eq(findings.id, dbFindingId)).limit(1);
+                  const ev = Array.isArray(row?.evidence)
+                    ? row!.evidence as Record<string, unknown>[]
+                    : [];
+                  ev.push({
+                    type: "impact_escalation",
                     severity: assessment.severity,
                     cvssScore: assessment.cvssScore,
                     impact: assessment.businessImpact,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(findings.id, dbFindingId))
-                  .catch(() => {});
+                    proven: true,
+                  });
+                  await db.update(findings)
+                    .set({ evidence: ev as unknown as Record<string, unknown>[], updatedAt: new Date() })
+                    .where(eq(findings.id, dbFindingId));
+                } catch (e) {
+                  logger.debug("[HunterEngine] Failed to stash impact escalation", { err: String(e) });
+                }
               }
             } catch (err) {
               logger.debug("[HunterEngine] Post-exploit demonstration non-critical failure", { err: String(err) });

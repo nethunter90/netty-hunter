@@ -187,9 +187,9 @@ between phases so concurrent hunts/sockets aren't starved. State machine on
 RL `onHuntComplete`, **`persistResults()`** (updates `huntSessions`, creates an
 `exploitChains` row if ≥2 findings), emits **`hunt:complete`**.
 
-> ⚠️ **persistFinding writes `verificationStatus:"pending"` and does NOT set `dedupHash`.**
-> The verifier sets `dedupHash` later. See the gotcha in §14 about the post-exploit
-> DB patch keying on `dedupHash`.
+> Note: `persistFinding` writes `verificationStatus:"pending"` and does NOT set `dedupHash`
+> (the verifier sets it later); it now returns the new row id so the post-exploit escalation
+> can target the finding by `id` and stash its proven escalation for apply-on-confirm (§7, §16#8).
 
 ---
 
@@ -242,8 +242,18 @@ The anti-hallucination gate. `result` is a `SolverResult`. **NEW this session:**
   (`verify-<taskId>`) to avoid races. On parse/transport failure → `errored:true`
   (routes to *inconclusive*, never a silent reject).
 
-### Final verdict — per-class oracle authority (important and subtle)
-- **Browser-verifiable classes (`xss`, `dom_xss`):** L3 is the **mandatory oracle**.
+### Final verdict — oracle authority by DISCOVERY method, not just class (important and subtle)
+There are now **three** authority categories. The selector is `result.discoveryTool`
+(or `result.evidence.tool` fallback) first, then vuln class:
+- **Stateful agent-discovered (`discoveryTool === "logic_exploit_agent"`):** these
+  `idor`/`auth_bypass`/`business_logic` findings only exist inside a live multi-step /
+  multi-identity browser session. **L2 is barred from voting** — a contextless GET can't
+  replay them (it falsely rejects `auth_bypass` on 401/403 and falsely confirms `idor` on a
+  200). The discovery run was itself a Playwright oracle with hard-evidence requirements, so
+  authority passes to **L4 over the captured `rawHttpLog`**. L4 confirmed → `confirmed`;
+  L4 dissent/error → `inconclusive` (human review), never an auto-reject. (`STATEFUL_ORACLE_TOOLS`
+  in VerifierAgent.)
+- **Browser-verifiable classes (`xss`, `dom_xss`):** L3 is the **mandatory oracle** (unchanged).
   - L3 offline → `inconclusive` (if L4 believes) or `rejected`. **Never auto-confirmed without a real browser execution.**
   - L3 confirmed → `confirmed`. L4-only (L3 didn't prove) → `inconclusive`. Neither → `rejected`.
 - **HTTP-observable classes (everything else):** **L2 is authoritative, L4 corroborates, L3 does not vote.**
@@ -251,8 +261,10 @@ The anti-hallucination gate. `result` is a `SolverResult`. **NEW this session:**
 - **L4 errored + verdict would be rejected → bumped to `inconclusive`** (a dead reasoning
   backstop must not refute a finding).
 
-> Governance rule: **do not bypass the Playwright gate.** The `skipDedupHash` change does
-> NOT touch the L3 gate — it only skips L1 dedup for intentional re-verification.
+> Governance rule: **do not bypass the Playwright gate.** Neither `skipDedupHash` nor the
+> stateful-oracle category touches the `xss`/`dom_xss` L3 mandatory gate — the stateful
+> category only governs classes L3 never gated, and those findings were already proven by a
+> real Playwright run (LogicExploitAgent) at discovery.
 
 ---
 
@@ -268,6 +280,13 @@ Demonstrates *impact* without exploiting destructively, to justify report severi
 - **Severity escalation: upward only, one rank, capped per class.** CVSS = `max(base, CVSS_BY_SEVERITY[escalated])`. Only when `impactProven`.
 - **Emits:** `postexploit:start/step/complete`; engine re-emits `hunt:impact_demonstrated`.
 - **Method:** `demonstrate(input, baseSeverity, baseCvss): Promise<ImpactAssessment>`.
+- **Escalation ordering (important):** post-exploit runs in `update()`, *before* the finding
+  is verified (Path B verifies at `hunt:complete`, Path A at L5). So it does **not** write
+  the severity bump to the row — it **stashes** the proven escalation as an
+  `{type:"impact_escalation", severity, cvssScore, impact, proven:true}` entry in the
+  finding's `evidence`. The bump is applied **only on a `confirmed` verdict**, by
+  `pendingEscalation()` (in `verify-finding.ts`) at both verify sites (Path B helper + L5).
+  This prevents inflating severity on a finding the verifier later rejects.
 
 ---
 
@@ -457,18 +476,22 @@ These are how the `claude --print -p` bridge gets live hunt state prepended to i
 4. **The circuit breaker only gates Ollama.** "Circuit OPEN" never blocks Claude.
 5. **L1 dedup `rejected` ≠ "not a vuln."** It means "we've seen this hash." Re-verify uses
    `skipDedupHash` to avoid self-collision.
-6. **VerifierAgent has per-class oracle authority.** L3 (browser) is mandatory only for
-   `xss`/`dom_xss`; for HTTP-observable classes L3 does not vote and L2 is authoritative.
-   A browser-verifiable finding is *never* auto-confirmed when Playwright is offline.
+6. **VerifierAgent authority is by DISCOVERY method, not just class.** Three categories:
+   stateful agent-discovered (`discoveryTool === "logic_exploit_agent"` → L2 barred, L4 over
+   captured proof); `xss`/`dom_xss` (L3 mandatory); HTTP-observable (L2 authoritative). A bare
+   stateless L2 GET **cannot** verify a stateful idor/auth_bypass/business_logic finding —
+   that was the root verification bug. A browser-verifiable finding is *never* auto-confirmed
+   when Playwright is offline.
 7. **L4 `errored` routes to `inconclusive`, never auto-reject.** A dead reasoning backstop
    must not refute a possibly-real finding.
-8. **`persistFinding` does not set `dedupHash` (it's null at insert).** ⚠️ The non-blocking
-   post-exploit DB patch in `update()` keys on `.where(eq(findings.dedupHash, hypothesis.id))`,
-   which will **silently match nothing** because (a) dedupHash is null at that point and
-   (b) it's compared to the hypothesis UUID, not a real hash. The `.catch(()=>{})` hides it.
-   **If you want post-exploit severity escalation to actually persist for Path B, key the
-   update on `huntSessionId + affectedUrl/vulnType` (or set a stable id at insert) instead.**
-   This is a latent bug worth fixing.
+8. **Post-exploit escalation is deferred to verification (was a latent bug, now fixed).**
+   `persistFinding()` returns the new row id; the impact escalation is **stashed** in
+   `evidence` as `{type:"impact_escalation",...}` during `update()` and applied to
+   `severity/cvssScore/impact` **only on a `confirmed` verdict** via `pendingEscalation()`
+   at both verify sites. (The old code keyed the patch on `findings.dedupHash = hypothesis.id`
+   — a UUID against a null column — so it silently never persisted; the interim "fix" that
+   keyed on `findings.id` then inflated severity on *unverified* findings. The stash-and-apply
+   ordering resolves both.)
 9. **`CampaignOrchestrator` has no singleton.** It's `new`-ed per run; don't look for a shared instance.
 10. **Governance import surface:** singletons come from `server/src/governance` (index), but
     `governanceImmunizer` lives in `server/src/lib/governance/` and is imported separately.
@@ -520,7 +543,8 @@ curl http://localhost:11434/api/tags | jq '.models[].name'
 4. **CampaignOrchestrator L5 rejection** now persists the verdict to the DB row (was in-memory only).
 5. **Verification pipeline fixed:** shared `verify-finding.ts` helper; Path B (forward + backward) auto-verify on `hunt:complete`; manual verify endpoint now uses a real URL (was passing numeric `targetId`); `request` field populated so L2 actually replays.
 6. **Layer-1 self-dedup fix:** `verify(result, { skipDedupHash })` so re-verifying a finding isn't rejected as its own duplicate.
-7. **Post-exploit severity escalation fixed:** `persistFinding()` now returns the DB row id; the non-blocking impact patch uses `eq(findings.id, dbFindingId)` instead of the former `eq(findings.dedupHash, hypothesis.id)` which was a UUID against a null column — a silent no-op.
+7. **Post-exploit severity escalation — key fixed, then ordering fixed:** `persistFinding()` returns the DB row id; the impact patch first moved from `eq(findings.dedupHash, hypothesis.id)` (UUID vs null column, silent no-op) to `eq(findings.id, dbFindingId)`. That surfaced a sequencing trap (escalation persisted before verification), so escalation is now **stashed in evidence and applied only on a `confirmed` verdict** via `pendingEscalation()` at both verify sites (Path B helper + Path A L5).
 8. **Backward hunt auto-verify added:** the backward hunt `hunt:complete` handler was missing the auto-verify IIFE that the forward hunt had — backward-mode console hunts never ran the 4-layer pipeline.
 9. **Nuclei template + report URL fields fixed:** `POST /findings/:id/nuclei-template` and `POST /findings/:id/report` were passing `String(finding.targetId)` (e.g. "5") as the `endpoint` and `targetUrl` for the mock `SolverResult`. Templates were targeting a numeric DB id rather than the actual URL. Fixed to `finding.affectedUrl`.
 10. **CLAUDE.md port corrected:** server defaults to 3001, not 3000. The Juice Shop `targetUrl` in the curl example remains `:3000` (Juice Shop's own port).
+11. **Stateful verification mismatch fixed (root bug):** stateless L2 reprobe no longer votes on `idor`/`auth_bypass`/`business_logic` findings discovered by the Claude-directed Playwright agent — authority passes to L4 over the captured proof. The `xss`/`dom_xss` L3 mandatory gate is untouched. (§6.)

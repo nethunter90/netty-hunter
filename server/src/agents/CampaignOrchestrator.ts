@@ -44,6 +44,7 @@ import { bountyIntelligenceService } from "../lib/bounty-intelligence";
 import { eventBus } from "../lib/orchestration/layer3-event-bus";
 import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
+import { pendingEscalation } from "../lib/verification/verify-finding";
 import { nvdClient } from "../lib/intelligence/nvd-client";
 import { reportSubmitter } from "../lib/intelligence/report-submitter";
 import { subdomainTakeoverChecker } from "../lib/tools/subdomain-takeover";
@@ -845,6 +846,11 @@ export class CampaignOrchestrator extends EventEmitter {
           // CWE tag is a synchronous map lookup — apply it immediately.
           const cweId = VULN_TYPE_TO_CWE[dbFinding.vulnType] ?? null;
 
+          // Apply PostExploitAgent's proven severity/CVSS escalation now that the
+          // finding is confirmed (it was stashed in evidence during the hunt loop,
+          // before verification, so it never inflates an unverified finding).
+          const escalation = pendingEscalation(dbFinding);
+
           // Update finding record
           await db.update(findings).set({
             verificationStatus: verification.finalVerdict,
@@ -852,6 +858,11 @@ export class CampaignOrchestrator extends EventEmitter {
             confidence: verification.finalConfidence,
             dedupHash: verification.dedupHash,
             ...(cweId !== null ? { cweId } : {}),
+            ...(escalation ? {
+              severity: escalation.severity,
+              cvssScore: escalation.cvssScore,
+              impact: escalation.impact,
+            } : {}),
             updatedAt: new Date(),
           }).where(eq(findings.id, dbFinding.id));
 
