@@ -64,6 +64,7 @@ import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
 import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
+import { postExploitAgent } from "./PostExploitAgent";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 import { ClaudeClient } from "../lib/claude-client";
@@ -1953,6 +1954,49 @@ Return ONLY valid JSON array of hypothesis objects.`;
             confidence: confirmed.hypothesis.confidence,
           });
           await this.persistFinding(confirmed);
+
+          // Non-blocking: demonstrate impact scope for the report without
+          // holding up the hunt loop. Failures are fully isolated.
+          (async () => {
+            try {
+              const assessment = await postExploitAgent.demonstrate(
+                {
+                  findingId: confirmed.hypothesis.id,
+                  vulnClass: confirmed.hypothesis.vulnClass,
+                  targetUrl: confirmed.hypothesis.targetUrl,
+                  programId: this.state.programId,
+                  exploitPayload: confirmed.exploitPayload,
+                  confidence: confirmed.hypothesis.confidence,
+                  authHeaders: this.authHeaders,
+                },
+                confirmed.severity,
+                confirmed.cvssScore,
+              );
+              if (assessment.impactProven) {
+                this.emit("hunt:impact_demonstrated", {
+                  sessionId: this.state.sessionId,
+                  findingId: confirmed.hypothesis.id,
+                  vulnClass: confirmed.hypothesis.vulnClass,
+                  severity: assessment.severity,
+                  cvssScore: assessment.cvssScore,
+                  steps: assessment.steps.length,
+                });
+                // Patch the DB row with escalated severity/CVSS + business impact.
+                await db.update(findings)
+                  .set({
+                    severity: assessment.severity,
+                    cvssScore: assessment.cvssScore,
+                    impact: assessment.businessImpact,
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(findings.dedupHash, confirmed.hypothesis.id))
+                  .catch(() => {});
+              }
+            } catch (err) {
+              logger.debug("[HunterEngine] Post-exploit demonstration non-critical failure", { err: String(err) });
+            }
+          })();
+
           notificationService.notifyIfWorthy({
             type: "finding_confirmed",
             severity: confirmed.severity,

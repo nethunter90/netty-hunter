@@ -31,6 +31,7 @@ import adaptiveScanRoutes from "./routes/adaptive-scan";
 import findingsRoutes from "./routes/findings";
 import evidenceRoutes from "./routes/evidence";
 import reportExportRoutes from "./routes/report-export";
+import exploitRoutes from "./routes/exploit";
 import { HunterEngine } from "./agents/HunterEngine";
 import { SolverPool } from "./agents/SolverPool";
 import { CampaignOrchestrator } from "./agents/CampaignOrchestrator";
@@ -224,6 +225,7 @@ app.use("/api/adaptive-scan", requireAuth, adaptiveScanRoutes);
 app.use("/api/findings", requireAuth, findingsRoutes);
 app.use("/api/evidence", requireAuth, evidenceRoutes);
 app.use("/api/report-export", requireAuth, reportExportRoutes);
+app.use("/api/exploit", requireAuth, exploitRoutes);
 
 // OOB callback receiver — no auth required (external targets call this).
 // Per-IP rate limit caps beacon-flooding abuse on this public endpoint.
