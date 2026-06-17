@@ -30,6 +30,7 @@ vi.mock('../db', () => ({
 
 vi.mock('../db/schema', () => ({
   findings: { dedupHash: 'dedupHash', createdAt: 'createdAt', id: 'id' },
+  huntSessions: { id: 'id', sessionUuid: 'sessionUuid' },
 }));
 
 vi.mock('drizzle-orm', () => ({
@@ -83,6 +84,7 @@ vi.mock('axios', () => ({
 
 import { VerifierAgent } from '../agents/VerifierAgent';
 import type { SolverResult } from '../agents/SolverPool';
+import { pendingEscalation } from '../lib/verification/verify-finding';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -336,14 +338,18 @@ describe('VerifierAgent', () => {
       expect(r.confidenceAdjustment).toBe(-0.5);
     });
 
-    it('degrades gracefully when the model throws — returns L2∩L3 consensus', async () => {
+    it('on model error returns errored=true (needs review), never a silent confirm', async () => {
+      // Post-refactor (dd3d1b9): a dead L4 no longer rubber-stamps the L2∩L3
+      // consensus. It returns errored=true so the verdict routes to inconclusive
+      // rather than confirming on the other layers' raw booleans.
       const l4 = getL4WithError(new Error('LLM unavailable'));
       const bothConfirmed = {
         layer2: { confirmed: true, statusCode: 200, responseSnippet: 'ok' },
         layer3: { confirmed: true, consoleAlerts: [] },
       };
       const r = await l4.confirm(makeSolverResult(), bothConfirmed);
-      expect(r.confirmed).toBe(true);
+      expect(r.confirmed).toBe(false);
+      expect(r.errored).toBe(true);
       expect(r.reasoning).toContain('unavailable');
     });
 
@@ -390,19 +396,20 @@ describe('VerifierAgent', () => {
       expect(l2spy).not.toHaveBeenCalled();
     });
 
-    it('L2+L3+L4 all confirm (non-mandatory gate) → confirmed with +0.1 boost', async () => {
+    it('HTTP-observable class (cors): L2+L4 confirm → confirmed with +0.05 boost (L3 does not vote)', async () => {
       const result = makeSolverResult({ confidence: 0.6, vulnClass: 'cors' });
       const vr = await runVerify(result);
       expect(vr.finalVerdict).toBe('confirmed');
-      // finalConfidence = 0.6 + 0 (l4.confidenceAdjustment) + 0.1 = 0.7
-      expect(vr.finalConfidence).toBeCloseTo(0.7);
+      // HTTP-observable: l2 && l4 → +0.05 (L3 confirmation no longer boosts)
+      expect(vr.finalConfidence).toBeCloseTo(0.65);
     });
 
-    it('L2+L4 confirm but L3 not, no mandatory gate → confirmed (no +0.1)', async () => {
+    it('HTTP-observable class (cors): L2+L4 confirm with L3 absent → still confirmed (L3 n/a)', async () => {
       const result = makeSolverResult({ confidence: 0.6, vulnClass: 'cors' });
       const vr = await runVerify(result, { l3: l3Rejected });
       expect(vr.finalVerdict).toBe('confirmed');
-      expect(vr.finalConfidence).toBeCloseTo(0.6);
+      // L3 does not vote for HTTP-observable classes, so a rejected L3 is irrelevant.
+      expect(vr.finalConfidence).toBeCloseTo(0.65);
     });
 
     it('L2+L4 confirm but L3 fails mandatory gate (xss) → inconclusive', async () => {
@@ -412,10 +419,13 @@ describe('VerifierAgent', () => {
       expect(vr.finalVerdict).toBe('inconclusive');
     });
 
-    it('L2+L4 confirm but L3 fails mandatory gate (high confidence > 0.7) → inconclusive', async () => {
+    it('high confidence alone no longer forces a browser gate (cors, conf 0.8) → confirmed', async () => {
+      // Post-refactor: the mandatory browser gate is keyed on vuln CLASS
+      // (xss/dom_xss), not on a confidence threshold. A high-confidence cors
+      // finding is HTTP-observable and confirms on L2+L4.
       const result = makeSolverResult({ confidence: 0.8, vulnClass: 'cors' });
       const vr = await runVerify(result, { l3: l3Rejected });
-      expect(vr.finalVerdict).toBe('inconclusive');
+      expect(vr.finalVerdict).toBe('confirmed');
     });
 
     it('L2+L3+L4 all confirm with mandatory gate (sqli, L3 confirmed) → confirmed', async () => {
@@ -424,11 +434,12 @@ describe('VerifierAgent', () => {
       expect(vr.finalVerdict).toBe('confirmed');
     });
 
-    it('neither L2 nor L3 confirm → rejected with -0.3 confidence penalty', async () => {
+    it('HTTP-observable: neither L2 nor L4 confirm → rejected with -0.3 penalty', async () => {
+      // Must reject L4 too — for HTTP-observable classes L2 and L4 are the voters
+      // (L3 is n/a). A confirming L4 with a rejecting L2 would be "inconclusive".
       const result = makeSolverResult({ confidence: 0.6 });
-      const vr = await runVerify(result, { l2: l2Rejected, l3: l3Rejected });
+      const vr = await runVerify(result, { l2: l2Rejected, l3: l3Rejected, l4: l4Rejected });
       expect(vr.finalVerdict).toBe('rejected');
-      // finalConfidence = max(0, 0.6 + l4.confirmed(false adj → 0 from mock) - 0.3)
       expect(vr.finalConfidence).toBeLessThan(0.6);
     });
 
@@ -470,13 +481,98 @@ describe('VerifierAgent', () => {
       expect(vr.dedupHash).toBe('deadbeef1234');
     });
 
-    it('rce and ssrf also trigger mandatory browser gate', async () => {
+    it('rce and ssrf are HTTP-observable now, NOT browser-gated (L2+L4 → confirmed)', async () => {
+      // Post-refactor only xss/dom_xss are browser-verifiable. rce/ssrf are
+      // confirmed by L2 (live reprobe) + L4, with L3 not voting — so a rejected
+      // L3 does not block them.
       for (const vulnClass of ['rce', 'ssrf'] as const) {
         const result = makeSolverResult({ vulnClass, confidence: 0.5 });
         const vr = await runVerify(result, { l3: l3Rejected });
-        // L3 not confirmed + mandatory gate → cannot be "confirmed"
-        expect(['inconclusive', 'rejected']).toContain(vr.finalVerdict);
+        expect(vr.finalVerdict).toBe('confirmed');
       }
+    });
+  });
+
+  // ─── Stateful oracle authority (the root-bug fix) ─────────────────────────
+  // Findings discovered by LogicExploitAgent are stateful — a bare L2 GET can't
+  // replay them. For these, L2 must NOT vote; authority is L4 over captured proof.
+  describe('Stateful oracle authority (discoveryTool)', () => {
+    async function verdict(result: SolverResult, layers: { l2: any; l3?: any; l4: any }) {
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue({ isDuplicate: false });
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('statefulhash');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      vi.spyOn((a as any).layer2, 'reprobe').mockResolvedValue(layers.l2);
+      vi.spyOn((a as any).layer3, 'replay').mockResolvedValue(layers.l3 ?? l3Rejected);
+      vi.spyOn((a as any).layer4, 'confirm').mockResolvedValue(layers.l4);
+      return a.verify(result);
+    }
+
+    it('auth_bypass via agent: L2 rejects (bare GET hits 403) but L4 confirms → CONFIRMED', async () => {
+      // The false-reject the fix removes: a stateless reprobe of a protected
+      // endpoint returns 401/403, which previously sank the verdict. L2 is barred.
+      const result = makeSolverResult({
+        vulnClass: 'auth_bypass', confidence: 0.6, discoveryTool: 'logic_exploit_agent',
+      });
+      const vr = await verdict(result, { l2: l2Rejected, l4: l4Confirmed });
+      expect(vr.finalVerdict).toBe('confirmed');
+    });
+
+    it('idor via agent: L2 confirms (URL returns 200) but L4 dissents → INCONCLUSIVE, not confirmed', async () => {
+      // The false-confirm the fix removes: a 200 on the URL proves nothing about
+      // cross-account access, so L2's "confirm" must not stand on its own.
+      const result = makeSolverResult({
+        vulnClass: 'idor', confidence: 0.6, discoveryTool: 'logic_exploit_agent',
+      });
+      const vr = await verdict(result, { l2: l2Confirmed, l4: l4Rejected });
+      expect(vr.finalVerdict).toBe('inconclusive');
+    });
+
+    it('business_logic: discovery tool recovered from evidence.tool fallback (Path A) → CONFIRMED', async () => {
+      // Path A (orchestrator L5) doesn't set discoveryTool explicitly; the agent
+      // ProbeResult in evidence[0] carries .tool, which verify() falls back to.
+      const result = makeSolverResult({
+        vulnClass: 'business_logic', confidence: 0.6,
+        evidence: { tool: 'logic_exploit_agent' },
+      });
+      const vr = await verdict(result, { l2: l2Rejected, l4: l4Confirmed });
+      expect(vr.finalVerdict).toBe('confirmed');
+    });
+
+    it('control: same idor WITHOUT the stateful tag is HTTP-observable (L2 reject + L4 confirm → inconclusive)', async () => {
+      // Proves the discoveryTool tag is what flips the outcome: a stateless idor
+      // with the identical layer votes lands at "inconclusive" (one signal), not
+      // "confirmed".
+      const result = makeSolverResult({ vulnClass: 'idor', confidence: 0.6 });
+      const vr = await verdict(result, { l2: l2Rejected, l4: l4Confirmed });
+      expect(vr.finalVerdict).toBe('inconclusive');
+    });
+  });
+
+  // ─── pendingEscalation: apply-on-confirm gate for post-exploit severity ────
+  describe('pendingEscalation', () => {
+    it('extracts a stashed impact_escalation from evidence', () => {
+      const finding: any = { evidence: [
+        { type: 'raw_http', data: 'GET /...' },
+        { type: 'impact_escalation', severity: 'critical', cvssScore: 9.1, impact: 'cloud creds read' },
+      ] };
+      expect(pendingEscalation(finding)).toEqual({
+        severity: 'critical', cvssScore: 9.1, impact: 'cloud creds read',
+      });
+    });
+
+    it('returns null when no escalation entry is present', () => {
+      expect(pendingEscalation({ evidence: [{ type: 'raw_http' }] } as any)).toBeNull();
+    });
+
+    it('returns null when the escalation entry has empty severity (guard)', () => {
+      expect(pendingEscalation({
+        evidence: [{ type: 'impact_escalation', severity: '', cvssScore: 9 }],
+      } as any)).toBeNull();
+    });
+
+    it('returns null when evidence is not an array', () => {
+      expect(pendingEscalation({ evidence: null } as any)).toBeNull();
     });
   });
 });
