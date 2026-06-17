@@ -75,7 +75,14 @@ class Layer1Dedup {
     return this.simHash.computeSimHash(text, anchor);
   }
 
-  async check(hash: string, simhash: bigint): Promise<{ isDuplicate: boolean; existingHash?: string }> {
+  async check(hash: string, simhash: bigint, skipHash?: string): Promise<{ isDuplicate: boolean; existingHash?: string }> {
+    // Skip all dedup checks when this is an intentional re-verification of a known
+    // finding (operator clicked "verify" again). The hash must match exactly so
+    // this cannot be exploited to bypass dedup for genuinely new findings.
+    if (skipHash && hash === skipHash) {
+      return { isDuplicate: false };
+    }
+
     if (this.hashCache.has(hash)) {
       return { isDuplicate: true, existingHash: hash };
     }
@@ -433,7 +440,7 @@ export class VerifierAgent {
     await this.layer3.initialize();
   }
 
-  async verify(result: SolverResult): Promise<VerificationResult> {
+  async verify(result: SolverResult, options?: { skipDedupHash?: string }): Promise<VerificationResult> {
     const findingId = result.taskId;
     const dedupHash = this.layer1.computeHash(result);
     const simhash = this.layer1.computeSimHash(result);
@@ -445,7 +452,10 @@ export class VerifierAgent {
     });
 
     // Layer 1: Deduplication (exact SHA-256 + SimHash near-duplicate)
-    const l1 = await this.layer1.check(dedupHash, simhash);
+    // skipDedupHash lets operator-initiated re-verification bypass this layer so
+    // the finding can get a fresh L2→L3→L4 verdict without being blocked as a
+    // "duplicate" of itself. The hunt loop never passes skipDedupHash.
+    const l1 = await this.layer1.check(dedupHash, simhash, options?.skipDedupHash);
     if (l1.isDuplicate) {
       logger.info("VerifierAgent: L1 deduplicated", { findingId, hash: dedupHash });
       return {

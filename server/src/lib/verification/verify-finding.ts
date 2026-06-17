@@ -73,7 +73,11 @@ export async function verifyAndPersistFinding(
     toolsUsed: [],
   };
 
-  const verification = await verifier.verify(mockResult);
+  // Pass the finding's own stored dedupHash so Layer 1 doesn't reject it as a
+  // "duplicate of itself" on a second manual verify click.
+  const verification = await verifier.verify(mockResult, {
+    skipDedupHash: finding.dedupHash ?? undefined,
+  });
 
   await db.update(findings).set({
     verificationStatus: verification.finalVerdict,
