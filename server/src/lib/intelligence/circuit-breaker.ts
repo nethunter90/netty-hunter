@@ -76,6 +76,23 @@ export class CircuitBreaker extends EventEmitter {
     return { allowed: true, reason: 'Circuit half-open' };
   }
 
+  /**
+   * Side-effect-free availability check for the DECISION layer to consult when
+   * choosing among candidate tools. Unlike canExecute(), this does NOT transition
+   * an open-but-cooled-down circuit to half_open — that half-open recovery probe
+   * belongs to the actual execution path (canExecute), not to candidate scoring.
+   * A tool is "available" if its circuit is closed/half_open, or open but past the
+   * cooldown (so the execution layer is free to attempt a recovery probe).
+   */
+  isAvailable(tool: string): boolean {
+    const circuit = this.getCircuit(tool);
+    if (circuit.state !== 'open') return true;
+    if (circuit.openedAt) {
+      return Date.now() - new Date(circuit.openedAt).getTime() > this.cooldownMs;
+    }
+    return false;
+  }
+
   private openCircuit(tool: string) {
     const circuit = this.getCircuit(tool);
     circuit.state = 'open';

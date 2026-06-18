@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { reasoningEngine, PriorityTask, MissionMemory } from './reasoning-engine';
+import { circuitBreaker } from './circuit-breaker';
 
 export interface Decision {
   id: string;
@@ -41,25 +42,38 @@ export class DecisionEngine extends EventEmitter {
     scored.sort((a, b) => b.confidence - a.confidence);
 
     if (scored.length === 0) {
+      // Default scan when nothing was proposed — but don't default onto a tool
+      // whose circuit is open (that's how the hunt got stuck re-picking nuclei).
+      const defaultTool = ['nuclei', 'nmap', 'ffuf', 'nikto'].find(t => circuitBreaker.isAvailable(t)) || 'nuclei';
       scored.push({
-        tool: 'nuclei',
+        tool: defaultTool,
         target: memory.target,
-        parameters: {},
+        parameters: this.getToolParams(defaultTool, memory.goal),
         expectedOutcome: 'General vulnerability scan',
         confidence: 0.5,
-        estimatedTime: 180,
-        riskLevel: 'medium'
+        estimatedTime: this.estimateTime(defaultTool),
+        riskLevel: this.assessRisk(defaultTool)
       });
     }
+
+    // Circuit-breaker awareness: drop tools whose circuit is OPEN from the
+    // candidate set BEFORE choosing. The breaker is the execution layer's guard;
+    // making it an INPUT to the decision stops the Brain from re-selecting a dead
+    // tool every cycle and relying on a post-hoc fallback swap (the nuclei loop:
+    // [Brain] Decision: nuclei → ... immediately after its circuit opened). If
+    // every candidate is open we keep the original ranking and let the execution
+    // layer's canExecute() fallback handle it, rather than deadlock with no action.
+    const available = scored.filter(p => circuitBreaker.isAvailable(p.tool));
+    const usable = available.length > 0 ? available : scored;
 
     const decision: Decision = {
       id: `decision-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
       missionId,
       timestamp: new Date().toISOString(),
-      chosenAction: scored[0],
-      alternatives: scored.slice(1, 3),
-      confidence: scored[0].confidence,
-      reasoning: this.generateReasoning(scored[0], memory)
+      chosenAction: usable[0],
+      alternatives: usable.slice(1, 3),
+      confidence: usable[0].confidence,
+      reasoning: this.generateReasoning(usable[0], memory)
     };
 
     this.decisionHistory.push(decision);
