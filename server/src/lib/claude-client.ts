@@ -65,7 +65,32 @@ export class ClaudeClient {
   private static tokenBucketUsed = 0;
   private static tokenBucketWindowStart = Date.now();
 
-  private static async paceTokens(estimatedTokens: number): Promise<void> {
+  // Serializes every token reservation through one async chain so the
+  // check-and-reserve is ATOMIC across concurrent callers. The post-exploit
+  // narrative fan-out + chain synthesis fire multiple SDK calls in the same
+  // tick; previously each read stale headroom and fired together (check-then-act
+  // race — same shape as the old prefill array race), blowing past the ceiling
+  // before any recorded its spend and producing back-to-back 429s. Chaining
+  // forces each caller to observe every prior reservation, and the pacing wait
+  // (when triggered) holds the whole chain so queued callers wait behind it.
+  private static pacerChain: Promise<void> = Promise.resolve();
+
+  /**
+   * Reserve estimated input tokens against the shared per-minute bucket,
+   * pacing (awaiting the window) when the reservation would breach the ceiling.
+   * Public so callers that issue Anthropic requests directly (LogicExploitAgent's
+   * tool-use loop) pace through the SAME bucket as reason()/oneShot() — one gate
+   * for all Claude spend, rather than each path walking into the 429 separately.
+   */
+  static paceTokens(estimatedTokens: number): Promise<void> {
+    const run = ClaudeClient.pacerChain.then(() => ClaudeClient.reserveTokens(estimatedTokens));
+    // Keep the chain alive even if a reservation rejects, so one failure can't
+    // wedge every subsequent caller.
+    ClaudeClient.pacerChain = run.catch(() => {});
+    return run;
+  }
+
+  private static async reserveTokens(estimatedTokens: number): Promise<void> {
     const now = Date.now();
     if (now - ClaudeClient.tokenBucketWindowStart >= 60_000) {
       ClaudeClient.tokenBucketWindowStart = now;
@@ -167,6 +192,13 @@ export class ClaudeClient {
       logger.warn("[ClaudeClient] oneShot() blocked — hunt LLM budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
       throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
     }
+
+    // Pace Haiku calls through the shared bucket too. The PostExploitAgent
+    // narrative fan-out issues these concurrently (one per confirmed finding)
+    // and they count against the org input-token limit just like Sonnet calls —
+    // they were the unpaced burst behind the back-to-back 429s.
+    const estimatedInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
+    await ClaudeClient.paceTokens(estimatedInputTokens);
 
     const response = await ClaudeClient.client.messages.create({
       model: "claude-haiku-4-5",
