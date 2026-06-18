@@ -17,6 +17,7 @@ import { ModelRouter } from "../intelligence/ModelRouter";
 import { HuntStrategyBuilder } from "./huntStrategy";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
+import { nvdClient, cvssToSeverity } from "../lib/intelligence/nvd-client";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -351,27 +352,56 @@ router.get("/browser/history", (_req: Request, res: Response) => {
 });
 
 // ── CVE Intel ─────────────────────────────────────────────────────────────────
-router.get("/cve/search", (req: Request, res: Response) => {
-  const q = String(req.query.q || "");
-  const mockCves = [
-    { id: "CVE-2024-0001", description: `SQL Injection in web application ${q}`, cvss: 9.8, published: "2024-01-15" },
-    { id: "CVE-2024-0002", description: `XSS vulnerability in login page ${q}`, cvss: 6.1, published: "2024-02-10" },
-    { id: "CVE-2024-0003", description: `SSRF in file upload handler ${q}`, cvss: 8.2, published: "2024-03-05" },
-    { id: "CVE-2024-0004", description: `IDOR in user profile endpoint ${q}`, cvss: 7.5, published: "2024-04-01" },
-    { id: "CVE-2024-0005", description: `Auth bypass via JWT manipulation ${q}`, cvss: 9.1, published: "2024-05-20" },
-  ];
-  return res.json({ results: mockCves, query: q, count: mockCves.length });
+router.get("/cve/search", async (req: Request, res: Response) => {
+  const query = String(req.query.query || req.query.q || "").trim();
+  const severity = String(req.query.severity || "all");
+  const year = String(req.query.year || "all");
+
+  if (!query) return res.json({ success: false, error: "query is required", cves: [] });
+
+  try {
+    const records = await nvdClient.lookupByKeywordFiltered(query, { severity, year });
+    const cves = records.map(r => ({
+      cveId: r.id,
+      name: r.description.split('.')[0].slice(0, 120),
+      description: r.description,
+      severity: cvssToSeverity(r.cvssScore),
+      cvss: r.cvssScore,
+      publishedDate: r.publishedDate,
+      exploitAvailable: r.exploitAvailable,
+      affectedProducts: r.cweIds,
+      references: r.references,
+    }));
+    return res.json({ success: true, cves, count: cves.length });
+  } catch (err: any) {
+    logger.warn('[bounty/cve/search] NVD lookup failed', { query, err: err.message });
+    return res.json({ success: false, error: 'NVD lookup failed', cves: [] });
+  }
 });
 
-router.get("/cve/:id", (req: Request, res: Response) => {
-  return res.json({
-    id: req.params.id,
-    description: `Mock CVE data for ${req.params.id}`,
-    cvss: 7.0,
-    published: "2024-01-01",
-    references: [],
-    cwe: "CWE-79",
-  });
+router.get("/cve/:id", async (req: Request, res: Response) => {
+  const cveId = req.params.id;
+  try {
+    const record = await nvdClient.lookupById(cveId);
+    if (!record) return res.json({ success: false, error: 'CVE not found', cve: null });
+    return res.json({
+      success: true,
+      cve: {
+        cveId: record.id,
+        name: record.description.split('.')[0].slice(0, 120),
+        description: record.description,
+        severity: cvssToSeverity(record.cvssScore),
+        cvss: record.cvssScore,
+        publishedDate: record.publishedDate,
+        exploitAvailable: record.exploitAvailable,
+        affectedProducts: record.cweIds,
+        references: record.references,
+      },
+    });
+  } catch (err: any) {
+    logger.warn('[bounty/cve/:id] NVD lookup failed', { cveId, err: err.message });
+    return res.json({ success: false, error: 'NVD lookup failed', cve: null });
+  }
 });
 
 // ── Deadlines ─────────────────────────────────────────────────────────────────

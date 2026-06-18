@@ -90,6 +90,56 @@ class NVDClient {
     }
   }
 
+  async lookupById(cveId: string): Promise<CVERecord | null> {
+    const params = { cveId };
+    const key = this.cacheKey(params);
+
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < this.CACHE_TTL_MS) {
+      return cached.records[0] ?? null;
+    }
+
+    try {
+      const records = await this.enqueue(() => this.fetchNVD(params));
+      this.cache.set(key, { records, fetchedAt: Date.now() });
+      return records[0] ?? null;
+    } catch (err: any) {
+      logger.warn('[NVDClient] lookupById failed', { cveId, err: err.message });
+      return null;
+    }
+  }
+
+  async lookupByKeywordFiltered(keyword: string, options: { severity?: string; year?: string } = {}): Promise<CVERecord[]> {
+    const params: Record<string, string> = { keywordSearch: keyword };
+    if (options.year && options.year !== 'all') {
+      params.pubStartDate = `${options.year}-01-01T00:00:00.000`;
+      params.pubEndDate = `${options.year}-12-31T23:59:59.999`;
+    }
+    const key = this.cacheKey(params);
+
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < this.CACHE_TTL_MS) {
+      return this.filterBySeverity(cached.records, options.severity);
+    }
+
+    try {
+      const records = await this.enqueue(() => this.fetchNVD(params));
+      this.cache.set(key, { records, fetchedAt: Date.now() });
+      return this.filterBySeverity(records, options.severity);
+    } catch (err: any) {
+      logger.warn('[NVDClient] lookupByKeywordFiltered failed', { keyword, err: err.message });
+      return [];
+    }
+  }
+
+  private filterBySeverity(records: CVERecord[], severity?: string): CVERecord[] {
+    if (!severity || severity === 'all') return records;
+    return records.filter(r => {
+      const s = cvssToSeverity(r.cvssScore);
+      return s === severity;
+    });
+  }
+
   async lookupByCWE(cweId: string): Promise<CVERecord[]> {
     const params = { cweId };
     const key = this.cacheKey(params);
@@ -179,3 +229,10 @@ class NVDClient {
 }
 
 export const nvdClient = new NVDClient();
+
+export function cvssToSeverity(score: number): string {
+  if (score >= 9.0) return 'critical';
+  if (score >= 7.0) return 'high';
+  if (score >= 4.0) return 'medium';
+  return 'low';
+}
