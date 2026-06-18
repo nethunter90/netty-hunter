@@ -134,6 +134,7 @@ export interface ProbeResult {
   parsed: Record<string, unknown>;
   success: boolean;
   duration: number;
+  payload?: string;
   rawHttpLog?: string;
   videoPath?: string;
 }
@@ -2653,12 +2654,29 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const cvssScore = cvssMap[severity] || 5.0;
     const bestProbe = probes.sort((a, b) => Number(b.success) - Number(a.success))[0];
 
+    // Prefer explicit payload over raw output (which is often just HTTP response headers)
+    const exploitPayload = (
+      bestProbe?.payload ||
+      (bestProbe?.parsed?.payload as string | undefined) ||
+      (() => {
+        // Extract injected query string from the command if present
+        try {
+          const urlMatch = bestProbe?.command?.match(/https?:\/\/\S+/);
+          if (urlMatch) {
+            const qs = new URL(urlMatch[0]).search;
+            if (qs && qs !== "?") return qs.slice(1); // strip leading "?"
+          }
+        } catch { /* ignore parse errors */ }
+        return "";
+      })()
+    ).slice(0, 500);
+
     return {
       hypothesis,
       proof: probes,
       severity,
       cvssScore,
-      exploitPayload: bestProbe?.output?.slice(0, 500) || "",
+      exploitPayload,
       rawEvidence: bestProbe?.rawHttpLog ?? undefined,
       videoPath: bestProbe?.videoPath ?? undefined,
     };
