@@ -217,7 +217,7 @@ export class CampaignOrchestrator extends EventEmitter {
 
       // ── Layer 4: Execution Engine ────────────────────────────────────────
       const execResult = await this.runLayer(4, () =>
-        this.layer4_executionEngine(params, stratResult.data, expandedTargets)
+        this.layer4_executionEngine(params, stratResult.data, expandedTargets, (govResult.data.target as any)?.id)
       );
 
       // ── Layer 5: Verification Gate ───────────────────────────────────────
@@ -550,7 +550,8 @@ export class CampaignOrchestrator extends EventEmitter {
   private async layer4_executionEngine(
     params: OrchestrateParams,
     stratData: Record<string, unknown>,
-    expandedTargets: string[] = []
+    expandedTargets: string[] = [],
+    targetId?: number
   ): Promise<{ passed: boolean; data: Record<string, unknown> }> {
     this.audit(4, "execution_start", {
       targetUrl: params.targetUrl,
@@ -599,6 +600,7 @@ export class CampaignOrchestrator extends EventEmitter {
         targetUrl: params.targetUrl,
         programId: params.programId,
         campaignId: this.state.campaignId!,
+        targetId,
         maxIterations: params.maxIterations || 10,
         budget: params.budget,
         auth: params.auth,
@@ -646,7 +648,7 @@ export class CampaignOrchestrator extends EventEmitter {
           { priorityVulns: [] },
           {
             programId: params.programId,
-            sessionId: 0,
+            sessionId: engine.getDbSessionId(),
             // Draw from the remaining campaign budget, pre-charged with what the
             // engine already spent so total spend stays within maxRequests.
             budget: { maxRequests: totalBudget, requestsMade: engineSpent },

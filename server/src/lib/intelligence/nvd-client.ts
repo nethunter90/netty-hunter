@@ -118,7 +118,7 @@ class NVDClient {
 
     const resp = await fetch(url.toString(), {
       headers,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!resp.ok) {

@@ -2873,6 +2873,10 @@ Only include chains that genuinely increase severity beyond individual findings.
   getState(): HuntState {
     return this.state;
   }
+
+  getDbSessionId(): number {
+    return this.dbSessionId;
+  }
 }
 
 export default HunterEngine;
