@@ -318,18 +318,52 @@ class Layer4AIConfirmation {
       } catch { /* non-critical — degrade silently */ }
     }
 
-    // Truncate original evidence for the prompt — long tool outputs inflate context fast.
+    // Stateful oracle findings (logic_exploit_agent) need special handling in the
+    // L4 prompt: L2's bare-GET result is structurally inapplicable to multi-step
+    // stateful exploits and actively misleads L4 (e.g., an admin endpoint returning
+    // 200 to L2's unauthenticated GET looks "public" but the stateful session proved
+    // it was restricted before the bypass). Surface rawHttpLog explicitly instead.
+    const evidenceTool = (result.evidence as { tool?: string } | undefined)?.tool;
+    const isStatefulOracle = STATEFUL_ORACLE_TOOLS.has(
+      String(result.discoveryTool ?? evidenceTool ?? "")
+    );
+    const capturedHttpLog = isStatefulOracle
+      ? (result.evidence as { rawHttpLog?: string } | undefined)?.rawHttpLog?.slice(0, 2000) ?? null
+      : null;
+
+    // Expand evidence window for stateful findings — rawHttpLog is buried at the
+    // end of the ProbeResult JSON and gets cut off at the default 600-char limit.
+    const evidenceLimit = isStatefulOracle ? 1500 : 600;
     const origEvidence = result.evidence
-      ? (typeof result.evidence === "string" ? result.evidence : JSON.stringify(result.evidence)).slice(0, 600)
+      ? (typeof result.evidence === "string" ? result.evidence : JSON.stringify(result.evidence)).slice(0, evidenceLimit)
       : null;
     const origResponse = result.response ? String(result.response).slice(0, 300) : null;
 
     const authBypassNote = result.vulnClass === "auth_bypass"
-      ? `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
-        `RESTRICTED endpoint (returning 401/403 for unauthenticated requests) became\n` +
-        `accessible after a bypass technique was applied. A public endpoint that returns\n` +
-        `200 without any auth is NOT an auth bypass — it is expected behaviour.\n`
+      ? isStatefulOracle
+        ? `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
+          `RESTRICTED endpoint (returning 401/403 for unauthenticated requests) became\n` +
+          `accessible after a bypass technique was applied. Check the captured HTTP session\n` +
+          `below for the before/after state — the stateful agent recorded both the\n` +
+          `unauthenticated attempt and the bypassed attempt.\n`
+        : `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
+          `RESTRICTED endpoint (returning 401/403 for unauthenticated requests) became\n` +
+          `accessible after a bypass technique was applied. A public endpoint that returns\n` +
+          `200 without any auth is NOT an auth bypass — it is expected behaviour.\n`
       : "";
+
+    // For stateful oracle findings, note that L2 reprobe is inapplicable (a bare
+    // stateless GET cannot reproduce a multi-step, multi-identity flow) and should
+    // not factor into the assessment.
+    const layer2Section = isStatefulOracle
+      ? `Layer 2 (HTTP Reprobe): NOT APPLICABLE — this finding was confirmed by a\n` +
+        `multi-step stateful browser session. A bare GET cannot reproduce the multi-\n` +
+        `step flow (e.g. dual-session IDOR, JWT bypass, race condition). Do NOT use\n` +
+        `L2 reprobe status to accept or reject this finding.`
+      : `Layer 2 (HTTP Reprobe):\n` +
+        `- Confirmed: ${previousLayers.layer2.confirmed}\n` +
+        `- Status Code: ${previousLayers.layer2.statusCode}\n` +
+        `- Response: ${previousLayers.layer2.responseSnippet}`;
 
     const prompt = `You are a senior security researcher reviewing a potential vulnerability finding.
 
@@ -338,16 +372,13 @@ Vulnerability Class: ${result.vulnClass}
 Payload Used: ${result.payload}
 Original Confidence: ${result.confidence}
 ${authBypassNote}
-Original Probe Evidence (what the scanner captured during discovery):
+Original Probe Evidence (what the stateful agent captured during discovery):
 ${origEvidence ?? "Not available"}
 
 Original Solver Response:
 ${origResponse ?? "Not available"}
-
-Layer 2 (HTTP Reprobe):
-- Confirmed: ${previousLayers.layer2.confirmed}
-- Status Code: ${previousLayers.layer2.statusCode}
-- Response: ${previousLayers.layer2.responseSnippet}
+${capturedHttpLog ? `\nCaptured HTTP Session (primary evidence — before/after state from stateful browser):\n${capturedHttpLog}\n` : ""}
+${layer2Section}
 
 Layer 3 (Browser Replay):
 - Confirmed: ${previousLayers.layer3.confirmed}

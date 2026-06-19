@@ -789,6 +789,22 @@ export class CampaignOrchestrator extends EventEmitter {
       this.emit("l5:verifying", { findingId: dbFinding.id });
       try {
         const verificationUrl = this.deriveVerificationUrl(dbFinding, params.targetUrl);
+        const allDbEvidence = (dbFinding.evidence as unknown[]) || [];
+        const firstEvidence = allDbEvidence[0] as Record<string, unknown> | undefined;
+        // discoveryTool is stored in evidence[0].tool (the ProbeResult spread).
+        // Set it explicitly on mockResult so VerifierAgent's L4 routes stateful findings
+        // to the stateful oracle path without relying on evidence.tool fallback.
+        const findingDiscoveryTool = (firstEvidence?.tool as string | undefined) || undefined;
+        // rawHttpLog is stored both inline in evidence[0].rawHttpLog (ProbeResult) and
+        // as a separate { type:"raw_http", data } entry. Pass it as `response` so L4
+        // has the captured session as a named field (not buried in a JSON blob).
+        const rawHttpEntry = allDbEvidence.find(
+          (e) => (e as { type?: string }).type === "raw_http"
+        ) as { data?: string } | undefined;
+        const capturedSession =
+          rawHttpEntry?.data?.slice(0, 3000) ||
+          (firstEvidence?.rawHttpLog as string | undefined)?.slice(0, 3000) ||
+          "";
         const mockResult = {
           taskId: String(dbFinding.id),
           solverId: "orchestrator",
@@ -796,12 +812,13 @@ export class CampaignOrchestrator extends EventEmitter {
           vulnClass: dbFinding.vulnType as Parameters<typeof this.verifierAgent.verify>[0]["vulnClass"],
           found: true,
           confidence: dbFinding.confidence,
-          evidence: ((dbFinding.evidence as unknown[]) || [])[0] as Record<string, unknown> || {},
+          evidence: firstEvidence || {},
           payload: dbFinding.exploitPayload || "",
           request: "",
-          response: "",
+          response: capturedSession,
           duration: 0,
           toolsUsed: [],
+          discoveryTool: findingDiscoveryTool,
         };
 
         const verification = await this.verifierAgent.verify(mockResult);
