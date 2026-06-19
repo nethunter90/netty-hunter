@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "golden:compare": "tsx golden-run/compare.ts"
   },
   "dependencies": {
     "axios": "^1.6.2",

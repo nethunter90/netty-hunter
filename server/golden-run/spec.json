@@ -1,0 +1,86 @@
+{
+  "_comment": "Golden-run spec — 2026-06-19, Juice Shop :3050, backward mode, session 40.",
+  "_usage": "Run `npm run golden:compare` after a fresh hunt to diff against this baseline.",
+
+  "meta": {
+    "date": "2026-06-19",
+    "huntSessionId": 40,
+    "durationMinutes": 35,
+    "maturityLabel": "Competent Autonomy",
+    "maturityScore": 60,
+    "notes": "First golden run confirming the stateful business-logic pipeline end-to-end. L4 evidence fix (rawHttpLog as primary evidence for stateful classes) flipped L4 from inconclusive→confirmed for auth_bypass ×2."
+  },
+
+  "inputs": {
+    "targetUrl": "http://localhost:3050",
+    "mode": "backward",
+    "maxIterations": 10,
+    "programId": -1,
+    "goal": "Find authentication bypass vulnerabilities in the Juice Shop API that allow unauthenticated access to admin endpoints",
+    "requiredReset": "docker restart <juice-shop-container> OR restart the Juice Shop node process BEFORE EACH RUN to return to factory state. Running without resetting contaminates the second run with registered accounts from the first."
+  },
+
+  "hardFloor": [
+    {
+      "_comment": "The JWT-session auth bypass (finding #250 shape). This MUST confirm every run. If it fails, investigate the stateful pipeline before looking at anything else.",
+      "vulnClass": "auth_bypass",
+      "endpointPath": "/rest/user/login",
+      "discoveryTool": "logic_exploit_agent",
+      "minConfidence": 0.85,
+      "technique": "multi-step credential chain: SQLi dump → offline MD5 crack → admin login"
+    }
+  ],
+
+  "confirmedSet": [
+    {
+      "_comment": "Multi-step credential chain login bypass (finding #250).",
+      "vulnClass": "auth_bypass",
+      "endpointPath": "/rest/user/login",
+      "discoveryTool": "logic_exploit_agent"
+    },
+    {
+      "_comment": "SQLi auth bypass + unauthenticated admin config access (finding #251).",
+      "vulnClass": "auth_bypass",
+      "endpointPath": "/rest/admin/application-configuration",
+      "discoveryTool": "logic_exploit_agent"
+    },
+    {
+      "_comment": "CORS wildcard on admin config endpoint (finding #246).",
+      "vulnClass": "cors",
+      "endpointPath": "/rest/admin/application-configuration"
+    }
+  ],
+
+  "mustNotConfirm": [
+    {
+      "_comment": "XSS at the login endpoint reflects but does not execute. The browser gate (L3) must reject this every run.",
+      "vulnClass": "xss",
+      "endpointPath": "/rest/user/login",
+      "allowedStatuses": ["rejected", "deduplicated", "inconclusive"]
+    }
+  ],
+
+  "counts": {
+    "totalFindings": { "min": 7, "max": 15 },
+    "confirmed": { "min": 2, "max": 5 },
+    "deduplicated": { "min": 2 },
+    "_notes": [
+      "LLM variance affects exact counts each run — use ranges, not exact values.",
+      "Hard floor (auth_bypass at /rest/user/login) is the meaningful invariant.",
+      "If confirmed count drops below 2, investigate before assuming it's variance.",
+      "If confirmed count exceeds 5, inspect — the target has only ~4 distinct vuln classes in scope."
+    ]
+  },
+
+  "governance": {
+    "maxActionableInterventions": 0,
+    "_check": "manual — review server logs for governance_rejected or budget_exceeded events. If any appear, the hunt is not comparable to the baseline.",
+    "_source": "server logs: grep 'governance_rejected\\|budget_exceeded\\|governance_action' server/logs/app.log"
+  },
+
+  "rateLimiting": {
+    "max429sFromTarget": 0,
+    "_check": "manual — DynamicRateLimiter.getStats().total429s is in-process only. Check server logs: grep '429' server/logs/app.log | grep -v 'Anthropic'",
+    "_note": "Anthropic API 429s (pacer) do not count — the pacer prevents them before they happen. Only target (Juice Shop) 429s matter here."
+  }
+}
