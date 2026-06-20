@@ -194,8 +194,8 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "idor", "exposed_panels", "misconfig"],
     command: (url, opts) => ({
       bin: "nuclei",
-      args: ["-u", url, "-severity", opts?.severity || "medium,high,critical",
-             "-json", "-silent", "-timeout", "10"],
+      args: ["-u", url, "-s", opts?.severity || "medium,high,critical",
+             "-j", "-silent", "-timeout", "10"],
     }),
     parser: (output) => {
       const result = parseNucleiOutput(output);
@@ -331,7 +331,7 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["xss"],
     command: (url) => ({
       bin: "nuclei",
-      args: ["-u", url, "-tags", "xss", "-severity", "medium,high,critical", "-json", "-silent", "-timeout", "10"],
+      args: ["-u", url, "-tags", "xss", "-s", "medium,high,critical", "-j", "-silent", "-timeout", "10"],
     }),
     parser: (output) => {
       const findings: unknown[] = [];
