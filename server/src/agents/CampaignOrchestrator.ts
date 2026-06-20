@@ -161,12 +161,34 @@ export class CampaignOrchestrator extends EventEmitter {
   private targetSelector = new TargetSelectionIntelligence();
   private backwardHunt = new BackwardHuntEngine();
   private _abortRequested = false;
+  // Holds the live L4 HunterEngine so a stop reaches the thing actually spending
+  // money. Without this, _abortRequested only takes effect at the NEXT layer
+  // boundary — the engine would keep issuing model calls until L4 ends naturally.
+  private currentEngine: HunterEngine | null = null;
 
   constructor() {
     super();
     this.state = this.initState();
     this.verifierAgent.initialize().catch(err => logger.warn("Verifier init deferred", { err }));
-    this.once("orchestration:stop", () => { this._abortRequested = true; });
+    // Existing event-based trigger (POST /api/orchestration/stop emits this) now
+    // routes through the same stop() path as the registry's direct call.
+    this.once("orchestration:stop", () => this.stop());
+  }
+
+  /**
+   * Real, propagating stop (implements Stoppable). Sets the abort flag checked at
+   * the start of every runLayer AND immediately propagates into the live L4
+   * HunterEngine so model calls cease within seconds rather than at the next
+   * layer boundary. The runLayer guard then converts the flag into a clean
+   * orchestration:aborted via orchestrate()'s catch. Idempotent.
+   */
+  stop(): void {
+    if (this._abortRequested) return;
+    this._abortRequested = true;
+    logger.info("[CampaignOrchestrator] Stop requested — aborting orchestration", {
+      orchestrationId: this.state?.orchestrationId,
+    });
+    this.currentEngine?.stop();
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -561,6 +583,10 @@ export class CampaignOrchestrator extends EventEmitter {
     });
 
     const engine = new HunterEngine();
+    // Register as the current spender so stop() propagates into it. If a stop
+    // arrived between layers (before we got here), honour it immediately.
+    this.currentEngine = engine;
+    if (this._abortRequested) engine.stop();
     const rawFindings: unknown[] = [];
 
     // Wire HunterEngine events → Orchestrator events (with layer prefix)
@@ -664,15 +690,21 @@ export class CampaignOrchestrator extends EventEmitter {
     }
 
     // 4c. Run abbreviated hunts on additional discovered subdomains (concurrency limit 2)
-    const additionalTargets = expandedTargets.filter(t => t !== params.targetUrl).slice(0, 5);
+    // Skip entirely if a stop was requested — never spin up new engines mid-abort.
+    const additionalTargets = this._abortRequested
+      ? []
+      : expandedTargets.filter(t => t !== params.targetUrl).slice(0, 5);
     if (additionalTargets.length > 0) {
       this.audit(4, "subdomain_hunt_start", { count: additionalTargets.length });
       const CONCURRENCY = 2;
       for (let i = 0; i < additionalTargets.length; i += CONCURRENCY) {
+        if (this._abortRequested) break;
         const batch = additionalTargets.slice(i, i + CONCURRENCY);
         await Promise.allSettled(batch.map(async (subUrl) => {
           try {
             const subEngine = new HunterEngine();
+            this.currentEngine = subEngine;
+            if (this._abortRequested) subEngine.stop();
             subEngine.on("hunt:finding_confirmed", (d) => {
               rawFindings.push(d);
               this.state.findingsCount++;
@@ -700,6 +732,10 @@ export class CampaignOrchestrator extends EventEmitter {
         }));
       }
     }
+
+    // L4 is done spending — drop the engine reference so a later stop() doesn't
+    // try to halt a torn-down engine (verification/harvest carry no engine spend).
+    this.currentEngine = null;
 
     // Reconcile in-memory counter with DB to catch any persistence gaps
     if (this.state.campaignId) {

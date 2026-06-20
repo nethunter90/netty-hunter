@@ -519,6 +519,7 @@ export class HunterEngine extends EventEmitter {
   private campaignId = 0;
   private targetId = 0;
   private hardBanned = false;
+  private aborted = false;
   private consecutiveFailures = 0;
   private banCheckDone = false;
   private authHeaders: Record<string, string> = {};
@@ -765,7 +766,8 @@ export class HunterEngine extends EventEmitter {
       this.state.iteration < this.state.maxIterations &&
       this.state.budget.requestsMade < this.state.budget.maxRequests &&
       (Date.now() - startTime) / 1000 < this.state.budget.maxTime &&
-      !this.hardBanned
+      !this.hardBanned &&
+      !this.aborted
     ) {
       this.state.iteration++;
       this.state.budget.elapsed = (Date.now() - startTime) / 1000;
@@ -1727,6 +1729,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
       .slice(0, 8);
 
     for (const hypothesis of pending) {
+      // Abort check — a user stop() must halt model spend within one probe, not
+      // wait for the next OHPU iteration boundary. This is the granular gate that
+      // makes "model calls cease within seconds" true (each probe may run the
+      // LogicExploitAgent + reasoning calls; we refuse to start a new one).
+      if (this.aborted) {
+        logger.info("HunterEngine: Abort requested — halting probe phase", { session: this.state.sessionId });
+        break;
+      }
+
       // Pre-flight budget check — stop probing if we've hit the request cap
       if (this.isBudgetExhausted()) {
         logger.info("HunterEngine: Budget exhausted — halting probe phase", {
@@ -2876,6 +2887,24 @@ Only include chains that genuinely increase severity beyond individual findings.
 
   getDbSessionId(): number {
     return this.dbSessionId;
+  }
+
+  /**
+   * Real, propagating stop (implements Stoppable). Sets the abort flag checked
+   * by the main OHPU loop and by every probe iteration, so the engine ceases
+   * issuing new model calls and exits at the next probe/iteration boundary
+   * (within seconds, not at hunt completion). Idempotent.
+   */
+  stop(): void {
+    if (this.aborted) return;
+    this.aborted = true;
+    logger.info("[HunterEngine] Stop requested — aborting hunt", { session: this.state?.sessionId });
+    this.emit("hunt:aborted", { sessionId: this.state?.sessionId });
+  }
+
+  /** True once stop() has been called. */
+  isAborted(): boolean {
+    return this.aborted;
   }
 }
 

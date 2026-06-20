@@ -42,6 +42,7 @@ import { writeupScraper } from "./lib/intelligence/writeup-scraper";
 import { egressAllocator } from "./lib/stealth/egress-route-allocator";
 import { wireHuntEngineToSocket } from "./lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "./lib/state/hunt-sessions";
+import { activeHunts } from "./lib/state/active-hunts";
 import { db } from "./db";
 import { programs, findings } from "./db/schema";
 import { gt, eq } from "drizzle-orm";
@@ -304,9 +305,23 @@ io.on("connection", (socket) => {
     budget?: { maxRequests: number; maxTime: number };
     focusVulnClasses?: string[];
   }) => {
+    // ── Single-flight gate (cost-safety core) ──────────────────────────────────
+    // The Socket.IO launch path is gated by the same global slot as the REST
+    // endpoints. Reject (don't queue) if a hunt is already running.
+    if (!activeHunts.reserve(params.targetUrl)) {
+      const current = activeHunts.current();
+      socket.emit("orchestration:error", {
+        error: "A hunt is already running",
+        activeHunt: current ? { id: current.id, kind: current.kind, targetUrl: current.targetUrl } : undefined,
+      });
+      return;
+    }
+
     const orchestrator = new CampaignOrchestrator();
     const state = orchestrator.getState();
     const orchestrationId = state.orchestrationId;
+    // No await before this — promote the reservation into a bound, stoppable run.
+    activeHunts.bind({ id: orchestrationId, kind: "orchestration", handle: orchestrator, targetUrl: params.targetUrl, startedAt: Date.now() });
 
     // Wire all events → socket
     [
@@ -332,12 +347,15 @@ io.on("connection", (socket) => {
     });
 
     socket.emit("orchestration:created", { orchestrationId });
+    orchestrator.on("orchestration:aborted", () => activeHunts.release(orchestrationId));
 
     activeOrchestrations.set(orchestrationId, orchestrator);
     orchestrator.orchestrate(params).then(() => {
       activeOrchestrations.delete(orchestrationId);
+      activeHunts.release(orchestrationId);
     }).catch(err => {
       activeOrchestrations.delete(orchestrationId);
+      activeHunts.release(orchestrationId);
       socket.emit("orchestration:error", { orchestrationId, error: String(err) });
     });
   });
@@ -349,6 +367,16 @@ io.on("connection", (socket) => {
     maxIterations?: number;
     budget?: { maxRequests: number; maxTime: number };
   }) => {
+    // ── Single-flight gate (cost-safety core) ──────────────────────────────────
+    if (!activeHunts.reserve(params.targetUrl)) {
+      const current = activeHunts.current();
+      socket.emit("hunt:error", {
+        error: "A hunt is already running",
+        activeHunt: current ? { id: current.id, kind: current.kind, targetUrl: current.targetUrl } : undefined,
+      });
+      return;
+    }
+
     const engine = new HunterEngine();
 
     try {
@@ -357,11 +385,17 @@ io.on("connection", (socket) => {
       // Replay hunt:started since it fired before wiring
       io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
       activeHuntSessions.set(sessionUuid, engine);
+      // Promote the reservation into a bound, stoppable run.
+      activeHunts.bind({ id: sessionUuid, kind: "hunt", handle: engine, targetUrl: params.targetUrl, startedAt: Date.now() });
       engine.on("hunt:complete", (data: Record<string, unknown>) => {
+        activeHunts.release(sessionUuid);
         setTimeout(() => activeHuntSessions.delete(String(data.sessionId ?? sessionUuid)), 60_000);
       });
+      engine.on("hunt:error", () => activeHunts.release(sessionUuid));
       socket.emit("hunt:session_created", { sessionUuid });
     } catch (err) {
+      // startHunt threw before binding — release the reservation.
+      activeHunts.release();
       socket.emit("hunt:error", { error: String(err) });
     }
   });
@@ -452,17 +486,33 @@ setInterval(async () => {
       const targetUrl = scope[0];
       if (!targetUrl) continue;
 
+      // Honour the global single-flight slot — never let a scheduled re-scan
+      // stack on top of a running hunt (or another scheduled one). If busy, skip
+      // this whole tick; due programs are picked up on the next 15-min pass.
+      if (!activeHunts.reserve(targetUrl)) {
+        logger.info("[Scheduler] Skipping re-scan — a hunt is already running", { programId: prog.id });
+        break;
+      }
+
       logger.info("[Scheduler] Triggering scheduled re-scan", { programId: prog.id, name: prog.name });
       io.emit("scheduler:rescan_started", { programId: prog.id, name: prog.name, targetUrl });
 
       const orchestrator = new CampaignOrchestrator();
+      const schedId = (orchestrator.getState() as { orchestrationId: string }).orchestrationId;
+      activeHunts.bind({ id: schedId, kind: "orchestration", handle: orchestrator, targetUrl, startedAt: Date.now() });
+      orchestrator.on("orchestration:aborted", () => activeHunts.release(schedId));
       orchestrator.orchestrate({
         programId: prog.id,
         targetUrl,
         budget: { maxRequests: 2000, maxTime: 1800 },
+      }).then(() => {
+        activeHunts.release(schedId);
       }).catch(err => {
+        activeHunts.release(schedId);
         logger.warn("[Scheduler] Re-scan failed", { programId: prog.id, err: String(err) });
       });
+      // One scheduled hunt per tick (single-flight) — stop scanning the due list.
+      break;
     }
   } catch (err) {
     logger.debug("[Scheduler] tick error (non-critical)", { err: String(err) });

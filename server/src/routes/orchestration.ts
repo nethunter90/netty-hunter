@@ -14,6 +14,7 @@ import { db } from "../db";
 import { campaigns, findings } from "../db/schema";
 import { desc, like } from "drizzle-orm";
 import { CampaignOrchestrator, OrchestratorState } from "../agents/CampaignOrchestrator";
+import { activeHunts } from "../lib/state/active-hunts";
 import logger from "../utils/logger";
 import { Server as SocketServer } from "socket.io";
 
@@ -110,8 +111,21 @@ router.post("/run", async (req: Request, res: Response) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
+  // ── Single-flight gate (cost-safety core) ───────────────────────────────────
+  // Same global slot as POST /api/hunt/start — an orchestration and a console
+  // hunt cannot both run, and rapid re-clicks are rejected, not queued.
+  if (!activeHunts.reserve(parsed.data.targetUrl)) {
+    const current = activeHunts.current();
+    return res.status(409).json({
+      error: "A hunt is already running",
+      activeHunt: current ? { id: current.id, kind: current.kind, targetUrl: current.targetUrl } : undefined,
+    });
+  }
+
   const orchestrator = new CampaignOrchestrator();
   const orchestrationId = (orchestrator.getState() as OrchestratorState & { orchestrationId: string }).orchestrationId;
+  // No await between reserve() and here — promote straight to a bound run.
+  activeHunts.bind({ id: orchestrationId, kind: "orchestration", handle: orchestrator, targetUrl: parsed.data.targetUrl, startedAt: Date.now() });
 
   // Wire orchestrator events to Socket.IO
   const io: SocketServer | undefined = req.app.get("io");
@@ -139,7 +153,9 @@ router.post("/run", async (req: Request, res: Response) => {
       io.to(room).emit("orchestration:complete", d);
       completedResults.set(orchestrationId, { state: d.state, completedAt: Date.now() });
       activeOrchestrations.delete(orchestrationId);
+      activeHunts.release(orchestrationId);
     });
+    orchestrator.on("orchestration:aborted", () => activeHunts.release(orchestrationId));
   }
 
   activeOrchestrations.set(orchestrationId, orchestrator);
@@ -159,22 +175,33 @@ router.post("/run", async (req: Request, res: Response) => {
       completedAt: Date.now(),
     });
     activeOrchestrations.delete(orchestrationId);
+    activeHunts.release(orchestrationId);
     logger.info("Orchestration finished", { orchestrationId, findings: result.findingsTotal });
   }).catch((err) => {
     logger.error("Orchestration failed", { orchestrationId, err });
     activeOrchestrations.delete(orchestrationId);
+    activeHunts.release(orchestrationId);
   });
 });
 
 // ── Stop orchestration ─────────────────────────────────────────────────────────
+// REAL abort: call orchestrator.stop() so the abort flag is set, the running L4
+// HunterEngine is halted (model calls cease mid-layer), and the single-flight slot
+// is released. Works whether the orchestration was started via REST or Socket.IO,
+// since both register in activeOrchestrations AND bind into the shared registry.
 router.post("/stop/:id", (req: Request, res: Response) => {
-  const orchestrator = activeOrchestrations.get(req.params.id);
-  if (!orchestrator) {
+  const id = req.params.id;
+  const orchestrator = activeOrchestrations.get(id);
+  const stopped = activeHunts.stop(id);     // calls handle.stop() = orchestrator.stop()
+  if (orchestrator) {
+    orchestrator.stop();                    // idempotent — covers any registry miss
+    activeOrchestrations.delete(id);
+  }
+  if (!stopped && !orchestrator) {
     return res.status(404).json({ error: "Orchestration not found or already complete" });
   }
-  orchestrator.emit("orchestration:stop");
-  activeOrchestrations.delete(req.params.id);
-  return res.json({ ok: true, orchestrationId: req.params.id, status: "aborted" });
+  logger.info("Orchestration stop requested", { orchestrationId: id, stopped });
+  return res.json({ ok: true, orchestrationId: id, status: "aborted" });
 });
 
 // ── Stats endpoint (must be before /:id to avoid swallowing "stats") ──────────

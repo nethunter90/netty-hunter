@@ -12,6 +12,7 @@ import { BackwardHuntEngine } from "../intelligence/BackwardHunt";
 import { HuntStrategyBuilder } from "./huntStrategy";
 import { wireHuntEngineToSocket } from "../lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "../lib/state/hunt-sessions";
+import { activeHunts } from "../lib/state/active-hunts";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 import { verifyAndPersistFinding, verifyPendingForSession } from "../lib/verification/verify-finding";
@@ -48,19 +49,29 @@ const StartHuntSchema = z.object({
 
 // Start a new hunt
 router.post("/start", async (req: Request, res: Response) => {
-  if (activeHuntSessions.size > 0) {
-    const running = [...activeHuntSessions.keys()];
-    return res.status(409).json({
-      error: "A hunt is already in progress. Stop it before starting a new one.",
-      activeSessionUuids: running,
-    });
-  }
-
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth } = parsed.data;
 
+  // ── Single-flight gate (cost-safety core) ───────────────────────────────────
+  // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
+  // orchestration is already running (or reserved), reject with 409 — never queue
+  // a second. This is what makes ~60 rapid clicks → 1 hunt instead of 60. The
+  // unified registry supersedes the earlier activeHuntSessions.size check: it is
+  // race-safe across the async setup window and also covers running orchestrations.
+  if (!activeHunts.reserve(targetUrl)) {
+    const current = activeHunts.current();
+    return res.status(409).json({
+      error: "A hunt is already in progress. Stop it before starting a new one.",
+      activeHunt: current ? { id: current.id, kind: current.kind, targetUrl: current.targetUrl } : undefined,
+    });
+  }
+
+  // Everything past the reserve() claim runs inside this guard so the single-
+  // flight slot is released on ANY failure path (DB error, 404, engine throw)
+  // and is only converted to a bound run via activeHunts.bind() on success.
+  try {
   // Resolve effective program — for custom/local-lab hunts (programId === -1) we
   // find-or-create a synthetic "Custom Lab" program so FK constraints are satisfied.
   let programId = rawProgramId;
@@ -82,7 +93,7 @@ router.post("/start", async (req: Request, res: Response) => {
   } else {
     // Verify real program exists
     const [program] = await db.select().from(programs).where(eq(programs.id, rawProgramId)).limit(1);
-    if (!program) return res.status(404).json({ error: "Program not found" });
+    if (!program) { activeHunts.release(); return res.status(404).json({ error: "Program not found" }); }
   }
 
   // Create campaign
@@ -141,11 +152,16 @@ router.post("/start", async (req: Request, res: Response) => {
       // Replay hunt:started since it fired before wiring was in place
       io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
       activeHuntSessions.set(sessionUuid, engine);
+      // Promote the single-flight reservation into a bound, stoppable run.
+      activeHunts.bind({ id: sessionUuid, kind: "hunt", handle: engine, targetUrl, startedAt: Date.now() });
       engine.on("hunt:complete", (data: unknown) => {
         const d = data as Record<string, unknown> | null;
         const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
         metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
         strategyWeightLearner.learn().catch(() => {});
+        // Release the single-flight slot the moment the hunt finishes so the next
+        // legitimate launch can proceed (don't wait the 60s state-cleanup window).
+        activeHunts.release(sessionUuid);
         (async () => {
           try {
             io.to(`hunt:${sessionUuid}`).emit("hunt:verifying", { sessionUuid });
@@ -158,6 +174,7 @@ router.post("/start", async (req: Request, res: Response) => {
         })();
         setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
+      engine.on("hunt:error", () => activeHunts.release(sessionUuid));
 
       logger.info("Backward hunt started", { campaignId: campaign.id, planId: plan.planId, sessionUuid });
       return res.json({
@@ -189,6 +206,8 @@ router.post("/start", async (req: Request, res: Response) => {
     // Replay hunt:started since it fired before wiring was in place
     io.to(`hunt:${sessionUuid}`).emit("hunt:started", { sessionUuid, targetUrl });
     activeHuntSessions.set(sessionUuid, engine);
+    // Promote the single-flight reservation into a bound, stoppable run.
+    activeHunts.bind({ id: sessionUuid, kind: "hunt", handle: engine, targetUrl, startedAt: Date.now() });
 
     // Auto-cleanup after hunt completes; trigger cross-hunt learning
     engine.on("hunt:complete", (data: unknown) => {
@@ -196,6 +215,8 @@ router.post("/start", async (req: Request, res: Response) => {
       const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
       metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
       strategyWeightLearner.learn().catch(() => {});
+      // Release the single-flight slot immediately on completion.
+      activeHunts.release(sessionUuid);
       // Auto-verify: console-launched hunts don't pass through CampaignOrchestrator
       // Layer 5, so run the 4-layer pipeline on every pending finding here. This is
       // what removes the need to click "verify" on each finding by hand.
@@ -211,6 +232,7 @@ router.post("/start", async (req: Request, res: Response) => {
       })();
       setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
+    engine.on("hunt:error", () => activeHunts.release(sessionUuid));
 
     logger.info("Hunt started", { campaignId: campaign.id, sessionUuid, targetUrl });
     return res.json({
@@ -220,18 +242,36 @@ router.post("/start", async (req: Request, res: Response) => {
       status: "running",
     });
   } catch (err) {
+    // Engine-section failure (after DB setup). Release the slot so it isn't stuck.
+    activeHunts.release();
     logger.error("Failed to start hunt", { err });
     return res.status(500).json({ error: "Failed to start hunt", details: String(err) });
   }
+  } catch (outerErr) {
+    // DB-setup failure (program/campaign/target creation) before the engine ran.
+    activeHunts.release();
+    logger.error("Failed to start hunt (setup)", { err: outerErr });
+    return res.status(500).json({ error: "Failed to start hunt", details: String(outerErr) });
+  }
 });
 
-// Stop an active hunt
+// Stop an active hunt — REAL abort: propagate stop() into the running engine so
+// model calls cease, then release the single-flight slot. The old code emitted
+// an unhandled "hunt:stop" event and deleted the registry entry, leaving the
+// engine running (and spending) — the lying-button bug this fixes.
 router.post("/stop/:sessionUuid", (req: Request, res: Response) => {
-  const engine = activeHuntSessions.get(req.params.sessionUuid);
-  if (!engine) return res.status(404).json({ error: "Session not found" });
-  engine.emit("hunt:stop");
-  activeHuntSessions.delete(req.params.sessionUuid);
-  return res.json({ ok: true });
+  const sessionUuid = req.params.sessionUuid;
+  const stopped = activeHunts.stop(sessionUuid);
+  const engine = activeHuntSessions.get(sessionUuid);
+  if (engine) {
+    engine.stop();                          // idempotent — covers stop() before bind()
+    activeHuntSessions.delete(sessionUuid);
+  }
+  if (!stopped && !engine) {
+    return res.status(404).json({ error: "Session not found or already stopped" });
+  }
+  logger.info("Hunt stop requested", { sessionUuid, stopped });
+  return res.json({ ok: true, stopped: true, sessionUuid });
 });
 
 // Get hunt session state
