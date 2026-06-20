@@ -85,7 +85,8 @@ class NVDClient {
       this.cache.set(key, { records, fetchedAt: Date.now() });
       return records;
     } catch (err: any) {
-      logger.warn('[NVDClient] lookupByKeyword failed', { keyword, err: err.message });
+      const isAbort = err?.name === 'AbortError' || err?.name === 'TimeoutError';
+      logger[isAbort ? 'debug' : 'warn']('[NVDClient] lookupByKeyword failed', { keyword, err: err.message });
       return [];
     }
   }
@@ -104,7 +105,8 @@ class NVDClient {
       this.cache.set(key, { records, fetchedAt: Date.now() });
       return records[0] ?? null;
     } catch (err: any) {
-      logger.warn('[NVDClient] lookupById failed', { cveId, err: err.message });
+      const isAbort = err?.name === 'AbortError' || err?.name === 'TimeoutError';
+      logger[isAbort ? 'debug' : 'warn']('[NVDClient] lookupById failed', { cveId, err: err.message });
       return null;
     }
   }
@@ -127,7 +129,8 @@ class NVDClient {
       this.cache.set(key, { records, fetchedAt: Date.now() });
       return this.filterBySeverity(records, options.severity);
     } catch (err: any) {
-      logger.warn('[NVDClient] lookupByKeywordFiltered failed', { keyword, err: err.message });
+      const isAbort = err?.name === 'AbortError' || err?.name === 'TimeoutError';
+      logger[isAbort ? 'debug' : 'warn']('[NVDClient] lookupByKeywordFiltered failed', { keyword, err: err.message });
       return [];
     }
   }
@@ -154,7 +157,8 @@ class NVDClient {
       this.cache.set(key, { records, fetchedAt: Date.now() });
       return records;
     } catch (err: any) {
-      logger.warn('[NVDClient] lookupByCWE failed', { cweId, err: err.message });
+      const isAbort = err?.name === 'AbortError' || err?.name === 'TimeoutError';
+      logger[isAbort ? 'debug' : 'warn']('[NVDClient] lookupByCWE failed', { cweId, err: err.message });
       return [];
     }
   }
@@ -168,7 +172,7 @@ class NVDClient {
 
     const resp = await fetch(url.toString(), {
       headers,
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!resp.ok) {

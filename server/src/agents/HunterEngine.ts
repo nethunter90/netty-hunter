@@ -704,10 +704,15 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
-    // Start interactsh for public OOB callbacks (best-effort — falls back to local server).
-    interactshManager.start().then(domain => {
-      if (domain) logger.info("[HunterEngine] Interactsh OOB active", { domain });
-    }).catch(() => {});
+    // Start interactsh for public OOB callbacks — skip for local/private targets since
+    // interactsh.com can't reach them and the startup attempt just produces a noisy warn.
+    const targetHostname = (() => { try { return new URL(params.targetUrl).hostname; } catch { return ""; } })();
+    const isLocalTarget = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1)/.test(targetHostname);
+    if (!isLocalTarget) {
+      interactshManager.start().then(domain => {
+        if (domain) logger.info("[HunterEngine] Interactsh OOB active", { domain });
+      }).catch(() => {});
+    }
 
     this.rlWiring.onHuntStart({
       sessionId: sessionUuid,

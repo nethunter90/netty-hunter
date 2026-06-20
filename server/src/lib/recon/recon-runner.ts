@@ -15,6 +15,17 @@ import { join } from "path";
 import { writeFile, mkdir } from "fs/promises";
 import logger from "../../utils/logger";
 
+function isLocalTarget(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    /^127\./.test(hostname) ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+    /^::1$/.test(hostname)
+  );
+}
+
 const INTERESTING_PATH_PATTERNS = [
   /\/admin/i, /\/upload/i, /\/backup/i, /\/config/i, /\/api\//i,
   /\/login/i, /\/manage/i, /\/dashboard/i, /\/console/i, /\/setup/i,
@@ -62,6 +73,24 @@ export class ReconRunner {
   async run(): Promise<ReconContext> {
     this.emit("recon:start", { sessionId: this.sessionId, domain: this.domain });
     logger.info("[ReconRunner] Phase 0 OSINT started", { domain: this.domain });
+
+    // Skip external OSINT for local/private targets — crt.sh and Wayback have no
+    // records for localhost or RFC-1918 addresses and will always fail noisily.
+    if (isLocalTarget(this.domain)) {
+      logger.info("[ReconRunner] Local target — skipping crt.sh and Wayback CDX", { domain: this.domain });
+      const ctx: ReconContext = {
+        targetUrl: this.targetUrl,
+        targetDomain: this.domain,
+        collectedAt: Date.now(),
+        subdomains: [],
+        interestingUrls: [],
+        historicalPathCount: 0,
+        summary: `Attack surface for ${this.domain}:\n• Local/private target — passive OSINT skipped`,
+      };
+      await this.persist(ctx);
+      this.emit("recon:complete", { sessionId: this.sessionId, subdomains: 0, alive: 0, interestingUrls: 0, historicalPathCount: 0 });
+      return ctx;
+    }
 
     const [subResult, waybackResult] = await Promise.allSettled([
       this.fetchCrtSh(),
