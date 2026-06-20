@@ -48,6 +48,14 @@ const StartHuntSchema = z.object({
 
 // Start a new hunt
 router.post("/start", async (req: Request, res: Response) => {
+  if (activeHuntSessions.size > 0) {
+    const running = [...activeHuntSessions.keys()];
+    return res.status(409).json({
+      error: "A hunt is already in progress. Stop it before starting a new one.",
+      activeSessionUuids: running,
+    });
+  }
+
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
