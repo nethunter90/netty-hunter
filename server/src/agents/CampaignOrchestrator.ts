@@ -160,11 +160,13 @@ export class CampaignOrchestrator extends EventEmitter {
   private roiModel = new ROIModel();
   private targetSelector = new TargetSelectionIntelligence();
   private backwardHunt = new BackwardHuntEngine();
+  private _abortRequested = false;
 
   constructor() {
     super();
     this.state = this.initState();
     this.verifierAgent.initialize().catch(err => logger.warn("Verifier init deferred", { err }));
+    this.once("orchestration:stop", () => { this._abortRequested = true; });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -1272,6 +1274,8 @@ export class CampaignOrchestrator extends EventEmitter {
     this.state.layers[layerIdx].startedAt = t0;
     this.state.phase = LAYER_PHASES[layerIdx];
     this.emit("orchestration:layer_start", { layer: layerNum, name: LAYER_META[layerIdx].name, state: this.publicState() });
+
+    if (this._abortRequested) throw new Error("Aborted by user");
 
     try {
       const result = await fn();

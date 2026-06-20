@@ -122,22 +122,29 @@ export function BackwardHunt() {
     setLoading(true);
     setError('');
     try {
-      const response = await csrfFetch('/api/bounty/hunts', {
+      const targetUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+      const response = await csrfFetch('/api/hunt/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          target,
-          goal,
-          scope: { inScope: [target], outOfScope: [] }
+          programId: -1,
+          targetUrl,
+          mode: 'backward',
+          goal: goal || undefined,
+          maxIterations: 10,
+          budget: { maxRequests: 2000, maxTime: 3600 },
         })
       });
       const data = await response.json();
-      if (data.success) {
+      if (response.ok) {
         setTarget('');
         setStrategyRecs([]);
+        if (data.sessionUuid && socketRef.current) {
+          socketRef.current.emit('subscribe:hunt', { sessionUuid: data.sessionUuid });
+        }
         fetchHunts();
       } else {
-        const message = data.error || 'Failed to start hunt. The server returned an error.';
+        const message = data.error || 'Failed to start hunt.';
         setError(message);
         toast({ variant: 'destructive', title: 'Hunt Failed', description: message });
       }
@@ -152,7 +159,7 @@ export function BackwardHunt() {
 
   const stopHunt = async (huntId: string) => {
     try {
-      await csrfFetch(`/api/bounty/hunts/${huntId}/stop`, { method: 'POST' });
+      await csrfFetch(`/api/hunt/stop/${huntId}`, { method: 'POST' });
       fetchHunts();
     } catch (error) {
       console.error('Failed to stop hunt:', error);

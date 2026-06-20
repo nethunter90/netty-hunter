@@ -20,7 +20,9 @@ import { Server as SocketServer } from "socket.io";
 const router = Router();
 
 // In-memory active orchestrations (orchestrationId → orchestrator)
-const activeOrchestrations = new Map<string, CampaignOrchestrator>();
+// Exported so the socket handler in index.ts can register socket-started orchestrations
+// in the same map, making the REST stop endpoint work regardless of how the hunt was started.
+export const activeOrchestrations = new Map<string, CampaignOrchestrator>();
 // Track completed results
 const completedResults = new Map<string, {
   state: OrchestratorState;

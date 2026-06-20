@@ -13,7 +13,7 @@ import logger from "./utils/logger";
 import authRoutes from "./routes/auth";
 import huntRoutes from "./routes/hunt";
 import bountyRoutes from "./routes/bounty";
-import orchestrationRoutes from "./routes/orchestration";
+import orchestrationRoutes, { activeOrchestrations } from "./routes/orchestration";
 import hunterRoutes from "./routes/hunter";
 import governanceRoutes from "./routes/governance";
 import missionsRoutes from "./routes/missions";
@@ -333,7 +333,11 @@ io.on("connection", (socket) => {
 
     socket.emit("orchestration:created", { orchestrationId });
 
-    orchestrator.orchestrate(params).catch(err => {
+    activeOrchestrations.set(orchestrationId, orchestrator);
+    orchestrator.orchestrate(params).then(() => {
+      activeOrchestrations.delete(orchestrationId);
+    }).catch(err => {
+      activeOrchestrations.delete(orchestrationId);
       socket.emit("orchestration:error", { orchestrationId, error: String(err) });
     });
   });
