@@ -998,5 +998,55 @@
     "reasoning_focus": "Cross-product financial state consistency failure in super-app architecture.",
     "expected_answer": "The shared wallet with cross-product logic flaws enables a financial perpetual motion machine. A single $1,000 transaction debits the wallet for a payment (satisfying the payments service) while simultaneously crediting the same $1,000 as an investment deposit (satisfying the investment service). The user has both paid for goods AND invested $1,000, despite only $1,000 leaving their wallet. This is possible because each service independently reads the wallet balance, validates the debit or credit condition, and executes \u2014 without awareness that another service is simultaneously acting on the same balance. The financial impact cascades: the investment service books a $1,000 asset, the payments service debits $1,000, but the wallet only decreased by $1,000 total \u2014 creating a $1,000 phantom asset. At scale, this creates systemic balance sheet inflation across the super-app. Each exploited transaction creates $1,000 in phantom value. If this extends to lending (using phantom investments as collateral), the risk amplifies through leverage. Remediation requires implementing a central financial orchestration layer that serializes cross-product transactions, using distributed transactions or saga patterns across services, implementing a unified balance that cannot be simultaneously consumed by multiple services, and adding cross-product reconciliation that detects balance sheet discrepancies between services.",
     "evaluation_criteria": "Must model the phantom asset creation from simultaneous debit-credit across products and recommend a central financial orchestration layer with serialized cross-product transactions."
+  },
+  {
+    "id": 1,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "A checkout system applies multiple coupon codes sequentially without deduplication checks. A user applies a 20% site-wide discount, then a category-specific 15% discount, then a first-purchase 25% coupon\u2014all stack multiplicatively rather than taking the maximum.",
+    "prompt": "Model the cumulative discount effect when multiple coupon codes are applied without mutual exclusivity validation and calculate the actual revenue loss per transaction.",
+    "reasoning_focus": "Coupon stacking through sequential application without exclusivity enforcement.",
+    "expected_answer": "When coupon validation lacks mutual exclusivity checks, sequential application creates multiplicative discounting. A $100 purchase applying 20%, then 15%, then 25% discounts compounds to $51 (0.8 \u00d7 0.85 \u00d7 0.75 = 0.51 final price), not the intended single maximum discount of $75\u2013$80. The vulnerability scales across transaction volume: if 10% of daily transactions exploit this across a $1M daily revenue baseline, losses reach $50K\u2013$70K daily. Remediation requires implementing coupon tiers with mutual exclusivity rules, coupon combination whitelisting, and post-application discount cap enforcement. Database-level constraints should prevent application of conflicting coupon categories within single transactions.",
+    "evaluation_criteria": "Must calculate the multiplicative compounding effect across all applied coupons and demonstrate daily revenue impact at scale; must recommend coupon tier stratification with single-coupon-per-tier enforcement."
+  },
+  {
+    "id": 2,
+    "complexity": "L5",
+    "domain": "Fintech",
+    "scenario": "A cryptocurrency exchange processes withdrawal requests with a race condition between balance verification and debit execution. Two concurrent withdrawal requests for 5 BTC each are submitted when the user balance is 5 BTC; both pass verification independently before either debit completes.",
+    "prompt": "Model the race condition window between balance verification and atomic debit execution and calculate potential fund loss exposure.",
+    "reasoning_focus": "Race condition on balance check-and-debit sequence without atomicity.",
+    "expected_answer": "Non-atomic balance verification followed by debit creates a critical race window. With two concurrent 5 BTC withdrawal requests against 5 BTC balance: both requests independently read balance (5 BTC available), both pass verification, then both execute debits sequentially, resulting in \u22125 BTC balance and 10 BTC total withdrawn. At BTC price $45K, this represents $225K per concurrent request pair. The vulnerability compounds with connection pooling and high-frequency API usage patterns. Remediation requires: (1) atomic compare-and-swap operations at the balance ledger level using database transactions with SERIALIZABLE isolation, (2) write-ahead logging with rollback capability, (3) per-account request sequencing queues to serialize balance modifications, (4) real-time balance reconciliation audits detecting negative balances within seconds.",
+    "evaluation_criteria": "Must quantify fund loss per concurrent request pair and demonstrate scaling across transaction throughput; must specify atomic transaction isolation level and sequential processing architecture."
+  },
+  {
+    "id": 3,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "A subscription management system allows users to downgrade their tier mid-billing-cycle, immediately removing access but retroactively crediting the difference between old and new tier pricing without checking for resource usage during the higher tier.",
+    "prompt": "Model the abuse potential when downgrade credits are issued without validating usage compliance against the downgraded tier's limits.",
+    "reasoning_focus": "Privilege skip through tier downgrade without usage validation.",
+    "expected_answer": "Downgrade workflows that immediately credit price differences without usage validation enable tier privilege bypass. A user on Enterprise ($500/mo, unlimited API calls) can downgrade to Starter ($25/mo, 1K API calls/month) mid-cycle, receive $475 retroactive credit, but retain usage from prior 20 days at Enterprise limits\u2014consuming 50K API calls that would violate Starter tier by 50\u00d7. Per-user abuse yields $475 monthly revenue loss plus $2K\u2013$5K compute cost overruns. At 5% subscriber exploitation rate across 5K users, this represents $11.9K monthly revenue leakage plus $50K\u2013$125K operational cost. Remediation requires: (1) usage-level auditing before credit issuance, (2) prorated credit calculation tied to actual compliant usage days, (3) resource overage billing for usage exceeding downgraded tier limits, (4) downgrade request hold period with compliance verification before access reduction.",
+    "evaluation_criteria": "Must calculate revenue loss and operational cost impact per exploited downgrade; must recommend usage audit requirements and overage billing enforcement pre-access removal."
+  },
+  {
+    "id": 4,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A seller referral program awards $50 per new seller signup without validating the relationship between referrer and referee. A single user creates multiple seller accounts, each referring the previous account, creating a circular referral chain that triggers payouts on non-existent economic activity.",
+    "prompt": "Model the systemic fraud potential when referral relationships lack identity validation and assess the scaling economics of abuse.",
+    "reasoning_focus": "Referral abuse through self-referral and circular referral chains.",
+    "expected_answer": "Unvalidated referral relationships enable self-dealing and circular referral loops. An attacker with 10 email addresses creates 10 seller accounts in sequence, each referring the previous account, triggering 10 \u00d7 $50 = $500 in payouts for zero actual marketplace value creation. Scaling to 100 accounts across multiple identity vectors (email variations, phone numbers, payment methods) yields $5K in fraudulent payouts. At marketplace scale with 1% of new sellers exploiting this, a marketplace onboarding 1K sellers monthly loses $500/month (minimum). Detection requires cross-referral validation: (1) IP/device fingerprinting to prevent same-device referrer/referee pairs, (2) payment method uniqueness enforcement across referral chains, (3) time-gap validation requiring minimum marketplace activity before referral credit issuance, (4) graph-based circular relationship detection flagging any referral cycles. Remediation also includes reputation scoring that requires minimum transaction history before referral earnings unlock.",
+    "evaluation_criteria": "Must quantify fraud payouts per account and demonstrate scaling across identity diversity; must specify validation controls for IP/device/payment method enforcement and circular referral detection."
+  },
+  {
+    "id": 5,
+    "complexity": "L5",
+    "domain": "Healthcare",
+    "scenario": "A prescription refill authorization system processes requests through a workflow with three sequential approval steps (pharmacist review, insurance verification, doctor notification). A race condition allows concurrent requests to bypass step 2 if both requests enter the queue simultaneously before either completes insurance verification.",
+    "prompt": "Model the workflow bypass vulnerability when concurrent requests can circumvent sequential validation gates and assess clinical/financial risk.",
+    "reasoning_focus": "Workflow bypass through race condition on sequential approval steps.",
+    "expected_answer": "Sequential workflow steps without request-level locking create bypass windows. Two concurrent refill requests for controlled substances submitted simultaneously can both pass pharmacist review independently, then both attempt insurance verification concurrently\u2014if the first request's verification failure is not visible to the second request before doctor notification is triggered, both requests advance to fulfillment, resulting in duplicate prescriptions. Clinical risk includes patient overdose from duplicate medication fills; financial risk includes insurance fraud (duplicate claims) and DEA compliance violations for controlled substance refills. Per-request abuse creates duplicate fills costing $50\u2013$500 per incident; at 0.5% of monthly refill traffic (pharmacy processing 1K refills/month), this represents $250\u2013$2.5K monthly loss plus regulatory fines. Remediation requires: (1) request-level distributed locking using database row locks or Redis-based mutual exclusion, (2) workflow state machine ensuring step completion before advancing, (3) idempotency keys preventing re-submission from creating duplicate records, (4) real-time duplicate detection comparing prescription ID + patient ID + drug + quantity + date.",
+    "evaluation_criteria": "Must quantify duplicate prescription financial and clinical risk per incident; must specify distributed locking architecture and idempotency enforcement at the request level."
   }
 ]
