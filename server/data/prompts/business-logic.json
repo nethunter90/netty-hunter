@@ -1588,5 +1588,55 @@
       "Must explain email aliasing mechanics and how plus-addressing exploits domain-only validation",
       "Must recommend multi-layered identity verification (phone, transaction history, device fingerprinting) rather than relying on email domain checks alone"
     ]
+  },
+  {
+    "id": 51,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "Checkout applies all active coupons sequentially without deduplication checks; system allows stacking percentage-based and fixed-amount coupons with no maximum discount cap; promotional coupons can be combined with loyalty coupons.",
+    "prompt": "Identify how coupon stacking vulnerabilities enable arbitrary price reduction and quantify the maximum discount achievable through coupon combination abuse.",
+    "reasoning_focus": "Coupon deduplication and stacking logic bypass.",
+    "expected_answer": "Coupon stacking vulnerabilities create compounding discount opportunities. If the system applies a 20% promotional coupon, then a $50 fixed-amount coupon, then a 15% loyalty coupon sequentially without deduplication, an attacker on a $500 order achieves: $500 \u00d7 0.80 = $400, $400 - $50 = $350, $350 \u00d7 0.85 = $297.50\u2014a 40.5% total discount. The vulnerability escalates if expired or single-use coupons can be reapplied via session manipulation or if coupon validity checks occur post-application. Exploitation requires identifying all valid coupon codes (via enumeration or disclosure), testing combination order dependencies, and confirming whether maximum-discount-per-order limits exist. Remediation requires implementing coupon exclusivity groups (marking coupons as mutually exclusive), enforcing a maximum discount percentage cap, validating coupon applicability server-side before application, and logging all coupon applications with timestamp validation.",
+    "evaluation_criteria": "Must calculate the compounding discount percentage from at least two coupon types and recommend implementing coupon exclusivity groups with a maximum discount cap enforcement at the database level."
+  },
+  {
+    "id": 52,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "Referral reward system credits $10 per successful referral; reward is credited immediately upon signup without email verification completion; users can generate unlimited referral links from a single account; no duplicate account detection for referrer/referee relationships.",
+    "prompt": "Assess how incomplete referral validation logic enables self-referral abuse and large-scale reward generation.",
+    "reasoning_focus": "Referral program validation and duplicate detection bypass.",
+    "expected_answer": "Referral abuse exploits incomplete validation across three dimensions. First, immediate crediting before email verification allows an attacker to generate $10 rewards for each signup without account confirmation, bypassing a key activation gate. Second, lack of duplicate detection permits self-referral loops: creating accounts A and B, referencing B from A's link, then referencing A from B's link or referencing A multiple times from fresh accounts costs the attacker minimal effort. Third, unlimited referral link generation from a single account enables scaling: one attacker account can generate 1000 links daily, recruiting 500 emails from services like Guerrilla Mail, netting $5000 in fraudulent rewards. Detection vectors include analyzing referrer-referee relationships for circular references, flagging accounts sharing IP addresses or device fingerprints, implementing rate limits on referral link generation (5 per day), and requiring email verification completion before reward crediting. Additionally, employ CAPTCHA on signup and cross-reference referral patterns across time windows for velocity anomalies.",
+    "evaluation_criteria": "Must identify at least two exploitation techniques (self-referral loops and unverified credit) and recommend email verification gates combined with referrer-referee relationship graph analysis."
+  },
+  {
+    "id": 53,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "Transfer API processes balance deduction and recipient credit in separate database transactions; no locking mechanism prevents concurrent transfers from the same account; system logs show a 200ms window between deduction and credit operations.",
+    "prompt": "Model a race condition attack enabling double-spend by exploiting the transaction isolation gap in the transfer workflow.",
+    "reasoning_focus": "Race condition on balance checks during concurrent fund transfers.",
+    "expected_answer": "The 200ms gap between balance deduction and recipient credit creates a race condition enabling double-spend attacks. An attacker with $1000 balance initiates two concurrent $600 transfers by timing HTTP requests within a 50ms window. Transaction T1 checks balance ($1000 \u2265 $600, passes), and simultaneously Transaction T2 checks the same balance ($1000 \u2265 $600, also passes). Both transactions proceed past the balance check but before the deduction is persisted. T1 deducts $600 (balance = $400), T2 deducts $600 (balance = -$200). Result: $1200 extracted from a $1000 account. Exploitation requires identifying concurrent transfer endpoints, calculating transaction processing latency, and using multi-threaded HTTP clients to send overlapping requests. Advanced attacks involve multiple accounts and coordinator patterns to maximize throughput. Remediation requires row-level locking (SELECT ... FOR UPDATE) during balance checks, implementing optimistic locking with version columns, or consolidating balance check and deduction into a single atomic transaction with SERIALIZABLE isolation level. Additionally, maintain a pre-transaction balance snapshot and validate all debits against this snapshot post-transaction.",
+    "evaluation_criteria": "Must explain the race condition mechanics with specific timing (200ms gap exploitation) and recommend row-level locking or SERIALIZABLE isolation with pre-transaction balance validation."
+  },
+  {
+    "id": 54,
+    "complexity": "L2",
+    "domain": "Healthcare",
+    "scenario": "Patient appointment booking system allows users to modify appointment details (time, provider) post-booking; modification endpoint accepts user_id and appointment_id without role validation; admin users have a separate approval workflow that is bypassed when modifications originate from the patient endpoint.",
+    "prompt": "Identify the privilege escalation vulnerability in the appointment modification workflow and assess its impact.",
+    "reasoning_focus": "Workflow bypass and privilege escalation in appointment management.",
+    "expected_answer": "The appointment modification endpoint implements a privilege escalation vulnerability through workflow bypass. The system distinguishes between patient and admin modification endpoints but fails to validate that the modification request originated from the appropriate role before processing. A patient-tier user can invoke the appointment modification endpoint (intended for patient self-service changes like rescheduling) to modify sensitive fields such as 'approved_by_admin' or 'requires_review' flags, bypassing the admin approval workflow entirely. An attacker with patient credentials can: modify an appointment's provider field to an unqualified provider, change appointment status from 'pending_approval' to 'confirmed' without admin review, or escalate appointment priority level. The vulnerability stems from endpoint design that assumes client-side role enforcement rather than server-side authorization checks. Remediation requires implementing capability-based authorization at the endpoint level by checking the authenticated user's role and comparing requested modifications against permitted field-level changes for that role. Specifically, implement a modification whitelist per role (patients can modify only date/time, admins can modify all fields), validate the modification against this whitelist server-side, and enforce the approval workflow by rejecting attempts to set 'approved_by_admin' from the patient endpoint.",
+    "evaluation_criteria": "Must identify at least two sensitive fields (provider, approval status) that patients can illegitimately modify and recommend role-based field-level modification whitelists with server-side enforcement."
+  },
+  {
+    "id": 55,
+    "complexity": "L3",
+    "domain": "Crypto",
+    "scenario": "Smart contract exchange calculates swap output price using an on-chain oracle price feed updated every 15 minutes; slippage protection allows \u00b15% price deviation; attacker can flash loan large amounts, perform a swap at the oracle price, then liquidate at market price within the same block.",
+    "prompt": "Analyze how stale oracle pricing combined with flash loan access enables risk-free arbitrage extraction.",
+    "reasoning_focus": "Integer overflow and stale oracle price manipulation in DEX swap logic.",
+    "expected_answer": "The combination of 15-minute oracle update windows and flash loan availability creates a deterministic arbitrage vector. An attacker executes a multi-step attack within a single block: (1) flash loan 1000 ETH from a lending pool at near-zero cost, (2) invoke the swap function using the oracle price from 14 minutes ago (which may be 3-5% stale), (3) receive 50,000 tokens at the stale price, (4) immediately swap 50,000 tokens on a DEX with real-time pricing (Uniswap), (5) receive 1050 ETH back (5% arbitrage), (6) repay the flash loan (1000 ETH + 0.05% fee = 1000.5 ETH), netting 49.5 ETH in profit. The \u00b15% slippage tolerance is insufficient because the oracle can legitimately be 5% stale at the attack execution time. Exploitation scales with oracle update frequency; shorter intervals reduce the window. The attack is profitable if (oracle price discount %) > (flash loan fee % + market slippage %). Remediation requires implementing time-weighted average price (TWAP) oracles that sample prices across multiple blocks, reducing exploitable staleness to seconds rather than minutes. Additionally, enforce a maximum price impact check by requiring swap outputs to match recent block-level prices (e.g., within 1% of the last 3 blocks), implement circuit breakers that pause swaps during high volatility, and calculate flash loan fees dynamically based on transaction size to price out large arbitrage extractions.",
+    "evaluation_criteria": "Must calculate the arbitrage profit (at least 49.5 ETH in the example) and recommend TWAP oracles with time-weighted sampling combined with circuit breakers and dynamic flash loan fees."
   }
 ]
