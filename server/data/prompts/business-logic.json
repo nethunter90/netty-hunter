@@ -1178,5 +1178,135 @@
       "Timeline mapping transaction, settlement, and refund dates; calculate vendor net gain and platform loss",
       "Recommend settlement hold-period duration and post-settlement refund reconciliation rules"
     ]
+  },
+  {
+    "id": 16,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "Coupon validation logic allows sequential application of percentage-based and fixed-amount discounts without mutual exclusivity checks; a user applies a 50% coupon followed by a $100 fixed discount on a $200 item, reducing price to $0.",
+    "prompt": "Identify whether coupon stacking vulnerability enables negative or zero-price checkout when discount validation lacks exclusivity enforcement.",
+    "reasoning_focus": "Cumulative discount application without upper-bound validation or coupon interaction rules.",
+    "expected_answer": "The vulnerability exists because the coupon application layer applies discounts sequentially without checking cumulative discount ceilings or coupon incompatibility flags. A user with two valid coupons (50% + $100 fixed) on a $200 item pays $0 after both apply. The server should: (1) define mutually-exclusive coupon groups, (2) enforce maximum discount caps per order (e.g., max 80% or $X), (3) validate final price >= $0.01 before checkout, (4) log coupon combination attempts for fraud analysis. Implementation requires transaction-level validation where the final price calculation includes all applied coupons before payment processing.",
+    "evaluation_criteria": [
+      "Demonstrate coupon stacking resulting in sub-zero or zero price with specific coupon IDs and final price calculation",
+      "Recommend implementing a coupon compatibility matrix and transaction-level price floor validation with logging of suspicious combinations"
+    ]
+  },
+  {
+    "id": 17,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A seller-to-seller payment system processes refunds via an API endpoint that accepts a negative quantity parameter; submitting qty=-100 for a completed order triggers a credit reversal instead of a refund deduction.",
+    "prompt": "Assess whether negative quantity handling in refund logic enables unauthorized credit generation for sellers.",
+    "reasoning_focus": "Input validation on quantity fields in financial transactions.",
+    "expected_answer": "The flaw is insufficient input validation on the quantity parameter in refund endpoints. When a refund request includes qty=-100, the system interprets this as a reversal operation, crediting the seller's account instead of debiting it. The fix requires: (1) strict validation that quantity must be positive and <= original order quantity, (2) use of unsigned integer types or explicit range checks, (3) unit tests covering boundary cases (0, negative, exceeding original qty), (4) audit logging of all quantity values submitted. Additionally, separate refund and reversal flows with explicit authorization checkpoints prevent misuse.",
+    "evaluation_criteria": [
+      "Demonstrate submission of negative quantity parameter and resulting unauthorized seller credit with transaction ID and amount",
+      "Recommend positive-only quantity validation, unsigned integer types, and comprehensive audit logging of refund operations"
+    ]
+  },
+  {
+    "id": 18,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A payment processor updates user balance in a two-step process: (1) deduct from source account, (2) add to destination account. Between steps, concurrent requests on the same source account bypass the balance check because the deduction is not yet visible.",
+    "prompt": "Evaluate whether a race condition in balance update logic allows spending more than available balance through concurrent transfer requests.",
+    "reasoning_focus": "Race condition between balance read and write in financial transactions.",
+    "expected_answer": "This is a classic race condition in financial systems. When User A has $100 and submits two concurrent $80 transfers, each request reads the balance as $100, checks it passes, then deducts $80. Both succeed despite insufficient funds. The mitigation requires: (1) atomic read-modify-write using database locks (SELECT FOR UPDATE) or optimistic locking with version checks, (2) balance deduction must occur before any async operation, (3) implement a pending balance field that immediately reflects in-flight transactions, (4) use database constraints to prevent overdraft at the storage layer. Additionally, idempotency keys prevent duplicate processing if requests retry.",
+    "evaluation_criteria": [
+      "Demonstrate two concurrent transfer requests each spending $80 from a $100 balance, showing both succeed and balance becomes negative",
+      "Recommend SELECT FOR UPDATE locking strategy, pending balance tracking, and database-level overdraft constraints"
+    ]
+  },
+  {
+    "id": 19,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "An admin invitation API checks if the inviter is admin, but does not verify the inviter's permissions within the target organization; a user from Organization A invites themselves as admin to Organization B after observing an admin invitation link.",
+    "prompt": "Identify whether organization context is missing from privilege escalation checks, allowing cross-organization admin elevation.",
+    "reasoning_focus": "Privilege validation scope missing organization context.",
+    "expected_answer": "The vulnerability is an incomplete authorization check. The system verifies the inviter is an admin in some organization, but doesn't validate the inviter holds admin rights in the target organization. An attacker exploits this by capturing an admin invitation link meant for Organization B, then using the API to accept it, since the system only checks 'is admin somewhere?' rather than 'is admin in this org?'. Fix: (1) embed organization_id in the invitation token, (2) validate org_id from the invitation context during acceptance, (3) verify inviter's role specifically within the target org, not globally, (4) log all invitation acceptances with source and target org. Additionally, use short-lived tokens and one-time-use links to prevent link reuse.",
+    "evaluation_criteria": [
+      "Demonstrate capturing a valid invitation link from Organization B and using it to escalate to admin in a different organization",
+      "Recommend embedding organization context in tokens, validating org-specific roles, and enforcing single-use invitation links"
+    ]
+  },
+  {
+    "id": 20,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A referral program calculates bonuses based on referee signup count without validating uniqueness; a user creates 50 accounts using different emails and devices, each referred by their own master account, claiming $50 bonus per signup.",
+    "prompt": "Assess whether referral validation lacks fraud detection for self-referral and account creation velocity abuse.",
+    "reasoning_focus": "Referral uniqueness and abuse detection in incentive programs.",
+    "expected_answer": "The referral system fails to detect self-referral and bulk signup patterns. A user creates a master account, then registers 50 secondary accounts, each attributed to the master via unique referral links. Since the system only checks 'referee exists and is new,' it credits the master with 50 \u00d7 $50 = $2500. Detection requires: (1) velocity limits on referrals per account (e.g., max 5 per day, 20 per month), (2) IP/device fingerprinting to identify related accounts, (3) flag signups within short time windows from same IP, (4) require payment method uniqueness (one card per referrer), (5) manual review for bonuses exceeding thresholds. Additionally, implement cooldown periods and require 30+ days before bonus payout to allow chargeback detection.",
+    "evaluation_criteria": [
+      "Demonstrate creating multiple accounts from the same IP/device and claiming referral bonuses for each, calculating total fraudulent payout",
+      "Recommend velocity limits, device fingerprinting, payment method deduplication, and delayed bonus payout with fraud review"
+    ]
+  },
+  {
+    "id": 21,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "A dynamic pricing engine adjusts product prices based on demand, inventory, and user segment. A user edits the price variable in the shopping cart JSON before checkout; the server recalculates totals using the user-supplied price instead of re-fetching from the product catalog.",
+    "prompt": "Evaluate whether client-side price manipulation bypasses server-side price verification in the checkout flow.",
+    "reasoning_focus": "Trust boundary violation between client-side cart representation and server truth.",
+    "expected_answer": "The vulnerability occurs because the checkout handler accepts price data from the client cart state without re-validating against the authoritative product catalog. A user modifies their cart JSON to set price to $0.01 for a $500 item, and the server computes the order total using the malicious price. The fix requires: (1) never trust client-side price data; always fetch current price from the product service during order finalization, (2) implement server-side cart validation that compares client-submitted items + prices against the catalog, (3) reject orders where cart prices differ from current catalog prices by >threshold, (4) use a separate cart integrity token signed by the server that prevents tampering. Additionally, disable client-side price editing and compute all totals server-side only.",
+    "evaluation_criteria": [
+      "Demonstrate modifying cart JSON price field from $500 to $0.01 and completing checkout with malicious price, showing server accepts it",
+      "Recommend fetching current product prices from catalog during checkout, implementing server-signed cart integrity tokens, and rejecting price mismatches"
+    ]
+  },
+  {
+    "id": 22,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A prescription refill workflow requires approval from two actors: pharmacist and physician. A user captures the initial approval webhook and replays it twice, creating two refills from a single approval.",
+    "prompt": "Identify whether webhook idempotency protection is missing, enabling duplicate refill processing from single authorization.",
+    "reasoning_focus": "Idempotency and replay protection in critical workflow events.",
+    "expected_answer": "The vulnerability is the absence of idempotency key validation on webhook handlers. When the pharmacist approves a refill, a webhook is sent to the fulfillment system. An attacker intercepts the webhook and replays it multiple times. Since the handler lacks idempotency checks (e.g., no deduplication of request IDs), each replay creates a duplicate refill. The mitigation requires: (1) generate a unique idempotency_key (UUID) for each refill request, (2) store processed idempotency keys in a database with TTL, (3) return 200 OK for duplicate idempotency keys without processing, (4) validate webhook signatures to prevent forgery, (5) implement request deduplication at the API gateway level. Additionally, use state machines to prevent transitions from invalid states.",
+    "evaluation_criteria": [
+      "Demonstrate replaying a refill approval webhook and showing multiple duplicate refills processed from a single authorization",
+      "Recommend implementing idempotency keys with deduplication storage, webhook signature validation, and state machine enforcement"
+    ]
+  },
+  {
+    "id": 23,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "A DeFi platform stores user token balances as a 32-bit integer (max ~2.1B) representing wei. During a liquidity pool payout, the calculation adds fees, interest, and rewards without overflow checking; a user with 2.1B tokens gains an additional 1B, overflowing to a negative balance interpreted as a huge positive number.",
+    "prompt": "Assess whether integer overflow in balance calculations allows balance multiplication through arithmetic bypass.",
+    "reasoning_focus": "Integer overflow in fixed-size financial calculations.",
+    "expected_answer": "The vulnerability is a classic integer overflow in token accounting. User A has a balance of 2,100,000,000 wei stored in a 32-bit unsigned int. During reward distribution, the contract calculates new_balance = balance + rewards (1,000,000,000). The sum is 3,100,000,000, which exceeds the 32-bit max (2,147,483,647), causing wraparound. The result becomes a large negative number, which in unsigned integer context wraps to a huge positive value. User A's balance becomes worth 100x more. Prevention requires: (1) use 256-bit integers (native in Solidity) for all financial calculations, (2) implement SafeMath libraries that revert on overflow, (3) validate balance + addition <= max before executing, (4) use fixed-point math with explicit bit widths. Additionally, audit all arithmetic operations in financial code.",
+    "evaluation_criteria": [
+      "Demonstrate a balance overflow calculation showing 2.1B + 1B wrapping to an inflated positive balance, with hex representation",
+      "Recommend using 256-bit integers, SafeMath libraries, and pre-addition overflow checks before executing transfers"
+    ]
+  },
+  {
+    "id": 24,
+    "complexity": "L3",
+    "domain": "Subscription SaaS",
+    "scenario": "A subscription cancellation endpoint deletes the subscription record immediately without checking for active billing cycles or pending charges. A user cancels mid-cycle, then the system attempts to process a recurring charge, but the subscription no longer exists in the database.",
+    "prompt": "Evaluate whether premature subscription deletion during an active billing cycle creates orphaned charges and revenue loss.",
+    "reasoning_focus": "Workflow state management in subscription lifecycle.",
+    "expected_answer": "The vulnerability is improper state management in the subscription cancellation workflow. When a user cancels, the endpoint immediately deletes the subscription record from the database. However, the recurring charge processor runs asynchronously and expects the subscription to exist for validation. When it queries for the subscription, it finds nothing, logs an error, but still attempts to charge the user's card. If the charge succeeds, it's orphaned (no subscription to attach it to) and creates reconciliation issues. If it fails, the user is charged without active service. The fix requires: (1) use subscription states (active \u2192 canceling \u2192 canceled) instead of deletion, (2) delay actual deletion until current billing cycle completes, (3) validate subscription state before processing charges, (4) implement idempotent charge handlers, (5) use transactions to coordinate cancellation and charge refunds atomically.",
+    "evaluation_criteria": [
+      "Demonstrate canceling a subscription and showing the charge processor attempting to process a charge for a deleted subscription record",
+      "Recommend using subscription state machines, delayed deletion until cycle end, and transactional coordination of cancellation with refunds"
+    ]
+  },
+  {
+    "id": 25,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "A checkout flow includes order finalization, inventory deduction, and payment processing as separate API calls. An attacker completes the payment step but interrupts the inventory deduction; the system shows the order as paid but inventory is not deducted, allowing the product to be sold twice.",
+    "prompt": "Identify whether lack of transactional consistency between payment and inventory allows overselling through request interruption.",
+    "reasoning_focus": "Transactional boundaries in multi-step checkout workflows.",
+    "expected_answer": "The vulnerability is a lack of atomicity across the checkout workflow. The proper sequence is: (1) reserve inventory, (2) process payment, (3) commit reservation. However, this system processes them as independent API calls without transactional wrapping. An attacker: (1) calls finalize_order, (2) calls process_payment successfully, (3) interrupts inventory_deduction by closing the connection. The order is marked paid, payment is settled, but inventory.quantity is never decremented. The product remains available for another buyer. To reach 100 units sold with only 50 in stock, an attacker repeats this 100 times. The fix requires: (1) wrap all three operations in a database transaction that commits only if all succeed, (2) implement a saga pattern with compensating transactions (refund if inventory fails), (3) use distributed locks to prevent overselling, (4) validate available inventory before payment, not after. Additionally, implement idempotency keys to prevent duplicate charges if clients retry.",
+    "evaluation_criteria": [
+      "Demonstrate completing payment while interrupting inventory deduction, showing order marked as paid but product still available for resale",
+      "Recommend using database transactions for multi-step workflows, implementing saga pattern with compensations, and distributed inventory locks"
+    ]
   }
 ]
