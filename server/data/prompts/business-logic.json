@@ -1523,5 +1523,70 @@
     "reasoning_focus": "Sandwich attack enabling price slippage bypass through transaction ordering.",
     "expected_answer": "Mempool visibility allows attackers to sandwich victim transactions. Attack sequence: (1) victim submits swap TX: deposit 1 ETH expecting \u226540 DAI (1% slippage tolerance), rate check is client-side only, (2) attacker observes pending TX, calculates victim's slippage limit, (3) attacker front-runs: deposits $500K DAI to spike ETH price, (4) victim's TX executes at degraded rate (35 DAI instead of 40), but contract applies discount from current pool state, ignoring stale client-side checks, (5) attacker back-runs: withdraws DAI at profit. Victim loss per swap: $0.05 \u00d7 transaction volume = 5-15% slippage loss. Scale: all DEX volume. Root cause: reliance on client-side slippage validation instead of contract-enforced minimum_output check. Remediation: enforce minimum_output as contract parameter (immutable per TX), validate post-swap balance meets minimum, reject if output < minimum_output (revert TX), implement Flashbots MEV protection (private mempools), use threshold encryption (threshold decryption only after block finality), and add time-weighted average price (TWAP) oracles to detect manipulation. Monitor for sandwich patterns: rapid consecutive trades on same pool.",
     "evaluation_criteria": "Must model three-stage sandwich attack (front-run, victim execution, back-run) with specific price/slippage impact; must specify contract-enforced minimum_output validation and MEV mitigation (private mempools or TWAP oracles)."
+  },
+  {
+    "id": 46,
+    "complexity": "L5",
+    "domain": "E-commerce Marketplace",
+    "scenario": "A marketplace platform applies coupon discounts sequentially without atomicity checks. An attacker discovers that combining a percentage-off coupon, a free-shipping coupon, and a stacked loyalty discount in rapid succession across multiple cart sessions creates a race condition where each discount calculates against the original price rather than the cumulative discounted price.",
+    "prompt": "Analyze how coupon stacking without transactional isolation enables price manipulation below cost in a multi-session cart environment.",
+    "reasoning_focus": "Race condition on discount application sequencing and price state consistency.",
+    "expected_answer": "The vulnerability arises from non-atomic discount application across distributed cart sessions. An original item priced at $100 with a 50% coupon should cost $50. However, when a loyalty discount (20% off) and free shipping ($15 value) are applied in parallel sessions without locking the price state, each discount calculates independently: Session 1 applies 50% ($50), Session 2 applies 20% off original ($80, then discount to $64), Session 3 applies free shipping. The final checkout processes multiple overlapping discount transactions, allowing the attacker to exploit the last-write-wins semantics of the cart system. The item ends up costing $35, below the $40 cost basis. Mitigation requires: (1) atomic discount application with a single transactional block, (2) sequential rather than parallel coupon processing, (3) audit logging of all discount applications with order-preserving timestamps, and (4) server-side cart state validation that rejects discount combinations exceeding maximum discount thresholds.",
+    "evaluation_criteria": [
+      "Must demonstrate a specific price calculation showing how three coupons applied non-atomically result in sub-cost final price",
+      "Must identify the race condition window and recommend pessimistic locking or optimistic concurrency control with version checksums on cart state"
+    ]
+  },
+  {
+    "id": 47,
+    "complexity": "L4",
+    "domain": "SaaS Subscription Platform",
+    "scenario": "A subscription billing system tracks active subscriptions using a boolean flag and renewal_date field. The cancellation workflow sets the boolean to false but does not atomically prevent a concurrent renewal job from executing. A user exploiting precise timing can trigger a renewal request milliseconds after cancellation, causing the system to reactivate the subscription and charge the user while the cancellation flag is still processing.",
+    "prompt": "Evaluate the race condition vulnerability in subscription state transitions between cancellation and renewal job execution.",
+    "reasoning_focus": "Race condition on subscription lifecycle state machine without transaction isolation.",
+    "expected_answer": "The subscription state machine lacks proper mutual exclusion between cancellation and renewal operations. When a user initiates cancellation, the system updates the subscription.is_active flag from true to false, but the renewal job runs on a separate thread pool checking subscriptions where is_active=true and renewal_date <= NOW(). During the window between the cancellation request reaching the database and the flag change propagating to all cache replicas, the renewal job queries an outdated cache layer showing is_active=true and processes a renewal charge. The user is charged despite cancellation intent. Exploitation requires sub-millisecond timing using concurrent API calls. Mitigation requires: (1) using a state machine with mutually exclusive states (ACTIVE, CANCELLATION_PENDING, CANCELLED) rather than boolean flags, (2) implementing pessimistic locking on subscription rows during state transitions, (3) ensuring the renewal job and cancellation endpoint acquire the same row lock before modifying state, (4) using event-driven architecture with idempotent renewal that checks CANCELLED state before charging, and (5) implementing a grace period buffer (60+ seconds) between cancellation and renewal eligibility.",
+    "evaluation_criteria": [
+      "Must identify the specific time window where cache staleness allows renewal execution post-cancellation",
+      "Must recommend both locking strategy and state machine redesign to eliminate boolean flag logic"
+    ]
+  },
+  {
+    "id": 48,
+    "complexity": "L5",
+    "domain": "Healthcare Platform",
+    "scenario": "A healthcare SaaS platform manages provider credentials and patient access permissions through role-based access control. A logic flaw allows a provider to modify their own role assignment through the 'update_provider_profile' endpoint if they provide both their current_role and desired_new_role in the request. The validation checks if current_role matches the database, but due to a transaction isolation bug, it updates to new_role without re-verifying authorization immediately before the database commit.",
+    "prompt": "Model the privilege escalation attack exploiting role update authorization bypass and recommend transactional integrity controls.",
+    "reasoning_focus": "Privilege escalation through authorization check-time-of-use gap in role modification.",
+    "expected_answer": "The vulnerability is a classic Time-of-Check-Time-of-Use (TOCTOU) flaw in privilege escalation. A standard provider logs in with role 'PROVIDER' and fetches their profile. They craft a concurrent request to update_provider_profile with {current_role: 'PROVIDER', new_role: 'ADMIN'}. The endpoint validates current_role == database.role (passes), but before the database UPDATE executes, a race condition window exists where concurrent requests can also pass validation. If the provider sends two requests milliseconds apart, Request 1 passes validation (is PROVIDER), Request 2 also passes validation (database still shows PROVIDER due to uncommitted transaction), and both reach the UPDATE phase. Request 1 commits first, escalating to ADMIN. Request 2 then commits, re-escalating to ADMIN from an already-ADMIN state. The provider now has unrestricted administrative access to patient data. Mitigation requires: (1) re-validating authorization at the database layer using a stored procedure that atomically checks role and updates in a single transaction, (2) implementing row-level pessimistic locking on the provider record during the entire authorization + update flow, (3) using a sequential version number incremented on each role change to detect concurrent modifications, and (4) adding audit logging for all role changes with mandatory multi-factor re-authentication for escalations.",
+    "evaluation_criteria": [
+      "Must explain the TOCTOU window and how concurrent requests exploit the validation-to-commit gap",
+      "Must recommend database-level enforcement (stored procedures or constraints) rather than application-level checks alone"
+    ]
+  },
+  {
+    "id": 49,
+    "complexity": "L4",
+    "domain": "Crypto Exchange",
+    "scenario": "A cryptocurrency exchange implements a withdrawal negative-balance prevention check at the application layer: if (balance >= amount) { debit(amount) }. However, the check and debit are not atomic, and a user can trigger multiple concurrent withdrawal requests before any single request completes. With $100 balance, a user sends ten $50 withdrawal requests simultaneously. Due to the race condition, all ten requests pass the balance check before any debit executes, resulting in $500 being withdrawn from a $100 balance.",
+    "prompt": "Analyze the negative-balance withdrawal attack enabled by non-atomic balance checks and debit operations.",
+    "reasoning_focus": "Negative balance attack through race condition on balance verification and debit sequencing.",
+    "expected_answer": "The vulnerability is a classic non-atomic check-then-act pattern in balance management. The withdrawal process reads balance ($100), checks if $50 <= $100 (true), but does not immediately debit. In a concurrent environment, ten identical $50 withdrawal requests execute in parallel. Each request reads the initial balance of $100 (not yet updated by any other request due to isolation), checks $50 <= $100 (all pass), and queues the debit. When all ten debits execute, they apply sequentially: $100 - $50 - $50 - $50... resulting in a final balance of -$400. The exchange has created $400 of phantom assets by allowing the user to withdraw more than their balance. Mitigation requires: (1) using a database-level atomic decrement operation (e.g., UPDATE balance = balance - ? WHERE user_id = ? AND balance >= ?) that fails if the balance would go negative, (2) implementing optimistic locking with a balance_version field that increments on each change and prevents stale reads, (3) enforcing serializable transaction isolation (SERIALIZABLE in SQL), (4) using a distributed lock on the user's balance key during all withdrawal processing, and (5) implementing idempotency keys to reject duplicate withdrawal requests within a time window.",
+    "evaluation_criteria": [
+      "Must demonstrate the exact sequence showing how ten $50 requests against $100 balance result in -$400 final balance",
+      "Must recommend both database-level atomic operations and application-layer idempotency/locking strategies"
+    ]
+  },
+  {
+    "id": 50,
+    "complexity": "L4",
+    "domain": "Marketplace Referral Program",
+    "scenario": "A marketplace referral program grants $20 credit to both referrer and referee when a new user signs up via a referral link. The system tracks referral eligibility by checking if the new user's email domain differs from the referrer's email domain. However, an attacker discovers they can bypass this check by: (1) creating multiple accounts using email aliases (user+alias@domain.com), (2) referring each alias to themselves using the main account, and (3) claiming the $20 credit for each alias-to-main referral, multiplying their balance by 40x with minimal investment.",
+    "prompt": "Assess the referral abuse vulnerability and design comprehensive anti-abuse controls for identity verification in referral programs.",
+    "reasoning_focus": "Referral abuse through weak identity uniqueness validation and email alias exploitation.",
+    "expected_answer": "The vulnerability exploits two logic gaps: (1) weak email uniqueness validation that doesn't recognize email aliases (RFC 5321 allows '+' addressing), and (2) insufficient identity verification that relies solely on email domain checking rather than actual unique entity verification. An attacker with one legitimate account can create 50 aliases (user+1@domain, user+2@domain, etc.), all controlled by the same person, and refer each alias to their main account. The referral endpoint checks if email domains differ (they don't, all are @domain.com), BUT the check logic uses string matching on domain only, missing that the account is self-referrals. With $20 per referral, the attacker nets $2,000 from a single email account. Mitigation requires: (1) de-aliasing email addresses during account creation by normalizing '+' addresses using provider-specific rules (Gmail ignores everything after '+'), (2) implementing phone number verification as a second identity factor, enforcing one phone per account, (3) adding velocity checks (max 3 referrals per source user per day), (4) requiring a minimum transaction history (e.g., $5 purchase) before referral eligibility, (5) using IP geolocation and device fingerprinting to detect single-person multi-account networks, (6) implementing fraud scoring that flags accounts with abnormally high referral-to-activity ratios, and (7) requiring human review for accounts claiming referrals before credit issuance.",
+    "evaluation_criteria": [
+      "Must explain email aliasing mechanics and how plus-addressing exploits domain-only validation",
+      "Must recommend multi-layered identity verification (phone, transaction history, device fingerprinting) rather than relying on email domain checks alone"
+    ]
   }
 ]
