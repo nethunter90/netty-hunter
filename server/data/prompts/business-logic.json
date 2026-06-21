@@ -1408,5 +1408,70 @@
     "reasoning_focus": "Affiliate bonus abuse through self-origination without underwriting validation.",
     "expected_answer": "Affiliate bonus programs incentivize loan originations but fail to validate loan legitimacy or borrower-affiliate independence. An affiliate registers Accounts A (borrower), B (affiliate), and C (secondary borrower). Account B originates a loan to Account A ($5,000), receives a $250 bonus. Account A simultaneously originates a loan to Account C, generating another $250 bonus for Account A (who is the affiliate on that transaction). Loans are self-referential and non-arms-length, lacking genuine credit assessment. The affiliate extracts $500 in bonuses without legitimate lending activity. At scale with 50 self-originated loans per affiliate, $12,500 in unearned bonuses are extracted. Mitigation: (1) enforce mandatory underwriting criteria (credit score, income verification, collateral assessment) before bonus issuance, (2) implement identity verification to prevent affiliate-borrower relationship masking, (3) flag and investigate loans between related accounts (shared IP, email, payment method), (4) require borrower loan-to-value or debt-to-income ratios to demonstrate legitimate creditworthiness, (5) implement a grace period before bonus payout to measure loan repayment performance, and (6) audit affiliate-generated loan portfolios for relationship anomalies.",
     "evaluation_criteria": "Must model the self-origination attack with specific financial figures and recommend underwriting validation with relationship detection and repayment-performance validation."
+  },
+  {
+    "id": 36,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "An e-commerce platform applies discount codes at checkout; the system validates coupon eligibility per-coupon but does not prevent applying multiple coupons from the same category (e.g., three 20% off codes stacked sequentially), reducing a $500 order to $64 through algorithmic chaining.",
+    "prompt": "Analyze the coupon-stacking vulnerability where sequential application of same-category discount codes bypasses mutual-exclusion controls.",
+    "reasoning_focus": "Coupon category mutual exclusion and cumulative discount validation logic.",
+    "expected_answer": "The vulnerability arises from independent coupon validation without tracking applied categories or cumulative discount ceilings. Each coupon validation checks: (1) expiration date, (2) minimum purchase threshold, (3) per-user redemption limit. However, no check prevents applying multiple coupons from the 'percentage-off' category sequentially. The system applies 20% off ($500 \u2192 $400), then 20% off again ($400 \u2192 $320), then 20% off ($320 \u2192 $256), totaling 48.8% discount instead of the intended maximum 20%. The fix requires: (a) tracking applied coupon categories per-transaction, (b) maintaining a cumulative-discount ceiling, (c) enforcing mutual-exclusion rules at the database-constraint level using a CHECK constraint on the order_discounts table, and (d) implementing atomic transaction validation that rolls back if any coupon violates exclusivity rules.",
+    "evaluation_criteria": [
+      "Calculate cumulative discount percentages from sequential application showing final order total of $64 and identify missing category-mutex validation",
+      "Recommend database-level constraints (CHECK, unique index on order_id+category) and atomic transaction boundaries"
+    ]
+  },
+  {
+    "id": 37,
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "A SaaS inventory management system permits negative quantity adjustments through the API; a user adjusts stock by -9999999 units, triggering an integer overflow in the stored procedure that calculates cost-of-goods-sold (COGS), resulting in a negative inventory value of $2.3 billion credited to accounts payable.",
+    "prompt": "Identify the integer overflow vulnerability in inventory quantity validation and COGS calculation leading to balance manipulation.",
+    "reasoning_focus": "Input validation bounds and integer overflow in financial calculations.",
+    "expected_answer": "The vulnerability occurs in two layers: (1) the API endpoint accepts a 'quantity_delta' parameter without range validation, allowing negative values below the current stock, and (2) the stored procedure calculates COGS as quantity_delta \u00d7 unit_cost using 32-bit integer arithmetic. When quantity_delta = -9999999 and unit_cost = $250, the multiplication overflows: -9999999 \u00d7 250 = -2,499,999,750, which wraps to a positive value in some implementations or produces unexpected accounting entries. The fix requires: (a) validating quantity_delta >= -current_stock to prevent negative inventory, (b) using 64-bit integers (BIGINT) or decimal types for all financial calculations, (c) implementing inventory-state transitions through an enumerated state machine (available \u2192 reserved \u2192 allocated) rather than accepting arbitrary deltas, and (d) adding database constraints: CHECK (quantity >= 0) and using triggers to audit all quantity modifications with before/after snapshots.",
+    "evaluation_criteria": [
+      "Demonstrate the specific overflow calculation with bit-width analysis and resulting accounts-payable impact",
+      "Recommend input validation range checks, 64-bit arithmetic, and state-machine transitions with audit triggers"
+    ]
+  },
+  {
+    "id": 38,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A marketplace referral program grants $20 credit per referred user; a user submits referral links for 50,000 disposable email accounts they control, each completing a minimal KYC process with synthetic identity data, earning $1M in credits without detection; the system lacks duplicate-detection algorithms for related accounts.",
+    "prompt": "Model the referral-abuse attack exploiting insufficient deduplication and KYC-bypass mechanisms to accumulate fraudulent credits.",
+    "reasoning_focus": "Referral-loop detection, identity duplication, and synthetic-user KYC validation.",
+    "expected_answer": "Referral abuse succeeds through three concurrent flaws: (1) KYC validation accepts synthetic identities (invalid SSN checksums, randomized but plausible phone numbers), (2) referral tracking uses only email domain for deduplication (missing phone, IP, payment-method clustering), and (3) no behavioral-analysis flags for bulk account creation. The attacker creates 50,000 accounts from 2-3 IP ranges using rotating email subdomains, each passing basic KYC (name, email, date-of-birth). Each referred account generates $20 credit, totaling $1M. Detection fails because systems lack: (a) phone-number or IP-address clustering to identify related accounts, (b) device-fingerprinting and browser-cache analysis, (c) behavioral-timing analysis (normal users spread signups over weeks; bots create 1000/day), and (d) KYC-velocity limits. Remediation requires: (1) multi-factor clustering (phone, IP, payment method, device ID) using union-find algorithm, (2) behavioral scoring via signup-velocity and time-between-account-actions, (3) enhanced KYC with ID-document verification and Liveness checks, (4) referral-credit hold-periods (30-60 days) pending referred-account activity.",
+    "evaluation_criteria": [
+      "Quantify the attack scale (50K accounts \u00d7 $20 = $1M) and identify all three detection gaps (KYC, email-only dedup, no velocity limits)",
+      "Recommend multi-factor clustering algorithm with phone/IP/device fingerprinting and behavioral scoring thresholds"
+    ]
+  },
+  {
+    "id": 39,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "A cryptocurrency exchange allows users to set custom trading-fee discounts via an admin configuration endpoint; the discount percentage stored in the database is applied multiplicatively during order settlement without validation that total fees do not become negative, allowing a user with admin-misconfiguration access to set fee_discount = 150%, resulting in a negative fee (rebate) of -$50 per $100 transaction.",
+    "prompt": "Analyze the price-manipulation vulnerability through unvalidated fee-discount configuration enabling negative trading costs.",
+    "reasoning_focus": "Input validation bounds on percentage-based discount configuration and fee-calculation logic.",
+    "expected_answer": "The vulnerability stems from insufficient validation at two control points. First, the admin configuration endpoint accepts fee_discount as an unbounded percentage without range validation (should enforce 0 \u2264 fee_discount \u2264 100). Second, the order-settlement logic calculates final_fee = base_fee \u00d7 (1 - fee_discount/100) without asserting final_fee \u2265 0. With base_fee = $50 and fee_discount = 150%, the calculation yields final_fee = $50 \u00d7 (1 - 1.5) = -$50, crediting the user instead of charging them. An attacker with compromised admin credentials (or exploiting a privilege-escalation flaw) modifies their fee_discount to 150%, then executes high-volume trades generating $500K in rebates at the exchange's expense. The fix requires: (a) database-level CHECK constraint: CHECK (fee_discount >= 0 AND fee_discount <= 100), (b) application-level validation in the configuration handler, (c) fee-calculation assertion: assert final_fee >= 0 or throw InvalidFeeException, and (d) audit logging of all fee_discount changes with approval workflows for values >50%.",
+    "evaluation_criteria": [
+      "Calculate the negative-fee impact with specific transaction volumes (e.g., 10K trades \u00d7 $50 rebate = $500K loss) and identify missing bounds validation",
+      "Recommend CHECK constraints, assertion gates in fee calculation, and audit-logged approval workflows for high-discount changes"
+    ]
+  },
+  {
+    "id": 40,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A patient-scheduling system allows appointment creation with a workflow: Patient submits request \u2192 Doctor approves \u2192 System issues invoice. A patient submits 50 appointment requests, then before any approvals are issued, directly calls the invoice-generation endpoint with the appointment request IDs, triggering invoice generation without doctor approval, resulting in 50 unbilled appointments recorded as completed.",
+    "prompt": "Identify the workflow-bypass vulnerability where invoice generation skips mandatory approval state transitions.",
+    "reasoning_focus": "Workflow state-machine validation and permission-gating on state transitions.",
+    "expected_answer": "The vulnerability is a classic workflow-bypass flaw where the invoice-generation endpoint checks only user identity (patient is the owner) without verifying the appointment has transitioned through the required approval state. The appointment state machine defines: (1) submitted \u2192 (2) approved_by_doctor \u2192 (3) completed \u2192 (4) invoiced. However, the invoice endpoint validates only: if (appointment.owner_id == current_user.id) then generate_invoice(), omitting the check that appointment.state == 'completed' AND appointment.approved_by_doctor == true. The patient exploits this by: (a) submitting 50 appointment requests (state = submitted), (b) directly calling POST /api/appointments/{id}/invoice without waiting for doctor approval, (c) the system generates invoices for submitted (not approved) appointments, creating billing records while the doctor's approval queue remains empty. Remediation requires: (1) state-machine enforcement via database trigger: before invoice generation, assert appointment.state IN ('completed') AND appointment.doctor_approval_id IS NOT NULL, (2) explicit permission check: if appointment.state != 'completed' throw StateViolationException(), (3) API-level middleware validating state transitions through an enum-based finite-state machine, and (4) audit logging of all state transitions with who-when-why records.",
+    "evaluation_criteria": [
+      "Trace the appointment state transitions showing missing approval state validation and quantify unmonitored appointments (50 invoiced without approval)",
+      "Recommend state-machine enforcement via database triggers, explicit state assertions in invoice endpoint, and audit-logged state transitions"
+    ]
   }
 ]
