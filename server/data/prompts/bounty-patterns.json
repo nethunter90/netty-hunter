@@ -6767,5 +6767,44 @@
       "Includes transparency statement in report acknowledging scope boundary and duplicate risk mitigation strategy"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 574,
+    "scenario": "A HackerOne program runs a bug bounty with explicit duplicate policy: 'First valid report wins full bounty; duplicates receive 25% payout.' A researcher discovers an authentication bypass in the password-reset endpoint via timing-based token prediction. They submit a detailed report with PoC. Two weeks later, a second researcher reports the identical vulnerability via the same attack vector. The program marks the second as duplicate but awards only 25% ($250 of $1000 baseline). However, the second reporter can prove independent discovery with dated development notes and local testing logs.",
+    "prompt": "How do you navigate duplicate policies on HackerOne when independent discovery is provable? What leverage do you have for fair compensation?",
+    "expected_answer": "HackerOne's duplicate policy prioritizes submission timestamp, not discovery independence, creating payout inequality even with simultaneous research efforts. To contest unfair duplicate classification: (1) Document your independent discovery timeline with dated commit logs, local testing evidence, and correspondence timestamps\u2014this demonstrates non-derivative work; (2) Request HackerOne mediation by citing their published guidelines that acknowledge 'substantially different exploitation chains' merit consideration; (3) Propose splitting the bounty equitably if both exploitations reveal distinct underlying causes (e.g., one via token prediction, another via algorithmic weakness); (4) Escalate to the program's security lead if the program uses coordinated disclosure timelines\u2014some programs honor 'simultaneous valid submissions' with full payout split rather than winner-take-all. On Bugcrowd, submission order is equally strict but some programs offer 'shared credit' for overlapping findings. Always document discovery dates before submission to strengthen future claims.",
+    "reasoning_requirement": "Navigate platform-specific duplicate policies; distinguish between true duplicates and independent discoveries; leverage documentation and mediation channels; compare HackerOne vs Bugcrowd handling of concurrent findings.",
+    "evaluation_criteria": [
+      "Articulates HackerOne's timestamp-priority duplicate model and its fairness implications",
+      "Specifies evidence types (commit logs, timestamps, testing artifacts) that support independent-discovery claims",
+      "Identifies mediation pathways and program-specific nuances (HackerOne mediation vs Bugcrowd shared-credit mechanisms)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 575,
+    "scenario": "A researcher discovers a SSRF vulnerability in an internal webhook-delivery system. The vulnerability allows an attacker to make the server perform HTTP requests to arbitrary endpoints by controlling the webhook URL parameter. Testing reveals access to: internal Kubernetes API (port 6443), internal Redis instance (port 6379), and the AWS metadata endpoint (169.254.169.254). Exploiting the metadata endpoint yields temporary AWS credentials with S3-read permissions. CVSS score: 7.5 (high). However, the credentials are scoped to a non-production staging S3 bucket containing only test data. Business impact: No sensitive data exposed; risk is primarily lateral-movement potential.",
+    "prompt": "How do you classify this: P2 or P3? Does CVSS match business impact, and how do you amplify severity through impact chaining?",
+    "expected_answer": "This is P2 despite CVSS 7.5 scoring and non-sensitive staging access, due to critical infrastructure access and lateral-movement risk amplification. CVSS correctly identifies high severity from a technical standpoint (SSRF + credential disclosure = 7.5), but underweights the infrastructure-access component because the framework doesn't directly model internal system criticality. To argue for P2: (1) Demonstrate chaining potential\u2014AWS credentials in staging can be used to enumerate production resources (S3, RDS endpoints, IAM policies) without accessing sensitive data directly, enabling reconnaissance for subsequent attacks; (2) Quantify Kubernetes API access as critical\u2014unauthenticated API port exposure allows pod enumeration, secret extraction, and workload tampering; (3) Map Redis access to cache-poisoning and data-leakage scenarios affecting customer-facing systems; (4) Argue that SSRF to metadata endpoint is a prerequisite for AWS exploitation chains, making this a foundational escalation risk. Production programs (Shopify, Google Cloud) classify this as P2 due to internal infrastructure exposure regardless of immediate data impact.",
+    "reasoning_requirement": "Map CVSS 7.5 to P2 severity through infrastructure-access and lateral-movement potential; demonstrate impact amplification via chaining; distinguish between immediate and downstream risk; reference production program precedent.",
+    "evaluation_criteria": [
+      "Justifies P2 classification through infrastructure criticality and lateral-movement potential despite staging-only data access",
+      "Articulates impact-amplification chains: SSRF \u2192 metadata \u2192 credential reconnaissance \u2192 subsequent infrastructure exploitation",
+      "Acknowledges CVSS accuracy for technical severity while arguing business-impact elevation via internal-system exposure risk"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 576,
+    "scenario": "An Intigriti program's scope document states: 'Only production domain api.company.com is in scope. Subdomains and related services are out of scope unless explicitly stated.' A researcher identifies a GraphQL endpoint (graphql.api.company.com) that is technically a subdomain but serves the production GraphQL API for the main application. The subdomain contains an insecure direct object reference (IDOR) vulnerability allowing account enumeration and PII exposure across all customers. The researcher notes that graphql.api.company.com is referenced in the production web application's JavaScript bundle (loaded from api.company.com).",
+    "prompt": "Is this in-scope on Intigriti? How do you argue for inclusion without violating strict scope policies, and what's your fallback strategy?",
+    "expected_answer": "Intigriti's strict scope model defaults subdomain findings out-of-scope unless explicitly listed, and enforcement is rigorous\u2014violations lead to disqualification regardless of vulnerability criticality. Primary argument for inclusion: the GraphQL endpoint is functionally part of the production api.company.com service (referenced directly in production JavaScript and serving customer data), not a separate system. File a scope-clarification request with program management, citing: (1) the subdomain's integration into the production application architecture; (2) the JavaScript bundle reference as evidence of intentional production use; (3) request explicit in-scope confirmation before reporting. If denied, the fallback strategy is to identify equivalent or related vulnerabilities strictly on api.company.com (e.g., if the REST API mirrors GraphQL functionality, test for IDOR there). Alternatively, submit to Bugcrowd or HackerOne if they run concurrent programs\u2014these platforms are more flexible with subdomain scope interpretation and often allow 'production infrastructure' arguments. Document the scope-clarification conversation; it protects you from disqualification and demonstrates good-faith compliance.",
+    "reasoning_requirement": "Apply Intigriti's strict scope enforcement model; propose in-scope reformulation via functional integration argument; provide fallback strategies across platforms; demonstrate scope-clarification diligence.",
+    "evaluation_criteria": [
+      "Acknowledges Intigriti's strict subdomain out-of-scope default and disqualification risk",
+      "Proposes in-scope argument: functional production integration via JavaScript reference and customer-data handling",
+      "Specifies fallback strategies: scope-clarification request, equivalent vulnerability on primary domain, cross-platform submission, and documentation of compliance efforts"
+    ],
+    "category": "bounty_patterns"
   }
 ]
