@@ -6494,5 +6494,70 @@
       "Describes HackerOne payout signal for 'authentication chain complexity' and suggests comparison framework for duplicate vs. enhancement assessment with triage."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 553,
+    "scenario": "A researcher discovers a race condition in a HackerOne program's payment processing endpoint. The vulnerability allows double-charging users under specific timing conditions (100ms window). The CVSS score calculates to 5.3 (Medium), but the researcher demonstrates that automated exploitation could generate $500K in fraudulent charges daily. The program's policy caps Medium severity at $500 bounty.",
+    "prompt": "How do you reconcile low CVSS scores with demonstrable business impact to justify severity elevation?",
+    "expected_answer": "CVSS-to-severity misalignment occurs when quantifiable business impact (revenue loss, fraud volume, user harm scale) exceeds metric assumptions. For payment vulnerabilities: (1) Calculate daily/monthly exploitation impact in concrete dollars, not theoretical risk. (2) Document reproducibility rate and automation potential\u2014race conditions with <1% success rates score lower than conditions with >50% reliability. (3) Distinguish user-facing fraud (P1/P2) from backend exploit chains requiring multiple preconditions (P3/P4). On HackerOne, provide impact calculation spreadsheet showing $500K exposure; request severity review citing business impact clause in program policy. Many programs allow P-level override for financial exploits exceeding stated thresholds. Cross-reference similar past bounties in the program (search HackerOne's publicly disclosed reports) to establish precedent. If capped at $500, negotiate via triage: frame as policy exception requiring leadership approval rather than metric dispute.",
+    "reasoning_requirement": "Quantify business impact separately from CVSS scoring; document reproducibility and scale; identify program-specific override mechanisms for financial impact.",
+    "evaluation_criteria": [
+      "Calculates concrete daily/monthly exploitation value ($500K/day) distinct from CVSS metric interpretation",
+      "Identifies race condition reliability percentage and automation potential as severity amplifiers beyond base CVSS",
+      "Proposes HackerOne-specific escalation: impact calculation documentation + precedent search + policy exception request to bypass Medium cap"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 554,
+    "scenario": "On an Intigriti program, you discover a CSRF vulnerability in admin password-reset functionality. The vulnerability requires victim admin interaction (clicking malicious link), but affects all 50 administrators of a target organization simultaneously. Exploitation chain: craft CSRF payload \u2192 distribute via phishing \u2192 reset all admin credentials \u2192 take-over platform. The program statement includes: 'CSRF affecting non-admin users: P4. CSRF affecting admin functions: case-by-case.' Your finding affects admin functions but requires initial phishing distribution.",
+    "prompt": "How do you classify CSRF severity when attack chain complexity and victim count create divergent impact signals?",
+    "expected_answer": "Multi-step attack chains compress into single-report submissions when the vulnerability is the bottleneck enabling downstream compromise. Intigriti's 'case-by-case' admin-CSRF language permits P2/P3 classification if: (1) Scope includes admin accounts (verify target organization structure). (2) CSRF vector reaches active admins without unrealistic user assumptions (phishing viability for internal security teams is lower; external phishing higher). (3) Complete takeover path is demonstrated, not speculative. For this scenario: CSRF alone = P4, but mass admin reset + full platform takeover = P2/P3 depending on Intigriti's risk appetite. Document the complete chain in proof-of-concept: show CSRF payload generation \u2192 simulate 50 password resets \u2192 demonstrate post-compromise access (dashboard login, user data export). On Intigriti, 'case-by-case' decisions favor detailed PoCs. Request clarity on scope statement via triage question: 'Does exploitation affecting all 50 administrators escalate from P4 to P3?' This forces classification decision before submission.",
+    "reasoning_requirement": "Separate CSRF base severity from impact amplification via victim count and complete attack chain; assess program-specific 'case-by-case' language; calibrate user-interaction assumptions.",
+    "evaluation_criteria": [
+      "Distinguishes CSRF base severity (P4) from attack chain severity (P2/P3) based on scope and complete compromise demonstration",
+      "Evaluates phishing viability as precondition realism: internal admin teams vs. external users affect user-interaction assumptions",
+      "Proposes Intigriti-specific triage question to clarify admin-CSRF classification before submission, with PoC showing mass reset + post-compromise access"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 555,
+    "scenario": "You discover that a Bugcrowd program's mobile app leaks API credentials (JWT tokens with 30-day expiration) in application logs accessible via Android logcat. The tokens grant access to financial data APIs. However, exploitation requires: (1) physical device access, (2) developer mode enabled, (3) token still valid (max 30 days). The program states: 'Physical device access out of scope.' Your analysis shows tokens are also cached in unencrypted app-local storage, accessible via ADB without developer mode.",
+    "prompt": "Does shifting attack surface from logcat (physical + dev-mode) to app-storage (physical + ADB) change scope classification?",
+    "expected_answer": "Physical-device-access exclusions vary by platform interpretation. Bugcrowd's exclusion typically targets direct hardware attacks (chip-level extraction, JTAG) but permits logical exploitation vectors reachable via standard Android debugging interfaces. Key distinction: logcat requires intentional developer-mode activation (arguably out of scope); unencrypted app-local storage accessed via ADB is within normal mobile security assessment scope. Leverage this shift in your report: (1) Acknowledge logcat finding may be out of scope due to dev-mode requirement. (2) Pivot primary finding to app-storage leakage, which only requires physical + ADB (standard Android testing methodology). (3) Quantify exposure: 30-day token validity + financial API access = P2/P3 depending on API privilege level. On Bugcrowd, frame as 'credential storage vulnerability' rather than 'logging vulnerability'\u2014this linguistically separates from physical-access exclusion. Provide ADB exploitation steps in PoC without developer-mode assumptions. Request scope clarification: 'Does standard Android debugging (ADB over USB) constitute in-scope testing methodology?' This typically receives 'yes,' converting your finding to in-scope.",
+    "reasoning_requirement": "Distinguish between physical-access vectors with varying tooling requirements; reframe finding around exploitable attack surface distinct from explicitly excluded preconditions.",
+    "evaluation_criteria": [
+      "Identifies logcat (dev-mode dependent) vs. app-storage (ADB only) as separate attack vectors with different scope applicability",
+      "Establishes ADB exploitation as standard Android testing methodology, contrasting with developer-mode activation requirement",
+      "Proposes Bugcrowd-specific reframing: 'credential storage vulnerability' linguistic pivot + scope clarification question on ADB methodology inclusion"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 556,
+    "scenario": "A HackerOne program report you submit documents a Server-Side Template Injection (SSTI) in a Jinja2 endpoint. Your PoC achieves Remote Code Execution (RCE) with a 3-step payload chain: (1) inject template syntax, (2) access __builtins__, (3) execute os.system(). However, the target application runs in a Docker container with read-only root filesystem and no internet egress. You can read files but cannot exfiltrate data or pivot to other systems. Your bounty is capped at $2,000 for RCE.",
+    "prompt": "How do environmental constraints degrade RCE severity, and how do you assess impact within exploitation limitations?",
+    "expected_answer": "RCE severity on isolated systems depends on post-exploitation capability, not code execution alone. HackerOne's RCE classification assumes lateral movement, data exfiltration, or persistence potential. Your scenario: RCE exists but lacks meaningful impact due to environmental isolation (read-only filesystem, no egress, container boundary). Severity assessment: (1) Can you achieve persistence? No (read-only root). (2) Can you exfiltrate sensitive data? No (no egress). (3) Can you pivot laterally? No (isolated container). This degrades RCE \u2192 Information Disclosure or Impact-Limited RCE (P3/P4). Document constraints in report: 'While code execution is achieved, exploitation is limited by environment configuration\u2014no persistence, no exfiltration, no lateral movement possible.' Request severity assessment from HackerOne triage, specifically asking if isolated RCE falls under Information Disclosure rather than full RCE. Propose alternative impact: demonstrate reading sensitive files (config, API keys) and reporting as Information Disclosure instead, potentially increasing bounty if key material is exposed. This reframing acknowledges environmental constraints while maximizing legitimate impact.",
+    "reasoning_requirement": "Calibrate RCE severity based on post-exploitation capability, not code execution existence; assess container isolation and egress constraints as severity degraders.",
+    "evaluation_criteria": [
+      "Quantifies post-exploitation limitations: no persistence (read-only), no exfiltration (no egress), no lateral movement (container boundary)",
+      "Proposes severity downgrade from full RCE (P1/P2) to Impact-Limited RCE or Information Disclosure (P3/P4) with environmental justification",
+      "Suggests HackerOne triage question and alternative impact framing (sensitive file disclosure) to optimize bounty within constraint acknowledgment"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 557,
+    "scenario": "On an Intigriti program targeting a SaaS platform, you discover a vulnerability affecting the account-deletion workflow. When a user initiates deletion, their account is marked 'deleted' in the main database but user-generated content (posts, comments, media) remains accessible under a null-user-id reference. This creates: (1) information disclosure (content still accessible), (2) GDPR Right to Erasure violation (personal data not fully deleted), (3) no direct business impact to the company. The program's policy emphasizes 'direct security impact' over compliance violations.",
+    "prompt": "How do you elevate compliance/privacy violations to security-relevant severity when direct technical impact is minimal?",
+    "expected_answer": "Compliance violations (GDPR, CCPA) attract low bounty scores on programs prioritizing direct technical exploits, but jurisdictional liability and regulatory exposure create secondary business impact arguments. For account-deletion gaps: (1) Frame as data retention vulnerability rather than 'compliance issue'\u2014technical focus improves triage receptiveness. (2) Quantify regulatory exposure: GDPR fines up to 4% of global revenue; if the SaaS serves EU customers, this becomes material business risk, not abstract compliance. (3) Prove recoverability: deleted content is still queryable via user-id=NULL, creating de-anonymization risk if correlatable with deletion timestamps. On Intigriti, 'case-by-case' programs often award P3 for privacy violations when framed as data-exposure vectors. Provide a technical PoC showing content retrieval via null-user-id queries, then link to GDPR Article 17 deletion requirements. Propose: 'User data marked deleted but retained in database creates compliance and re-identification risk.' This repositions compliance as security (re-identification threat) rather than policy adherence. If bounty remains low, request clarification: 'Does incomplete data deletion affecting EU users escalate severity due to regulatory exposure?' This educates triage on liability beyond technical metrics.",
+    "reasoning_requirement": "Reframe compliance violations as technical data-retention vulnerabilities; quantify regulatory liability as business impact; establish recoverability as privacy-degradation risk.",
+    "evaluation_criteria": [
+      "Converts compliance-violation language to technical vulnerability: data-retention gap with recoverability via null-user-id queries",
+      "Quantifies GDPR financial exposure (4% global revenue) as material business risk distinct from abstract compliance adherence",
+      "Proposes Intigriti triage question linking incomplete deletion to re-identification threat (privacy risk as security impact), with regulatory context"
+    ],
+    "category": "bounty_patterns"
   }
 ]
