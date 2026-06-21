@@ -6637,5 +6637,70 @@
       "Provides quantified data exposure estimates and HIPAA regulatory citation (CFR reference) that justify premium payout tier within Intigriti's HIPAA-specific pricing model"
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 564,
+    "scenario": "API endpoint /api/v2/user/{id}/export allows CSV export of user data. Authentication check passes for any logged-in user. CSV injection discovered: formula fields like '=cmd|' execute in Excel. CVSS 5.4 (medium), but actual impact: financial fraud via malicious spreadsheets distributed to accounting teams.",
+    "prompt": "How does CVSS score diverge from business impact, and what submission strategy maximizes payout across platforms?",
+    "expected_answer": "CVSS underweights CSV injection severity because it excludes post-exploitation social engineering vectors. Base CVSS 5.4 reflects medium confidentiality/integrity. However, business context shifts this to P1: accountants open CSVs daily, macro execution is default behavior, and fraud impact is material. On HackerOne, emphasize business impact narrative with proof-of-concept demonstrating formula execution\u2014expect $2000-5000 (P1 rate). Bugcrowd rates CSV injection lower (CVSS-aligned); submit with detailed business scenario to contest severity downgrade\u2014target $1500-3000. Intigriti rewards impact storytelling; frame as supply-chain fraud trigger\u2014expect $1200-2500. Submission strategy: lead with business impact, include video PoC showing Excel formula execution, quantify user exposure (accounting department size), and cite OWASP A03:2021 (injection) alignment.",
+    "reasoning_requirement": "Recognize CVSS-business impact divergence; understand platform-specific severity interpretation; craft narrative-driven submissions for impact amplification.",
+    "evaluation_criteria": [
+      "Identifies CVSS 5.4 as underweighting social engineering and post-exploitation fraud chain; articulates business context (accountant role, macro execution likelihood).",
+      "Provides platform-specific payout ranges: HackerOne $2000-5000 (narrative-driven P1), Bugcrowd $1500-3000 (severity contest required), Intigriti $1200-2500 (impact storytelling premium).",
+      "Describes submission differentiation: HackerOne emphasizes fraud narrative, Bugcrowd includes CVSS rebuttal, Intigriti leads with supply-chain risk amplification."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 565,
+    "scenario": "Mobile app's GraphQL endpoint allows unauthenticated introspection. Query schema reveals internal microservice names, database structures, and undocumented fields. Secondary finding: one undocumented field 'internal_admin_flag' can be set via mutation despite no UI exposure. Scope ambiguity: program states 'information disclosure out of scope' but 'unauthorized modifications' are in scope.",
+    "prompt": "How do you resolve scope ambiguity and classify this as P2 vs P3 vs duplicate-risk rejection?",
+    "expected_answer": "Scope ambiguity requires strategic triangulation. GraphQL introspection alone (information disclosure) is explicitly out-of-scope; submitting only schema details risks rejection. However, the 'internal_admin_flag' mutation represents unauthorized modification\u2014in-scope by explicit policy. Submission strategy: frame primary finding as 'unauthorized flag mutation via undocumented GraphQL field' rather than 'introspection exposure.' Secondary context: explain that introspection enabled discovery, but the exploitable flaw is the mutation validation bypass. This reframes as P2/P3 (depending on flag impact\u2014if it grants admin access, P2; if cosmetic, P3). Duplicate risk: search program's closed reports for 'GraphQL introspection' findings; if found, emphasize your mutation discovery as novel escalation. On HackerOne, this clarification typically yields $800-2000 (P2 if sensitive flag). Bugcrowd may request impact proof (screenshot of flag effect); Intigriti favors methodical scope interpretation\u2014expect $600-1500. Preemptively address scope in report: 'While introspection is out-of-scope, the unvalidated mutation represents in-scope authorization bypass.'",
+    "reasoning_requirement": "Navigate scope ambiguity through policy-compliant framing; distinguish exploitable flaw from contextual discovery; mitigate rejection risk via precise scope alignment.",
+    "evaluation_criteria": [
+      "Correctly identifies scope boundary: introspection excluded, mutation validation bypass included; reframes finding to emphasize in-scope exploitation.",
+      "Articulates duplicate-risk mitigation by distinguishing novel mutation discovery from routine introspection reports; references closed reports as due diligence.",
+      "Provides platform-specific positioning: HackerOne $800-2000 (P2, narrative-driven), Bugcrowd $600-1200 (impact proof required), Intigriti $600-1500 (scope methodology emphasis)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 566,
+    "scenario": "Web application's password reset uses OTP sent to registered email. OTP validation fails to rate-limit or log attempts. Brute force succeeds in <100 attempts (4-digit OTP, 10k combinations). However, real-world exploitation requires attacker to know target email and have network position to intercept/time reset requests. Reproducibility: 100% in lab, <5% in production (email delivery variance, timing windows).",
+    "prompt": "How do you classify P severity when reproducibility is high in isolation but low in real-world context? What complexity signals matter for payout?",
+    "expected_answer": "Reproducibility divergence between lab and production directly impacts severity classification and payout. CVSS typically assumes controlled environments; P3 (medium, 5.3-6.9) applies to unvalidated brute force attacks. However, production exploitability requires multiple converging conditions: email knowledge, network positioning, and timing\u2014reducing real-world likelihood to near-trivial without insider help. Classification strategy: Submit as P3 (not P2) with transparent complexity articulation. Document: (1) lab reproducibility at 100% with PoC, (2) production barriers (email delivery timing variance, 5% success rate), (3) prerequisite conditions (email enumeration needed, network access assumed). Payout signals: On HackerOne, P3 rate-limit bypass typically yields $500-1500; clarity on 'not P2' misconception prevents rejection\u2014emphasize prerequisites. Bugcrowd rewards technical rigor; explicit production vs. lab distinction shows maturity\u2014expect $600-1200. Intigriti prioritizes impact quantification; include failure analysis (95% of production attempts fail) to justify P3 over P2\u2014expect $400-1000. PoC submission: label clearly as 'lab environment only,' document environment setup precisely, and provide attack chain prerequisites.",
+    "reasoning_requirement": "Distinguish lab reproducibility from production exploitability; articulate P-level through realistic attack prerequisites; signal complexity maturity to platforms.",
+    "evaluation_criteria": [
+      "Correctly classifies as P3 (not P2) via production exploitability barriers; articulates lab/production divergence with quantified success rates (100% lab, <5% production).",
+      "Documents attack prerequisites: email knowledge, network positioning, timing variance; identifies which barriers are exploitable vs. insurmountable without insider help.",
+      "Provides platform-specific messaging: HackerOne $500-1500 (lab PoC with P3 justification), Bugcrowd $600-1200 (lab/production distinction clarity), Intigriti $400-1000 (impact quantification emphasis)."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 567,
+    "scenario": "Multi-tenant SaaS application: Account A user discovers they can enumerate Account B's webhook configurations via /api/webhooks?account_id=<ID>. Authorization check missing. Secondary escalation: webhook payloads contain API tokens. Attacker can intercept tokens and assume Account B's API identity. Platform policy: 'IDOR findings automatically merged with any overlapping privilege escalation findings by same researcher.'",
+    "prompt": "How do platform merge policies affect multi-stage vulnerability reporting strategy and payout maximization?",
+    "expected_answer": "Platform merge policies directly determine whether multi-stage findings generate one or multiple payouts. This scenario involves IDOR (enumeration) + privilege escalation (token exfiltration), which under the stated policy will be auto-merged into single report. Payout impact: submission timing and narrative control become critical. Strategy: Submit as unified 'authorization bypass enabling token exfiltration' rather than separate IDOR and PE findings\u2014this preempts merge-policy reduction. Single finding typically pays less than split findings; on HackerOne, merged IDOR+PE yields $1500-3500 (vs. $800+1200 if split). Mitigate via impact amplification: quantify token exposure (how many accounts affected, token scope/permissions). On Bugcrowd, merge policies vary by program; research specific policy before submission. If merge occurs, request severity re-evaluation citing privilege escalation impact (potential P2 vs. P3 IDOR). Intigriti often grants exception to merge policies for findings with distinct exploitation chains; frame token exfiltration as separate escalation step with independent security value. Submission tactic: Lead with API token exposure impact (business-critical), then explain enumeration as discovery mechanism. This narrative structure justifies potential policy exception or severity premium ($2000-4000) to offset merge consolidation.",
+    "reasoning_requirement": "Understand platform-specific merge policies; strategically frame multi-stage findings to maximize payout under consolidation constraints; request policy exceptions via impact justification.",
+    "evaluation_criteria": [
+      "Identifies platform merge policy: HackerOne auto-merges IDOR+PE; Bugcrowd policy-dependent; Intigriti grants exceptions for distinct escalation chains.",
+      "Quantifies payout impact: split findings $800+1200=$2000 vs. merged $1500-3500; articulates narrative preemption strategy (unified framing) and impact amplification (token exposure scope).",
+      "Provides platform-specific tactics: HackerOne single-report framing with impact premium, Bugcrowd pre-submission policy research + severity rebuttal, Intigriti exception request via escalation chain distinctness."
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 568,
+    "scenario": "E-commerce platform: Attacker can manipulate 'quantity' parameter in checkout POST request, setting negative quantities. System accepts and applies negative price calculations, resulting in credit to customer account. Exploitation requires account creation + checkout initiation (both free, unrestricted). Financial impact per transaction: $10-500 depending on product. No rate limiting on checkout endpoint. Estimated total exploitable revenue: $50,000-500,000 depending on product catalog size and conversion.",
+    "prompt": "How do you classify and communicate quantified financial impact to maximize payout without triggering program rejection for 'too severe' findings?",
+    "expected_answer": "Quantified financial impact is P1/P2 driver but also rejection risk\u2014programs may assume findings claiming massive impact are exaggerated or require immediate takedown (threatening program reputation). Classification: negative quantity pricing is P1 (authentication bypass \u2192 financial loss \u2192 complete integrity compromise) per CVSS 8.1+. However, communication strategy prevents program skepticism. Approach: (1) Frame as 'limited impact PoC' first\u2014demonstrate single $50 or $100 credit transaction with screenshot, not full catalog exploitation. (2) Quantify exposure conservatively: 'Based on 5 test transactions, each $50-200 product can be exploited. If exploited at 1% of daily checkout volume, potential impact: $X-Y monthly.' (3) Emphasize discovery methodology (parameter fuzzing, negative value testing) rather than scale exploitation. HackerOne P1 findings typically pay $3,000-15,000; financial impact premium can reach $10,000+ if framed as 'critical revenue leakage with limited attacker effort.' Bugcrowd rewards responsible impact quantification\u2014expect $5,000-12,000 with detailed financial modeling. Intigriti prioritizes security over financial metrics; frame as 'logic error enabling payment bypass'\u2014expect $4,000-10,000. Avoid claims like 'exploitable for $500k total'; instead: 'each transaction can be manipulated, impacting checkout integrity.' Submit with limited PoC (1-2 transactions), architectural explanation of vulnerability scope, and conservative impact estimates. This positions finding as credible and severe without appearing exaggerated.",
+    "reasoning_requirement": "Quantify financial impact for severity justification while mitigating program skepticism; balance proof-of-concept scope with impact credibility; avoid rejection via impact overstatement.",
+    "evaluation_criteria": [
+      "Classifies as P1 via CVSS 8.1+ (integrity compromise, financial loss); frames limited PoC (1-2 transactions $50-200) rather than full-scale exploitation to build credibility.",
+      "Provides conservative financial impact quantification with methodology: 'X transactions tested, $Y-Z per transaction, estimated Z% conversion rate' rather than absolute exposure claims.",
+      "Delivers platform-specific payout signals: HackerOne $3,000-15,000 (financial impact premium, P1), Bugcrowd $5,000-12,000 (responsible quantification), Intigriti $4,000-10,000 (logic error emphasis)."
+    ],
+    "category": "bounty_patterns"
   }
 ]
