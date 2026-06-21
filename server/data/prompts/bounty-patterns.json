@@ -6702,5 +6702,70 @@
       "Delivers platform-specific payout signals: HackerOne $3,000-15,000 (financial impact premium, P1), Bugcrowd $5,000-12,000 (responsible quantification), Intigriti $4,000-10,000 (logic error emphasis)."
     ],
     "category": "bounty_patterns"
+  },
+  {
+    "id": 569,
+    "scenario": "A researcher discovers a CVSS 5.3 (Medium) authentication bypass in a Bugcrowd program's admin panel requiring user enumeration + password reset token prediction. The vulnerability affects <100 accounts monthly. However, the program's payout table lists authentication bypasses at $2,500 minimum, while CVSS scoring suggests $500\u2013$1,000. The researcher's initial report omits business context about downstream data exposure to regulated customer databases.",
+    "prompt": "How do you reconcile CVSS scoring divergence from business impact and program-specific payout signals?",
+    "expected_answer": "CVSS and business impact divergence is common in bug bounty triage. CVSS 5.3 reflects technical attack complexity and scope, but Bugcrowd programs often weight business context heavily: authentication bypasses unlock downstream exploitation paths. Here, the $2,500 floor signals the program values any auth bypass as high-priority, regardless of CVSS. To maximize credibility and payout alignment, reframe your report to highlight downstream risk: enumerate how token prediction enables access to customer data classified under regulated frameworks (HIPAA, PCI-DSS, GDPR). Quantify blast radius (100 accounts \u00d7 average data value). Include a proof-of-concept showing token entropy analysis and successful prediction within 10 attempts. Explicitly reference the program's historical payouts for similar authentication findings to demonstrate precedent. Avoid anchoring on CVSS; instead, use Bugcrowd's published severity guidelines (which often treat auth bypass as P2\u2013P3 minimum). Submit detailed timeline of when enumeration data becomes predictable, and whether rate limiting exists. This bridges the gap between technical scoring and program expectations.",
+    "reasoning_requirement": "Distinguish between CVSS technical scoring and business impact; leverage program-specific payout history and regulatory context to amplify apparent severity.",
+    "evaluation_criteria": [
+      "Identifies the specific payout tier and justifies claims using program's historical payouts for similar vulnerability classes",
+      "Quantifies downstream impact (regulated data exposure, blast radius, chain to higher-severity actions)",
+      "Addresses CVSS limitations explicitly and proposes business-context framing rather than metric gaming"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 570,
+    "scenario": "An Intigriti program's scope document lists 'Payment Processing Module v3+' in-scope, with a footnote: 'Legacy v2 instances excluded.' A researcher finds a critical SQL injection in the v2 payment endpoint still live on production. The program's scope ambiguity suggests v2 might be out-of-scope, but the endpoint processes real transactions. The researcher must decide whether to report directly or request scope clarification first.",
+    "prompt": "What is the optimal triage strategy when scope documentation conflicts with production reality?",
+    "expected_answer": "Scope ambiguity is a common Intigriti and Bugcrowd challenge. Never assume legacy assets are abandoned; instead, execute a fact-gathering phase before reporting. First, verify the v2 endpoint's active status: check if it receives production traffic (via timing analysis, transaction volume, or user-agent patterns if accessible). Document evidence that v2 is maintained (recent patches, active error logging, or support references). Second, contact Intigriti's scope management directly via the program portal\u2014do not email reporters\u2014requesting explicit clarification: 'v2 appears production-active; does exclusion apply if actively transacting?' Intigriti typically responds within 24\u201348 hours. Third, prepare dual-submission strategy: if v2 is confirmed in-scope, report the SQL injection immediately with highest priority flag. If Intigriti confirms out-of-scope, report to the security contact email listed in program terms (often a separate responsible disclosure channel). Document the scope clarification request and response in your report's 'scope justification' section to preempt duplicate/out-of-scope rejections. Avoid speculative reporting of ambiguous scope\u2014it damages your reputation and wastes program triage resources. Always err toward transparency and explicit confirmation.",
+    "reasoning_requirement": "Distinguish between ambiguous scope language and actionable scope determination; prioritize direct clarification over assumption-based reporting.",
+    "evaluation_criteria": [
+      "Proposes specific verification methods (traffic analysis, patch history, support records) to confirm endpoint active status",
+      "Describes platform-specific scope clarification process for Intigriti (portal request vs. email)",
+      "Includes documentation strategy to protect against out-of-scope or duplicate rejection based on scope uncertainty"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 571,
+    "scenario": "A researcher identifies an Information Disclosure vulnerability (P4) in a HackerOne program: API endpoint /api/debug/metrics leaks internal performance timings, resource allocations, and microservice topology without authentication. CVSS 3.7 (Low). However, chaining this with a public API enumeration tool, an attacker could map the entire internal architecture and identify services vulnerable to further exploitation. The finding is reproducible in seconds with curl.",
+    "prompt": "How do you evaluate and present information disclosure findings to maximize impact assessment and payout tier?",
+    "expected_answer": "Information disclosure (P4\u2013P5) findings are frequently undervalued despite enabling cascading attacks. The /api/debug/metrics leak itself scores low (CVSS 3.7), but its practical utility in reconnaissance determines business impact. To strengthen your report: (1) Explicitly chain the disclosure to higher-severity attack scenarios. Map disclosed services to known vulnerabilities (e.g., 'Service X runs vulnerable version Y based on timing fingerprints'). Include a proof-of-concept showing how topology data + timing data enables service enumeration that would otherwise require network access. (2) Quantify reconnaissance time saved: 'Without this endpoint, attacker must perform months of network scanning; with disclosure, full topology mapping takes 30 seconds.' (3) Highlight compliance implications: debug endpoints often violate regulatory requirements (PCI-DSS section 6.5.4, SOC 2 disclosure controls). (4) Provide explicit remediation: disable /api/debug/* in production, move to authenticated admin endpoints, or rate-limit aggressively. (5) Note whether debug endpoints are in scope for your specific HackerOne program\u2014many explicitly allow security.txt findings but treat debug endpoints as expected. Frame your report as 'reconnaissance enabler' rather than isolated disclosure, and HackerOne reviewers often reclassify from P5 to P3\u2013P4.",
+    "reasoning_requirement": "Connect isolated information disclosure to multi-step exploitation chains; quantify reconnaissance value and regulatory impact.",
+    "evaluation_criteria": [
+      "Demonstrates specific reconnaissance advantages enabled by disclosure (service enumeration, fingerprinting, timing analysis)",
+      "Provides remediation guidance and compliance references (PCI-DSS, SOC 2) to justify non-trivial impact",
+      "Includes proof-of-concept showing endpoint data directly accelerates higher-severity attacks (e.g., vulnerability targeting known service version)"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 572,
+    "scenario": "A researcher submits a Cross-Site Scripting (XSS) finding on Bugcrowd: stored XSS in user bio field affecting profile pages. The initial report lacks reproduction steps, payload, and screenshot. Bugcrowd automatically marks it as 'Needs More Info.' After 7 days without response, the report closes. The researcher later learns the vulnerability was valid (confirmed internally); however, due to poor submission quality, it was never triaged by security staff.",
+    "prompt": "What submission quality standards minimize rejection risk and maximize triage velocity on Bugcrowd vs. HackerOne?",
+    "expected_answer": "Bugcrowd and HackerOne have divergent triage workflows that demand platform-specific submission rigor. Bugcrowd enforces stricter upfront proof requirements: reports marked 'Needs More Info' auto-close after 7 days with zero reviewer escalation. HackerOne triagers are more lenient, allowing iterative refinement. To ensure Bugcrowd acceptance: (1) Include mandatory elements in first submission: working reproduction steps (numbered, copy-paste ready), actual payload used, screenshot or video demonstrating impact, and HTTP request/response log. For stored XSS specifically: provide the exact JavaScript payload, DOM location where it executes, and user interaction required to trigger. (2) Test reproduction steps yourself before submitting\u2014Bugcrowd reviewers will not debug incomplete PoCs. (3) Provide evidence of persistence: show the XSS payload stored in the database (e.g., HTML inspection or subsequent page load). (4) Bugcrowd programs prioritize business impact; explicitly state blast radius (% of user profiles, customer accounts affected). (5) For HackerOne, you can submit with moderate detail and iterate; however, best practice is identical rigor for both platforms. Use a standardized template: Vulnerability Type | Affected Component | Reproduction Steps | Impact | CVSS | Proof (screenshot/video). Avoid natural language descriptions; use structured formatting. Bugcrowd's auto-close policy means first-submission quality directly correlates to payout rate.",
+    "reasoning_requirement": "Map platform-specific triage workflows to submission quality requirements; distinguish Bugcrowd's strict upfront verification from HackerOne's iterative review.",
+    "evaluation_criteria": [
+      "Specifies platform-specific proof requirements (Bugcrowd auto-close vs. HackerOne iterative refinement) with concrete timelines",
+      "Provides stored XSS-specific reproduction checklist (payload, storage mechanism, persistence verification, user action required)",
+      "Includes template structure or example formatted submission demonstrating platform-aligned presentation style"
+    ],
+    "category": "bounty_patterns"
+  },
+  {
+    "id": 573,
+    "scenario": "A researcher discovers a P2-level vulnerability: insufficient access control in the /admin/export endpoint allowing non-admin users to export encrypted customer datasets. The vulnerability requires authentication but no role validation. The affected program on HackerOne has multiple sub-programs (main + legacy instance). The main program's scope explicitly excludes 'data export functionality,' but the legacy instance's scope is silent on this endpoint. The researcher must determine: (1) which program to report to, (2) whether the finding is in-scope, and (3) duplicate risk.",
+    "prompt": "How do you navigate multi-program scope fragmentation and duplicate risk when a single vulnerability spans program boundaries?",
+    "expected_answer": "Multi-program scope fragmentation on HackerOne creates duplicate risk and rejection exposure if mishandled. The insufficient access control vulnerability affects both main and legacy instances, but scope boundaries differ. Execute this decision tree: (1) Identify the primary program. The main program explicitly excludes 'data export functionality'\u2014this is a hard out-of-scope signal. The legacy instance is silent, meaning export functionality may implicitly fall within scope. Report to the legacy instance first if it has higher payout history; otherwise, request scope clarification from the main program via private comment before reporting. (2) Assess if /admin/export is genuinely separate or semantically identical across instances. If legacy instance is deprecated (no active maintenance, frozen codebase), even in-scope reports will likely be marked duplicate against main-program findings. Check program comments, disclosure timelines, or HackerOne program history for remediation ownership. (3) If legacy instance is actively maintained by a separate team, report exclusively to legacy program and note in your submission: 'This endpoint does not fall under the data export exclusion in the main program, which targets only cloud-export features. Legacy instance endpoint appears in-scope based on scope documentation.' (4) To prevent duplicate rejection: in your initial report, state explicitly which program version is affected and acknowledge the scope boundary\u2014this demonstrates scope awareness and preempts dismissal. If HackerOne marks it duplicate, appeal with evidence of distinct remediation ownership.",
+    "reasoning_requirement": "Navigate program boundaries by analyzing scope language precision and remediation ownership; distinguish hard out-of-scope exclusions from ambiguous silence.",
+    "evaluation_criteria": [
+      "Applies explicit scope-language analysis (exclusion vs. silence) to determine reportability and program selection",
+      "Proposes verification steps for remediation ownership and program maturity (deprecated vs. active) to assess duplicate risk",
+      "Includes transparency statement in report acknowledging scope boundary and duplicate risk mitigation strategy"
+    ],
+    "category": "bounty_patterns"
   }
 ]
