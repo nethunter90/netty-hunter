@@ -1048,5 +1048,135 @@
     "reasoning_focus": "Workflow bypass through race condition on sequential approval steps.",
     "expected_answer": "Sequential workflow steps without request-level locking create bypass windows. Two concurrent refill requests for controlled substances submitted simultaneously can both pass pharmacist review independently, then both attempt insurance verification concurrently\u2014if the first request's verification failure is not visible to the second request before doctor notification is triggered, both requests advance to fulfillment, resulting in duplicate prescriptions. Clinical risk includes patient overdose from duplicate medication fills; financial risk includes insurance fraud (duplicate claims) and DEA compliance violations for controlled substance refills. Per-request abuse creates duplicate fills costing $50\u2013$500 per incident; at 0.5% of monthly refill traffic (pharmacy processing 1K refills/month), this represents $250\u2013$2.5K monthly loss plus regulatory fines. Remediation requires: (1) request-level distributed locking using database row locks or Redis-based mutual exclusion, (2) workflow state machine ensuring step completion before advancing, (3) idempotency keys preventing re-submission from creating duplicate records, (4) real-time duplicate detection comparing prescription ID + patient ID + drug + quantity + date.",
     "evaluation_criteria": "Must quantify duplicate prescription financial and clinical risk per incident; must specify distributed locking architecture and idempotency enforcement at the request level."
+  },
+  {
+    "id": 6,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "A checkout system applies multiple percentage-based coupons sequentially without preventing stacking; a 20% coupon followed by a 15% coupon compounds rather than being restricted to the best offer.",
+    "prompt": "Determine whether coupon stacking allows discount rates exceeding 100% or accumulating beyond intended margin thresholds.",
+    "reasoning_focus": "Sequential coupon application order and cumulative discount calculation logic.",
+    "expected_answer": "The sequential application creates compounding discounts. A $100 item with 20% coupon becomes $80, then 15% coupon reduces it to $68\u2014a 32% cumulative discount instead of the intended maximum 20%. An attacker applying multiple promotional codes could exceed 100% discount, resulting in negative prices or customer credit. The system should enforce: (1) coupon type classification (stackable vs exclusive), (2) maximum cumulative discount floor of 0.01, (3) coupon conflict rules preventing same-category stacking. Implementation must validate total discount against cost basis and reject mathematically impossible discount combinations at checkout confirmation.",
+    "evaluation_criteria": [
+      "Identify specific coupon codes and calculate resulting price; determine if cumulative discount exceeds single-coupon intent",
+      "Recommend coupon conflict detection logic and maximum-discount enforcement at transaction time"
+    ]
+  },
+  {
+    "id": 7,
+    "complexity": "L2",
+    "domain": "Marketplace",
+    "scenario": "A product inventory system allows quantity adjustments via API; negative quantity submissions are not validated, permitting orders for -5 units which credit the seller's account instead of debiting it.",
+    "prompt": "Assess whether negative quantity handling enables sellers to receive payouts without fulfilling corresponding customer orders.",
+    "reasoning_focus": "Input validation on quantity field and transaction direction logic.",
+    "expected_answer": "The absence of quantity validation allows an attacker to submit orders with negative quantities, reversing the transaction direction. Submitting a -5 unit order for a $50 product results in a +$250 payout to the seller without inventory deduction or customer fulfillment obligation. This exploits order-to-payment mapping logic. Remediation requires: (1) strict quantity > 0 validation at API ingress, (2) type constraints preventing negative integer submission, (3) audit logging of all quantity values with alerting for non-positive values, (4) payment direction reconciliation against positive customer orders only. Test vectors should include -1, -999, and integer underflow attempts (e.g., -2147483648 on 32-bit systems).",
+    "evaluation_criteria": [
+      "Demonstrate submission of negative quantity and resulting illicit payout; calculate total exposure across multiple sellers",
+      "Recommend input validation schema and pre-transaction payment direction verification rules"
+    ]
+  },
+  {
+    "id": 8,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A payment account features concurrent withdrawal and transfer operations on the same balance; both operations check available balance but execute without transactional isolation, allowing double-spend on high-latency networks.",
+    "prompt": "Model a race condition where simultaneous withdrawal and transfer requests both validate against the same balance snapshot, resulting in overdraft.",
+    "reasoning_focus": "Check-then-act race condition on mutable account balance state.",
+    "expected_answer": "The vulnerability manifests when balance-check and debit operations lack atomic enforcement. With a $1000 balance, request A (withdraw $900) and request B (transfer $900) arrive simultaneously. Both execute balance checks independently, each seeing $1000 available. Both pass validation and execute, resulting in a $800 overdraft. This exploits the gap between authorization and settlement. Mitigation requires: (1) row-level locking at balance read time, (2) pessimistic locking during authorization-to-settlement window, (3) serializable transaction isolation level, (4) idempotency keys preventing duplicate execution of identical requests within a window. Testing should simulate 10ms-100ms network latency and concurrent request batches with overlapping account operations, validating that only one succeeds or both fail atomically.",
+    "evaluation_criteria": [
+      "Construct concurrent request timing to demonstrate balance validation bypass; calculate resulting overdraft amount",
+      "Specify isolation level (serializable) and locking strategy (SELECT FOR UPDATE) required for remediation"
+    ]
+  },
+  {
+    "id": 9,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "A multi-tenant platform assigns user roles via JWT claims without validating against the authorization service; a user edits their JWT to elevate from 'viewer' to 'admin' in the token before re-submitting API requests.",
+    "prompt": "Evaluate whether client-side token manipulation enables privilege escalation when server-side role claims are not re-validated.",
+    "reasoning_focus": "Trust boundary violation between client JWT claims and server-side authorization checks.",
+    "expected_answer": "The critical flaw is treating JWT claims as authoritative without server-side verification. A user intercepts their JWT, decodes it, modifies the 'role' field from 'viewer' to 'admin', re-encodes it, and submits it in subsequent requests. If the API server only reads claims without validating the signature against the signing key or without cross-checking against the authorization database, the escalated token grants admin access. The fix requires: (1) strict JWT signature verification using the server's private/public key pair on every request, (2) server-side role/permission lookups in the authorization database independent of token claims, (3) session token expiration windows (15-60 minutes), (4) audit logging of privilege-escalation attempts. Never trust client-submitted claims; always validate against authoritative backend state.",
+    "evaluation_criteria": [
+      "Demonstrate JWT interception, modification, and re-submission; show resulting unauthorized admin action execution",
+      "Recommend JWT signature validation implementation and server-side role lookup caching strategy"
+    ]
+  },
+  {
+    "id": 10,
+    "complexity": "L2",
+    "domain": "Crypto",
+    "scenario": "A referral rewards program credits both referrer and referee with cryptocurrency tokens; users create multiple accounts and refer themselves across accounts, compounding token issuance without natural user acquisition.",
+    "prompt": "Determine whether self-referral patterns allow unbounded token generation beyond program intent.",
+    "reasoning_focus": "Referral program reward attribution and account ownership validation.",
+    "expected_answer": "The program lacks identity verification and account-relationship validation. A single user creates 10 accounts and chains referrals: Account A refers B (both earn tokens), B refers C, etc. Each referral event mints tokens without KYC or device-fingerprinting checks, enabling one user to claim 10 referrer rewards plus 9 referee rewards = exponential token inflation. A single user can generate thousands of tokens daily. Remediation: (1) require verified identity (government ID, phone) per account with 1:1 mapping enforcement, (2) implement referral graph analysis detecting circular or self-referral patterns, (3) restrict one rewards claim per verified identity per calendar period, (4) apply device fingerprinting and IP clustering to detect multi-account control, (5) cap total referral tokens issued per entity. Monitor for burst issuance spikes and token concentration in newly created wallets.",
+    "evaluation_criteria": [
+      "Map referral chain across self-created accounts and calculate total unearned token issuance",
+      "Recommend KYC integration and graph-based referral-fraud detection rules with alerting thresholds"
+    ]
+  },
+  {
+    "id": 11,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "A dynamic pricing system adjusts product prices based on inventory levels and demand; an attacker exploits the pricing algorithm by creating large cart quantities without checkout, triggering price increases, then abandoning carts and purchasing at elevated prices.",
+    "prompt": "Assess whether cart reservation logic without commit enables price inflation attack affecting downstream customer purchases.",
+    "reasoning_focus": "Cart state management and pricing trigger conditions without transactional commitment.",
+    "expected_answer": "The pricing algorithm factors pending carts into 'active inventory' and raises prices as availability appears to decrease. An attacker adds 500 units of a product to their cart without purchasing, triggering the algorithm to classify inventory as reserved and increase price by 15%. The attacker abandons the cart, but prices remain elevated for subsequent legitimate customers. The algorithm fails to distinguish between committed purchases and temporary holds. Legitimate customers then pay inflated prices. Remediation requires: (1) pricing calculations based only on confirmed inventory (committed orders), (2) cart hold timeout (15-30 minutes) with automatic release if not completed, (3) inventory reservation only upon payment completion, not cart addition, (4) dynamic pricing audit logs tracking price changes and causative factors, (5) maximum price-change thresholds (e.g., +20% per hour). Implement cart-to-purchase conversion monitoring to detect abandoned-cart price-inflation patterns.",
+    "evaluation_criteria": [
+      "Create large abandoned cart, measure price increase trigger, calculate overpayment for subsequent customers",
+      "Recommend hold-timeout logic and inventory-commit timing change in pricing algorithm"
+    ]
+  },
+  {
+    "id": 12,
+    "complexity": "L2",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine prescription platform allows patients to request medication refills; the workflow checks 'patient requested refill' but does not validate whether the original prescription remains valid or has been superseded by a newer prescription from the same provider.",
+    "prompt": "Determine whether workflow validation gaps permit dispensing of obsolete prescriptions, bypassing clinical supervision.",
+    "reasoning_focus": "Workflow state validation and prescription currency checks.",
+    "expected_answer": "The refill workflow transitions from 'requested' to 'dispensed' based on the 'refill_count > 0' flag without checking prescription issue date or whether a newer prescription exists. A patient originally prescribed Medication A in January requests refills through December. In June, the provider prescribes Medication B, superseding A. The patient's December refill request still processes the January prescription (A) because the system validates only request state, not prescription recency. The pharmacy dispenses the obsolete medication. Fix requires: (1) prescription currency validation\u2014reject refills if a newer prescription for the same medication exists from the same provider, (2) issue-date comparison with maximum refill window (e.g., prescriptions valid for 12 months only), (3) provider override notification when refilling superseded prescriptions, (4) clinical audit trail. Implement a 'active prescription' lookup at refill time, comparing against all provider-issued prescriptions for that patient.",
+    "evaluation_criteria": [
+      "Show original prescription date, newer prescription issue, and resulting refill of obsolete medication",
+      "Recommend prescription-currency validation logic and provider-notification workflow"
+    ]
+  },
+  {
+    "id": 13,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A currency conversion service processes large transfers using 32-bit integer storage for micro-unit values; converting $9,223,372,036 USD to satoshis (1 BTC = 100,000,000 satoshis) causes integer overflow, wrapping the total to a negative value.",
+    "prompt": "Model the impact of integer overflow in currency micro-unit calculations on high-value transfers.",
+    "reasoning_focus": "Integer overflow behavior in financial calculations and type-system weaknesses.",
+    "expected_answer": "The system stores currency amounts as 32-bit signed integers representing satoshi/cent equivalents. A $92,233,720.36 USD transfer attempts conversion: (92233720.36 USD) * (100,000,000 satoshis/BTC) * (BTC exchange rate 43,000 USD/BTC) = 214,791,000,000,000 satoshis. This exceeds MAX_INT32 (2,147,483,647), causing wraparound to a negative value like -2,061,176,705. The ledger records a credit of 2 billion satoshis (positive value magnitude) instead of 214 billion, and the corresponding debit becomes a credit due to the negative sign. The attacker receives ~2 billion satoshis worth ~$860,000, while only $92 million was actually transferred\u2014a gain of ~$767 million. Remediation: (1) use 64-bit or 128-bit integers (or arbitrary-precision decimals), (2) pre-flight validation checking if conversion result exceeds type maximum before execution, (3) amount normalization (convert to smallest unit early), (4) transaction amount limits and anomaly detection on high-value conversions. Test with values near integer boundaries.",
+    "evaluation_criteria": [
+      "Calculate overflow wrap-around value and resulting illicit gain in fiat currency",
+      "Recommend 64-bit integer usage and pre-flight overflow detection implementation"
+    ]
+  },
+  {
+    "id": 14,
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "A subscription platform supports pause/resume workflows; paused subscriptions are excluded from billing cycles but the next billing date is not adjusted. An attacker pauses for 11 months, then resumes 1 month before the original annual renewal date, receiving 12 months of service for a single payment.",
+    "prompt": "Evaluate whether pause logic fails to extend billing-cycle dates, enabling service-duration extension without additional payment.",
+    "reasoning_focus": "Billing-cycle date adjustment logic during subscription pause states.",
+    "expected_answer": "The system tracks subscription state (active/paused) and billing-cycle dates independently without synchronization. A user subscribes annually on January 1 with renewal on January 1 next year. They pause on February 1, skip charges through December, and resume on December 1. The billing system processes no charges during the pause window but does not extend the January 1 renewal date. When the user resumes on December 1, they have 31 days of active service remaining before the next charge\u2014receiving 11 months free (February-December). Fix requires: (1) pause-period accumulation logic that extends next_billing_date by the duration paused, (2) billing-date synchronization before state transitions, (3) pause duration validation (maximum pause windows), (4) audit log of all pause/resume with corresponding date adjustments. Implement: next_billing_date += (resume_date - pause_date).",
+    "evaluation_criteria": [
+      "Map pause dates to billing cycle, calculate service received versus payment made",
+      "Recommend billing-date extension formula and pause-window limits"
+    ]
+  },
+  {
+    "id": 15,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A vendor payment settlement batches multiple transactions; settlement amounts are calculated by summing transaction totals without deducting platform fees for transactions refunded after settlement calculation but before payment execution.",
+    "prompt": "Determine whether refund timing relative to settlement calculation creates fee-evasion opportunities.",
+    "reasoning_focus": "Settlement timing and fee-liability synchronization across transaction lifecycle.",
+    "expected_answer": "The settlement process: (1) calculates settlement amount on Day 1 summing all transaction totals minus fees, (2) initiates payout Day 2, (3) processes refunds Day 3. A vendor processes a $10,000 transaction on Day 1 with $300 platform fee, resulting in $9,700 settlement payout. A customer disputes and refunds the $10,000 on Day 3 after settlement initiation but the refund is not deducted from the already-processed payout. The vendor nets $9,700 from an ultimately-refunded sale, plus keeps merchandise or service value. The platform absorbs the $10,000 loss. Fix requires: (1) refund-settlement lag windows\u2014delay settlement execution (5-7 days) to capture refunds before payment, (2) provisional settlement accounting with adjustments for post-settlement refunds, (3) monthly settlement reconciliation comparing provisioned vs actual charges, (4) fee-reversal logic ensuring refunded transactions also reverse fee charges. Implement settlement hold periods with automated refund-capture sweeps.",
+    "evaluation_criteria": [
+      "Timeline mapping transaction, settlement, and refund dates; calculate vendor net gain and platform loss",
+      "Recommend settlement hold-period duration and post-settlement refund reconciliation rules"
+    ]
   }
 ]
