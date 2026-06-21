@@ -47,6 +47,14 @@ const StartHuntSchema = z.object({
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
+// Global hunt status — single source of truth for all UI panels.
+// Returns the currently active hunt (or null) so panels can disable their
+// launch buttons and show a banner without relying on local optimistic state.
+router.get("/status", (_req: Request, res: Response) => {
+  const current = activeHunts.current();
+  return res.json({ running: current !== null, hunt: current });
+});
+
 // Start a new hunt
 router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);

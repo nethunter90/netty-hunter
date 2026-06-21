@@ -11,7 +11,7 @@ import { EgressPoolPanel } from "../components/hunt/EgressPoolPanel";
 interface ActiveSession {
   sessionUuid: string;
   targetUrl: string;
-  status: "running" | "complete" | "error";
+  status: "running" | "stopping" | "complete" | "error";
   phase: string;
   iteration: number;
   findings: number;
@@ -42,6 +42,8 @@ export default function HuntConsole() {
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  // B3: hunt started from another panel (orchestration or socket path)
+  const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
 
   const socket = getSocket();
 
@@ -54,6 +56,13 @@ export default function HuntConsole() {
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     bountyAPI.getHuntTemplates().then(r => setTemplates(r.data || []));
+    // B3: check for any hunt running from another panel so the launch button is
+    // correctly disabled and a banner is shown.
+    hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
+      if (r.data.running && r.data.hunt) {
+        setExternalHunt(r.data.hunt);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -157,6 +166,14 @@ export default function HuntConsole() {
       setActiveSessions(prev => prev.map(s =>
         s.sessionUuid === String(data.sessionId || "") ? { ...s, status: "complete" } : s
       ));
+      setExternalHunt(null);
+    });
+
+    // B2: backend confirmation that the engine actually halted. Remove the session
+    // from state here (not optimistically in stopHunt).
+    socket.on("hunt:aborted", (_data: any) => {
+      setActiveSessions(prev => prev.filter(s => s.status !== "stopping"));
+      setExternalHunt(null);
     });
 
     socket.on("hunt:error", (data: any) => {
@@ -344,7 +361,7 @@ export default function HuntConsole() {
       [
         "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
         "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
-        "hunt:complete", "hunt:error", "solver:started", "solver:complete", "solver:finding",
+        "hunt:complete", "hunt:aborted", "hunt:error", "solver:started", "solver:complete", "solver:finding",
         "hunt:cve_seeded", "l5:public_duplicate",
         "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
         "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
@@ -387,26 +404,51 @@ export default function HuntConsole() {
         iteration: 0,
         findings: 0,
       };
+      // B3: we're now tracking this hunt locally — clear any external banner
+      setExternalHunt(null);
       setActiveSessions(prev => [...prev, session]);
 
       if (res.data.sessionUuid) {
         socket.emit("subscribe:hunt", { sessionUuid: res.data.sessionUuid });
       }
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: string } } };
-      toast.error(error.response?.data?.error || "Failed to start hunt");
-      push({ type: "error", ts: ts(), message: `Failed to start: ${error.response?.data?.error}` });
+      const axiosErr = err as { response?: { status?: number; data?: { error?: string; activeHunt?: { id: string; kind: string; targetUrl: string } } } };
+      const resp = axiosErr.response;
+      if (resp?.status === 409 && resp.data?.activeHunt) {
+        // B3: another hunt is already running — surface it so the user knows
+        setExternalHunt(resp.data.activeHunt);
+        toast.error(`Another hunt is already running: ${resp.data.activeHunt.targetUrl}`);
+        push({ type: "error", ts: ts(), message: `Hunt already running: ${resp.data.activeHunt.targetUrl}` });
+      } else {
+        toast.error(resp?.data?.error || "Failed to start hunt");
+        push({ type: "error", ts: ts(), message: `Failed to start: ${resp?.data?.error}` });
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const stopHunt = async (uuid: string) => {
-    await hunterAPI.stopHunt(uuid).catch(() => {});
-    setActiveSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
+    // B2: mark stopping immediately (disables button, shows indicator), but don't
+    // remove from state until the REST call confirms the backend accepted the stop.
+    setActiveSessions(prev => prev.map(s =>
+      s.sessionUuid === uuid ? { ...s, status: "stopping" } : s
+    ));
+    try {
+      await hunterAPI.stopHunt(uuid);
+      // Backend confirmed stop — remove from local state.
+      // If the engine emits hunt:aborted via socket first, that handler also removes it.
+      setActiveSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
+    } catch {
+      // Stop failed (maybe already gone) — revert to running so the user can retry
+      setActiveSessions(prev => prev.map(s =>
+        s.sessionUuid === uuid ? { ...s, status: "running" } : s
+      ));
+      toast.error("Stop request failed — hunt may have already ended");
+    }
   };
 
-  const isRunning = activeSessions.some(s => s.status === "running");
+  const isRunning = activeSessions.some(s => s.status === "running" || s.status === "stopping");
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -502,9 +544,17 @@ export default function HuntConsole() {
               <input type="range" min={1} max={50} value={maxIterations} onChange={e => setMaxIterations(parseInt(e.target.value))} className="w-full accent-hack-accent" />
             </div>
 
+            {externalHunt && (
+              <div className="text-[9px] font-mono text-hack-yellow bg-hack-yellow/5 border border-hack-yellow/20 rounded p-2 mb-2">
+                <span className="text-hack-yellow/70">{externalHunt.kind.toUpperCase()} running:</span>{" "}
+                {externalHunt.targetUrl.length > 30
+                  ? externalHunt.targetUrl.slice(0, 30) + "…"
+                  : externalHunt.targetUrl}
+              </div>
+            )}
             <button
               onClick={startHunt}
-              disabled={loading || (!selectedProgram && selectedProgram !== -1) || !targetUrl}
+              disabled={loading || (!selectedProgram && selectedProgram !== -1) || !targetUrl || !!externalHunt}
               className="hack-btn-primary w-full flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading
@@ -522,13 +572,16 @@ export default function HuntConsole() {
                 <div key={session.sessionUuid} className="hack-panel p-2 text-[10px] font-mono">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
-                      <span className={`status-dot ${session.status === "running" ? "status-running" : "status-complete"}`} />
+                      <span className={`status-dot ${session.status === "running" ? "status-running" : session.status === "stopping" ? "status-running opacity-50" : "status-complete"}`} />
                       <span className="text-hack-text truncate max-w-[140px]">{session.targetUrl}</span>
                     </div>
                     {session.status === "running" && (
                       <button onClick={() => stopHunt(session.sessionUuid)} className="text-hack-red hover:text-hack-red/80">
                         <Square className="w-3 h-3" />
                       </button>
+                    )}
+                    {session.status === "stopping" && (
+                      <span className="text-hack-yellow text-[9px] animate-pulse">…</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 text-hack-dim">

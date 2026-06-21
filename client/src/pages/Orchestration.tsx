@@ -67,6 +67,14 @@ export default function Orchestration() {
   const [toolStatusExpanded, setToolStatusExpanded] = useState(false);
   const [toolStatusLoading, setToolStatusLoading] = useState(false);
 
+  // B1: true between socket.emit("orchestration:run") and orchestration:created
+  // confirmation — prevents showing "running" before the backend confirms it started.
+  const [launching, setLaunching] = useState(false);
+  // B2: true between handleStop() and orchestration:aborted confirmation.
+  const [stopping, setStopping] = useState(false);
+  // B3: hunt running in another panel (kind==="hunt" or unrecognised orchestration)
+  const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
+
   const [orchestrationId, setOrchestrationId] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerStatus[]>(
     Array.from({ length: 6 }, (_, i) => ({
@@ -107,6 +115,15 @@ export default function Orchestration() {
       .catch(() => {})
       .finally(() => setToolStatusLoading(false));
 
+    // B3: check for a hunt started from the Hunt Console panel so the launch button
+    // is disabled and a banner is shown. Orchestration reconnect below handles the
+    // orchestration-kind path; this catches kind==="hunt".
+    hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
+      if (r.data.running && r.data.hunt?.kind === "hunt") {
+        setExternalHunt(r.data.hunt);
+      }
+    }).catch(() => {});
+
     // Reconnect to any orchestration already running when this panel opens.
     axios.get("/api/orchestration").then(r => {
       const liveList: Array<{ orchestrationId: string; state: any }> = r.data?.live || [];
@@ -134,6 +151,11 @@ export default function Orchestration() {
   useEffect(() => {
     socket.on("orchestration:created", ({ orchestrationId: id }: { orchestrationId: string }) => {
       setOrchestrationId(id);
+      // B1: backend confirmed the orchestration was created — transition from
+      // "launching" (unconfirmed) to "loading" (confirmed running).
+      setLaunching(false);
+      setLoading(true);
+      setExternalHunt(null);
       socket.emit("subscribe:orchestration", { orchestrationId: id });
     });
 
@@ -165,22 +187,32 @@ export default function Orchestration() {
       pushEvent({ type: "error", ts: now(), message: `L${d.layer} ${d.name}: ${d.error}` });
     });
 
-    socket.on("orchestration:complete", () => {
-      setPhase("complete");
-      setLoading(false);
-      toast.success("Orchestration complete!");
-    });
-
     socket.on("orchestration:aborted", (d: { reason: string }) => {
+      // B2: backend confirmed the abort — only now flip to aborted state.
       setPhase("aborted");
       setLoading(false);
+      setStopping(false);
       pushEvent({ type: "error", ts: now(), message: `Aborted: ${d.reason}` });
       toast.error(`Aborted: ${d.reason}`);
     });
 
-    socket.on("orchestration:error", (d: { error: string }) => {
-      setPhase("error");
+    socket.on("orchestration:complete", () => {
+      setPhase("complete");
       setLoading(false);
+      setStopping(false);
+      setExternalHunt(null);
+      toast.success("Orchestration complete!");
+    });
+
+    socket.on("orchestration:error", (d: { error: string; activeHunt?: { id: string; kind: string; targetUrl: string } }) => {
+      setPhase("error");
+      setLaunching(false);
+      setLoading(false);
+      setStopping(false);
+      if (d.activeHunt) {
+        // B3: rejected because another hunt is running — surface it
+        setExternalHunt(d.activeHunt);
+      }
       pushEvent({ type: "error", ts: now(), message: d.error });
       toast.error(`Orchestration error: ${d.error}`);
     });
@@ -319,13 +351,17 @@ export default function Orchestration() {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
 
+    // Reset UI for a fresh run (safe to do immediately — these are display resets).
     setLayers(prev => prev.map(l => ({ ...l, phase: "pending", startedAt: undefined, completedAt: undefined, durationMs: undefined, error: undefined })));
     setActivityEvents([]);
     setFindings(0);
     setVerified(0);
-    setPhase("starting");
-    setLoading(true);
     setOrchestrationId(null);
+    setExternalHunt(null);
+    // B1: do NOT set phase/loading yet — wait for orchestration:created confirmation.
+    // If the server rejects (slot taken), orchestration:error will fire and we stay idle.
+    setLaunching(true);
+    setPhase("idle");
 
     const auth: Record<string, string> = {};
     if (authCookie.trim()) auth.cookie = authCookie.trim();
@@ -344,13 +380,17 @@ export default function Orchestration() {
 
   const handleStop = () => {
     if (!orchestrationId) return;
-    axios.post(`/api/orchestration/stop/${orchestrationId}`).catch(() => {});
-    setPhase("aborting");
-    setLoading(false);
+    // B2: show "stopping" indicator but do NOT flip phase/loading — only the
+    // orchestration:aborted socket event (from the actual engine halt) does that.
+    setStopping(true);
+    axios.post(`/api/orchestration/stop/${orchestrationId}`).catch(() => {
+      setStopping(false);
+      toast.error("Stop request failed");
+    });
     toast("Stop signal sent");
   };
 
-  const isRunning = loading || (phase !== "idle" && phase !== "complete" && phase !== "aborted" && phase !== "error");
+  const isRunning = launching || loading || (phase !== "idle" && phase !== "complete" && phase !== "aborted" && phase !== "error");
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -587,10 +627,18 @@ export default function Orchestration() {
               />
             </div>
 
+            {externalHunt && (
+              <div className="text-[9px] font-mono text-hack-yellow bg-hack-yellow/5 border border-hack-yellow/20 rounded p-2 mb-2">
+                <span className="text-hack-yellow/70">{externalHunt.kind.toUpperCase()} running:</span>{" "}
+                {externalHunt.targetUrl.length > 28
+                  ? externalHunt.targetUrl.slice(0, 28) + "…"
+                  : externalHunt.targetUrl}
+              </div>
+            )}
             {!isRunning ? (
               <button
                 onClick={handleRun}
-                disabled={(!selectedProgram && selectedProgram !== -1) || !targetUrl}
+                disabled={(!selectedProgram && selectedProgram !== -1) || !targetUrl || !!externalHunt}
                 className="hack-btn-primary w-full flex items-center justify-center gap-2 py-2 text-xs rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Play className="w-3 h-3" />
@@ -599,10 +647,12 @@ export default function Orchestration() {
             ) : (
               <button
                 onClick={handleStop}
-                className="hack-btn-danger w-full flex items-center justify-center gap-2 py-2 text-xs rounded"
+                // B2: disable while launching (nothing to abort yet) or already stopping
+                disabled={launching || stopping || !orchestrationId}
+                className="hack-btn-danger w-full flex items-center justify-center gap-2 py-2 text-xs rounded disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Square className="w-3 h-3" />
-                ABORT
+                {launching ? "LAUNCHING..." : stopping ? "STOPPING..." : "ABORT"}
               </button>
             )}
           </div>

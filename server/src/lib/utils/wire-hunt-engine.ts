@@ -46,6 +46,9 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   fwd('hunt:solver_finding');
   fwd('hunt:solver_started');
   fwd('hunt:solver_complete');
+  // hunt:aborted — emitted immediately by engine.stop(); clients use this to
+  // confirm a stop request was honoured rather than relying on optimistic UI state.
+  fwd('hunt:aborted');
   // hunt:complete handled separately by caller (needs cleanup logic)
   engine.on('hunt:complete', (d: unknown) => io.to(room).emit('hunt:complete', d));
 }

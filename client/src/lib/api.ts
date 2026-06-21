@@ -24,6 +24,7 @@ export default api;
 export const hunterAPI = {
   startHunt: (data: Record<string, unknown>) => api.post("/hunt/start", data),
   stopHunt: (uuid: string) => api.post(`/hunt/stop/${uuid}`),
+  getStatus: () => api.get("/hunt/status"),
   getSession: (uuid: string) => api.get(`/hunt/session/${uuid}`),
   getCampaigns: (programId?: number) => api.get("/hunt/campaigns", { params: programId ? { programId } : undefined }),
   getCampaign: (id: number) => api.get(`/hunt/campaigns/${id}`),
