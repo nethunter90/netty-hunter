@@ -1473,5 +1473,55 @@
       "Trace the appointment state transitions showing missing approval state validation and quantify unmonitored appointments (50 invoiced without approval)",
       "Recommend state-machine enforcement via database triggers, explicit state assertions in invoice endpoint, and audit-logged state transitions"
     ]
+  },
+  {
+    "id": 41,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "An inventory system decrements stock after payment confirmation but allows negative stock values in the database due to missing constraint validation. A race condition between concurrent purchases can cause stock to go negative, enabling overselling beyond available inventory.",
+    "prompt": "Exploit the negative quantity vulnerability in stock management to identify how concurrent transactions bypass inventory limits and quantify financial/fulfillment impact.",
+    "reasoning_focus": "Negative quantity exploit through race condition on inventory decrement.",
+    "expected_answer": "The vulnerability stems from missing NOT NULL and CHECK constraints on the stock column combined with TOCTOU (time-of-check-time-of-use) gaps. The attack flow: (1) two concurrent orders arrive for 1 remaining item, (2) both queries read stock=1 before either write, (3) both decrement and write stock=-1, (4) system permits overselling. Financial impact: refund costs + shipping reversal + supplier chargebacks. Exploitability: trivial via parallel request submission. Mitigation requires: atomic decrement operations (SELECT...FOR UPDATE), database-level CHECK constraints (stock >= 0), and idempotent order IDs preventing duplicate processing. Implement optimistic locking with version numbers on inventory records or use distributed locks (Redis) for critical sections.",
+    "evaluation_criteria": "Must demonstrate concurrent request technique to achieve negative stock and quantify per-incident losses (COGS + fulfillment costs); must specify atomic SQL patterns and database constraints preventing negative values."
+  },
+  {
+    "id": 42,
+    "complexity": "L5",
+    "domain": "Fintech",
+    "scenario": "A payment platform's balance update logic uses 32-bit signed integers for currency representation (cents). Transferring large amounts (>$21.4M) in rapid succession causes integer overflow, wrapping balances to negative values and enabling theft of deposited funds.",
+    "prompt": "Model an integer overflow attack on financial balance fields to demonstrate how type constraints enable unauthorized fund extraction.",
+    "reasoning_focus": "Integer overflow in balance arithmetic enabling fund theft.",
+    "expected_answer": "32-bit signed integer overflow at INT_MAX (2,147,483,647 cents = $21,474,836.47) wraps to INT_MIN when incremented, creating negative balances. Attack sequence: (1) attacker deposits $30M in structured transfers, (2) each transfer wraps balance from positive to negative, (3) system allows withdrawal of now-negative balance (interpreted as credit), (4) attacker extracts original deposit plus system credit. Exploitation cost: minimal API calls. Financial exposure: entire user fund pool. Remediation: migrate to 64-bit integers (long) or arbitrary-precision decimals (BigDecimal in Java). Implement application-layer validation: reject transactions exceeding INT_MAX thresholds before arithmetic. Add runtime overflow detection (Math.addExact() in Java throws ArithmeticException). Audit all financial calculations for type safety; enforce code review for numeric operations. Monitor balance updates for statistical anomalies (negative balances).",
+    "evaluation_criteria": "Must calculate exact overflow threshold in USD and demonstrate transaction sequence causing wrap-around; must specify 64-bit or arbitrary-precision remediation with overflow detection."
+  },
+  {
+    "id": 43,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A referral bonus system credits both referrer and referee with cash rewards. An attacker creates multiple accounts in rapid succession, self-referring through manipulated referral links that lack rate limiting or duplicate detection, allowing a single person to claim multiple signup bonuses per hour.",
+    "prompt": "Assess how referral bonus loops without identity verification enable self-referral abuse and quantify the fraud scale.",
+    "reasoning_focus": "Referral abuse through account creation spam and self-referral loop.",
+    "expected_answer": "Referral systems lacking identity verification and rate limiting enable trivial self-referral cycles. Attack methodology: (1) attacker creates account A with bonus $50, (2) generates referral code for A, (3) creates account B using A's code, earning both accounts $50 each, (4) repeats hourly creating 24+ accounts/day = $2,400 daily fraud. Root causes: no phone/email uniqueness enforcement across accounts, no velocity limits on referral claim (claims/hour threshold), no geolocation/IP clustering detection, and no recipient identity verification (referrer confirmation). Fraud scale: single attacker \u00d7 365 days = $876K annual loss per attacker. Remediation: enforce unique phone (SMS verification) and email per account with mandatory cooldown (30 days between referrals), implement IP/device fingerprinting to detect clustering, require referrer explicit confirmation via email link, and add withdrawal restrictions until account age >30 days. Monitor for statistical anomalies: same device creating multiple accounts, clustered IP addresses, repeated rapid referral claims.",
+    "evaluation_criteria": "Must calculate quantified fraud per attacker per timeframe ($/day or $/month); must specify identity verification methods and rate-limiting thresholds preventing self-referral loops."
+  },
+  {
+    "id": 44,
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "A subscription renewal service applies promotional coupon discounts at renewal time without checking coupon stacking rules or verifying code usage limits. An attacker applies multiple overlapping percentage-off coupons (50% off + 40% off + 30% off) on a single renewal, compounding discounts beyond business intent.",
+    "prompt": "Identify how coupon stacking vulnerabilities bypass discount caps and enable near-zero renewal costs for legitimate subscribers.",
+    "reasoning_focus": "Coupon stacking through missing validation on multiple concurrent redemptions.",
+    "expected_answer": "Coupon validation lacks exclusive-use enforcement and cumulative cap checks. Attack flow: (1) attacker supplies coupon array [CODE_50OFF, CODE_40OFF, CODE_30OFF] at renewal, (2) system applies each sequentially: $100 - 50% = $50, then $50 - 40% = $30, then $30 - 30% = $21, (3) final charge $21 instead of $100 baseline. Business loss: $79/month \u00d7 12 = $948 annual LTV destruction per subscriber. Exploitability: trivial via API manipulation of renewal request payload. Root cause: missing coupon.max_concurrent_uses validation and no aggregate discount ceiling (e.g., maximum 50% total discount). Remediation: enforce single-coupon-per-renewal rule via database constraint, implement cumulative discount cap (max 50% off), add coupon exclusion groups (incompatible codes cannot combine), and track coupon usage per subscription (usage_count column). Validate coupon eligibility at redemption: check expiration, usage limit, subscription age minimum, and previous coupon application timestamp. Log all coupon applications with redemption reason for fraud analysis.",
+    "evaluation_criteria": "Must demonstrate coupon application order producing compounded discount and calculate financial impact per subscriber; must specify single-coupon enforcement and maximum discount cap mechanisms."
+  },
+  {
+    "id": 45,
+    "complexity": "L5",
+    "domain": "Crypto",
+    "scenario": "A DEX smart contract executes trades via a multi-step atomic swap: (1) user deposits tokens, (2) contract calculates exchange rate, (3) contract transfers counterparty tokens. A sandwich attack exploits the gap between step 2 and 3 by inserting a transaction that manipulates the exchange rate (via large trade on the same pool), causing the victim's slippage protection to fail silently if rate checks are client-side only.",
+    "prompt": "Model how transaction ordering vulnerabilities in atomic swaps enable price manipulation attacks even with slippage limits.",
+    "reasoning_focus": "Sandwich attack enabling price slippage bypass through transaction ordering.",
+    "expected_answer": "Mempool visibility allows attackers to sandwich victim transactions. Attack sequence: (1) victim submits swap TX: deposit 1 ETH expecting \u226540 DAI (1% slippage tolerance), rate check is client-side only, (2) attacker observes pending TX, calculates victim's slippage limit, (3) attacker front-runs: deposits $500K DAI to spike ETH price, (4) victim's TX executes at degraded rate (35 DAI instead of 40), but contract applies discount from current pool state, ignoring stale client-side checks, (5) attacker back-runs: withdraws DAI at profit. Victim loss per swap: $0.05 \u00d7 transaction volume = 5-15% slippage loss. Scale: all DEX volume. Root cause: reliance on client-side slippage validation instead of contract-enforced minimum_output check. Remediation: enforce minimum_output as contract parameter (immutable per TX), validate post-swap balance meets minimum, reject if output < minimum_output (revert TX), implement Flashbots MEV protection (private mempools), use threshold encryption (threshold decryption only after block finality), and add time-weighted average price (TWAP) oracles to detect manipulation. Monitor for sandwich patterns: rapid consecutive trades on same pool.",
+    "evaluation_criteria": "Must model three-stage sandwich attack (front-run, victim execution, back-run) with specific price/slippage impact; must specify contract-enforced minimum_output validation and MEV mitigation (private mempools or TWAP oracles)."
   }
 ]
