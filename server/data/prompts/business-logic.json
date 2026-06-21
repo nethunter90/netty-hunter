@@ -1308,5 +1308,105 @@
       "Demonstrate completing payment while interrupting inventory deduction, showing order marked as paid but product still available for resale",
       "Recommend using database transactions for multi-step workflows, implementing saga pattern with compensations, and distributed inventory locks"
     ]
+  },
+  {
+    "id": 26,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "A promotional engine allows stacking of unlimited percentage-based discount codes because validation checks only verify individual coupon validity, not cumulative discount caps. An attacker chains 5 coupons (20% each) totaling 101% discount.",
+    "prompt": "Design an attack sequence leveraging coupon stacking to achieve negative transaction prices and model the revenue impact.",
+    "reasoning_focus": "Cumulative discount validation gap enabling price inversion.",
+    "expected_answer": "Coupon stacking exploits the absence of aggregate discount ceiling validation. Applying five 20% coupons sequentially results in a 101% total discount, inverting the transaction price to negative values. On a $100 item: after 20% discount ($80), subsequent coupons reduce the price below zero, potentially triggering refund issuance or order reversal exploits. The attacker receives payment instead of paying. At scale with bulk orders, this creates measurable revenue leakage. Mitigation requires: (1) enforcing a maximum cumulative discount cap (e.g., 50%) at the basket level before transaction processing, (2) validating that final price remains strictly positive, and (3) implementing mutual exclusivity rules for promotional code combinations, with backend validation preventing application of incompatible discounts.",
+    "evaluation_criteria": "Must calculate the negative price outcome and recommend basket-level cumulative discount ceiling enforcement with strict positive-price validation before payment processing."
+  },
+  {
+    "id": 27,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "Inventory management accepts negative quantities in the cart if a user directly manipulates the product quantity parameter to -1 before checkout, bypassing frontend validation.",
+    "prompt": "Demonstrate how negative quantity acceptance enables reverse inventory exploitation and free goods extraction.",
+    "reasoning_focus": "Backend quantity validation bypass enabling reverse inventory.",
+    "expected_answer": "Negative quantity parameters bypass frontend validation by directly manipulating API requests. Submitting a cart with product quantity of -1 generates a negative line item credit. When combined with a legitimate positive-quantity purchase, the negative item reduces the transaction total. On a $50 item with -1 quantity of the same item, the order total becomes $0 or triggers refund processing. This exploits the absence of server-side quantity boundary validation. An attacker extracts inventory value without payment. Mitigation: (1) enforce strict quantity bounds validation server-side (quantity > 0), (2) reject and log negative quantity submissions with security alerts, (3) validate all quantity parameters against inventory and account constraints before order confirmation, and (4) implement audit logging of unusual quantity patterns.",
+    "evaluation_criteria": "Must demonstrate the negative quantity to zero-cost order chain and recommend server-side absolute quantity validation with logging of boundary violations."
+  },
+  {
+    "id": 28,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A balance transfer endpoint processes requests asynchronously; two simultaneous requests from the same account transferring the full balance to different recipients are both accepted because balance checks occur before queue processing, not during atomic execution.",
+    "prompt": "Model a race condition attack on balance transfers enabling double-spend of the same funds.",
+    "reasoning_focus": "Race condition on balance validation during asynchronous transfer processing.",
+    "expected_answer": "Asynchronous balance transfer processing creates a race window between validation and settlement. An account with $10,000 receives concurrent transfer requests: Request A transfers $10,000 to Recipient X, Request B transfers $10,000 to Recipient Y. Both requests pass initial balance validation ($10,000 >= $10,000) before queue processing. The system processes both transfers, debiting $10,000 twice against a $10,000 balance, resulting in a -$10,000 account state. Funds are credited to both recipients despite insufficient balance. This double-spend exploits lack of pessimistic locking on balance updates. Mitigation: (1) implement distributed locking or database row-level locks before balance validation, (2) use atomic database transactions that check balance and debit in a single serialized operation, (3) employ optimistic locking with version counters to detect concurrent modifications, and (4) enforce strict idempotency keys for transfer requests to prevent duplicate processing.",
+    "evaluation_criteria": "Must articulate the race window timing and recommend atomic transaction-based balance validation with locking mechanisms or optimistic concurrency control."
+  },
+  {
+    "id": 29,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "A multi-tenant SaaS platform stores user roles in a client-side JWT token without server-side validation; a user edits the JWT claim from 'user' to 'admin' and re-submits authenticated requests.",
+    "prompt": "Assess the privilege escalation risk of client-side role manipulation in JWT-based authentication.",
+    "reasoning_focus": "Client-side role claim manipulation enabling privilege bypass.",
+    "expected_answer": "JWTs signed without strict validation of claim integrity enable privilege escalation through token manipulation. A user decodes a JWT, modifies the 'role' claim from 'user' to 'admin', and re-submits the token. If the server blindly trusts the token without cryptographic signature verification or server-side role store validation, the modified token grants admin access. The attacker accesses admin endpoints, modifies other users' data, exports sensitive reports, or escalates permissions further. This exploits the absence of server-side authorization state and assumes the signing key is compromised or the token signature validation is weak. Mitigation: (1) always verify JWT signatures using a securely stored private key, (2) maintain an authoritative server-side role store, not client claims, (3) validate user roles against the database on every permission-sensitive operation, (4) use short JWT expiration times and refresh token rotation, and (5) implement role-change audit logging with out-of-band notifications.",
+    "evaluation_criteria": "Must explain JWT signature bypass mechanics and recommend server-side role authority validation independent of token claims."
+  },
+  {
+    "id": 30,
+    "complexity": "L4",
+    "domain": "Healthcare",
+    "scenario": "A prescription fulfillment workflow allows patients to request refills; the system checks if the last fill was >= 30 days ago but does not validate that the prescription quantity matches the original provider authorization before dispensing.",
+    "prompt": "Model a workflow bypass enabling unauthorized prescription quantity escalation.",
+    "reasoning_focus": "Prescription quantity validation gap in refill workflow.",
+    "expected_answer": "Prescription refill workflows validate temporal constraints (e.g., 30-day minimum between fills) but may neglect to enforce quantity bounds against the original provider authorization. A patient requests a refill for 90 tablets when the original prescription authorized 30 tablets. The system checks the 30-day refill interval and dispenses 90 tablets due to absence of original-quantity validation. This enables unauthorized medication quantity escalation, creating diversion risk, patient safety issues, and regulatory compliance violations. Over 12 months, a patient could obtain 1080 tablets instead of the authorized 360. Mitigation: (1) retrieve and enforce the original prescription quantity ceiling on every refill request, (2) implement dispense-quantity audit logging with pharmacist review, (3) validate that cumulative annual dispensing does not exceed provider authorization, (4) cross-reference DEA schedules for controlled substances with stricter validation, and (5) generate alerts for quantity escalations exceeding historical refill patterns.",
+    "evaluation_criteria": "Must calculate cumulative overage from quantity escalation and recommend original-prescription-quantity enforcement with controlled-substance-specific validation."
+  },
+  {
+    "id": 31,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A seller on a peer-to-peer marketplace can adjust product prices in real-time; a buyer places an order, and the seller changes the price to a higher amount before the order is confirmed in the payment processing queue.",
+    "prompt": "Evaluate the price manipulation vulnerability in asynchronous checkout workflows.",
+    "reasoning_focus": "Price mutation between order placement and payment confirmation.",
+    "expected_answer": "Asynchronous checkout workflows create a window between order placement and payment processing where product prices can be modified. A buyer places an order for an item at $50; before payment processing begins, the seller updates the price to $150. The payment processor retrieves the current price, charges the buyer $150, and the order is confirmed at the inflated price. The buyer is unaware of the price change due to the temporal gap. This exploits the absence of price-snapshot locking at order placement. Mitigation: (1) capture and lock the product price at order creation, storing it in an order-line-item record, (2) validate that payment processing uses the locked historical price, not current catalog price, (3) implement a short order expiration window (e.g., 5 minutes) to limit price-lock duration, (4) use database transactions to ensure price retrieval and payment occur atomically, and (5) generate buyer notifications if prices change during checkout.",
+    "evaluation_criteria": "Must identify the time-window vulnerability and recommend order-level price snapshots locked at placement, validated during payment processing."
+  },
+  {
+    "id": 32,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "A DeFi platform allows swaps with slippage tolerance set by the user; an attacker sees pending swap transactions in the mempool, front-runs with a larger swap of the same token pair, and executes a back-run swap to extract the price difference.",
+    "prompt": "Model a sandwich attack exploiting mempool visibility and slippage tolerance in atomic swap execution.",
+    "reasoning_focus": "Front-run and back-run attacks on mempool-visible transactions.",
+    "expected_answer": "Sandwich attacks exploit public mempool visibility and slippage tolerance on DEX swaps. An attacker observes a pending swap: User swaps 100 ETH for USDC with 2% slippage tolerance. Attacker front-runs by swapping 500 ETH for USDC, increasing USDC price. User's 100 ETH swap now receives fewer USDC (within their 2% tolerance but below original expected price). Attacker back-runs by swapping the acquired USDC back to ETH at the inflated price, capturing the price difference. On a $200,000 transaction, a 2% slippage tolerance loses $4,000 to the sandwich attacker. At scale with high-value swaps, attackers extract millions. Mitigation: (1) implement encrypted mempools or private relay services (e.g., MEV-resistant execution), (2) enforce minimal slippage tolerances with warnings, (3) use batch auctions to randomize transaction ordering, (4) implement commit-reveal schemes to hide swap details until execution, and (5) validate on-chain prices against off-chain oracles to detect anomalies.",
+    "evaluation_criteria": "Must quantify the slippage extraction per transaction and recommend MEV-resistant execution mechanisms or encrypted mempool solutions."
+  },
+  {
+    "id": 33,
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "A subscription billing platform calculates pro-rata refunds using floating-point arithmetic; the refund amount is rounded down, and the remainder is retained by the platform without audit logging.",
+    "prompt": "Assess the financial accumulation risk from rounding errors in pro-rata refund calculations.",
+    "reasoning_focus": "Floating-point rounding bias in pro-rata calculations.",
+    "expected_answer": "Pro-rata refund calculations using floating-point arithmetic introduce rounding errors that accumulate at scale. A subscriber pays $99 for annual service, cancels after 100 days. Refund calculation: ($99 / 365 days) * 265 remaining days = $72.191781... Rounding down to $72.19 retains $0.0082 per cancellation. With 100,000 annual cancellations, the platform accumulates $820 in undisclosed retained refunds. This violates consumer protection regulations requiring accurate pro-rata calculations. Mitigation: (1) use integer arithmetic (convert to cents, perform calculations, then convert back) to eliminate floating-point rounding, (2) implement explicit rounding policies: round in customer's favor (up) or to nearest cent, documented in terms, (3) maintain detailed audit logs of all refund calculations with rounding amounts, (4) perform periodic reconciliation of calculated refunds vs. actual payments to detect systematic rounding bias, and (5) issue credit memos or periodic refunds for accumulated rounding remainders.",
+    "evaluation_criteria": "Must calculate cumulative rounding error at scale and recommend integer-based arithmetic or explicit rounding-policy enforcement with audit reconciliation."
+  },
+  {
+    "id": 34,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A ride-sharing platform calculates dynamic pricing using distance and time; the algorithm uses a 32-bit integer for accumulated seconds, which overflows after 136 years; a malicious actor injects a manipulated timestamp causing integer overflow in surge-pricing calculations.",
+    "prompt": "Model integer overflow exploitation in dynamic pricing calculations and quantify the fare manipulation impact.",
+    "reasoning_focus": "Integer overflow in elapsed-time arithmetic enabling price manipulation.",
+    "expected_answer": "Integer overflow in time-based pricing calculations enables fare manipulation. A 32-bit integer represents time in seconds, overflowing after 2^31 seconds (~68 years). If a timestamp is injected as a near-maximum value, subtraction to calculate elapsed time wraps to a negative or minimal value, reducing the calculated duration. A ride normally priced at $25 (30-minute duration) becomes $2 if the elapsed-time calculation wraps to 3 minutes due to overflow. Alternatively, overflow in surge-multiplier calculations (e.g., 2^31 requests causes multiplier to wrap to negative, inverting pricing). An attacker exploits this by manipulating request timestamps or crafting edge-case time values. At scale, systematic fare undercharging occurs. Mitigation: (1) use 64-bit integers (int64_t) for all time calculations to extend overflow horizon beyond application lifetime, (2) implement unsigned integer types where negative time is impossible, (3) add explicit overflow detection and clamping logic that rejects out-of-range values, (4) validate timestamp sanity (e.g., timestamp must be within \u00b11 hour of server time), and (5) log and alert on all arithmetic operations near integer boundaries.",
+    "evaluation_criteria": "Must demonstrate the integer overflow calculation and recommend 64-bit arithmetic with bounds validation and timestamp sanity checks."
+  },
+  {
+    "id": 35,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "A peer-to-peer lending platform awards bonus points for successful loan originations; an affiliate can register multiple accounts, originate loans to themselves, and redeem bonus points for cash without verification that the loans represent legitimate credit underwriting.",
+    "prompt": "Design a self-referral abuse attack exploiting the absence of loan legitimacy validation in affiliate bonus distribution.",
+    "reasoning_focus": "Affiliate bonus abuse through self-origination without underwriting validation.",
+    "expected_answer": "Affiliate bonus programs incentivize loan originations but fail to validate loan legitimacy or borrower-affiliate independence. An affiliate registers Accounts A (borrower), B (affiliate), and C (secondary borrower). Account B originates a loan to Account A ($5,000), receives a $250 bonus. Account A simultaneously originates a loan to Account C, generating another $250 bonus for Account A (who is the affiliate on that transaction). Loans are self-referential and non-arms-length, lacking genuine credit assessment. The affiliate extracts $500 in bonuses without legitimate lending activity. At scale with 50 self-originated loans per affiliate, $12,500 in unearned bonuses are extracted. Mitigation: (1) enforce mandatory underwriting criteria (credit score, income verification, collateral assessment) before bonus issuance, (2) implement identity verification to prevent affiliate-borrower relationship masking, (3) flag and investigate loans between related accounts (shared IP, email, payment method), (4) require borrower loan-to-value or debt-to-income ratios to demonstrate legitimate creditworthiness, (5) implement a grace period before bonus payout to measure loan repayment performance, and (6) audit affiliate-generated loan portfolios for relationship anomalies.",
+    "evaluation_criteria": "Must model the self-origination attack with specific financial figures and recommend underwriting validation with relationship detection and repayment-performance validation."
   }
 ]
