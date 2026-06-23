@@ -1985,6 +1985,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
                   exploitPayload: confirmed.exploitPayload,
                   confidence: confirmed.hypothesis.confidence,
                   authHeaders: this.authHeaders,
+                  capturedBody: confirmed.proof.find(p => p.success)?.output ?? confirmed.proof[0]?.output,
+                  rawHttpLog: confirmed.rawEvidence,
                 },
                 confirmed.severity,
                 confirmed.cvssScore,
