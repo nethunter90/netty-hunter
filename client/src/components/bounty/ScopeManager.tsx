@@ -70,6 +70,8 @@ export function ScopeManager() {
   const [stealthProfile, setStealthProfile] = useState('balanced');
   const [noveltyFloor, setNoveltyFloor] = useState('');
   const [maxScanRate, setMaxScanRate] = useState('');
+  const [scopeText, setScopeText] = useState('');
+  const [outOfScopeText, setOutOfScopeText] = useState('');
   const [importing, setImporting] = useState(false);
 
   const [programs, setPrograms] = useState<Program[]>([]);
@@ -144,14 +146,21 @@ export function ScopeManager() {
           stealthProfile,
           noveltyFloor: noveltyFloor ? parseFloat(noveltyFloor) : undefined,
           maxScanRate: maxScanRate ? parseInt(maxScanRate, 10) : undefined,
+          scope: scopeText,
+          outOfScope: outOfScopeText,
         }),
       });
       const data = await res.json();
       if (res.ok) {
         toast({ title: 'Program Imported', description: data.message || `Successfully imported ${handle}` });
+        if (data.warnings?.length) {
+          toast({ title: 'Scope Warning', description: data.warnings[0], variant: 'destructive' });
+        }
         setHandle('');
         setNoveltyFloor('');
         setMaxScanRate('');
+        setScopeText('');
+        setOutOfScopeText('');
         fetchPrograms();
       } else {
         toast({ title: 'Import Failed', description: data.error || 'Failed to import program', variant: 'destructive' });
@@ -312,6 +321,31 @@ export function ScopeManager() {
                   className="bg-[#1e1e1e] border-[#3d3d3d] text-gray-200 h-9"
                   data-testid="input-max-scan-rate"
                 />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <Label className="text-xs text-gray-400 mb-1 block">In-Scope (one host per line)</Label>
+                <textarea
+                  placeholder={"example.com\n*.example.com\napi.example.com"}
+                  value={scopeText}
+                  onChange={(e) => setScopeText(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-md bg-[#1e1e1e] border border-[#3d3d3d] text-gray-200 px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  data-testid="textarea-scope"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-gray-400 mb-1 block">Out-of-Scope (one host per line)</Label>
+                <textarea
+                  placeholder={"staging.example.com\ndev.example.com"}
+                  value={outOfScopeText}
+                  onChange={(e) => setOutOfScopeText(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-md bg-[#1e1e1e] border border-[#3d3d3d] text-gray-200 px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  data-testid="textarea-out-of-scope"
+                />
+                <p className="text-xs text-gray-500 mt-1">Host patterns only — paths rejected</p>
               </div>
             </div>
             <Button
