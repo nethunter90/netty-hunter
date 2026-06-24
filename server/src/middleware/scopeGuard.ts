@@ -224,8 +224,13 @@ export class ScopeGuard {
   private matchesPattern(hostname: string, pattern: string): boolean {
     // Bare "*" means match everything (used by local-lab / custom programs).
     if (pattern === "*") return true;
-    // Support wildcards: *.example.com — matches at any subdomain depth.
-    const normalized = pattern.replace(/^\*\./, "");
+    // Normalize: strip scheme and path from stored patterns so that entries like
+    // "http://admin.example.com" or "*.example.com/api" still match correctly.
+    // OOS scheme-prefix bug: without this, "http://admin.example.com" stored as OOS
+    // never matches the clean hostname extracted from the incoming URL → scope escape.
+    let normalized = pattern.replace(/^https?:\/\//i, ""); // strip scheme
+    normalized = normalized.split("/")[0];                  // strip path
+    normalized = normalized.replace(/^\*\./, "");           // strip wildcard prefix
     return hostname === normalized || hostname.endsWith(`.${normalized}`);
   }
 }
