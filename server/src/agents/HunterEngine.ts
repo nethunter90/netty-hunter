@@ -1576,9 +1576,13 @@ export class HunterEngine extends EventEmitter {
     // Per-hunt corpusEnrichment flag (set at launch) takes priority.
     // The CORPUS_ENRICHMENT env var acts as a global process-level override.
     const enrichmentOn = this.state.corpusEnrichment !== false && process.env.CORPUS_ENRICHMENT !== 'false';
-    const domainKnowledge = enrichmentOn
-      ? await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7)
-      : '';
+    let domainKnowledge = '';
+    let corpusEntries: import('../intelligence/JsonPromptLoader').CorpusEntry[] = [];
+    if (enrichmentOn) {
+      const result = await jsonPromptLoader.getContextEntriesAsync(semanticQuery, 7);
+      domainKnowledge = result.block;
+      corpusEntries = result.entries;
+    }
 
     // ── RAG: RL framework priorities ──────────────────────────────────────────
     // If observations contain recognized framework tags, pull historically
@@ -1664,6 +1668,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       },
       promptPreview: prompt.slice(0, 1500),
       enrichmentActive: enrichmentOn,
+      corpusEntries,
     });
 
     const _aiReasoningStart = Date.now();

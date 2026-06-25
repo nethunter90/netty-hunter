@@ -56,6 +56,14 @@ export interface JsonPrompt {
   engagement_context?: string;
 }
 
+export interface CorpusEntry {
+  id: string;
+  title: string;
+  category: string;
+  score: number | null;  // cosine similarity (null = keyword fallback, no score)
+  mode: 'semantic' | 'keyword';
+}
+
 interface EmbeddingCache {
   hash: string;
   model: string;
@@ -220,16 +228,41 @@ export class JsonPromptLoader {
   }
 
   /**
-   * Semantic context retrieval. Embeds the query text and returns the
-   * most relevant prompt examples. Falls back to keyword search if embeddings
-   * are not yet ready.
+   * Semantic context retrieval — returns the rendered block only.
+   * Kept for backward compatibility. Prefer getContextEntriesAsync when
+   * you need scores for visibility or threshold filtering.
    */
   async getContextBlockAsync(queryText: string, maxEntries = 7): Promise<string> {
+    const { block } = await this.getContextEntriesAsync(queryText, maxEntries);
+    return block;
+  }
+
+  /**
+   * Semantic context retrieval with relevance scoring.
+   *
+   * Returns both the rendered text block (for prompt injection) AND the
+   * individual scored entries (for UI visibility and threshold enforcement).
+   *
+   * minScore (default 0.45): entries below this cosine similarity are
+   * excluded even if they rank in the top N. Prevents low-relevance corpus
+   * noise from being injected. Falls back gracefully: if fewer than
+   * Math.ceil(maxEntries/2) entries pass the threshold, the threshold is
+   * relaxed to 0 so the model always gets at least some context.
+   */
+  async getContextEntriesAsync(
+    queryText: string,
+    maxEntries = 7,
+    minScore = 0.45,
+  ): Promise<{ block: string; entries: CorpusEntry[] }> {
     if (!this.embeddingsReady) {
-      // Kick off init in background, return keyword result for now
       void this.initEmbeddings();
       const vulnHint = this.extractVulnHint(queryText);
-      return this.getContextBlock(vulnHint, maxEntries);
+      const block = this.getContextBlock(vulnHint, maxEntries);
+      // Keyword fallback — no scores available
+      const entries: CorpusEntry[] = block
+        ? [{ id: 'keyword-fallback', title: `Keyword match: ${vulnHint}`, category: 'keyword', score: null, mode: 'keyword' }]
+        : [];
+      return { block, entries };
     }
 
     let queryEmbedding: number[];
@@ -237,7 +270,8 @@ export class JsonPromptLoader {
       queryEmbedding = await this.embedText(queryText);
     } catch {
       const vulnHint = this.extractVulnHint(queryText);
-      return this.getContextBlock(vulnHint, maxEntries);
+      const block = this.getContextBlock(vulnHint, maxEntries);
+      return { block, entries: [] };
     }
 
     // Score every prompt by cosine similarity
@@ -246,14 +280,35 @@ export class JsonPromptLoader {
       const key = this.entryKey(p);
       const emb = this.embeddings.get(key);
       if (!emb) continue;
-      const score = this.cosineSimilarity(queryEmbedding, emb);
-      scored.push({ prompt: p, score });
+      scored.push({ prompt: p, score: this.cosineSimilarity(queryEmbedding, emb) });
     }
-
     scored.sort((a, b) => b.score - a.score);
-    const selected = scored.slice(0, maxEntries).map(s => s.prompt);
 
-    return this.renderContextBlock(selected);
+    // Apply threshold. If fewer than half pass, relax to 0 so the model always
+    // gets some context rather than an empty block (fail-open on relevance).
+    const minRequired = Math.ceil(maxEntries / 2);
+    const aboveThreshold = scored.filter(s => s.score >= minScore);
+    const candidates = aboveThreshold.length >= minRequired
+      ? aboveThreshold.slice(0, maxEntries)
+      : scored.slice(0, maxEntries);
+
+    const selected = candidates.map(s => s.prompt);
+    const block = this.renderContextBlock(selected);
+
+    const entries: CorpusEntry[] = candidates.map(s => {
+      const p = s.prompt;
+      const title = p.scenario ?? p.objective ?? p.prompt.slice(0, 80);
+      const category = p.auth_domain ?? p.cloud_domain ?? p.domain ?? p.signal_type ?? p.category ?? 'general';
+      return {
+        id: String(p.id),
+        title: title.slice(0, 100),
+        category,
+        score: Math.round(s.score * 1000) / 1000,
+        mode: 'semantic' as const,
+      };
+    });
+
+    return { block, entries };
   }
 
   private buildEntryText(p: JsonPrompt): string {

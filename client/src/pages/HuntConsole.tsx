@@ -362,6 +362,7 @@ export default function HuntConsole() {
         durationMs: Number(data.durationMs ?? 0),
         generatedCount: Number(data.generatedCount ?? 0),
         enrichmentActive: typeof data.enrichmentActive === 'boolean' ? data.enrichmentActive : undefined,
+        corpusEntries: Array.isArray(data.corpusEntries) ? data.corpusEntries : undefined,
       });
     });
 

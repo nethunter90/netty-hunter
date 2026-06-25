@@ -49,7 +49,8 @@ export type ActivityEvent =
   | { type: "ai_reasoning"; ts: string; task: string; phase: "thinking" | "complete" | "decision";
       context?: { observations: number; hypotheses: number; iteration: number };
       promptPreview?: string; rawResponse?: string; summary?: string;
-      durationMs?: number; generatedCount?: number; enrichmentActive?: boolean }
+      durationMs?: number; generatedCount?: number; enrichmentActive?: boolean;
+      corpusEntries?: { id: string; title: string; category: string; score: number | null; mode: string }[] }
   | { type: "recon_start";    ts: string; domain: string }
   | { type: "recon_complete"; ts: string; subdomains: number; alive: number; interestingUrls: number; historicalPathCount: number };
 
@@ -233,6 +234,44 @@ function AIReasoningRow({ ev }: { ev: ActivityEvent & { type: "ai_reasoning" } }
           )}
         </div>
       </button>
+
+      {expanded && ev.phase === "thinking" && ev.corpusEntries && ev.corpusEntries.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          <div className="text-[9px] text-hack-dim font-mono uppercase tracking-wide px-1 flex items-center gap-2">
+            <span>Corpus entries injected ({ev.corpusEntries.length})</span>
+            {ev.corpusEntries[0].mode === 'keyword' && (
+              <span className="text-hack-yellow text-[8px] border border-hack-yellow/30 rounded px-1">KEYWORD FALLBACK</span>
+            )}
+          </div>
+          <div className="space-y-0.5 px-1">
+            {ev.corpusEntries.map((entry, i) => {
+              const pct = entry.score !== null ? Math.round(entry.score * 100) : null;
+              const barColor = pct === null ? 'bg-hack-dim' : pct >= 70 ? 'bg-hack-accent' : pct >= 50 ? 'bg-hack-yellow' : 'bg-hack-red';
+              const scoreLabel = pct !== null ? `${pct}%` : 'kw';
+              return (
+                <div key={i} className="flex items-center gap-1.5 py-0.5">
+                  <span className="text-[8px] text-hack-dim w-3 text-right flex-shrink-0">{i + 1}</span>
+                  <div className="w-12 flex-shrink-0">
+                    <div className="flex items-center gap-0.5">
+                      <div className="flex-1 h-1 bg-hack-muted rounded overflow-hidden">
+                        <div className={`h-full rounded ${barColor}`} style={{ width: pct !== null ? `${pct}%` : '30%' }} />
+                      </div>
+                      <span className={`text-[8px] font-mono w-5 text-right flex-shrink-0 ${pct !== null && pct < 50 ? 'text-hack-red' : 'text-hack-dim'}`}>{scoreLabel}</span>
+                    </div>
+                  </div>
+                  <span className="text-[8px] text-hack-blue font-mono flex-shrink-0 max-w-[60px] truncate">{entry.category}</span>
+                  <span className="text-[9px] text-hack-text truncate flex-1">{entry.title}</span>
+                </div>
+              );
+            })}
+          </div>
+          {ev.corpusEntries.some(e => e.score !== null && e.score < 0.45) && (
+            <div className="text-[8px] text-hack-red font-mono px-1">
+              ⚠ Some entries below 0.45 threshold — low relevance (threshold relaxed, context sparse)
+            </div>
+          )}
+        </div>
+      )}
 
       {expanded && ev.phase === "thinking" && ev.promptPreview && (
         <div className="mt-1.5 space-y-1">
