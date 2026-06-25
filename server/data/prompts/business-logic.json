@@ -1638,5 +1638,105 @@
     "reasoning_focus": "Integer overflow and stale oracle price manipulation in DEX swap logic.",
     "expected_answer": "The combination of 15-minute oracle update windows and flash loan availability creates a deterministic arbitrage vector. An attacker executes a multi-step attack within a single block: (1) flash loan 1000 ETH from a lending pool at near-zero cost, (2) invoke the swap function using the oracle price from 14 minutes ago (which may be 3-5% stale), (3) receive 50,000 tokens at the stale price, (4) immediately swap 50,000 tokens on a DEX with real-time pricing (Uniswap), (5) receive 1050 ETH back (5% arbitrage), (6) repay the flash loan (1000 ETH + 0.05% fee = 1000.5 ETH), netting 49.5 ETH in profit. The \u00b15% slippage tolerance is insufficient because the oracle can legitimately be 5% stale at the attack execution time. Exploitation scales with oracle update frequency; shorter intervals reduce the window. The attack is profitable if (oracle price discount %) > (flash loan fee % + market slippage %). Remediation requires implementing time-weighted average price (TWAP) oracles that sample prices across multiple blocks, reducing exploitable staleness to seconds rather than minutes. Additionally, enforce a maximum price impact check by requiring swap outputs to match recent block-level prices (e.g., within 1% of the last 3 blocks), implement circuit breakers that pause swaps during high volatility, and calculate flash loan fees dynamically based on transaction size to price out large arbitrage extractions.",
     "evaluation_criteria": "Must calculate the arbitrage profit (at least 49.5 ETH in the example) and recommend TWAP oracles with time-weighted sampling combined with circuit breakers and dynamic flash loan fees."
+  },
+  {
+    "id": 56,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "Coupon system applies discounts sequentially without deduplication; users can stack percentage-off coupons with free-shipping coupons, and the same percentage coupon code can be applied multiple times if submitted via separate API requests within the same checkout session.",
+    "prompt": "Design an attack to apply overlapping discounts and quantify the maximum discount extraction on a $500 purchase.",
+    "reasoning_focus": "Coupon stacking and sequential application logic bypass.",
+    "expected_answer": "If a 20% coupon and a 15% coupon stack sequentially without deduplication checks, a $500 purchase is reduced to $500 \u00d7 0.8 \u00d7 0.85 = $340, a 32% total discount. If the same coupon ID can be resubmitted via rapid API calls without idempotency enforcement, an attacker could theoretically apply it multiple times. The fix requires: (1) coupon exclusivity rules enforced at session start, (2) idempotent coupon application with UUID-based deduplication, (3) maximum discount caps per transaction, and (4) backend coupon combination validation that rejects incompatible types before price recalculation.",
+    "evaluation_criteria": "Must calculate cumulative discount percentage from sequential application and identify API-level idempotency gaps; must recommend session-level coupon conflict detection."
+  },
+  {
+    "id": 57,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A seller-to-buyer escrow marketplace processes refunds by marking order status as 'refunded' without atomically decrementing the buyer's account balance and crediting the seller's pending payout. A race condition exists between the refund status update and the balance ledger write.",
+    "prompt": "Model a scenario where simultaneous refund and withdrawal requests cause double-crediting of funds.",
+    "reasoning_focus": "Race condition between order status and ledger state.",
+    "expected_answer": "A buyer requests a refund for a $250 order while simultaneously withdrawing pending funds. Without atomic transactions, the sequence could be: (1) Order status \u2192 'refunded' (no balance decrement yet), (2) Withdrawal approved (balance calculated before refund ledger entry), (3) Refund ledger entry applied late, duplicating the $250 credit. Mitigation requires: (1) atomic transactions wrapping both status and ledger updates, (2) optimistic locking with version numbers on the balance record, (3) ledger-first design where every balance change is journaled before status updates, and (4) idempotent refund operations with unique request IDs to prevent reprocessing on retry.",
+    "evaluation_criteria": "Must identify the specific race condition window and demonstrate double-crediting scenario; must recommend atomicity and idempotency controls."
+  },
+  {
+    "id": 58,
+    "complexity": "L2",
+    "domain": "SaaS",
+    "scenario": "A multi-tenant SaaS platform uses tenant ID as a URL path parameter (/api/tenants/{tenant_id}/dashboard). Authorization checks occur only in the service layer, not in the API gateway. An authenticated user can modify the tenant_id parameter to access another organization's analytics and data.",
+    "prompt": "Demonstrate how privilege scope bypass enables cross-tenant data exfiltration.",
+    "reasoning_focus": "Missing API-layer authorization and tenant isolation.",
+    "expected_answer": "An authenticated user with valid credentials for tenant_id=42 can manually change the URL to /api/tenants/43/dashboard and receive another organization's data if the authorization check relies on implicit token validation rather than explicit tenant-to-user binding. The attacker gains access to: customer lists, transaction histories, configuration data, and potentially API keys. Fixes include: (1) embedding the authorized tenant_id in the JWT and validating it against the path parameter, (2) API gateway-level authorization checking tenant membership before routing to backends, (3) row-level security (RLS) policies in the database that enforce tenant isolation, and (4) audit logging of all cross-tenant access attempts with alerting.",
+    "evaluation_criteria": "Must explain how token-only authorization fails to enforce tenant boundaries; must recommend JWT-embedded tenant binding and API gateway validation."
+  },
+  {
+    "id": 59,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "A peer-to-peer lending platform allows users to create referral codes offering $50 bonus per successful referral. The referral reward is credited upon account creation, not upon first loan disbursement. A user creates 100 accounts programmatically using email aliases, each triggering the referral bonus, then abandons the accounts.",
+    "prompt": "Calculate the financial impact of referral bonus abuse and design a detection strategy.",
+    "reasoning_focus": "Referral abuse through batch account creation.",
+    "expected_answer": "An attacker creates 100 accounts with the same person's KYC data using email variants (user+1@domain, user+2@domain, etc.), each triggered by a referral code, earning $50 \u00d7 100 = $5,000 in fraudulent bonuses. At platform scale (10,000 active users), undetected abuse could cost $500,000+ annually. Detection requires: (1) KYC identity verification linking to a single person per bonus period, (2) time-based rate limiting on referral credits (e.g., max 5 per day per referrer), (3) email domain clustering and phone number deduplication, (4) behavior analysis flagging accounts created within minutes of each other from the same IP, and (5) requiring first loan activation or minimum deposit before bonus credit.",
+    "evaluation_criteria": "Must quantify abuse scale and calculate platform financial impact; must recommend identity verification and behavioral rate limiting controls."
+  },
+  {
+    "id": 60,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "An inventory management system accepts product quantity adjustments via API without validating against negative inventory. A negative quantity update is stored in the database and displayed as 'infinite stock' in the frontend due to unsigned integer handling.",
+    "prompt": "Explain how negative quantity injection enables unlimited product sales without inventory constraint.",
+    "reasoning_focus": "Negative quantity and unsigned integer rendering.",
+    "expected_answer": "A POST /api/inventory/adjust request with quantity=-1 on a product with 5 units reduces it to 4. However, if the API lacks bounds validation and the database schema uses a signed integer, an attacker can set quantity=-999,999. When the frontend renders this with unsigned integer conversion (treating it as a very large positive number) or simply displays 'infinite availability', sales are unconstrained. An order for 10,000 units completes successfully, causing massive overselling. Mitigation requires: (1) API-layer validation rejecting adjustments that would make quantity negative, (2) database constraints (CHECK quantity >= 0), (3) atomic reserve-and-decrement patterns during checkout, (4) frontend validation of inventory displays against a sane maximum, and (5) transaction logs capturing all inventory mutations with justifications.",
+    "evaluation_criteria": "Must explain the negative quantity \u2192 unsigned rendering chain; must recommend database constraints and API validation rules."
+  },
+  {
+    "id": 61,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "A decentralized exchange (DEX) smart contract processes swaps with a price oracle that updates once per block. An attacker executes a flash loan to accumulate large token reserves, manipulates the price oracle within the same block, executes a beneficial swap, and repays the loan\u2014all atomically.",
+    "prompt": "Model a flash loan price manipulation attack and quantify potential profit.",
+    "reasoning_focus": "Oracle manipulation within atomic transaction.",
+    "expected_answer": "An attacker flash-loans 1,000 ETH, swaps it for Token-A on the DEX, inflating Token-A's price in the oracle. Since the oracle hasn't updated mid-block, they execute a swap of Token-B \u2192 Token-A at artificially high rates, profiting from the discrepancy. They then repay the flash loan plus fees. If the oracle-derived price differs from true market price by 10%, and the attacker moves $10M in volume, profits could reach $100,000+. Mitigation requires: (1) time-weighted average price (TWAP) oracles spanning multiple blocks, (2) Chainlink or similar decentralized oracle networks resistant to single-block manipulation, (3) slippage limits enforced at transaction submission, (4) circuit breakers halting trades if price moves exceed thresholds in one block, and (5) liquidity depth requirements before large swaps execute.",
+    "evaluation_criteria": "Must quantify profit from oracle manipulation within atomic transaction; must recommend TWAP oracles and slippage circuit breakers."
+  },
+  {
+    "id": 62,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine platform allows patients to update their insurance information in-session. The request handler validates that the user is authenticated but does not verify that the insurance tier matches the current session's plan. An attacker changes insurance tier from 'basic' to 'premium' mid-session, then completes the consultation at premium pricing but pays only the discounted rate they started with.",
+    "prompt": "Demonstrate how insurance tier modification during checkout enables pricing bypass.",
+    "reasoning_focus": "Dynamic session parameter validation absent.",
+    "expected_answer": "A patient with 'basic' insurance (20% copay) initiates a $200 consultation. Mid-consultation, they submit a PUT /api/patient/insurance with tier='premium' (5% copay). If the application recalculates the final bill using the updated insurance tier without validating that tier changes after session start are invalid, the copay drops from $40 to $10. The attacker saves $30 per session; across a patient base of 100,000, this could represent $3M in annual revenue loss. Fixes include: (1) snapshot insurance tier at session initialization and render it read-only during the session, (2) reject insurance tier modifications until the session is closed and billed, (3) validate that insurance updates occur only outside active sessions, (4) implement two-phase billing (lock-in tier, then calculate final amounts), and (5) audit log all insurance changes with timestamps linked to sessions.",
+    "evaluation_criteria": "Must identify the session-level parameter validation gap; must recommend tier immutability and two-phase billing."
+  },
+  {
+    "id": 63,
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "A subscription billing platform calculates monthly recurring charges using 32-bit signed integers for cent amounts. A user with a $999,999.99 subscription experiences integer overflow during the monthly billing cycle, resulting in a negative charge (credit to the user) instead of a debit.",
+    "prompt": "Model how integer overflow in currency calculations causes financial loss.",
+    "reasoning_focus": "Integer overflow in monetary arithmetic.",
+    "expected_answer": "A subscription billed at $999,999.99/month uses 99,999,999 cents internally (32-bit signed int max \u2248 2.1B). Monthly calculation multiplies this by renewal count or applies tax/adjustment logic. If an operation crosses the 32-bit boundary (e.g., 99,999,999 \u00d7 1.05 for tax), overflow wraps to a large negative number, recorded as a credit instead of a charge. The user receives $1M+ in credits. At scale, a 0.1% population with high-value plans could incur millions in losses. Mitigation requires: (1) use 64-bit integers or decimal types for all monetary calculations, (2) apply overflow detection before arithmetic (check bounds pre-calculation), (3) implement monetary libraries (e.g., BigDecimal in Java) that handle arbitrary precision, (4) validate billing amount against business rules (reject > $1M per period), and (5) reconciliation reports flagging unusual credit transactions.",
+    "evaluation_criteria": "Must explain the 32-bit overflow and resulting sign flip; must recommend 64-bit or decimal types with bounds validation."
+  },
+  {
+    "id": 64,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A gig economy platform allows workers to set their hourly rate. The backend rate-limiting for time-logging is per-worker per-day (max 16 hours). A worker executes two simultaneous time-logging requests at the same second, both approved because the counter is checked before either write completes, allowing them to log 32 hours in a day.",
+    "prompt": "Demonstrate a race condition in cumulative time-logging that bypasses daily hour caps.",
+    "reasoning_focus": "Non-atomic read-check-write on cumulative counters.",
+    "expected_answer": "A worker has logged 14 hours today. At time T, they submit two identical time-log requests for 9 hours each. Both requests execute: (1) Check: SELECT logged_hours WHERE worker_id=X AND date=TODAY \u2192 returns 14, (2) Evaluate: 14 + 9 = 23 \u2264 16 hours? False, reject. However, without row-level locking, both requests pass the check before either writes. Both INSERT time_log entries, resulting in 32 total logged hours. They earn 2 additional hours of pay ($20-40) fraudulently. Fixes include: (1) atomic increment: UPDATE time_log SET total_minutes = total_minutes + 540 WHERE ... AND total_minutes + 540 <= 960, (2) pessimistic locking (SELECT ... FOR UPDATE) during the read phase, (3) optimistic locking with version numbers on the daily counter, and (4) idempotent request handling using unique submission IDs.",
+    "evaluation_criteria": "Must identify the race condition between check and write; must recommend atomic operations or row-level locking."
+  },
+  {
+    "id": 65,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "A shopping cart system stores item prices client-side in a hidden form field. During checkout, the total is recalculated by summing client-submitted prices rather than querying the current backend price database.",
+    "prompt": "Explain how client-side price manipulation enables arbitrary discounts.",
+    "reasoning_focus": "Trust of client-submitted pricing data.",
+    "expected_answer": "A $500 laptop is added to the cart; the frontend renders a hidden input field: <input type='hidden' name='item_price' value='50000' />. An attacker uses browser dev tools to modify it to <input type='hidden' name='item_price' value='1' />, then submits checkout. If the backend totals prices from POST parameters instead of recalculating from the product database, the transaction processes at $0.01. The attacker saves $499.99. Scaled across even 0.1% of users, this represents significant fraud. Mitigation requires: (1) never trust client-submitted prices; always fetch current price from the backend database at checkout time, (2) validate item_id and quantity only from the client, then look up price server-side, (3) implement price change detection comparing submitted price to current price, flagging discrepancies >5%, and (4) audit logging of price mismatches with manual review.",
+    "evaluation_criteria": "Must explain the price lookup failure and demonstrate the attack; must recommend server-side price queries and validation."
   }
 ]
