@@ -43,7 +43,7 @@ const StartHuntSchema = z.object({
     bearerToken: z.string().optional(),
     headers: z.record(z.string()).optional(),
   }).optional(),
-  corpusEnrichment: z.boolean().optional().default(true),
+  corpusEnrichment: z.boolean().optional().default(false),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────

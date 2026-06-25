@@ -44,7 +44,7 @@ export default function HuntConsole() {
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
-  const [corpusEnrichment, setCorpusEnrichment] = useState(true);
+  const [corpusEnrichment, setCorpusEnrichment] = useState(false);
   // B3: hunt started from another panel (orchestration or socket path)
   const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
 
