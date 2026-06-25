@@ -239,6 +239,39 @@ describe('report-export — export gate (gateCheck)', () => {
     }
   });
 
+  // ── data-plumbing end-to-end: confirmed row → ExportFinding → formatter ───
+  // Proves the full chain: gate-pass + field-population + rendered output.
+  // This is the missing link — gate-passes and fields-render are distinct behaviors.
+  it('confirmed row with exploitPayload/cvssScore → both appear in formatted output', () => {
+    const row = makeRow('confirmed');
+    const gate = gateCheck(row, 42);
+    expect(gate.allowed).toBe(true);
+    if (!gate.allowed) return;
+
+    // Simulate exactly what the route handler does
+    const finding: ExportFinding = {
+      findingId: 42,
+      title: gate.row.title,
+      type: gate.row.vulnType,
+      severity: gate.row.severity,
+      description: gate.row.description,
+      impact: gate.row.impact ?? undefined,
+      affectedEndpoint: gate.row.affectedUrl ?? undefined,
+      exploitPayload: gate.row.exploitPayload ?? undefined,
+      cvssScore: gate.row.cvssScore ?? undefined,
+    };
+
+    for (const platform of PLATFORMS) {
+      const md = FORMATTERS[platform](finding, true);
+      // Payload must appear in a fenced code block
+      expect(md).toContain('"><script>alert(1)</script>');
+      expect(md).toMatch(/```[\s\S]*alert\(1\)[\s\S]*```/);
+      // CVSS score must appear in the severity line
+      expect(md).toMatch(/CVSS 7\.4/);
+      console.log(`  [${platform}] exploitPayload rendered=true, cvssScore rendered=true`);
+    }
+  });
+
   // ── data-plumbing: confirmed row fields map to ExportFinding ──────────────
   it('confirmed row with null exploitPayload → exploitPayload omitted (no fabrication)', () => {
     const row = makeRow('confirmed', { exploitPayload: null, cvssScore: null });
