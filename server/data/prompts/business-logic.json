@@ -1968,5 +1968,350 @@
     "reasoning_focus": "Integer overflow in cumulative payment calculations.",
     "expected_answer": "The vulnerability exploits a fixed-width integer representation without overflow detection. When the system sums transaction amounts using a 32-bit signed integer, values near INT_MAX (2,147,483,647) combined with additional orders cause the total to exceed the maximum representable value. The integer wraps around to large negative values, inverting the payout direction. A seller with legitimate $100 in earnings plus one order for $2,147,483,647 followed by a refund can create a cumulative total exceeding INT_MAX, wrapping negative and generating a company-to-seller refund request. Remediation requires: (1) using arbitrary-precision arithmetic (BigDecimal, Decimal types) for all financial calculations instead of fixed-width integers, (2) implementing explicit overflow checks before arithmetic operations (sum each transaction against remaining capacity), (3) storing all monetary values as integers in the smallest unit (cents, satoshis) to avoid floating-point precision issues, (4) validating individual transaction amounts against reasonable business limits (maximum order price) before permitting them to enter the ledger, (5) maintaining dual-ledger accounting with credits and debits stored separately to prevent negative balances masking errors. Implement comprehensive audit logging that captures the calculation steps. Use static analysis tools to identify arithmetic operations on financial data without overflow guards. Test with boundary values (INT_MAX-1, INT_MAX, INT_MAX+1) in payment calculation scenarios.",
     "evaluation_criteria": "Must explain the integer overflow wraparound mechanism and why fixed-width integers are dangerous for financial math; must recommend BigDecimal types and explicit overflow checks with dual-ledger accounting."
+  },
+  {
+    "id": 86,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "An online retailer allows customers to apply multiple discount codes sequentially without validation. A user discovers that each coupon code applies its discount percentage to the already-discounted subtotal rather than the original price. By stacking five 20%-off coupons, the user reduces a $1000 order to $32.77 (0.8^5 = 0.32768). The system processes the transaction without detecting duplicate code usage or coupon combination restrictions.",
+    "prompt": "Identify how sequential coupon application compounds discounts and determine the maximum loss from unrestricted code stacking.",
+    "reasoning_focus": "Coupon stacking vulnerability through iterative discount application without deduplication or validation logic.",
+    "expected_answer": "The vulnerability stems from applying each coupon as a multiplicative discount on the previous result rather than implementing coupon exclusivity or additive caps. When five identical 20%-off coupons stack: $1000 \u00d7 0.8 \u00d7 0.8 \u00d7 0.8 \u00d7 0.8 \u00d7 0.8 = $32.77, representing a 96.7% loss to the merchant. The system lacks three critical controls: (1) coupon deduplication checks preventing the same code reuse, (2) exclusivity rules preventing certain coupon combinations, and (3) maximum-discount thresholds capping total reduction. To exploit, an attacker obtains multiple single-use coupon codes (via referral abuse or account enumeration) and applies them sequentially before checkout validation consolidates all discounts. Remediation requires atomic coupon application: validate all coupons before any discount calculation, enforce mutually-exclusive coupon categories, implement per-transaction discount caps (e.g., max 40% total), and log all coupon applications with user/session/IP binding for fraud detection. Database constraints should prevent duplicate code usage within a time window.",
+    "evaluation_criteria": [
+      "Calculate final price from five 20%-off coupon stacking and quantify merchant loss percentage",
+      "Specify deduplication mechanism (coupon history table, Redis key expiry) and coupon category exclusivity rules to prevent recurrence"
+    ]
+  },
+  {
+    "id": 87,
+    "complexity": "L4",
+    "domain": "SaaS",
+    "scenario": "A project management SaaS allows users to adjust usage metrics via an internal adjustment API endpoint that was intended for administrator reconciliation only. Due to missing role-based access control checks, any authenticated user can call /api/admin/adjust-usage with a JWT token, submitting negative adjustment values to reduce their storage consumption metrics. A user with 150GB usage calls the endpoint with adjustment=-150000000000 (bytes), resulting in negative storage consumption that triggers unlimited free-tier benefits indefinitely.",
+    "prompt": "Analyze the privilege escalation enabling non-admin users to manipulate usage metrics.",
+    "reasoning_focus": "Privilege-skip vulnerability through missing authorization checks on administrative endpoints and negative quantity manipulation.",
+    "expected_answer": "The vulnerability combines two critical flaws: missing role-based access control (RBAC) enforcement and lack of business-logic validation on metric adjustments. The /api/admin/adjust-usage endpoint performs token validation (authentication) but omits authorization checks verifying user.role == 'admin' before processing adjustment requests. Simultaneously, the adjustment logic accepts negative values without validating that cumulative usage cannot decrease below zero, enabling negative-balance attacks. An attacker authenticates with a standard user token, identifies the endpoint via API enumeration or documentation disclosure, and submits a large negative adjustment to underflow the usage counter. This causes the billing system to calculate free-tier eligibility based on negative storage, incorrectly granting unlimited resources. Exploitation requires: (1) identifying the adjustment endpoint, (2) crafting a request with valid JWT and negative adjustment payload, (3) triggering billing recalculation. Remediation: implement authorization middleware checking role=admin before endpoint processing, validate adjustments maintain cumulative usage >= 0 (add limits to adjustment magnitude), audit all adjustment requests with admin approval workflows, and implement idempotency keys to prevent duplicate adjustments.",
+    "evaluation_criteria": [
+      "Demonstrate the exact RBAC bypass allowing standard-user JWT to invoke admin endpoint and resulting negative usage state",
+      "Recommend authorization middleware implementation, non-negative constraint validation, and approval workflow design"
+    ]
+  },
+  {
+    "id": 88,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine platform processes prescription refills through a state machine workflow: pending \u2192 approved \u2192 dispensed. The system checks user subscription status only at the 'approved' state before advancing to 'dispensed'. A user schedules a refill, subscription auto-renews to 'active', the refill is approved, then the user cancels their subscription immediately. The system advances the refill to 'dispensed' before checking updated subscription status, dispensing medications to an inactive subscriber without payment capture.",
+    "prompt": "Identify the workflow bypass enabled by stale subscription status checks.",
+    "reasoning_focus": "Workflow state-machine bypass through time-of-check to time-of-use race condition on subscription validation.",
+    "expected_answer": "The prescription refill workflow implements a critical time-of-check-time-of-use (TOCTOU) vulnerability by reading subscription status once during the 'approved' state without re-validating during the final 'dispensed' transaction. The attack sequence: (1) User schedules refill with active subscription, (2) System transitions refill to 'pending' and 'approved' states, checking subscription='active' once, (3) User immediately cancels subscription (subscription='cancelled'), (4) System proceeds to 'dispensed' state using cached or unchecked subscription status from step 2, (5) Medication dispensed without payment authorization. The root cause is storing subscription status in the refill object or local variable rather than performing transactional validation at payment-processing time. Remediation requires: (1) implement pessimistic locking on the refill record during state transitions, (2) re-query current subscription status immediately before payment processing (not during approval), (3) add subscription-status change event listeners that automatically cancel pending/approved refills, (4) enforce two-phase commit: validate subscription and hold authorization before marking dispensed, (5) implement compensating transactions that reverse dispensed refills if subscription becomes inactive between approval and dispensing. Database constraints should require subscription.status in allowed_states before INSERT into dispensed_refills.",
+    "evaluation_criteria": [
+      "Create timeline showing subscription status at each refill state transition and identify exact point subscription validity expires",
+      "Specify re-validation logic location (immediately pre-payment, not pre-approval) and event-listener implementation for subscription cancellations"
+    ]
+  },
+  {
+    "id": 89,
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "A streaming subscription service implements a referral reward system: users earn $10 credit for each new user they refer. The referral logic checks only whether the referred email address is 'new to the platform' by querying if email exists in the users table. An attacker registers disposable email accounts (via temporary email services), refers themselves from multiple browser profiles, receives referral credits for each, then uses the credits to extend subscription indefinitely at zero cost.",
+    "prompt": "Analyze the referral abuse vulnerability from insufficient referred-user validation.",
+    "reasoning_focus": "Referral fraud through minimal uniqueness validation and missing device/IP fingerprinting controls.",
+    "expected_answer": "The referral system implements insufficient validation gates, checking only if the referred email is new without detecting coordinated abuse from a single attacker. The vulnerability manifests in three ways: (1) no Device ID or IP tracking preventing one person registering multiple accounts with different emails, (2) no referrer-referred relationship deduplication (same attacker cannot refer same account twice), (3) missing velocity checks (e.g., one account referring 50+ new users per day is anomalous). An attacker opens ten incognito browser profiles, uses temp email services (tempmail.com) to generate disposable addresses, registers ten accounts from the same IP with slightly different payment methods to avoid fraud detection, then has Account A refer Accounts B-J sequentially. The system credits Account A with $90, applied immediately to subscription balance. The attacker repeats weekly with new temp emails. Detection requires: (1) Device ID fingerprinting (browser canvas/WebGL hashing, TLS session tracking) to correlate accounts, (2) IP-based rate limiting and geo-velocity checks (account registration from different countries in minutes is impossible), (3) Phone number or government ID verification for new referral accounts (raising attacker friction), (4) Credit hold period (30 days post-referral before credit availability, allowing time for legitimate referred user to make first payment confirming intention), (5) Machine learning anomaly detection on referral patterns (unusual email domain distributions, sequential IPs, payment method reuse). Implement referral audit logs linking referrer IP, device ID, payment instrument, and referred account creation.",
+    "evaluation_criteria": [
+      "Model attack scenario showing how one attacker generates 10+ new accounts weekly and accumulates unlimited subscription credits",
+      "Recommend device fingerprinting implementation, velocity limits (max referrals per account/IP/day), and credit hold-back mechanics"
+    ]
+  },
+  {
+    "id": 90,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "A decentralized exchange aggregator prices assets by averaging feeds from five external price oracles without staleness checks. When one oracle API returns an outdated price from cache (BTC=$40,000) while others quote $67,000, the average price becomes $54,400. An attacker executes a large swap using the underpriced average, receives more BTC than market rates should allow, then immediately sells on a secondary market at true price, profiting from the oracle manipulation.",
+    "prompt": "Evaluate price manipulation attacks enabled by unvalidated multi-source oracle averaging.",
+    "reasoning_focus": "Price oracle weakness through naive averaging without staleness validation and lack of outlier detection.",
+    "expected_answer": "The aggregator implements naive oracle averaging without timestamp validation or outlier filtering, creating a price-manipulation surface. The attack exploits the weighted average calculation: when one oracle's price significantly deviates from consensus (due to cache staleness or provider lag), that outlier pulls the average toward artificially favorable rates for the attacker. The sequence: (1) Attacker monitors five price feeds, (2) One provider's cached response lags 5+ minutes (BTC=$40,000 vs real $67,000), (3) Attacker identifies the deviation and submits a swap order using the aggregator's endpoint, (4) DEX calculates swap output using $54,400 average price, minting 0.0148 BTC instead of 0.0090 BTC for equivalent USD input, (5) Attacker immediately sells 0.0148 BTC on Uniswap at $67,000/BTC for $990, vs only $600 spent on initial swap, gaining $390 profit. Remediation requires: (1) Staleness checks rejecting prices older than N seconds (e.g., 30s for fast markets), (2) Deviation filtering excluding outliers >X% from median price before averaging, (3) Primary/fallback oracle design where prices from fewer than 3 non-stale sources trigger circuit-breaker pauses, (4) Time-weighted average prices (TWAP) over blocks/periods reducing single-sample manipulation, (5) Slippage limits requiring swap execution price within Y% of expected output. Implement oracle change-of-value event triggers and off-chain monitoring alerting on anomalous feed divergences.",
+    "evaluation_criteria": [
+      "Calculate the exact BTC amount received ($600 input at $54,400 average vs $40,000 stale price) and USD profit when sold at true $67,000 price",
+      "Recommend staleness check implementation (timestamp validation logic), outlier filtering mechanism (median-based bounds), and circuit-breaker threshold design"
+    ]
+  },
+  {
+    "id": 91,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "Coupon application logic allows multiple discount codes to stack without verification of exclusivity rules, enabling cumulative reductions exceeding 100% of item price.",
+    "prompt": "Identify how coupon stacking bypasses discount restrictions and calculate maximum financial exposure per transaction.",
+    "reasoning_focus": "Coupon exclusivity validation and cumulative discount capping.",
+    "expected_answer": "When the system applies coupons sequentially without checking mutual exclusivity flags, a user can combine a 50% category discount, 30% store-wide promotion, and 25% first-purchase code, resulting in 105% total reduction. The system may either charge negative amounts, refund the difference, or apply only the final discount after the damage is done. The vulnerability stems from missing coupon combination validation at application time. Remediation requires: (1) maintaining an exclusivity matrix defining which coupons cannot combine; (2) enforcing a maximum cumulative discount cap (e.g., 75%) before final amount calculation; (3) validating the discount total against item price before order finalization; (4) implementing per-coupon usage limits linked to user accounts and IP addresses to prevent programmatic abuse.",
+    "evaluation_criteria": "Must identify that multiple coupons can combine beyond 100% discount and explain the financial loss mechanism; must recommend exclusivity matrix validation and cumulative discount capping with per-transaction verification."
+  },
+  {
+    "id": 92,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Transfer API accepts negative quantity parameter in batch payment requests; validation only checks that quantity field exists, not its sign or value bounds.",
+    "prompt": "Analyze how negative quantity manipulation reverses fund flow and assess attack surface for automated payment reversal.",
+    "reasoning_focus": "Input validation on signed integer quantities in financial operations.",
+    "expected_answer": "A transfer endpoint expecting positive amounts for debits fails to validate the sign of the quantity parameter. An attacker submits a batch transfer request with quantity=-5000 intended for a business account. If the backend only validates presence and not signedness, the system interprets the negative value as a reversal operation, crediting the attacker's account instead of debiting it. This is particularly exploitable in batch APIs where validation may be deferred. Remediation requires: (1) explicit type checking for unsigned integers or explicit range validation (quantity > 0); (2) whitelist validation against expected transaction direction; (3) schema enforcement at API definition level using strict type systems; (4) audit logging of all sign-related transformations; (5) transaction review workflows for unusual patterns like reversals without corresponding forward transfers.",
+    "evaluation_criteria": "Must explain how negative parameters reverse intended fund direction and identify batch processing as high-risk vector; must recommend unsigned integer types and directional schema validation."
+  },
+  {
+    "id": 93,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "Wallet balance updates for seller payouts use optimistic locking without transaction isolation; two concurrent withdrawal requests from same account may both read the same balance, both pass validation, and both execute deductions, resulting in over-withdrawal.",
+    "prompt": "Model race condition exploitation in concurrent balance operations and design atomic transaction controls.",
+    "reasoning_focus": "Race condition on concurrent balance validation and deduction.",
+    "expected_answer": "A marketplace seller with $1000 balance initiates two simultaneous $800 withdrawals via different devices. Thread 1 reads balance=$1000, passes validation, Thread 2 reads balance=$1000 simultaneously, both pass validation, both execute SQL UPDATE balance=balance-800. Depending on database isolation level, both updates may succeed, resulting in balance=-$600 instead of one rejection. This occurs because validation and deduction are separate operations without atomic bundling. Even with optimistic versioning, a race between read-check-write windows remains. Remediation requires: (1) SELECT...FOR UPDATE row locking to serialize conflicting operations; (2) SERIALIZABLE isolation level for balance-critical operations; (3) atomic compare-and-swap operations (CAS) at application level if using eventual consistency; (4) idempotency keys preventing duplicate processing of retried requests; (5) transactional wrapping of validation+deduction as single database transaction; (6) real-time monitoring of negative balance anomalies.",
+    "evaluation_criteria": "Must identify the read-check-write race window and explain why both threads pass validation; must recommend serialized transaction processing with row-level locks or SELECT...FOR UPDATE."
+  },
+  {
+    "id": 94,
+    "complexity": "L2",
+    "domain": "SaaS",
+    "scenario": "API endpoint for changing user role accepts role ID parameter without verifying requestor has permission to grant that role; regular users can escalate themselves to admin.",
+    "prompt": "Assess privilege escalation vectors in role assignment logic.",
+    "reasoning_focus": "Authorization check on privilege elevation operations.",
+    "expected_answer": "An unauthenticated but registered user calls PATCH /user/123/role with role_id=1 (admin). The endpoint authenticates the user but fails to verify the caller has admin privileges before allowing role changes. No implicit check occurs for role_id validity against caller's permissions. The user successfully escalates to admin. This is a privilege skip vulnerability where the operation required for authorization (role change) is the thing being protected. Remediation requires: (1) explicit authorization check before role mutation, verifying caller.role >= requested_role (hierarchy-based); (2) whitelist of roles each user type can assign; (3) separate endpoint permissions from data validation\u2014even if a role_id is valid doesn't mean the caller can assign it; (4) audit logging of all privilege changes with IP/device tracking; (5) requiring multi-factor confirmation for role escalations above current level; (6) periodic access reviews detecting suspicious role grants.",
+    "evaluation_criteria": "Must identify that role changes lack authorization verification and explain the privilege escalation mechanism; must recommend explicit role hierarchy checks and audit trails for elevation operations."
+  },
+  {
+    "id": 95,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "Referral program credits $50 to referrer and $50 to referee per successful signup; system tracks referrals by email only; users can create multiple accounts with email aliases and mail forwarding services.",
+    "prompt": "Model referral abuse vectors and calculate program cost exposure from duplicate signups.",
+    "reasoning_focus": "Referral reward verification and duplicate account detection.",
+    "expected_answer": "A user creates 100 accounts using variations (user+1@domain, user+2@domain) via a catch-all email service, then refers themselves in a ring structure. Each referral generates $100 in credits ($50\u00d72). The system validates that signups are unique emails but fails to detect that all addresses route to the same recipient via email aliasing. This could cost the program $10,000 per attacker account network. Multi-address abuse combines with insufficient identity verification. Remediation requires: (1) email canonicalization normalizing alias variations before storage (remove +suffix, handle provider-specific aliases); (2) phone number verification as secondary identity signal requiring distinct real numbers; (3) velocity checks detecting multiple signups from same IP/device fingerprint; (4) delayed reward issuance (72+ hours) to detect fraud patterns before paying; (5) machine learning models identifying suspicious referral chains with rapid cascading signups; (6) manual review threshold for referrers accumulating >$500 in pending credits; (7) captcha on referral link generation to prevent programmatic abuse.",
+    "evaluation_criteria": "Must identify email aliasing as attack vector and calculate cumulative fraud exposure; must recommend email canonicalization, phone verification, and velocity-based fraud detection."
+  },
+  {
+    "id": 96,
+    "complexity": "L2",
+    "domain": "Subscription",
+    "scenario": "Price increase for renewed subscriptions is applied client-side; JavaScript code calculates new price and updates order total before payment, but calculation is visible in browser DevTools and modifiable before submission.",
+    "prompt": "Identify price manipulation vectors in client-side billing logic.",
+    "reasoning_focus": "Trust in client-side price calculations without server validation.",
+    "expected_answer": "A SaaS subscription service upgrades a user's tier from $99/month to $199/month. The frontend JavaScript calculates the new amount and updates the DOM. An attacker opens DevTools, modifies the JavaScript variable subscription_price = 99 before payment submission, and the charge goes through at the old rate. The backend accepts the user-provided amount without validating it against the subscription plan tier currently in the database. Price calculation must never occur on the client. Remediation requires: (1) server-side authoritative price lookup using only the plan_id parameter, never accepting user-provided amounts; (2) order validation comparing submitted price to database plan price with tolerance checking for currency conversion; (3) payment gateway secondary validation\u2014many gateways allow merchant to submit expected amount for verification; (4) billing audit reports comparing plan tier to charged amount, flagging anomalies; (5) remove all price/discount calculation logic from frontend JavaScript; (6) API contracts explicitly documenting that price fields are read-only metadata and ignored during payment processing.",
+    "evaluation_criteria": "Must identify that client-side prices can be modified before payment and explain why server-side validation is non-negotiable; must recommend database-backed price lookups with zero client input to final charges."
+  },
+  {
+    "id": 97,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "Patient prescription workflow requires doctor approval before dispensing; system has conditional skip allowing nurses to 'mark as approved' if doctor hasn't responded in 24 hours, but approval timestamp is not validated against actual doctor action.",
+    "prompt": "Analyze workflow bypass mechanisms in healthcare authorization chains.",
+    "reasoning_focus": "Conditional approval bypass without validation of actual authorization.",
+    "expected_answer": "A patient's critical medication prescription requires doctor approval. After 24 hours without response, the system allows a nurse to auto-approve to prevent treatment delays. However, the approval status update only sets approved=true and approval_time=NOW() without logging that the approval came from the auto-bypass condition rather than actual physician verification. A nurse could manually trigger this bypass before 24 hours has passed, or a compromised account could escalate approvals. The vulnerability is that the approval mechanism loses auditability and precondition validation. Remediation requires: (1) separate approval_source field (doctor, nurse_auto, system_auto) making authorization path explicit; (2) timestamp validation ensuring auto-approval only triggers after verified 24h waiting period; (3) enforce approval prerequisites (check doctor activity status, ensure escalation rule applied correctly); (4) immutable audit trail recording exact condition triggering approval; (5) mandatory secondary verification for high-risk medications; (6) alerting on unusual approval patterns (bulk auto-approvals, rapid approvals from new accounts); (7) compliance review of all auto-approved prescriptions for regulatory audits.",
+    "evaluation_criteria": "Must identify that auto-bypass can be triggered without validating 24-hour precondition and explain auditability loss; must recommend conditional source tracking and immutable audit logs with prerequisite validation."
+  },
+  {
+    "id": 98,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "Decentralized exchange smart contract calculates token swap amounts using 64-bit unsigned integers; a trade of 2^63 tokens causes overflow in the calculation of output amount, resulting in a tiny refund instead of proper exchange.",
+    "prompt": "Model integer overflow in cryptographic asset calculations and design safe arithmetic for financial operations.",
+    "reasoning_focus": "Integer overflow in decentralized finance calculation logic.",
+    "expected_answer": "A DEX contract implements automated market maker with formula: output = (input * reserve_out) / reserve_in using uint64. An attacker submits a swap of 2^62 tokens. When multiplying input \u00d7 reserve_out, the result exceeds 2^64 and wraps around, producing an extremely small output_amount. The attacker receives minimal tokens but the contract's internal reserves are updated as if a normal trade occurred, draining the liquidity pool. Uint64 is insufficient for financial calculations\u2014a typical reserve might be 10^18 tokens, and multiplication creates 10^36 intermediate values. Remediation requires: (1) use uint256 (256-bit) or arbitrary precision libraries to prevent overflow in intermediate calculations; (2) implement SafeMath library functions (add, mul, div) that revert on overflow rather than wrapping; (3) validate input amounts against maximum safe values: max_input = reserve_in / 2 to prevent multiplication overflow; (4) use fixed-point arithmetic libraries designed for DeFi (e.g., Solidity's FixedPoint); (5) implement Checks-Effects-Interactions pattern with state verification after calculations; (6) formal verification of arithmetic operations; (7) monitor transactions for anomalous exchange rates deviating >5% from oracle prices.",
+    "evaluation_criteria": "Must explain the multiplication overflow mechanism producing tiny outputs despite large inputs; must recommend uint256, SafeMath, and input validation to prevent intermediate overflow."
+  },
+  {
+    "id": 99,
+    "complexity": "L2",
+    "domain": "Marketplace",
+    "scenario": "Seller inventory system decrements stock on order creation but restocks on cancellation. A buyer places 50 orders for a limited item with 10 units, then cancels 45, purchasing at seller's cost via mass cancellation refunds.",
+    "prompt": "Assess abuse patterns in order-cancellation-based refund logic and design rate limiting for reversals.",
+    "reasoning_focus": "Inventory manipulation through strategic cancellation abuse.",
+    "expected_answer": "A limited-edition item has only 10 units available. A buyer rapidly creates 50 orders, each succeeding because inventory is decremented before payment clears. They then cancel 40 orders within the refund window, receiving 40 refunds while keeping 10 units. The seller loses money on processing fees and platform costs. Each order-cancel cycle also causes inventory fluctuations visible to other buyers, creating false scarcity. The vulnerability is treating order creation and cancellation as symmetric operations without fraud detection. Remediation requires: (1) implement per-user cancellation limits (e.g., max 3 cancellations per item per day); (2) escalating cancellation fees: first 2 cancellations free, 3rd+ charges 10% of order value; (3) velocity checks flagging suspicious patterns: >5 orders of same SKU from same user within 1 hour; (4) delay refund processing 48 hours after cancellation request, allowing fraud team to review; (5) implement cancellation reason tracking and alert on excessive 'changed mind' reasons; (6) reputation scoring reducing refund speed for users with >20% cancellation rate; (7) inventory reservations lasting only 15 minutes from order creation, requiring payment completion to extend lock.",
+    "evaluation_criteria": "Must identify that rapid order-cancel cycles exploit free cancellations and inventory volatility; must recommend per-user cancellation rate limits, escalating fees, and velocity-based fraud detection."
+  },
+  {
+    "id": 100,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "Bill payment system allows users to schedule recurring payments with a frequency parameter (monthly, biweekly, daily). A user sets frequency='0 days' intending to create a one-time payment, but the recurring engine interprets zero as 'every day', creating 365 unwanted charges annually.",
+    "prompt": "Analyze input validation gaps in recurring operation scheduling and design safe default handling.",
+    "reasoning_focus": "Invalid frequency parameter causing unexpected recurring behavior.",
+    "expected_answer": "A user sets up a $500 bill payment with schedule_frequency=0 (attempting one-time, misinterpreting API documentation). The backend interprets 0 as 'every 0 days' which some libraries default to 'every day'. Over 30 days, the user is charged $15,000 instead of $500 once. The system lacks validation that frequency > 0 and lacks safety defaults for edge cases. Additionally, the user interface may not clearly show the cumulative impact of daily charges. Remediation requires: (1) whitelist allowed frequencies: ['once', 'daily', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annually'] with numeric mapping enforced; (2) reject frequency=0 with explicit error message; (3) display calculation showing 'This will charge $X every Y days = $Z annually' in UI before submission; (4) require explicit confirmation for daily/weekly frequencies with warning modal; (5) implement velocity checks blocking >$1000 in charges per day from single recurring source; (6) automated monitoring flagging recurring charges that differ >10\u00d7 from user's historical spending; (7) one-click pause feature accessible in billing dashboard; (8) email notification before each charge for high-frequency recurring payments.",
+    "evaluation_criteria": "Must explain how frequency=0 default to daily creates runaway charges and identify poor input validation; must recommend whitelist validation, UI confirmation displays, and velocity-based fraud detection."
+  },
+  {
+    "id": 101,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "Product inventory system allows negative stock quantities due to missing validation on concurrent purchase and restock operations. When inventory reaches zero, the checkout service fails to prevent order placement; simultaneous restock and purchase requests can result in negative inventory values, causing fulfillment chaos and financial loss.",
+    "prompt": "Demonstrate how negative quantity bypass in inventory management enables overselling and design atomic inventory reservation mechanisms.",
+    "reasoning_focus": "Negative quantity vulnerability through concurrent checkout without inventory locks.",
+    "expected_answer": "An e-commerce platform tracks inventory as integer field without non-negative constraints. Attack sequence: (1) Product has 1 unit. (2) Customer A initiates checkout, passes inventory check (1 >= 1), begins payment processing. (3) Simultaneously, Customer B initiates checkout, also reads inventory value of 1, passes validation. (4) Both transactions deduct 1 unit, resulting in final inventory of -1. (5) Platform oversells, creating unfulfillable orders and refund obligations. Exploitation requires sub-100ms timing between validation and deduction. Remediation: Implement row-level exclusive locks (SELECT...FOR UPDATE), use atomic compare-and-swap operations, or enforce database constraints with GENERATED columns. Apply inventory reservation pattern: reserve stock before payment, release on timeout or failure.",
+    "evaluation_criteria": "Must explain the race window between inventory read and deduction and calculate oversale volume; must recommend pessimistic locking with database constraints or optimistic locking with retry logic."
+  },
+  {
+    "id": 102,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "A role-based access control system relies on client-side role verification before rendering admin features. Attackers bypass this check by directly calling backend endpoints with manipulated authorization headers or missing role validation on sensitive API routes, gaining unauthorized admin access without privilege escalation.",
+    "prompt": "Identify privilege skip vulnerabilities caused by client-side RBAC enforcement and design server-side authorization controls.",
+    "reasoning_focus": "Privilege skip through missing server-side authorization validation.",
+    "expected_answer": "SaaS platform implements role checks only in frontend UI rendering logic, using JWT tokens with 'role' claim set by client. Attack: (1) Attacker intercepts their JWT with role='user'. (2) Modifies claim to role='admin' and re-signs using known public key or algorithm confusion. (3) Calls POST /api/users/delete?userId=123 with modified token. (4) Backend only verifies token signature, not role claim against database. (5) Deletion succeeds without audit trail. Exploitation requires JWT header algorithm downgrade (HS256 vs RS256) or stolen signing keys. Remediation: (1) Store authoritative role mappings in server-side database, not tokens. (2) Validate user role from database on every sensitive operation. (3) Implement explicit permission checks on protected routes (e.g., @RequireRole('ADMIN')). (4) Use RS256 with asymmetric keys, reject 'none' algorithm. (5) Log all privilege checks and deny by default.",
+    "evaluation_criteria": "Must identify specific API endpoint vulnerable to role bypass and explain token manipulation technique; must specify server-side role validation architecture and recommend audit logging mechanisms."
+  },
+  {
+    "id": 103,
+    "complexity": "L5",
+    "domain": "Crypto",
+    "scenario": "A decentralized lending protocol's interest calculation uses floating-point arithmetic with accumulated rounding errors. Over thousands of transactions, interest compounding calculations diverge from expected values, allowing attackers to exploit precision loss to withdraw more assets than mathematically owed, draining the protocol's reserves.",
+    "prompt": "Model floating-point precision attacks in financial protocols and design fixed-point arithmetic safeguards.",
+    "reasoning_focus": "Integer overflow and floating-point precision loss in compound interest calculations.",
+    "expected_answer": "Crypto lending protocol calculates compound interest using IEEE 754 doubles: balance = principal * (1 + rate)^blocks. Attack: (1) Attacker deposits 1 wei (10^-18 ETH) in pool charging 2% daily interest. (2) After 365 blocks (1 year), calculated balance = 1 * (1.02)^365 = 1.0e308 wei due to exponential growth in floating-point representation. (3) Precision loss in mantissa causes rounding to unexpected values. (4) Combined with multiple small deposits across accounts, cumulative rounding errors accumulate to 0.1% protocol-wide discrepancy. (5) Attacker withdraws inflated balance. Exploitation requires transaction ordering control and precise timing. Remediation: (1) Use fixed-point arithmetic (uint256 with 18-decimal scaling). (2) Implement interest as: balance_new = (balance_old * (10^18 + rate)) / 10^18 (avoiding division by zero). (3) Add invariant checks: total_deposits >= total_withdrawals after every operation. (4) Use SafeMath libraries detecting overflow/underflow. (5) Conduct formal verification of arithmetic.",
+    "evaluation_criteria": "Must calculate specific precision loss threshold in wei/tokens and demonstrate multi-transaction exploit sequence; must specify fixed-point architecture with bit width and recommend invariant testing."
+  },
+  {
+    "id": 104,
+    "complexity": "L4",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine platform's appointment scheduling workflow skips authorization checks when patients request appointment cancellations via direct API calls. Attackers cancel other patients' appointments by modifying appointment IDs, disrupting medical care and causing no-show penalties for innocent users.",
+    "prompt": "Demonstrate workflow bypass vulnerabilities in healthcare systems and implement authorization-gating for state-changing operations.",
+    "reasoning_focus": "Workflow bypass through missing patient ownership validation on cancellation endpoint.",
+    "expected_answer": "Telemedicine platform exposes DELETE /api/appointments/{appointmentId} endpoint. Workflow bypass attack: (1) Patient A books appointment with ID=5001. (2) Attacker (different user) sends DELETE /api/appointments/5001 with their valid auth token. (3) Backend endpoint validates token presence but fails to verify appointment ownership (patient_id in JWT != appointment.patient_id). (4) Appointment cancels without validation. (5) Patient A sees cancellation notification; physician marks no-show. Exploitation requires enumeration of valid appointment IDs (sequential or predictable). Impact: disrupted medical care, missed treatments, physician schedule fragmentation. Remediation: (1) Verify requester owns the appointment before deletion: if (request.userId != appointment.patient_id) return 403. (2) Add resource-level access control (RBAC) checking appointment.patient_id against authenticated user. (3) Implement soft-delete audit trail instead of hard-delete. (4) Add appointment cancellation reason logging and physician notification. (5) Rate-limit cancellations per user (e.g., max 5/day) to prevent abuse.",
+    "evaluation_criteria": "Must explain the missing ownership validation check and specify the exact resource-level authorization logic needed; must recommend audit logging and rate-limiting controls for appointment state changes."
+  },
+  {
+    "id": 105,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A referral program rewards users with $10 credit for each friend registration, but validates referral relationships only at credit issuance time without checking for duplicate referrals or self-referrals. Attackers create multiple accounts to refer themselves, rapidly accumulating credits to purchase items at zero cost.",
+    "prompt": "Identify referral abuse vulnerabilities and design idempotent, graph-based fraud detection mechanisms.",
+    "reasoning_focus": "Referral abuse through missing duplicate and self-referral validation.",
+    "expected_answer": "Marketplace referral program processes credits via: INSERT INTO referral_credits (user_id, referred_user_id, amount) VALUES (attacker, attacker, 10). Attack: (1) Attacker creates accounts A, B, C using different emails/IPs but same payment method or device fingerprint. (2) Account A refers B: B completes registration, $10 credited to A. (3) Account B refers A: A (already registered) re-registers with variation, $10 credited to B. (4) Attacker repeats 50 times, accumulating $500 in 2 hours. (5) Uses credits to purchase inventory for resale. Exploitation requires account creation automation and payment method obfuscation. Impact: $500 fraud per attacker \u00d7 1000 attackers = $500K monthly loss. Remediation: (1) Add UNIQUE(referred_user_id) constraint to prevent duplicate referral rewards. (2) Validate referrer != referred_user before crediting. (3) Implement cooldown: require 30-day gap between referrer registration and reward eligibility. (4) Use device fingerprinting (TLS fingerprint, User-Agent) to detect same-actor multi-accounting. (5) Flag accounts with >10 referrals in 24h for manual review. (6) Require email domain diversity or phone verification.",
+    "evaluation_criteria": "Must calculate total fraud exposure with specific attack scale and timeline; must recommend database constraints (UNIQUE, CHECK) combined with behavioral anomaly detection."
+  },
+  {
+    "id": 106,
+    "complexity": "L4",
+    "domain": "E-commerce Platform",
+    "scenario": "An e-commerce checkout system applies discount codes sequentially without validating mutual exclusivity constraints. The backend accepts multiple coupon_codes in a single transaction, applying each discount independently before final price calculation. A logic flaw allows stacking of percentage-based coupons (e.g., two 50% discounts) that should be mutually exclusive, resulting in cumulative discounts exceeding 100% and negative final prices that the system rounds to $0.01.",
+    "prompt": "Analyze the coupon stacking vulnerability and design an attack chain that exploits discount code validation gaps to achieve free purchases.",
+    "reasoning_focus": "Cumulative discount exploitation through lack of mutual exclusivity validation and negative price handling.",
+    "expected_answer": "Coupon stacking vulnerabilities arise from sequential discount application without atomic validation of exclusivity rules. The vulnerability chain begins with identifying coupon codes marked 'stackable: false' in the application logic. An attacker obtains multiple percentage-based coupons (e.g., SUMMER50, FALL50) through legitimate means or enumeration. During checkout, they submit both codes in the coupon_codes array. The backend validates each code individually against current_price rather than enforcing single-use-per-category constraints. After first discount: $100 \u2192 $50. After second discount: $50 \u2192 $25. If three 50% coupons are stacked: $100 \u2192 $50 \u2192 $25 \u2192 $12.50. The system's negative-price handler clamps results to $0.01 instead of rejecting invalid states. Remediation requires: (1) coupon group-based mutual exclusivity checks before any discount application, (2) atomic validation that rejects transactions violating coupon constraints, (3) price floor validation that treats sub-$0.01 results as transaction rejection rather than rounding, and (4) database constraints enforcing coupon category uniqueness per transaction.",
+    "evaluation_criteria": [
+      "Must explain both the sequential validation flaw and how negative price clamping enables free purchases",
+      "Must recommend atomic group-based coupon validation with transaction rejection for constraint violations"
+    ]
+  },
+  {
+    "id": 107,
+    "complexity": "L5",
+    "domain": "Fintech Platform",
+    "scenario": "A cryptocurrency exchange implements a balance deduction system using optimistic locking with version numbers. When a user initiates a withdrawal, the system reads current_balance (version=5), subtracts withdrawal_amount, and updates the database where version=5. However, a race condition exists: if two concurrent withdrawal requests are submitted before either commits, both read version=5, both subtract from the same balance, and both commit successfully because their version checks pass independently. The platform uses eventual consistency with asynchronous balance reconciliation.",
+    "prompt": "Model the race condition attack on the balance deduction logic and demonstrate how concurrent withdrawal requests bypass the optimistic lock.",
+    "reasoning_focus": "Race condition in optimistic locking allowing double-spend through concurrent withdrawal execution.",
+    "expected_answer": "This vulnerability exploits a fundamental race condition in optimistic concurrency control when version checks occur independently of balance verification. The attack timeline: T1 (Request A): Read balance=$1000, version=5. T2 (Request B): Read balance=$1000, version=5. T3 (Request A): Attempt withdraw $900, check version=5 passes, UPDATE balance=$100 where version=5, version becomes 6. T4 (Request B): Attempt withdraw $900, check version=5 fails\u2014but due to asynchronous reconciliation, this withdrawal queues without immediate rejection. The system's eventual-consistency design allows the failed withdrawal to retry against the new version=6 state, effectively processing both withdrawals. The attacker exploits this by submitting multiple withdrawal requests simultaneously within the race condition window. Each request individually passes version validation because they all read the pre-withdrawal state before any commit. Remediation requires: (1) pessimistic locking (SELECT FOR UPDATE) ensuring serial balance deductions, (2) synchronous balance verification immediately before database commit with no version-checking bypass, (3) strict serialization at the database transaction level for balance-critical operations, and (4) transaction-level isolation level set to SERIALIZABLE rather than READ_COMMITTED.",
+    "evaluation_criteria": [
+      "Must detail the exact race condition timeline showing how concurrent requests bypass the optimistic lock mechanism",
+      "Must identify eventual consistency as the enabling factor and recommend synchronous pessimistic locking instead"
+    ]
+  },
+  {
+    "id": 108,
+    "complexity": "L4",
+    "domain": "Subscription SaaS",
+    "scenario": "A subscription management platform calculates monthly recurring revenue (MRR) using integer arithmetic in cents to avoid floating-point errors. The billing engine deducts subscription_cost_cents and applies a pro-rata adjustment for mid-cycle upgrades. Due to integer truncation in the division operation (daily_rate_cents = subscription_cost_cents / 30), remainders are discarded. An attacker discovers that by repeatedly canceling and re-subscribing at specific times, they can accumulate underbilled amounts that never reconcile. The platform's monthly reconciliation process uses the same truncating division, masking the accumulated variance.",
+    "prompt": "Identify the integer overflow and truncation attack in the subscription billing logic that enables revenue leakage.",
+    "reasoning_focus": "Integer truncation in currency arithmetic enabling cumulative underbilling through subscription cycle manipulation.",
+    "expected_answer": "Integer truncation vulnerabilities in financial systems arise from naive division of currency values without proper remainder handling. The attack exploits the subscription platform's pro-rata calculation: daily_rate_cents = 2999 cents / 30 = 99 cents/day (remainder 29 discarded). When a user upgrades mid-cycle on day 16, the system calculates pro-rata charge as 14 days \u00d7 99 cents = 1386 cents, discarding the remainder variance of (14 \u00d7 29 / 30 =) 13.6 cents. By timing subscription cancellations and re-subscriptions to trigger multiple pro-rata calculations, an attacker accumulates underbilled remainders. Over 100 cycles, this exceeds $10 in revenue loss per customer. The monthly reconciliation uses identical truncating division, never surfacing the variance. Exploitation: attacker subscribes, upgrades on day 16 (triggering pro-rata), downgrades on day 20 (re-triggering pro-rata), repeating this cycle monthly. Each cycle leaks 13-15 cents in company revenue. Remediation requires: (1) bankers' rounding (ROUND_HALF_EVEN) instead of truncation in all currency division, (2) explicit remainder tracking and deferred remainder ledger for sub-cent amounts, (3) monthly reconciliation that sums both charged amounts and accumulated remainders, and (4) unit tests comparing calculated charges against exact decimal arithmetic.",
+    "evaluation_criteria": [
+      "Must explain the specific integer truncation in the daily_rate_cents calculation and how remainder loss accumulates",
+      "Must recommend bankers' rounding and explicit remainder accounting rather than naive integer division"
+    ]
+  },
+  {
+    "id": 109,
+    "complexity": "L4",
+    "domain": "Marketplace",
+    "scenario": "A referral reward system awards 10% cash bonuses to both referrer and referee when a referred user makes their first purchase. The platform tracks referral codes through user registration but allows users to change their referral source attribution via the 'update_referral_attribution' endpoint if the referred user has no completed transactions. An attacker exploits this by registering multiple accounts, associating them with a high-value referrer account, then updating attribution to point to a secondary attacker-controlled account before the first purchase, causing reward diversion.",
+    "prompt": "Design an attack exploiting the referral attribution manipulation to redirect rewards and analyze the business logic bypass.",
+    "reasoning_focus": "Referral abuse through post-registration attribution manipulation before transaction completion.",
+    "expected_answer": "Referral attribution manipulation attacks exploit the gap between registration-time referral linking and transaction-time reward allocation. The attack sequence: (1) Attacker creates Account A (legitimate business partner with high rewards). (2) Attacker creates Accounts B1, B2, B3 under Account A's referral code, triggering signup bonuses. (3) Before Account B1 makes any purchase, attacker calls 'update_referral_attribution' via Account B1, changing referrer from Account A to Account C (attacker-controlled). (4) Account B1 makes $100 purchase, triggering 10% rewards: $10 to new referrer (Account C) and $10 to B1. (5) Attacker repeats for B2, B3, diverting $30+ in rewards. The vulnerability stems from the system allowing attribution changes after signup but before reward finalization, and failing to lock referral source once a transaction lifecycle begins. The 'no completed transactions' check only prevents post-purchase changes, but doesn't prevent pre-purchase manipulation. Attackers exploit this at scale by creating fake referral chains. Remediation requires: (1) immutable referral source upon account creation with no modification capability, (2) referral lock immediately upon signup with cryptographic commitment, (3) synchronous reward allocation at registration completion (before attribution changes are possible), and (4) audit logging of all referral attribution attempts with fraud detection rules.",
+    "evaluation_criteria": [
+      "Must detail the specific attack timeline showing the registration-to-attribution-to-purchase sequence",
+      "Must identify the gap between transaction initiation and reward allocation as the exploitable window"
+    ]
+  },
+  {
+    "id": 110,
+    "complexity": "L5",
+    "domain": "Healthcare Payment Processing",
+    "scenario": "A healthcare billing system processes insurance claim reimbursements using a state machine workflow: SUBMITTED \u2192 VALIDATED \u2192 APPROVED \u2192 PAID. The workflow transition logic checks if current_state=SUBMITTED before transitioning to VALIDATED, but the state comparison uses a string match against a cached state variable instead of reading the authoritative database value. Additionally, the system allows direct transitions from SUBMITTED to PAID if a supervisor_override flag is set, intended only for emergency cases. An attacker with read-only access to claim IDs exploits this by simultaneously submitting a direct-to-PAID transition request while the normal validation workflow is processing, causing the cached state to become inconsistent.",
+    "prompt": "Analyze the workflow bypass vulnerability combining cached state comparison with supervisor override logic to achieve unauthorized claim payment.",
+    "reasoning_focus": "Workflow state bypass through inconsistent state management and privilege escalation via supervisor override.",
+    "expected_answer": "Workflow bypass vulnerabilities combine state management inconsistencies with privilege escalation mechanisms designed for emergency use. The attack exploits two logic flaws: (1) state comparison against in-memory cached values instead of authoritative database reads, and (2) supervisor_override allowing state machine shortcut without proper authorization context. Attack flow: Attacker with SUBMITTER role posts a normal claim to status SUBMITTED. The validation service reads claim state (cached: SUBMITTED) and begins validation (updating database to VALIDATING). Simultaneously, attacker submits a supervisor_override=true request to transition SUBMITTED \u2192 PAID. The cached state comparison passes because the attacker's request also saw SUBMITTED before the database updated to VALIDATING. The database UPDATE succeeds because it checks WHERE state IN ('SUBMITTED', 'VALIDATING')\u2014insufficient state specificity. Due to eventual consistency, claim is marked PAID before final validation completes. The attacker bypasses medical necessity review, authorization verification, and amount validation. Remediation requires: (1) authoritative database reads for every state transition with pessimistic locking, (2) supervisor_override capability only available to explicitly verified SUPERVISOR role (not SUBMITTER), (3) state machine transitions defined at database layer via stored procedures with strict state-specific validation, (4) immutable audit trail of all state transitions with role context, and (5) async workflow engines that prevent concurrent conflicting transitions.",
+    "evaluation_criteria": [
+      "Must explain both the cached state inconsistency and the supervisor override privilege escalation as distinct but interacting flaws",
+      "Must recommend database-layer state machine enforcement with stored procedures rather than application-layer checks"
+    ]
+  },
+  {
+    "id": 111,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A payment processor's balance update endpoint suffers from a time-of-check-time-of-use (TOCTOU) race condition. When a user initiates two concurrent withdrawal requests, each request checks available balance independently before deducting funds. Both checks pass if executed within the same millisecond window, allowing a user to withdraw twice the account balance.",
+    "prompt": "Identify whether concurrent balance verification without atomic locking enables overdraft via parallel transaction submission.",
+    "reasoning_focus": "Race condition in balance validation lacking transactional atomicity and mutual exclusion.",
+    "expected_answer": "This vulnerability exploits the gap between balance verification and fund deduction. When two withdrawal requests execute concurrently, each reads the balance state before either writes back the deduction. For example, if an account holds $1000, two $800 withdrawal requests submitted simultaneously may both pass the $800 < $1000 check, then both execute deductions, resulting in a -$600 balance. The attack requires precise timing to hit the verification window. Mitigation requires database-level transaction isolation (SERIALIZABLE level), row-level locks on account records during balance checks, or pessimistic locking using SELECT FOR UPDATE. Implement request deduplication to reject duplicate transaction IDs within a grace period. Add post-transaction reconciliation checks comparing sum of all transactions against final balance.",
+    "evaluation_criteria": [
+      "Demonstrate a proof-of-concept using concurrent HTTP requests or database transactions showing both withdrawals succeeding when balance < 2 * withdrawal_amount",
+      "Recommend implementing SERIALIZABLE isolation level, row-level locking, and transaction sequence numbers with idempotency keys"
+    ]
+  },
+  {
+    "id": 112,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A referral program awards both referrer and referee a $20 credit upon signup. The system only validates that the referral link is valid and the referred user is new, but fails to prevent a single user from creating multiple accounts using their own referral link, claiming credits for each account created.",
+    "prompt": "Identify whether referral abuse enables credit multiplication via self-referral through account creation loop.",
+    "reasoning_focus": "Referral validation missing self-referral detection and account correlation checks.",
+    "expected_answer": "Referral abuse occurs when the system rewards referrals without verifying the referrer and referee are distinct entities or checking for common identifiers suggesting account ownership. An attacker creates Account A, generates their unique referral link, then creates Account B using Account A's link. The system issues $20 to each account, totaling $40. The attacker repeats this process to accumulate credits without spending. Detection requires cross-referencing sign-up data: shared payment methods, IP addresses, device fingerprints, email patterns, phone numbers, and postal addresses. Implement cooling-off periods between referrals from the same IP or payment method. Enforce KYC verification before credit redemption. Track referral chains to identify circular patterns. Limit credits earned per referrer per time window. Monitor for bulk account creation from single IP ranges or payment instruments.",
+    "evaluation_criteria": [
+      "Demonstrate creating 5+ accounts using self-referral loop and accumulating credits, with specific timestamps and account IDs",
+      "Recommend implementing device fingerprinting, IP-based rate limiting, and shared-attribute correlation analysis"
+    ]
+  },
+  {
+    "id": 113,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A patient appointment booking system allows cancellation up to 24 hours before the appointment. However, the cancellation workflow does not verify that the cancellation requester matches the original appointment holder; any authenticated user can cancel another user's appointment by guessing or iterating through appointment IDs.",
+    "prompt": "Identify whether appointment cancellation lacks ownership verification, enabling workflow abuse via unauthorized cancellation.",
+    "reasoning_focus": "Workflow action missing resource ownership validation and access control.",
+    "expected_answer": "This vulnerability exemplifies insufficient authorization in a state-modifying workflow. The cancellation endpoint accepts an appointment ID parameter and processes the request if authenticated, without verifying the requesting user owns that appointment. An attacker iterates through sequential or predictable appointment IDs (e.g., /cancel-appointment?id=1001, 1002, 1003) and successfully cancels arbitrary appointments, disrupting patient schedules and potentially causing clinical impacts. Remediation requires: (1) embed user identity in appointment records at creation; (2) validate in cancellation logic that request_user_id == appointment.patient_id before proceeding; (3) use opaque, non-sequential identifiers (UUIDs) for appointments; (4) implement rate limiting on cancellation endpoints; (5) log all cancellations with requester details for audit trails. Consider requiring two-factor confirmation for same-day cancellations.",
+    "evaluation_criteria": [
+      "Demonstrate sequential appointment ID enumeration and successful cancellation of appointments belonging to other users",
+      "Recommend implementing user ownership checks, opaque IDs, and differential access controls based on cancellation timing"
+    ]
+  },
+  {
+    "id": 114,
+    "complexity": "L4",
+    "domain": "Subscription",
+    "scenario": "A subscription service uses a negative quantity vulnerability in the billing system. When processing refunds, the system applies a transaction that subtracts service units without checking if the result would be negative. A customer subscribes, receives 1000 API calls, uses 500, then requests a refund. The refund transaction subtracts 1000 calls from their balance, leaving -500. The system later treats negative balances as 'credits' usable against future charges, allowing the customer to obtain services worth thousands without payment.",
+    "prompt": "Identify whether negative balance handling in refund logic enables service credits through inventory manipulation.",
+    "reasoning_focus": "Absence of lower-bound validation on resource deduction allowing negative inventory as unintended credits.",
+    "expected_answer": "Negative quantity vulnerabilities occur when systems apply deductions without enforcing a zero floor on resource balances. In subscription systems, this transforms refund mechanisms into credit generation exploits. A customer with 500 remaining API calls requests a full refund of 1000 calls, moving their balance to -500. If the system interprets negative balances as credit (rather than debt), the customer can redeem -500 as $5000 credit (assuming $10 per 1000 calls). Exploitation scales: multiple refund requests, overlapping subscription periods, or coordinated account activity can generate arbitrary credit amounts. Prevention requires: (1) validate refund amount against actual usage or balance; (2) enforce non-negative balance invariant with database constraints (CHECK balance >= 0); (3) separate credit ledgers from balance buckets; (4) implement refund approval workflows with fraud detection; (5) audit all balance mutations; (6) cap maximum refund at original transaction value.",
+    "evaluation_criteria": [
+      "Demonstrate requesting refund exceeding actual usage and converting negative balance into service credits with monetary quantification",
+      "Recommend database constraints, refund approval workflows, and separate ledger accounting for credits versus balances"
+    ]
+  },
+  {
+    "id": 115,
+    "complexity": "L4",
+    "domain": "E-commerce",
+    "scenario": "A dynamic pricing engine adjusts product prices based on supply, demand, and user segments (logged-in customers receive lower prices). The price fetch endpoint returns the discounted price, but the checkout endpoint accepts a user-supplied 'price' parameter without re-validating against current server-side pricing. An attacker intercepts the price response, modifies it to a fraction of the actual value, and submits it during checkout. The server uses the attacker-supplied price for billing.",
+    "prompt": "Identify whether price validation at checkout fails to re-verify server-side pricing, enabling price manipulation via client-side parameter injection.",
+    "reasoning_focus": "Checkout logic trusting client-supplied price without server-side validation against current rules.",
+    "expected_answer": "Price manipulation vulnerabilities arise when checkout systems trust client-supplied pricing data instead of recalculating prices server-side based on current rules. This endpoint design flaw assumes clients act honestly, ignoring attacker interception and modification capabilities. An attacker purchases an item marked $99.99 by intercepting the HTTP request and changing the price parameter to $9.99, which the server accepts for billing. This bypasses all dynamic pricing logic, promotions, and inventory-based adjustments. The impact scales with transaction value and order frequency. Remediation requires: (1) never trust client price inputs; (2) recalculate price server-side at checkout using product ID, user segment, current promotions, and inventory state; (3) compare client-submitted price against recalculated value with narrow tolerance (e.g., \u00b1$0.01 for rounding); (4) log and reject mismatches above threshold; (5) implement cryptographic price signatures issued by the server with expiration; (6) use immutable price snapshots in cart sessions.",
+    "evaluation_criteria": [
+      "Demonstrate modifying price parameter in checkout request and successfully purchasing at attacker-specified price with order confirmation proof",
+      "Recommend server-side price recalculation, signature-based pricing, and strict mismatch detection with audit logging"
+    ]
   }
 ]
