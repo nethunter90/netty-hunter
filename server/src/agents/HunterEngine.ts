@@ -1570,7 +1570,12 @@ export class HunterEngine extends EventEmitter {
       `Hypothesizing: what vulnerabilities are most likely on this target`,
     ].filter(Boolean).join('. ');
 
-    const domainKnowledge = await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7);
+    // CORPUS_ENRICHMENT=false disables both domainKnowledge and methodologyHints
+    // so arm A (control) and arm B (treatment) differ by exactly one variable.
+    const enrichmentOn = process.env.CORPUS_ENRICHMENT !== 'false';
+    const domainKnowledge = enrichmentOn
+      ? await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7)
+      : '';
 
     // ── RAG: RL framework priorities ──────────────────────────────────────────
     // If observations contain recognized framework tags, pull historically
@@ -1601,12 +1606,14 @@ export class HunterEngine extends EventEmitter {
     const KNOWN_VULN_TAGS = new Set(['sqli','xss','ssrf','idor','rce','lfi','xxe','csrf','cors','open_redirect']);
     const candidateVulns = [...new Set(allObsTags.filter(t => KNOWN_VULN_TAGS.has(t)))].slice(0, 3);
     let methodologyHints = '';
-    for (const vc of candidateVulns) {
-      const templates = promptKB.getForVulnClass(vc);
-      if (templates.length > 0) {
-        const objMatch = templates[0].template.match(/Objective:\n((?:- .+\n?)+)/);
-        if (objMatch) {
-          methodologyHints += `${vc.toUpperCase()} — ${objMatch[1].trim().slice(0, 220)}\n`;
+    if (enrichmentOn) {
+      for (const vc of candidateVulns) {
+        const templates = promptKB.getForVulnClass(vc);
+        if (templates.length > 0) {
+          const objMatch = templates[0].template.match(/Objective:\n((?:- .+\n?)+)/);
+          if (objMatch) {
+            methodologyHints += `${vc.toUpperCase()} — ${objMatch[1].trim().slice(0, 220)}\n`;
+          }
         }
       }
     }
