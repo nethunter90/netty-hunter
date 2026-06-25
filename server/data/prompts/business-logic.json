@@ -2313,5 +2313,135 @@
       "Demonstrate modifying price parameter in checkout request and successfully purchasing at attacker-specified price with order confirmation proof",
       "Recommend server-side price recalculation, signature-based pricing, and strict mismatch detection with audit logging"
     ]
+  },
+  {
+    "id": 116,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "An e-commerce platform applies promotional discounts sequentially without restricting coupon combinations. A user stacks a 20% category discount, a 15% site-wide code, and a 10% loyalty tier bonus on the same cart, with no exclusivity flags or cumulative cap enforcement. The final price calculation compounds discounts multiplicatively instead of capping total reduction.",
+    "prompt": "Demonstrate coupon stacking vulnerability allowing cumulative discounts beyond intended thresholds, resulting in negative final prices or extreme undercharging.",
+    "reasoning_focus": "Missing coupon exclusivity validation and discount cap enforcement in cart calculation logic.",
+    "expected_answer": "A $500 cart applies three promotional codes sequentially: first discount reduces to $400 (20% off), second to $340 (15% of remaining), third to $306 (10% of remaining). The system fails to enforce a business rule capping total discount at 30%, allowing 38.8% cumulative reduction. Attackers identify non-conflicting coupon combinations through API enumeration. The vulnerability exists in the cart-total calculation endpoint which independently applies each discount without checking against a discount-exclusivity matrix. To exploit: (1) enumerate active coupons via /api/promotions endpoint, (2) identify non-conflicting codes through testing, (3) add all simultaneously to cart and checkout before fraud detection triggers. Mitigation requires: implementing a coupon-compatibility matrix in the database with exclusivity groups (UNIQUE constraint on (cart_id, exclusivity_group)), capping cumulative discount percentage at checkout validation, and logging all coupon application attempts with timestamp sequencing for fraud investigation.",
+    "evaluation_criteria": [
+      "Must calculate specific final price with stacked discounts and quantify revenue loss per transaction with attack scale",
+      "Must identify the exact API endpoint vulnerable to coupon enumeration and recommend database schema changes enforcing exclusivity constraints"
+    ]
+  },
+  {
+    "id": 117,
+    "complexity": "L4",
+    "domain": "Fintech",
+    "scenario": "A peer-to-peer payment platform implements transaction reversal as a multi-step workflow: (1) debit sender's account, (2) validate receiver exists, (3) credit receiver, (4) mark transaction as complete. An attacker initiates a reversal request simultaneously with a legitimate outbound transfer, causing a race condition where the same funds are credited to multiple receivers in separate transactions.",
+    "prompt": "Model a scenario exploiting workflow race conditions in transaction settlement to achieve double-spending of escrowed balance.",
+    "reasoning_focus": "Workflow bypass and race condition in multi-step transaction settlement without pessimistic locking.",
+    "expected_answer": "An attacker holding $1000 in an escrowed payment account initiates: (1) transfer of $1000 to User A, (2) reversal of the transfer to User B simultaneously. The platform's workflow executes Step 2 (validate User A exists) \u2192 Step 2b (validate User B exists) \u2192 Step 1 (debit $1000) \u2192 Step 3a (credit User A $1000) \u2192 Step 3b (credit User B $1000), resulting in $2000 distributed from $1000 source balance. The vulnerability stems from lack of pessimistic row-level locking on the balance record during the multi-step settlement process. The attacker exploits the race window between transaction validation and settlement phases using concurrent API calls with microsecond timing. Mitigation requires: (1) implementing optimistic locking with version numbers on balance records, (2) wrapping settlement workflow in a database transaction with SERIALIZABLE isolation level, (3) using distributed transaction identifiers with idempotency keys to prevent duplicate processing, (4) introducing a 'settlement_state' field tracking workflow progression with state-machine validation preventing concurrent state transitions.",
+    "evaluation_criteria": [
+      "Must identify the exact workflow steps vulnerable to race exploitation and demonstrate timing attack with concrete thread scheduling sequence",
+      "Must recommend specific database locking strategy (pessimistic vs optimistic) with isolation level requirements and idempotency implementation"
+    ]
+  },
+  {
+    "id": 118,
+    "complexity": "L2",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine subscription platform manages prescription refill credits. The API endpoint /api/patient/refill-credits accepts a 'quantity' parameter without upper-bound validation. Submitting quantity=2147483647 (max signed 32-bit int) causes an integer overflow in the credit-balance calculation stored in a signed integer column, flipping the balance negative and triggering automatic free-tier subscription assignment.",
+    "prompt": "Identify integer overflow vulnerability in healthcare credit system leading to unauthorized subscription tier privilege escalation.",
+    "reasoning_focus": "Signed integer overflow in financial balance calculations enabling privilege bypass.",
+    "expected_answer": "The /api/patient/refill-credits endpoint processes requests without validating quantity input bounds. When a user submits quantity=2147483647, the database stored procedure executes: UPDATE patient_credits SET balance = balance + 2147483647 WHERE patient_id = X. If the patient's current balance is 100, the signed 32-bit integer calculation yields: 100 + 2147483647 = 2147483747, which exceeds the maximum signed 32-bit value (2147483647), causing an overflow to -2147483648. The system interprets negative balance as 'credit due to patient' and automatically grants premium subscription features. Exploitation: (1) enumerate valid patient IDs, (2) submit crafted POST /api/patient/refill-credits with quantity=2147483647, (3) trigger subscription tier re-evaluation endpoint, (4) access premium features without payment. Mitigation: (1) enforce input validation with maximum quantity checks (e.g., MAX_CREDITS = 10000), (2) use unsigned 64-bit integers for all financial calculations, (3) implement balance floor/ceiling constraints with database CHECK constraints, (4) add transaction logging with anomaly detection for balance mutations exceeding 1000x median.",
+    "evaluation_criteria": [
+      "Must demonstrate the specific bit-level overflow calculation showing initial value, overflow threshold, and resulting negative balance with subscription tier mapping",
+      "Must recommend input validation thresholds and database column type changes with explicit CHECK constraint syntax"
+    ]
+  },
+  {
+    "id": 119,
+    "complexity": "L3",
+    "domain": "Cryptocurrency",
+    "scenario": "A crypto exchange's internal wallet system processes balance updates asynchronously via message queue. A user initiates a withdrawal while a deposit confirmation from blockchain arrives simultaneously. Due to eventual consistency without idempotent processing, both operations read the stale balance state, apply increments/decrements to the cached value, and write-back to Redis, causing the deposit to be lost and balance to only reflect the withdrawal.",
+    "prompt": "Model a race condition in asynchronous balance ledger updates exploiting eventual consistency without idempotency keys.",
+    "reasoning_focus": "Lost update problem in distributed ledger without idempotent key deduplication or compare-and-swap semantics.",
+    "expected_answer": "A user's balance is 10 BTC stored in Redis. At T0: blockchain deposit of 5 BTC arrives (msg_id=12345) and withdrawal request of 3 BTC is submitted (txn_id=abc). Both operations: (1) READ balance from Redis (both read 10), (2) APPLY mutation in memory (deposit: 10+5=15, withdrawal: 10-3=7), (3) WRITE back to Redis. If withdrawal writes at T1 and deposit writes at T2, final balance is 15, losing the withdrawal. Without idempotency keys, reprocessing a deposit message (network retry) increments balance again without deduplication. Exploitation: (1) execute withdrawal via API, (2) simultaneously trigger blockchain deposit rebroadcast, (3) exploit message ordering to cause lost write, (4) repeat across multiple assets to accumulate unauthorized balance. Mitigation requires: (1) using idempotent transaction identifiers (msg_id, txn_id) as Redis KEYS with SET NX EX semantics preventing duplicate processing, (2) implementing compare-and-swap (CAS) in Redis with version numbers on balance records, (3) moving from eventual to strong consistency via distributed locking or saga pattern with compensating transactions, (4) maintaining immutable ledger append log as source of truth with balance computed from log, (5) adding checksum validation across balance reads and writes.",
+    "evaluation_criteria": [
+      "Must demonstrate the specific read-modify-write race sequence with timing diagram showing how both operations read the same stale state and which write overwrites the other",
+      "Must recommend idempotency key implementation strategy, compare-and-swap semantics, and ledger-log architecture with cryptographic checksums"
+    ]
+  },
+  {
+    "id": 120,
+    "complexity": "L3",
+    "domain": "SaaS",
+    "scenario": "A project management SaaS allows users to adjust task priority via PATCH /api/tasks/{id} endpoint. The endpoint accepts a 'priority' parameter with no role-based access control. Non-admin users can escalate their tasks to 'critical' status normally reserved for admin-created escalations, bypassing workflow approval stages and triggering automatic resource allocation and billing adjustments without manager authorization.",
+    "prompt": "Identify privilege escalation vulnerability in workflow status transitions allowing non-authorized users to bypass approval gates and trigger billing side-effects.",
+    "reasoning_focus": "Missing attribute-based access control on state transition validation enabling workflow bypass and privilege skip.",
+    "expected_answer": "The PATCH /api/tasks/{id} endpoint validates user has access to the task but fails to enforce who can transition to 'critical' status. A non-admin user crafts: PATCH /api/tasks/42 with body {\"priority\": \"critical\", \"auto_allocate_resources\": true}. The endpoint executes: UPDATE tasks SET priority='critical', resource_allocation_triggered=1 WHERE id=42, without checking if the user has role='admin' or manager_id=current_user. Backend logic then auto-allocates resources (Kubernetes pods, cloud storage) and triggers billing. A premium tier user escalates regular tasks to critical, inflating resource usage metrics and receiving upsell to enterprise tier based on inflated consumption. Exploitation: (1) identify valid task IDs via list endpoint, (2) enumerate priority values through API fuzzing, (3) craft PATCH requests setting priority='critical' for all accessible tasks, (4) trigger batch billing recalculation to inflate resource metrics. Mitigation: (1) implement attribute-based access control (ABAC) rule: only users with role='admin' OR task.owner=current_user AND manager_approval=true can transition to 'critical', (2) store role/approval metadata in JWT and validate against authorization policy engine, (3) audit all status transitions with separate 'approval_audit' log table, (4) separate resource allocation from status update into distinct endpoints with separate authorization checks.",
+    "evaluation_criteria": [
+      "Must identify the exact authorization check missing from the endpoint and demonstrate the privilege escalation path with concrete API request/response examples",
+      "Must recommend ABAC policy implementation with specific role checks and audit logging for compliance and forensic reconstruction"
+    ]
+  },
+  {
+    "id": 121,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "A cart system allows applying multiple coupon codes sequentially; each code is validated independently against original price without checking prior discount application. Cart totals use 32-bit integer math for cent-denominated currency.",
+    "prompt": "Determine if coupon stacking combined with integer overflow enables negative final prices or refund extraction.",
+    "reasoning_focus": "Sequential coupon validation gap and integer overflow in currency arithmetic.",
+    "expected_answer": "The coupon validation loop applies each discount to the original price rather than the running total, enabling multiplicative stacking. An attacker applies overlapping 50% coupons sequentially, reducing a $10,000 order to $0, then negative values. The 32-bit integer implementation causes wraparound: applying a $50,000 discount to a $100 order creates a -49,900 cent value, which when cast to unsigned becomes 2,147,483,648 cents ($21,474,836.48 refund). Exploitation requires: (1) identifying coupon codes with broad category overlap, (2) confirming independent validation per coupon, (3) crafting discount sequences that overflow the integer type. Remediation requires: applying discounts to running totals, capping total discount at order value, using 64-bit or decimal types for currency, implementing coupon exclusivity rules, and adding overflow detection.",
+    "evaluation_criteria": [
+      "Must demonstrate the integer overflow calculation with specific cent values and explain wraparound behavior on 32-bit signed integers.",
+      "Must identify both the coupon stacking validation flaw AND the currency integer type as separate exploitable weaknesses requiring distinct fixes."
+    ]
+  },
+  {
+    "id": 122,
+    "complexity": "L3",
+    "domain": "Fintech",
+    "scenario": "A peer-to-peer payment service processes transfers asynchronously; balance validation occurs at request time, but deduction happens 3-5 seconds later in a background worker. Concurrent transfers from the same source account are not locked or sequenced.",
+    "prompt": "Model whether parallel transfer requests enable spending beyond available balance through timing exploitation.",
+    "reasoning_focus": "Race condition on balance validation and deduction.",
+    "expected_answer": "The asynchronous balance model creates a critical race condition. A user with $1,000 balance submits two simultaneous $900 transfer requests to different recipients. Both requests pass validation (check finds $1,000 available), both execute concurrently in the background worker, resulting in two $900 deductions totaling $1,800 against a $1,000 balance. This leaves the account at -$800. The attacker can extract this negative balance through reversals, refunds, or transfer-backs. Exploitation requires: (1) identifying the asynchronous processing pattern via response timing analysis, (2) crafting rapid sequential/parallel requests, (3) monitoring account ledger for negative states. Remediation requires: pessimistic locking (SELECT FOR UPDATE) during balance validation, moving balance deduction into the same transaction as validation, implementing request idempotency tokens to prevent duplication, or using event sourcing with strict ordering.",
+    "evaluation_criteria": [
+      "Must calculate the specific overspend amount and explain the race window between validation and deduction.",
+      "Must recommend a pessimistic locking or transactional isolation strategy that prevents concurrent balance verification exploits."
+    ]
+  },
+  {
+    "id": 123,
+    "complexity": "L2",
+    "domain": "Marketplace",
+    "scenario": "A seller dashboard permits inventory management; sellers can create negative stock quantities through the API by submitting negative integers in the stock update endpoint. The frontend enforces a minimum of 0, but the API does not.",
+    "prompt": "Evaluate whether negative inventory quantities enable artificial scarcity manipulation or unauthorized refunds.",
+    "reasoning_focus": "Input validation gap: client-side vs. server-side enforcement.",
+    "expected_answer": "The API's failure to validate the stock floor allows deliberate negative inventory creation. A seller with 10 units of a high-demand item submits an API request to set stock to -100. The system records -100 units. Subsequent customer purchases reduce this to -110, -120, etc. When the seller later restocks to +50, the inventory system records the absolute value without reconciling the negative debt. This enables: (1) artificial scarcity claims (appearing out-of-stock), (2) unfair advantage in allocation during drops, (3) refund generation (processing refunds against negative stock), (4) marketplace fee arbitrage (charging customers for phantom inventory). Exploitation requires: (1) intercepting stock update API calls, (2) submitting negative integers, (3) monitoring subsequent purchase and refund flows. Remediation requires: server-side integer range validation (minimum 0, maximum reasonable stock cap), type enforcement (unsigned integer), audit logging of all inventory mutations, and stock reconciliation reports flagging negative values.",
+    "evaluation_criteria": [
+      "Must explain how negative inventory persists through the purchase flow and enables at least one specific abuse (scarcity manipulation, phantom refunds, or fee arbitrage).",
+      "Must identify that client-side validation alone is insufficient and recommend server-side range enforcement with unsigned integer types or explicit minimum constraints."
+    ]
+  },
+  {
+    "id": 124,
+    "complexity": "L2",
+    "domain": "SaaS",
+    "scenario": "A role-based access control system enforces permissions at the view level; admin-only features (e.g., billing settings, team management) are hidden from non-admin UIs. However, the underlying API endpoints do not re-verify the caller's role on each request.",
+    "prompt": "Assess whether direct API calls enable privilege escalation for non-admin users.",
+    "reasoning_focus": "Permission verification gap between frontend presentation and backend enforcement.",
+    "expected_answer": "The absence of server-side role verification creates a privilege escalation vulnerability. A non-admin user inspects network traffic and identifies the API endpoint for invite team members (POST /api/v1/teams/{teamId}/invite). The user crafts a direct API request using their authentication token, bypassing the UI-level role check. The backend accepts the request without verifying the caller holds the 'team_admin' role, successfully adding a new team member or escalating themselves to admin. This grants unauthorized access to billing settings, sensitive member data, and team configuration. Exploitation requires: (1) proxying requests through Burp/similar tools, (2) identifying protected API endpoints, (3) crafting requests with the user's valid authentication token. Remediation requires: server-side authorization checks on every API endpoint (e.g., if (user.role !== 'admin') return 403), middleware-level permission validation, and treating frontend restrictions as UX only, not security.",
+    "evaluation_criteria": [
+      "Must identify a specific SaaS feature (billing, team management, or settings) and explain how direct API access bypasses role checks.",
+      "Must recommend implementing server-side role verification middleware or per-endpoint authorization logic, not relying on UI hiding."
+    ]
+  },
+  {
+    "id": 125,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A prescription fulfillment system accepts prescription refill requests through an API endpoint. The endpoint validates the prescription belongs to the authenticated patient (via patient ID in JWT) but does not verify the prescription status or enforce refill limits. Patients can submit unlimited refill requests in rapid succession; each creates a new fulfillment order and pharmacy charge.",
+    "prompt": "Model whether stateless refill requests enable unauthorized repeat dispensing and billing fraud.",
+    "reasoning_focus": "Workflow state validation bypass and rate limiting absence.",
+    "expected_answer": "The API's failure to track refill state or enforce limits enables pharmacy fraud. A patient with a 3-refill prescription (e.g., Sertraline) submits 50 refill requests in 10 seconds via script. Each request passes patient validation (JWT contains correct patient ID), and the API creates 50 fulfillment orders. The pharmacy receives 50 orders, fulfills 3 legitimately then questions the remainder, but billing is charged per order regardless. The patient receives excessive medication (overdose risk), and the provider/pharmacy is billed fraudulently. The attacker exploits: (1) lack of per-prescription refill counting, (2) no rate limiting on refill endpoints, (3) no idempotency tokens. Remediation requires: (1) querying prescription refill history and rejecting requests exceeding the max refill count, (2) implementing rate limiting (1 refill per 24-28 day interval per prescription), (3) using idempotency tokens (unique per refill attempt) to prevent duplicate processing, (4) audit logging all refill attempts, and (5) integrating pharmacy records checks.",
+    "evaluation_criteria": [
+      "Must quantify the fraud scale (e.g., 50 orders from 1 prescription, cost impact) and explain the patient/pharmacy/provider harm.",
+      "Must recommend enforcing refill count limits, rate limiting per prescription, and idempotency tokens as distinct controls."
+    ]
   }
 ]
