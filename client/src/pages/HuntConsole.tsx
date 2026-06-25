@@ -7,6 +7,7 @@ import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
 import { EgressPoolPanel } from "../components/hunt/EgressPoolPanel";
+import { huntStore } from "../lib/huntStore";
 
 interface ActiveSession {
   sessionUuid: string;
@@ -36,12 +37,14 @@ export default function HuntConsole() {
   const [huntMode, setHuntMode] = useState<"forward" | "backward">("forward");
   const [goal, setGoal] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
-  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
-  const [hypStats, setHypStats] = useState({ pending: 0, probing: 0, confirmed: 0, rejected: 0 });
+  // Initialize from module-level store so state survives panel navigation.
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>(huntStore.activeSessions);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(huntStore.activityEvents);
+  const [hypStats, setHypStats] = useState(huntStore.hypStats);
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  const [corpusEnrichment, setCorpusEnrichment] = useState(true);
   // B3: hunt started from another panel (orchestration or socket path)
   const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
 
@@ -50,17 +53,36 @@ export default function HuntConsole() {
   function push(ev: ActivityEvent) {
     // Cap retained events (~300) so long hunts don't grow state unbounded;
     // the feed only displays the last 150 anyway.
+    huntStore.pushEvent(ev);
     setActivityEvents(prev => [...prev.slice(-299), ev]);
   }
+
+  // Sync sessions and hypStats back to the store whenever they change so the
+  // state survives the next panel navigation.
+  useEffect(() => { huntStore.setSessions(activeSessions); }, [activeSessions]);
+  useEffect(() => { huntStore.setHypStats(hypStats); }, [hypStats]);
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     bountyAPI.getHuntTemplates().then(r => setTemplates(r.data || []));
+
+    // Re-subscribe any hunt sessions that survived panel navigation.
+    // If the store has running sessions, the socket room subscription was lost on
+    // unmount — re-emit subscribe so we keep receiving live events.
+    huntStore.activeSessions
+      .filter(s => s.status === 'running' || s.status === 'stopping')
+      .forEach(s => socket.emit('subscribe:hunt', { sessionUuid: s.sessionUuid }));
+
     // B3: check for any hunt running from another panel so the launch button is
     // correctly disabled and a banner is shown.
     hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
       if (r.data.running && r.data.hunt) {
-        setExternalHunt(r.data.hunt);
+        // If the running hunt is one we're already tracking locally (restored from
+        // store), don't show the external banner for it.
+        const alreadyTracked = huntStore.activeSessions.some(s => s.sessionUuid === r.data.hunt!.id);
+        if (!alreadyTracked) {
+          setExternalHunt(r.data.hunt);
+        }
       }
     }).catch(() => {});
   }, []);
@@ -339,6 +361,7 @@ export default function HuntConsole() {
         summary: String(data.summary ?? ""),
         durationMs: Number(data.durationMs ?? 0),
         generatedCount: Number(data.generatedCount ?? 0),
+        enrichmentActive: typeof data.enrichmentActive === 'boolean' ? data.enrichmentActive : undefined,
       });
     });
 
@@ -382,6 +405,7 @@ export default function HuntConsole() {
     if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
 
     setLoading(true);
+    huntStore.clearForNewHunt();
     setActivityEvents([]);
     setHypStats({ pending: 0, probing: 0, confirmed: 0, rejected: 0 });
 
@@ -394,6 +418,7 @@ export default function HuntConsole() {
         maxIterations,
         templateId: selectedTemplate || undefined,
         budget: { maxRequests: 2000, maxTime: 3600 },
+        corpusEnrichment,
       });
 
       const session: ActiveSession = {
@@ -542,6 +567,23 @@ export default function HuntConsole() {
             <div>
               <label className="hack-label">Max Iterations: {maxIterations}</label>
               <input type="range" min={1} max={50} value={maxIterations} onChange={e => setMaxIterations(parseInt(e.target.value))} className="w-full accent-hack-accent" />
+            </div>
+
+            <div>
+              <label className="hack-label">Corpus Enrichment</label>
+              <button
+                type="button"
+                onClick={() => setCorpusEnrichment(v => !v)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${corpusEnrichment ? 'bg-hack-accent/70' : 'bg-hack-border'}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${corpusEnrichment ? 'translate-x-4' : 'translate-x-1'}`} />
+              </button>
+              <span className={`ml-2 text-[10px] font-mono ${corpusEnrichment ? 'text-hack-accent' : 'text-hack-dim'}`}>
+                {corpusEnrichment ? 'ON' : 'OFF'}
+              </span>
+              <div className="text-[9px] text-hack-dim font-mono mt-1">
+                Inject domain knowledge + methodology hints into hypothesis generation
+              </div>
             </div>
 
             {externalHunt && (

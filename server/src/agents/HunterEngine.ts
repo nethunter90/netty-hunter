@@ -151,6 +151,7 @@ export interface HuntState {
   iteration: number;
   maxIterations: number;
   budget: { maxRequests: number; requestsMade: number; maxTime: number; elapsed: number };
+  corpusEnrichment: boolean;
 }
 
 export interface HypothesisConfirmed {
@@ -608,6 +609,7 @@ export class HunterEngine extends EventEmitter {
     goal?: string;
     secondaryAuthHeaders?: Record<string, string>;
     auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
+    corpusEnrichment?: boolean;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -632,6 +634,7 @@ export class HunterEngine extends EventEmitter {
         maxTime: params.budget?.maxTime || 7200,
         elapsed: 0,
       },
+      corpusEnrichment: params.corpusEnrichment !== false,
     };
 
     // Persist session and capture the real DB ID
@@ -1570,9 +1573,9 @@ export class HunterEngine extends EventEmitter {
       `Hypothesizing: what vulnerabilities are most likely on this target`,
     ].filter(Boolean).join('. ');
 
-    // CORPUS_ENRICHMENT=false disables both domainKnowledge and methodologyHints
-    // so arm A (control) and arm B (treatment) differ by exactly one variable.
-    const enrichmentOn = process.env.CORPUS_ENRICHMENT !== 'false';
+    // Per-hunt corpusEnrichment flag (set at launch) takes priority.
+    // The CORPUS_ENRICHMENT env var acts as a global process-level override.
+    const enrichmentOn = this.state.corpusEnrichment !== false && process.env.CORPUS_ENRICHMENT !== 'false';
     const domainKnowledge = enrichmentOn
       ? await jsonPromptLoader.getContextBlockAsync(semanticQuery, 7)
       : '';
@@ -1659,7 +1662,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         hypotheses: this.state.hypotheses.length,
         iteration: this.state.iteration,
       },
-      promptPreview: prompt.slice(0, 600),
+      promptPreview: prompt.slice(0, 1500),
+      enrichmentActive: enrichmentOn,
     });
 
     const _aiReasoningStart = Date.now();

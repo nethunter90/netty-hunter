@@ -49,7 +49,7 @@ export type ActivityEvent =
   | { type: "ai_reasoning"; ts: string; task: string; phase: "thinking" | "complete" | "decision";
       context?: { observations: number; hypotheses: number; iteration: number };
       promptPreview?: string; rawResponse?: string; summary?: string;
-      durationMs?: number; generatedCount?: number }
+      durationMs?: number; generatedCount?: number; enrichmentActive?: boolean }
   | { type: "recon_start";    ts: string; domain: string }
   | { type: "recon_complete"; ts: string; subdomains: number; alive: number; interestingUrls: number; historicalPathCount: number };
 
@@ -203,6 +203,11 @@ function AIReasoningRow({ ev }: { ev: ActivityEvent & { type: "ai_reasoning" } }
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-mono text-hack-purple font-bold">{ev.task}</span>
             <span className={`text-[9px] px-1 py-0.5 rounded border font-mono ${phaseCls}`}>{phaseLabel}</span>
+            {ev.phase === "thinking" && ev.enrichmentActive !== undefined && (
+              <span className={`text-[9px] px-1 py-0.5 rounded border font-mono ${ev.enrichmentActive ? "text-hack-accent border-hack-accent/30 bg-hack-accent/5" : "text-hack-dim border-hack-border"}`}>
+                CORPUS {ev.enrichmentActive ? "ON" : "OFF"}
+              </span>
+            )}
             {ev.durationMs && ev.durationMs > 0 && (
               <span className="text-[9px] text-hack-dim font-mono ml-auto">
                 {ev.durationMs < 1000 ? `${ev.durationMs}ms` : `${(ev.durationMs / 1000).toFixed(1)}s`}
