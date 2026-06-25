@@ -22,12 +22,14 @@ interface HuntStoreState {
   activeSessions: StoredSession[];
   activityEvents: ActivityEvent[];
   hypStats: { pending: number; probing: number; confirmed: number; rejected: number };
+  proxyEnabled: boolean;
 }
 
 const EMPTY: HuntStoreState = {
   activeSessions: [],
   activityEvents: [],
   hypStats: { pending: 0, probing: 0, confirmed: 0, rejected: 0 },
+  proxyEnabled: false,
 };
 
 let _state: HuntStoreState = { ...EMPTY, activityEvents: [] };
@@ -36,6 +38,7 @@ export const huntStore = {
   get activeSessions(): StoredSession[] { return _state.activeSessions; },
   get activityEvents(): ActivityEvent[] { return _state.activityEvents; },
   get hypStats() { return _state.hypStats; },
+  get proxyEnabled(): boolean { return _state.proxyEnabled; },
 
   setSessions(sessions: StoredSession[]): void {
     _state.activeSessions = sessions;
@@ -47,6 +50,10 @@ export const huntStore = {
 
   setHypStats(stats: HuntStoreState['hypStats']): void {
     _state.hypStats = stats;
+  },
+
+  setProxyEnabled(val: boolean): void {
+    _state.proxyEnabled = val;
   },
 
   hasActiveSessions(): boolean {

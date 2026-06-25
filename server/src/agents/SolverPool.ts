@@ -17,7 +17,7 @@ import { db } from "../db";
 import { solverResults } from "../db/schema";
 import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
 import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
-import { dynamicRateLimiter } from "../lib/stealth";
+import { dynamicRateLimiter, autoAdjuster } from "../lib/stealth";
 import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
 
 const execAsync = promisify(exec);
@@ -161,6 +161,9 @@ abstract class BaseSolver {
       if (hostname) {
         try {
           dynamicRateLimiter.recordResponse(hostname, new URL(url).pathname, result.status, result.headers);
+          // Propagate detection signal to auto-adjuster so stealth mode escalates automatically
+          const signal = dynamicRateLimiter.getDetectionSignal(hostname);
+          if (signal) autoAdjuster.evaluate([signal]);
         } catch { /* non-critical */ }
       }
       return result;

@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { autoAdjuster } from '../stealth/auto-adjuster';
 import { aiBridge } from './layer6-ai-bridge';
 import { agentRegistry } from './agent-registry';
 import { interactshManager } from '../oob/interactsh-manager';
@@ -90,7 +91,10 @@ export class ReconAgent extends MetaAgent {
   type = 'recon';
 
   protected async runTool(tool: string, target: string, params: Record<string, any>) {
-    const stealthMode = params.stealthMode || 'balanced';
+    const _baseMode = params.stealthMode || 'balanced';
+    const _adjMode = autoAdjuster.getCurrentMode();
+    const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
+    const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
       case 'nmap': return this.runNmap(target, stealthMode);
       case 'subfinder': return this.runSubfinder(target);
@@ -515,7 +519,10 @@ export class ScannerAgent extends MetaAgent {
   type = 'scanner';
 
   protected async runTool(tool: string, target: string, params: Record<string, any>) {
-    const stealthMode = params.stealthMode || 'balanced';
+    const _baseMode = params.stealthMode || 'balanced';
+    const _adjMode = autoAdjuster.getCurrentMode();
+    const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
+    const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
       case 'nikto': return this.runNikto(target, stealthMode);
       case 'nuclei': return this.runNuclei(target, params, stealthMode);
@@ -736,7 +743,10 @@ export class ExploitMetaAgent extends MetaAgent {
   type = 'exploit';
 
   protected async runTool(tool: string, target: string, params: Record<string, any>) {
-    const stealthMode = params.stealthMode || 'balanced';
+    const _baseMode = params.stealthMode || 'balanced';
+    const _adjMode = autoAdjuster.getCurrentMode();
+    const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
+    const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
       case 'sqlmap': {
         if (isReal() && await toolExists('sqlmap')) {

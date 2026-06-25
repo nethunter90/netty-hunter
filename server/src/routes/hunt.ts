@@ -44,6 +44,7 @@ const StartHuntSchema = z.object({
     headers: z.record(z.string()).optional(),
   }).optional(),
   corpusEnrichment: z.boolean().optional().default(false),
+  proxyEnabled: z.boolean().optional().default(false),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment } = parsed.data;
+  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled } = parsed.data;
 
   // ── Single-flight gate (cost-safety core) ───────────────────────────────────
   // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
@@ -155,6 +156,7 @@ router.post("/start", async (req: Request, res: Response) => {
         focusVulnClasses: approaches.map(a => a.vulnClass).slice(0, 6),
         auth,
         corpusEnrichment,
+        proxyEnabled,
       });
 
       const io = req.app.get("io") as SocketServer;
@@ -210,6 +212,7 @@ router.post("/start", async (req: Request, res: Response) => {
       focusVulnClasses,
       auth,
       corpusEnrichment,
+      proxyEnabled,
     });
 
     const io = req.app.get("io") as SocketServer;

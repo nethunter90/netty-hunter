@@ -8,6 +8,7 @@ import { metaAgents } from './layer5-meta-agents';
 import { nmapToFindings, extractInjectableTargets } from './tool-parsers';
 import { toolRunner } from '../stealth/tool-runner';
 import { timingObfuscation } from '../stealth/timing-obfuscation';
+import { autoAdjuster } from '../stealth/auto-adjuster';
 import { passKEvaluator } from './pass-k-evaluator';
 import { huntCortex, SignalType } from '../intelligence/hunt-cortex';
 
@@ -413,11 +414,19 @@ export class AgentLoop {
         continue;
       }
 
-      if (huntConfig.stealthMode !== 'aggressive') {
+      // Use autoAdjuster's current mode (adapts from detection signals) with huntConfig as floor
+      const effectiveMode = (() => {
+        const adjMode = autoAdjuster.getCurrentMode();
+        const ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
+        const adjIdx = ORDER.indexOf(adjMode);
+        const cfgIdx = ORDER.indexOf(huntConfig.stealthMode);
+        return adjIdx > cfgIdx ? adjMode : huntConfig.stealthMode;
+      })();
+      if (effectiveMode !== 'aggressive') {
         const risk = toolRunner.getToolRisk(tool);
-        const delay = timingObfuscation.getDelay(phaseType as any, huntConfig.stealthMode, risk, target);
+        const delay = timingObfuscation.getDelay(phaseType as any, effectiveMode, risk, target);
         if (delay > 0) {
-          console.log(`[AgentLoop] Stealth delay: ${Math.round(delay / 1000)}s before ${tool} (mode=${huntConfig.stealthMode}, risk=${risk})`);
+          console.log(`[AgentLoop] Stealth delay: ${Math.round(delay / 1000)}s before ${tool} (mode=${effectiveMode}, risk=${risk})`);
           await new Promise(r => setTimeout(r, delay));
           const a = agentRegistry.get(agent.id);
           if (!a || a.status === 'stopped') return didWork;

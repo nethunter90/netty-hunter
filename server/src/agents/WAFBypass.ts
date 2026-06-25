@@ -15,7 +15,10 @@ import { eq, and } from "drizzle-orm";
 import logger from "../utils/logger";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { stealthCoordinator } from "../lib/stealth";
+import { AIWAFEvasion } from "../lib/stealth/ai-waf-evasion";
 import { ScopeGuard } from "../middleware/scopeGuard";
+
+const aiWAFEvasion = new AIWAFEvasion();
 
 export interface WAFDetectionResult {
   detected: boolean;
@@ -329,8 +332,25 @@ export class IntelligenceSynthesizer {
 
     const { waf } = await this.fingerprinter.fingerprint(url);
     const recommendedTechs = this.library.recommendTechniques(waf.vendor);
-    const variants = this.library.generateVariants(payload, recommendedTechs);
+    const libraryVariants = this.library.generateVariants(payload, recommendedTechs);
     const vendorProfile = await this.vendorProfiles.getProfile(waf.vendor, domain);
+
+    // Detect vuln class from payload heuristic for AI semantic map selection
+    const vulnClass = /union.*select|select.*from|'\s*or\s*'/i.test(payload) ? 'sqli'
+      : /<|onerror|javascript:|alert\(/i.test(payload) ? 'xss'
+      : /\{\{|{%/i.test(payload) ? 'ssti'
+      : 'generic';
+
+    // Merge library variants with AI-WAF semantic variants, dedup by payload,
+    // sort by confidence descending so the top-5 are highest-confidence attempts
+    const aiRaw = aiWAFEvasion.generateVariants(payload, vulnClass);
+    const aiVariants = aiRaw.map(v => ({ technique: v.technique, payload: v.mutatedPayload }));
+    const seen = new Set<string>();
+    const variants = [...libraryVariants, ...aiVariants].filter(v => {
+      if (seen.has(v.payload)) return false;
+      seen.add(v.payload);
+      return true;
+    });
 
     // Execute bypass attempts (limited to 5 to avoid detection)
     const results: EvasionResult[] = [];

@@ -22,7 +22,7 @@ import { promptKB } from "../intelligence/PromptKnowledgeBase";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
 import { ReinforcementWiring } from "../lib/hunter/reinforcement-wiring";
 import { jsonPromptLoader } from "../intelligence/JsonPromptLoader";
-import { stealthCoordinator, dynamicRateLimiter } from "../lib/stealth";
+import { stealthCoordinator, dynamicRateLimiter, autoAdjuster, toolRunner } from "../lib/stealth";
 import { egressAllocator } from "../lib/stealth/egress-route-allocator";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { huntCortex } from "../lib/intelligence/hunt-cortex";
@@ -152,6 +152,7 @@ export interface HuntState {
   maxIterations: number;
   budget: { maxRequests: number; requestsMade: number; maxTime: number; elapsed: number };
   corpusEnrichment: boolean;
+  proxyEnabled: boolean;
 }
 
 export interface HypothesisConfirmed {
@@ -610,6 +611,7 @@ export class HunterEngine extends EventEmitter {
     secondaryAuthHeaders?: Record<string, string>;
     auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
     corpusEnrichment?: boolean;
+    proxyEnabled?: boolean;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -635,6 +637,7 @@ export class HunterEngine extends EventEmitter {
         elapsed: 0,
       },
       corpusEnrichment: params.corpusEnrichment !== false,
+      proxyEnabled: params.proxyEnabled === true,
     };
 
     // Persist session and capture the real DB ID
@@ -733,8 +736,24 @@ export class HunterEngine extends EventEmitter {
     contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit });
 
     contextWriter.reset(sessionUuid, params.targetUrl, "ollama");
-    this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl });
-    logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl });
+
+    // Validate tor is reachable if proxy routing was requested
+    if (params.proxyEnabled) {
+      const torOk = await new Promise<boolean>(resolve => {
+        const net = require('net') as typeof import('net');
+        const s = net.createConnection(9050, '127.0.0.1');
+        s.setTimeout(2000);
+        s.on('connect', () => { s.destroy(); resolve(true); });
+        s.on('error', () => resolve(false));
+        s.on('timeout', () => { s.destroy(); resolve(false); });
+      });
+      if (!torOk) {
+        throw new Error('Proxy routing requested but Tor SOCKS5 (127.0.0.1:9050) is unreachable. Start tor before launching a proxied hunt.');
+      }
+    }
+
+    this.emit("hunt:started", { sessionUuid, targetUrl: params.targetUrl, proxyEnabled: params.proxyEnabled === true });
+    logger.info("Hunt started", { sessionUuid, targetUrl: params.targetUrl, proxyEnabled: params.proxyEnabled });
 
     // Run stealth warmup before probing so WAF/CDN fingerprinting is pre-loaded
     try {
@@ -1917,6 +1936,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
           const resp = await axios.head(hypothesis.targetUrl, { timeout: 3000, validateStatus: () => true });
           if (resp.status === 403) {
             dynamicRateLimiter.recordResponse(canaryHostname, '/', 403, resp.headers as Record<string, string>);
+            const signal = dynamicRateLimiter.getDetectionSignal(canaryHostname);
+            if (signal) autoAdjuster.evaluate([signal]);
             this.hardBanned = true;
             this.emit('hunt:hard_banned', { target: canaryHostname, reason: 'IP hard-banned (403 confirmed after consecutive failures)' });
             logger.warn('[HunterEngine] Hard IP ban detected — terminating hunt early', { target: canaryHostname });
@@ -2258,8 +2279,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const cmdString = `${bin} ${args.join(" ")}`;
     const start = Date.now();
 
+    // Route through proxychains4 when proxy is enabled and the tool supports it
+    const useProxy = this.state.proxyEnabled
+      && (toolRunner.getToolConfig(toolName)?.proxySupport ?? false);
+    const execBin = useProxy ? 'proxychains4' : bin;
+    const execArgs = useProxy ? ['-q', bin, ...args] : args;
+
     try {
-      const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 60000 });
+      const { stdout, stderr } = await execFileAsync(execBin, execArgs, { timeout: 60000 });
       this.toolLastUsed.set(toolName, Date.now());
       const parsed = tool.parser(stdout + stderr);
       // Feed raw output to autonomous brain — fire-and-forget so AI latency never blocks probing

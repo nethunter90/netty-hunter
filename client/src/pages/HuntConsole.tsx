@@ -45,6 +45,7 @@ export default function HuntConsole() {
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [corpusEnrichment, setCorpusEnrichment] = useState(false);
+  const [proxyEnabled, setProxyEnabled] = useState(huntStore.proxyEnabled);
   // B3: hunt started from another panel (orchestration or socket path)
   const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
 
@@ -61,6 +62,7 @@ export default function HuntConsole() {
   // state survives the next panel navigation.
   useEffect(() => { huntStore.setSessions(activeSessions); }, [activeSessions]);
   useEffect(() => { huntStore.setHypStats(hypStats); }, [hypStats]);
+  useEffect(() => { huntStore.setProxyEnabled(proxyEnabled); }, [proxyEnabled]);
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
@@ -420,6 +422,7 @@ export default function HuntConsole() {
         templateId: selectedTemplate || undefined,
         budget: { maxRequests: 2000, maxTime: 3600 },
         corpusEnrichment,
+        proxyEnabled,
       });
 
       const session: ActiveSession = {
@@ -587,6 +590,25 @@ export default function HuntConsole() {
               </div>
             </div>
 
+            <div>
+              <label className="hack-label">Proxy Routing (Tor)</label>
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setProxyEnabled(v => !v)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${proxyEnabled ? 'bg-hack-red/70' : 'bg-hack-border'}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${proxyEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                </button>
+                <span className={`ml-2 text-[10px] font-mono ${proxyEnabled ? 'text-hack-red' : 'text-hack-dim'}`}>
+                  {proxyEnabled ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <div className="text-[9px] text-hack-dim font-mono mt-1">
+                Routes all tool traffic through Tor (proxychains4). Requires <span className="text-hack-yellow">tor</span> running on 127.0.0.1:9050
+              </div>
+            </div>
+
             {externalHunt && (
               <div className="text-[9px] font-mono text-hack-yellow bg-hack-yellow/5 border border-hack-yellow/20 rounded p-2 mb-2">
                 <span className="text-hack-yellow/70">{externalHunt.kind.toUpperCase()} running:</span>{" "}
@@ -648,6 +670,11 @@ export default function HuntConsole() {
           {(isRunning || hypStats.confirmed > 0 || hypStats.rejected > 0) && (
             <div className="flex items-center gap-4 px-3 py-1.5 border-b border-hack-border bg-hack-surface flex-shrink-0 text-[9px] font-mono">
               <Brain className="w-3 h-3 text-hack-purple flex-shrink-0" />
+              {isRunning && proxyEnabled && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-hack-red/15 border border-hack-red/40 text-hack-red font-bold tracking-widest uppercase animate-pulse">
+                  PROXY LIVE
+                </span>
+              )}
               <span className="text-hack-dim tracking-widest uppercase">hypotheses</span>
               <div className="flex items-center gap-3 ml-2">
                 <span className="flex items-center gap-1">
