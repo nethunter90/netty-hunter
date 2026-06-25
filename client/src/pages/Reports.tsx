@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { FileText, Download, Copy, RefreshCw, MessageSquare, Send } from "lucide-react";
+import { FileText, Download, Copy, RefreshCw, MessageSquare, Send, ExternalLink } from "lucide-react";
 import { hunterAPI, bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -173,6 +173,42 @@ export default function Reports() {
                         <button onClick={() => downloadReport(selectedFinding)} className="hack-btn flex items-center gap-1">
                           <Download className="w-3 h-3" /> DOWNLOAD
                         </button>
+                      </>
+                    )}
+                    {selectedFinding.verificationStatus === "confirmed" && (
+                      <>
+                        {(["hackerone", "bugcrowd", "intigriti"] as const).map(platform => (
+                          <button
+                            key={platform}
+                            onClick={async () => {
+                              try {
+                                const res = await fetch("/api/report-export/export", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ findingId: selectedFinding.id, options: { format: platform, includeRemediation: true } }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok || !data.success) {
+                                  toast.error(data.error || `Export failed (${res.status})`);
+                                  return;
+                                }
+                                const blob = new Blob([data.data], { type: "text/markdown" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${selectedFinding.vulnType}-${selectedFinding.id}-${platform}.md`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                                toast.success(`Exported for ${platform}`);
+                              } catch {
+                                toast.error("Export request failed");
+                              }
+                            }}
+                            className="hack-btn flex items-center gap-1 text-[9px] uppercase"
+                          >
+                            <ExternalLink className="w-3 h-3" /> {platform}
+                          </button>
+                        ))}
                       </>
                     )}
                   </div>

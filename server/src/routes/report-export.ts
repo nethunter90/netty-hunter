@@ -1,18 +1,28 @@
 import { Router, Request, Response } from "express";
+import { db } from "../db";
+import { findings } from "../db/schema";
+import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
 
 // Report export router.
 //
-//  POST /export – formats a finding into a platform-specific submission document.
-//                 Body:  { finding, options: { format, includeRemediation } }
+//  POST /export – gate-checked, DB-authoritative platform export.
+//                 Body:  { findingId: number, options: { format, includeRemediation } }
 //                 Reply: { success: true, data: <markdown string> }
-//                 (see DraftReports.tsx exportPlatform ~216).
+//
+//  Gate: only findings with verificationStatus === "confirmed" can export.
+//  All other states (pending, rejected, inconclusive, deduplicated) return 403.
+//  No findingId or no matching DB row returns 400.
+//
+//  Data-plumbing: exploitPayload and cvssScore are populated from the DB row,
+//  not from caller-supplied inline JSON. No fabrication when absent.
 
 const router = Router();
 
 type Platform = "hackerone" | "bugcrowd" | "intigriti";
 
-interface ExportFinding {
+export interface ExportFinding {
+  findingId?: number;
   id?: string;
   title?: string;
   type?: string;
@@ -26,6 +36,35 @@ interface ExportFinding {
   cvssScore?: number;
   cvssVector?: string;
 }
+
+// ── Gate ─────────────────────────────────────────────────────────────────────
+
+type FindingRow = typeof findings.$inferSelect;
+
+export type GateResult =
+  | { allowed: false; httpStatus: 400 | 403; error: string }
+  | { allowed: true; row: FindingRow };
+
+/**
+ * Gate check — exported for direct unit testing (no HTTP, no DB mock needed).
+ * Enforces: only verificationStatus === "confirmed" permits export.
+ * All other states fail closed. No row → 400. Wrong status → 403 with actual status.
+ */
+export function gateCheck(row: FindingRow | null | undefined, findingId: number): GateResult {
+  if (!row) {
+    return { allowed: false, httpStatus: 400, error: `no finding for id ${findingId}` };
+  }
+  if (row.verificationStatus !== "confirmed") {
+    return {
+      allowed: false,
+      httpStatus: 403,
+      error: `cannot export: finding status is '${row.verificationStatus}'`,
+    };
+  }
+  return { allowed: true, row };
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 const REMEDIATION_BY_TYPE: Record<string, string> = {
   xss: "Apply context-aware output encoding for all user-controlled data and enforce a strict Content-Security-Policy.",
@@ -47,25 +86,18 @@ function remediation(finding: ExportFinding): string {
     || "Apply appropriate security controls to mitigate the described vulnerability.";
 }
 
-// Severity precision: append CVSS when the finding carries it. Absent → "" so the
-// bare severity word (current behaviour) is preserved exactly. Never fabricated.
 function cvssSuffix(f: ExportFinding): string {
   if (typeof f.cvssScore === "number" && f.cvssVector) return ` (CVSS ${f.cvssScore} — ${f.cvssVector})`;
   if (typeof f.cvssScore === "number") return ` (CVSS ${f.cvssScore})`;
   return "";
 }
 
-// Proof-of-Concept block — the concrete payload/request a triager needs to
-// reproduce. Renders only when present; absent → "" so output is byte-identical
-// to today for findings without a payload (the discriminating-negative case).
 function pocBlock(f: ExportFinding, heading: string): string {
   const poc = (f.exploitPayload ?? f.poc ?? "").trim();
   if (!poc) return "";
   return `\n## ${heading}\n\`\`\`\n${poc}\n\`\`\`\n`;
 }
 
-// Each platform has slightly different section conventions. These produce
-// submission-ready markdown tailored to each program's expectations.
 function formatHackerOne(f: ExportFinding, includeRemediation: boolean): string {
   return `## Summary
 ${f.description || f.title || "Vulnerability report."}
@@ -129,22 +161,27 @@ const FORMATTERS: Record<Platform, (f: ExportFinding, r: boolean) => string> = {
   intigriti: formatIntigriti,
 };
 
-// Exported for unit testing the format directly (no HTTP). The route below is
-// the only production caller.
 export { FORMATTERS };
-export type { ExportFinding };
 
 // ── POST /export ──────────────────────────────────────────────────────────────
-router.post("/export", (req: Request, res: Response) => {
+
+router.post("/export", async (req: Request, res: Response) => {
   try {
-    const { finding, options } = req.body as {
-      finding?: ExportFinding;
+    const { findingId, options } = req.body as {
+      findingId?: unknown;
       options?: { format?: string; includeRemediation?: boolean };
     };
 
-    if (!finding) {
-      return res.status(400).json({ success: false, error: "finding is required" });
+    if (typeof findingId !== "number" || !Number.isInteger(findingId)) {
+      return res.status(400).json({ success: false, error: "findingId (integer) is required" });
     }
+
+    const rows = await db.select().from(findings).where(eq(findings.id, findingId)).limit(1);
+    const gate = gateCheck(rows[0], findingId);
+    if (!gate.allowed) {
+      return res.status(gate.httpStatus).json({ success: false, error: gate.error });
+    }
+    const { row } = gate;
 
     const format = (options?.format || "hackerone").toLowerCase() as Platform;
     const formatter = FORMATTERS[format];
@@ -154,6 +191,21 @@ router.post("/export", (req: Request, res: Response) => {
         error: `Unsupported format: ${format}. Supported: hackerone, bugcrowd, intigriti.`,
       });
     }
+
+    // Build ExportFinding from DB row — no inline caller data, no fabrication.
+    // Fields absent on the row (null) are omitted so the formatter's existing
+    // absent-field behaviour is preserved byte-identical to the prior output.
+    const finding: ExportFinding = {
+      findingId,
+      title: row.title,
+      type: row.vulnType,
+      severity: row.severity,
+      description: row.description,
+      impact: row.impact ?? undefined,
+      affectedEndpoint: row.affectedUrl ?? undefined,
+      exploitPayload: row.exploitPayload ?? undefined,
+      cvssScore: row.cvssScore ?? undefined,
+    };
 
     const data = formatter(finding, options?.includeRemediation !== false);
     return res.json({ success: true, data, format });
