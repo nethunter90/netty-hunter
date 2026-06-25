@@ -3403,5 +3403,174 @@
       "Measure cache TTL window and concurrent request batch sizing for reliable quota bypass; demonstrate 10x limit overage on multiple API endpoints",
       "Specify atomic counter implementation options with latency benchmarks and design the invalidation protocol for plan changes with replication factor requirements"
     ]
+  },
+  {
+    "id": 201,
+    "complexity": "L3",
+    "domain": "E-commerce",
+    "scenario": "An online retail platform processes bulk order discounts calculated using 32-bit integer multiplication. When a user orders 50,000 units of a $100 item with a 90% bulk discount, the price calculation overflows: (50000 * 100 * 10) wraps around negative, resulting in the customer receiving $429,496,729.50 credit instead of paying $500,000.",
+    "prompt": "Identify the integer overflow vulnerability in bulk pricing calculations and quantify the financial impact.",
+    "reasoning_focus": "Integer overflow in currency multiplication during bulk discount computation.",
+    "expected_answer": "Integer overflow occurs when intermediate calculations exceed 32-bit signed integer limits (2,147,483,647). In bulk pricing, multiplying quantity \u00d7 unit_price \u00d7 discount_multiplier without type promotion or overflow checks causes wraparound. A 50,000 unit \u00d7 $100 \u00d7 10 calculation yields 50,000,000, triggering overflow. The system should use 64-bit integers (long) or BigDecimal for all financial calculations, implement overflow detection via checked arithmetic libraries, and validate that final prices remain within expected ranges (e.g., price > 0). Additionally, apply server-side validation for bulk order quantities against inventory and implement rate limiting on large orders to detect anomalous behavior.",
+    "evaluation_criteria": [
+      "Must demonstrate the precise overflow calculation showing how negative wraparound converts to unintended credit",
+      "Must recommend 64-bit integer types, BigDecimal usage, and input validation caps on bulk order quantities"
+    ]
+  },
+  {
+    "id": 202,
+    "complexity": "L4",
+    "domain": "Healthcare",
+    "scenario": "A telemedicine scheduling system assigns appointment slots via privilege escalation. A user with basic patient role can modify the appointment_type field from 'consultation' to 'specialist_review' in the POST request, triggering specialist-only scheduling logic and specialist billing rates ($250 vs $50), without backend role validation on the appointment_type parameter.",
+    "prompt": "Exploit privilege escalation to access higher-tier appointment types and analyze billing impact.",
+    "reasoning_focus": "Client-side privilege assumption in appointment tier assignment.",
+    "expected_answer": "Privilege escalation in healthcare scheduling occurs when appointment tier or type is controlled by client-submitted parameters without server-side role verification. A basic patient can POST with appointment_type='specialist_review' because the backend trusts the request field instead of deriving the appointment tier from the authenticated user's subscription level or explicit provider assignment. The vulnerability allows accessing premium scheduling slots at discounted rates or billing fraud. Mitigation requires: (1) deriving appointment tier server-side based on authenticated user_role and provider assignment, never trusting client input; (2) implementing explicit authorization checks confirming user has permission for requested appointment_type; (3) validating appointment_type against the selected provider's available tiers; (4) auditing all appointment modifications with role-based reasoning. Backend logic should enforce: IF user.role == 'patient' THEN appointment_type = derive_from_subscription(user.subscription_id), not from request body.",
+    "evaluation_criteria": [
+      "Must demonstrate how modifying appointment_type in request grants access to specialist slots without provider authorization",
+      "Must specify server-side authorization logic: role-based tier derivation and provider-slot matching validation"
+    ]
+  },
+  {
+    "id": 203,
+    "complexity": "L3",
+    "domain": "Crypto",
+    "scenario": "A decentralized exchange swap contract accepts negative quantities in its input validation due to insufficient type checking on user-supplied token amounts. An attacker submits a swap request with amount = -1000 USDC, which the contract interprets as receiving 1000 USDC instead of sending, combined with a flash loan to manipulate reserves, enabling profit extraction without legitimate token transfer.",
+    "prompt": "Analyze how negative quantity input bypasses token swap validation and design robust input constraints.",
+    "reasoning_focus": "Negative quantity acceptance in DeFi swap logic.",
+    "expected_answer": "Negative quantity vulnerabilities in DeFi contracts stem from insufficient type validation before arithmetic operations. Smart contracts must explicitly validate that all user-supplied amounts are positive integers (> 0) before performing transfers or reserve calculations. An attacker exploiting this submits amount = -1000, which some contract implementations may interpret as subtraction reversal or leverage this in compound calculations (e.g., reserve_change = current_reserve - (-amount) = current_reserve + amount), artificially inflating available liquidity. Combined with flash loans to temporarily manipulate price oracles, the attacker profits from arbitrage without genuine token transfer. Mitigation requires: (1) require(amount > 0) checks at contract entry points; (2) explicit casting to uint256 (unsigned) to prevent negative values; (3) SafeMath library usage to prevent arithmetic manipulation; (4) invariant testing confirming total liquidity post-swap matches pre-swap plus/minus fees; (5) external audit of reserve update logic. All transfer amounts must be validated as strictly positive before any calculations.",
+    "evaluation_criteria": [
+      "Must explain how negative input bypasses validation and affects reserve calculations in swap logic",
+      "Must recommend require(amount > 0) and uint256 type enforcement at contract entry points"
+    ]
+  },
+  {
+    "id": 204,
+    "complexity": "L4",
+    "domain": "SaaS",
+    "scenario": "A project management SaaS platform processes subscription cancellations via an asynchronous workflow. When a user initiates cancellation, they immediately regain access to a team workspace while the cancellation job runs in the background. An attacker exports all workspace data, cancels their subscription, then re-subscribes before the cancellation job completes, retaining access to archived data while avoiding full monthly charges through cancellation credit exploitation.",
+    "prompt": "Identify the workflow bypass in subscription cancellation and design atomic state management.",
+    "reasoning_focus": "Asynchronous state inconsistency enabling resource access post-cancellation.",
+    "expected_answer": "Workflow bypass vulnerabilities emerge from eventual consistency in subscription state management. When cancellation is asynchronous, a gap exists between user request and enforcement\u2014users retain system access until the cancellation job executes, enabling data exfiltration and re-subscription gaming. The root cause is lack of atomic state transitions: subscription_status should atomically change to 'cancelled' with immediate revocation of workspace access, before background jobs (billing adjustments, data retention) execute. Proper design requires: (1) synchronous permission revocation: immediately remove user from workspace and disable API tokens upon cancellation request; (2) transactional consistency: single database transaction updating subscription_status, team_membership, and token validity; (3) state machine enforcement: workspace queries reject cancelled users regardless of async job status; (4) reconciliation logic: periodic audits confirming active subscriptions match active workspace members. Implementation: UPDATE subscriptions SET status='cancelled' WHERE user_id=X; DELETE FROM team_members WHERE user_id=X AND team_id=Y; REVOKE active_tokens; only then enqueue async billing jobs.",
+    "evaluation_criteria": [
+      "Must demonstrate the timing gap enabling post-cancellation data access and re-subscription before state sync",
+      "Must specify atomic transaction structure combining subscription state, team membership, and token revocation"
+    ]
+  },
+  {
+    "id": 205,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A vendor marketplace allows sellers to adjust pricing for bulk orders via a discount matrix. The discount calculation uses: final_price = base_price * (1 - discount_percentage). A seller modifies the API request to send discount_percentage = 1.5 (150%), resulting in final_price = base_price * (1 - 1.5) = base_price * (-0.5), making the platform pay the seller instead of charging the buyer for bulk orders.",
+    "prompt": "Exploit price inversion through invalid discount percentages and recommend input validation constraints.",
+    "reasoning_focus": "Discount percentage validation allowing negative or over-100% values.",
+    "expected_answer": "Price inversion vulnerabilities occur when discount percentages lack proper range validation. Systems accepting discount_percentage as unconstrained decimal input without bounds checking allow values outside the logical range [0, 1] or [0, 100], inverting payment direction. A seller submitting discount_percentage = 1.5 causes (1 - 1.5) = -0.5 multiplier, flipping the transaction: platform pays seller. This exploits missing validation at two levels: (1) lack of range check (discount must be \u2264 100%); (2) missing logic validation confirming final_price > 0. Mitigation requires: (1) validate 0 \u2264 discount_percentage \u2264 100 with explicit range error responses; (2) assert final_price \u2265 minimum_price (typically > 0); (3) implement business rule: discount cannot reduce seller revenue below platform fee minimum; (4) log all pricing modifications with seller ID and timestamp for audit; (5) implement approval workflow for discounts exceeding threshold (e.g., > 50%). Server-side validation: if (discount_percentage < 0 || discount_percentage > 100) return ValidationError; if (final_price <= 0) return InvalidPrice.",
+    "evaluation_criteria": [
+      "Must demonstrate price inversion calculation showing negative multiplier causing payment reversal",
+      "Must specify range validation constraints (0 \u2264 discount \u2264 100) and minimum price assertions"
+    ]
+  },
+  {
+    "id": 206,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "A checkout system applies percentage-based and fixed-amount coupons sequentially without validation of cumulative discount caps. Multiple coupons can stack, and negative order totals are permitted, resulting in platform-issued refunds to customer accounts.",
+    "prompt": "Analyze coupon stacking vulnerability where cumulative discounts exceed product value, generating negative totals and refund abuse.",
+    "reasoning_focus": "Coupon combination logic and refund generation on negative balances.",
+    "expected_answer": "The checkout engine applies coupons in sequence without aggregate discount validation or maximum-cap enforcement. An attacker chains a 50% percentage coupon with a $500 fixed discount on a $100 item, producing a -$400 order total. The system auto-credits this as a refund to the customer account, convertible to future purchases or withdrawal. Exploitation requires identifying coupons with overlapping categories, timing their application before validation recalculates, and triggering refund issuance. Remediation demands: (1) calculate cumulative discount before order finalization and reject if exceeding 100% of item value, (2) enforce coupon mutual-exclusivity rules at database schema level, (3) cap refunds at zero and disallow negative order totals, (4) implement coupon-combination blacklist rules reviewed quarterly.",
+    "evaluation_criteria": [
+      "Must demonstrate the specific coupon combination sequence showing order total calculation and refund generation with exact monetary values",
+      "Must identify the refund conversion mechanism and recommend validation logic preventing cumulative discounts exceeding item subtotal with database constraints"
+    ]
+  },
+  {
+    "id": 207,
+    "complexity": "L3",
+    "domain": "Marketplace",
+    "scenario": "A marketplace referral system awards bonus credits to referrer and referee upon first purchase. The bonus calculation uses the product price field directly without verifying it matches the confirmed transaction amount, and bonuses are issued before payment settlement confirmation.",
+    "prompt": "Identify referral bonus manipulation through price-field tampering and race conditions in bonus issuance timing.",
+    "reasoning_focus": "Referral bonus calculation based on unconfirmed transaction state.",
+    "expected_answer": "The referral system calculates bonuses using the price field from the product metadata rather than the settled transaction receipt. An attacker modifies the product price via browser DevTools to $10,000, generates a referral link, completes purchase of the item at actual price $50, but receives bonuses calculated on the $10,000 inflated price. The bonus issuance occurs pre-settlement, creating a race condition where refund after bonus issuance leaves the attacker with both refund and inflated bonus credits. Exploitation chain: (1) manipulate client-side price field before referral link generation, (2) complete transaction at actual price with referral, (3) request refund immediately after bonus issuance but before settlement confirmation, (4) repeat with multiple referral accounts. Mitigation requires: (1) derive bonus from settled transaction amount in payment processor records, (2) delay bonus issuance until post-settlement (minimum 24 hours), (3) implement bonus clawback logic on refunds, (4) validate price consistency between product catalog and transaction receipt.",
+    "evaluation_criteria": [
+      "Must map the exact race condition window between bonus issuance and payment settlement with specific API call sequences and timing",
+      "Must recommend fetching bonus calculation data from immutable payment processor records rather than mutable application database with explicit API integration details"
+    ]
+  },
+  {
+    "id": 208,
+    "complexity": "L2",
+    "domain": "SaaS",
+    "scenario": "A project management SaaS platform implements role-based access control via URL parameter 'role=admin' without server-side validation, relying solely on client-side role enforcement and token inspection in frontend code.",
+    "prompt": "Evaluate privilege escalation through client-side role parameter manipulation.",
+    "reasoning_focus": "Client-side privilege enforcement without server-side validation.",
+    "expected_answer": "The application transmits user role in a URL parameter that the backend accepts without re-validating against the authenticated session or database record. An attacker modifies the URL from /dashboard?role=user to /dashboard?role=admin and gains administrative functionality. The backend processes requests based on the URL parameter rather than the authoritative role stored in the session token or user database record. This affects all permission checks: /api/users/list?role=admin retrieves all user data, /api/audit/logs?role=admin exports sensitive logs, /api/settings?role=admin modifies system configuration. The vulnerability exists because role is treated as client-provided input rather than a derived property of the authenticated session. Exploitation requires only URL manipulation; no authentication bypass is needed. Remediation: (1) derive user role exclusively from the session token (JWT claims or server session store), (2) remove role from any client-controllable location including URL parameters, cookies, or request bodies, (3) implement server-side authorization checks on every endpoint that validate role matches the authenticated user's database record, (4) log all privilege-checking failures for alerting.",
+    "evaluation_criteria": [
+      "Must identify specific API endpoints vulnerable to role parameter substitution and demonstrate request/response showing privilege escalation",
+      "Must recommend storing authoritative role in cryptographically signed session token (JWT with HS256/RS256) with server-side validation on every request"
+    ]
+  },
+  {
+    "id": 209,
+    "complexity": "L4",
+    "domain": "Crypto",
+    "scenario": "A decentralized exchange smart contract processes token swaps with price calculation using uint256 arithmetic. A transaction submits a swap of 2^255 tokens with a price multiplier, causing integer overflow in the fee calculation that wraps to a small positive number, resulting in minimal fees charged.",
+    "prompt": "Analyze integer overflow in crypto fee calculation enabling high-volume trading without proportional fee burden.",
+    "reasoning_focus": "Unsigned integer overflow in financial calculations with no upper-bound validation.",
+    "expected_answer": "The smart contract calculates swap fees as (token_amount * price * fee_rate) / 10^18 using uint256 without overflow checks. An attacker submits a swap of 2^255 tokens (close to uint256 max of 2^256-1). The multiplication (2^255 * price * fee_rate) overflows the 256-bit limit, wrapping to a small positive value. If price=2 and fee_rate=10000 (0.01%), the calculation becomes (2^255 * 2 * 10000) which overflows to approximately 2^256 mod (2^255 * 2 * 10000), resulting in a fee of ~100 tokens instead of the expected 2^253 tokens. The attacker executes massive trades with negligible fees, extracting MEV (maximum extractable value) and destabilizing the exchange. The vulnerability requires: (1) token_amount close to uint256 max, (2) price > 1, (3) fee_rate multiplier. Solidity remediation: (1) use SafeMath library for all arithmetic, (2) implement upper-bound validation: require(token_amount <= MAX_SWAP_AMOUNT), (3) reorganize calculation to divide before multiply: (token_amount / 10^18) * price * fee_rate to prevent intermediate overflow, (4) add require statements validating result reasonableness before state changes.",
+    "evaluation_criteria": [
+      "Must demonstrate the exact overflow calculation with bit-level arithmetic showing initial values, overflow point, and resulting fee with mathematical proof",
+      "Must provide Solidity code remediation using SafeMath with explicit overflow prevention pattern and upper-bound validation contract deployment parameters"
+    ]
+  },
+  {
+    "id": 210,
+    "complexity": "L3",
+    "domain": "Subscription",
+    "scenario": "A subscription platform implements billing pause with date parameters 'pause_start' and 'pause_end' processed without validation of logical ordering. A subscriber can set pause_end before pause_start, causing the billing system to interpret this as a negative duration and skip billing cycles indefinitely.",
+    "prompt": "Identify subscription billing bypass through illogical date range parameters.",
+    "reasoning_focus": "Insufficient validation of temporal parameter constraints in billing logic.",
+    "expected_answer": "The pause billing endpoint accepts pause_start and pause_end date parameters without validating that pause_end > pause_start. A subscriber calls PATCH /api/subscription/pause with pause_start='2025-02-01' and pause_end='2025-01-01', creating a reverse date range. The billing system calculates pause_duration = pause_end - pause_start, resulting in a negative duration (-31 days). The billing cycle loop condition (current_date < pause_end || current_date > pause_start) evaluates as logically true for all dates when the range is inverted, effectively pausing billing indefinitely. The attacker maintains subscription access without charges by refreshing the reversed pause window before it expires. Exploitation chain: (1) initiate pause with inverted dates, (2) verify billing cycles are skipped, (3) renew the reversed pause window monthly, (4) maintain indefinite free access. Remediation: (1) implement explicit validation: require(pause_end > pause_start), returning HTTP 400 if violated, (2) enforce maximum pause duration: require(pause_end - pause_start <= 90 days), (3) add database CHECK constraint: CHECK(pause_end > pause_start), (4) implement billing cycle trigger that validates pause window integrity before skipping charges.",
+    "evaluation_criteria": [
+      "Must demonstrate the inverted date range request with API payload and show the resulting billing cycle skipping behavior with timestamp logs",
+      "Must recommend database-level CHECK constraints and application-level validation with specific error responses for invalid temporal ranges"
+    ]
+  },
+  {
+    "id": 211,
+    "complexity": "L2",
+    "domain": "E-commerce",
+    "scenario": "An inventory management system accepts 'quantity' parameters without type validation. Submitting quantity='-5' as a string in the add-to-cart endpoint causes the application to process it as a negative integer, reducing cart total while increasing item count.",
+    "prompt": "Evaluate negative quantity exploitation in cart manipulation.",
+    "reasoning_focus": "Type coercion and negative value handling in quantity calculations.",
+    "expected_answer": "The add-to-cart endpoint accepts quantity as a string parameter without explicit integer validation or negative-value checks. When a user submits quantity='-5', the application's type coercion converts it to the integer -5. The cart system calculates total_price = unit_price * quantity, resulting in a negative contribution (e.g., -5 * $20 = -$100), reducing the order total. The item count increments by -5, effectively removing inventory from the cart while reducing the total price. An attacker adds a high-value item with quantity='-999', obtaining a massive negative order balance, then completes purchase at a negative price (receiving payment from the platform). The vulnerability requires: (1) loose type handling permitting negative quantities, (2) no validation logic for quantity bounds, (3) price calculation without absolute value enforcement. Exploitation: submit quantity as negative integer, observe price reduction, proceed to checkout with negative total. Remediation: (1) explicitly validate quantity: require(quantity > 0), returning HTTP 400 for non-positive values, (2) implement type-strict parsing using parseInt with radix, rejecting non-numeric strings, (3) apply database constraint: ADD CONSTRAINT quantity_positive CHECK(quantity > 0), (4) validate cart total >= 0 before payment processing.",
+    "evaluation_criteria": [
+      "Must demonstrate the negative quantity request with exact API payload showing price calculation with negative values and resulting checkout amount",
+      "Must recommend input validation with parseInt implementation and database CHECK constraints with specific SQL syntax"
+    ]
+  },
+  {
+    "id": 212,
+    "complexity": "L3",
+    "domain": "Healthcare",
+    "scenario": "A medical appointment scheduling system allows users to modify appointment status via API without verifying appointment ownership. The status field accepts 'completed' without confirmation from the provider, and completed appointments reduce the provider's available capacity quota.",
+    "prompt": "Analyze workflow bypass through unauthorized status modification enabling provider quota manipulation.",
+    "reasoning_focus": "Missing authorization checks in state-transition operations affecting resource quotas.",
+    "expected_answer": "The /api/appointments/{id}/status endpoint accepts status updates without verifying that the authenticated user is the appointment provider or an administrator. A malicious patient calls PATCH /api/appointments/12345/status with status='completed' on a scheduled appointment, bypassing the normal provider confirmation workflow. The system marks the appointment completed and decrements the provider's available-appointment quota. By completing multiple appointments without provider consent, the attacker artificially reduces the provider's appointment capacity, preventing legitimate bookings. This affects other patients' ability to schedule with that provider. The vulnerability chain: (1) identify target provider's appointment ID, (2) iterate through available appointments, (3) submit status='completed' for each without provider confirmation, (4) observe provider capacity depletion in booking system. Additional impact: completed appointments may trigger billing workflows, generating false revenue records. Remediation: (1) implement role-based access control validating user role is 'provider' and appointment.provider_id matches authenticated user ID, (2) require provider confirmation via separate endpoint before status transitions to 'completed', (3) implement state-machine validation: only allow status transitions from scheduled -> in-progress -> completed, not direct jumps, (4) audit all status changes with provider signature requirements, (5) add database constraint: ALTER TABLE appointments ADD CONSTRAINT status_valid CHECK(status IN ('scheduled', 'in-progress', 'completed', 'cancelled')).",
+    "evaluation_criteria": [
+      "Must demonstrate unauthorized status modification API request showing missing authorization header validation and resulting quota change with specific quota values",
+      "Must recommend role-based access control implementation with provider_id matching and state-machine validation logic preventing direct status jumps"
+    ]
+  },
+  {
+    "id": 213,
+    "complexity": "L2",
+    "domain": "Fintech",
+    "scenario": "A peer-to-peer payment application implements a split-payment feature where multiple recipients are specified in a single transaction request. The application processes each recipient without atomic transaction guarantees, and network interruption during payment processing can result in duplicate transfers to recipients.",
+    "prompt": "Identify race condition in split-payment processing enabling duplicate transfers.",
+    "reasoning_focus": "Non-atomic multi-recipient payment processing without idempotency guarantees.",
+    "expected_answer": "The split-payment endpoint processes multiple recipients sequentially without database transactions or idempotency tokens. A user initiates a split payment of $100 to three recipients ($33.33 each), and the API processes recipient-1, recipient-2, then experiences a network timeout before recipient-3 completes. The application retries the request due to timeout, but lacks idempotency key validation, processing recipient-1 and recipient-2 again. The sender's balance is debited twice for recipients 1 and 2, while recipient-3 receives only a single transfer. An attacker intentionally triggers network interruption during split payments (by terminating network connection after first transfer) and repeatedly retries, multiplying transfers to early recipients. The vulnerability requires: (1) lack of idempotency token validation, (2) sequential processing without transaction wrapping, (3) no replay-attack detection. Exploitation: submit split-payment with idempotency_token=attacker_controlled, observe duplicate transfers, retry with identical token to trigger duplication. Remediation: (1) mandate idempotency tokens: require(idempotency_token) and store in idempotency_key table with unique constraint, (2) wrap all recipient transfers in database transaction: BEGIN; UPDATE sender_balance; INSERT INTO transfers (multiple rows); COMMIT;, (3) implement idempotent response: return cached result if idempotency_token already processed, (4) add foreign key constraints preventing orphaned transfers.",
+    "evaluation_criteria": [
+      "Must demonstrate the retry scenario with network timeout causing duplicate transfers with exact API requests, response codes, and resulting balance states",
+      "Must recommend idempotency token implementation with database unique constraint and transaction wrapping with specific SQL structure"
+    ]
   }
 ]
