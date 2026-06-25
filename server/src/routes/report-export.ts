@@ -21,6 +21,10 @@ interface ExportFinding {
   stepsToReproduce?: string[];
   impact?: string;
   affectedEndpoint?: string;
+  exploitPayload?: string;
+  poc?: string;
+  cvssScore?: number;
+  cvssVector?: string;
 }
 
 const REMEDIATION_BY_TYPE: Record<string, string> = {
@@ -43,6 +47,23 @@ function remediation(finding: ExportFinding): string {
     || "Apply appropriate security controls to mitigate the described vulnerability.";
 }
 
+// Severity precision: append CVSS when the finding carries it. Absent → "" so the
+// bare severity word (current behaviour) is preserved exactly. Never fabricated.
+function cvssSuffix(f: ExportFinding): string {
+  if (typeof f.cvssScore === "number" && f.cvssVector) return ` (CVSS ${f.cvssScore} — ${f.cvssVector})`;
+  if (typeof f.cvssScore === "number") return ` (CVSS ${f.cvssScore})`;
+  return "";
+}
+
+// Proof-of-Concept block — the concrete payload/request a triager needs to
+// reproduce. Renders only when present; absent → "" so output is byte-identical
+// to today for findings without a payload (the discriminating-negative case).
+function pocBlock(f: ExportFinding, heading: string): string {
+  const poc = (f.exploitPayload ?? f.poc ?? "").trim();
+  if (!poc) return "";
+  return `\n## ${heading}\n\`\`\`\n${poc}\n\`\`\`\n`;
+}
+
 // Each platform has slightly different section conventions. These produce
 // submission-ready markdown tailored to each program's expectations.
 function formatHackerOne(f: ExportFinding, includeRemediation: boolean): string {
@@ -53,14 +74,14 @@ ${f.description || f.title || "Vulnerability report."}
 ${f.type || "N/A"}
 
 ## Severity
-${(f.severity || "medium").toUpperCase()}
+${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
 
 ## Affected Endpoint / Asset
 ${f.affectedEndpoint || "N/A"}
 
 ## Steps To Reproduce
 ${steps(f)}
-
+${pocBlock(f, "Proof of Concept")}
 ## Impact
 ${f.impact || "See description."}
 ${includeRemediation ? `\n## Remediation\n${remediation(f)}\n` : ""}`;
@@ -70,7 +91,7 @@ function formatBugcrowd(f: ExportFinding, includeRemediation: boolean): string {
   return `# ${f.title || "Vulnerability Submission"}
 
 **VRT Category:** ${f.type || "N/A"}
-**Severity:** ${(f.severity || "medium").toUpperCase()}
+**Severity:** ${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
 **Affected URL:** ${f.affectedEndpoint || "N/A"}
 
 ## Description
@@ -78,7 +99,7 @@ ${f.description || "N/A"}
 
 ## Proof of Concept / Steps
 ${steps(f)}
-
+${pocBlock(f, "Payload")}
 ## Business Impact
 ${f.impact || "See description."}
 ${includeRemediation ? `\n## Suggested Remediation\n${remediation(f)}\n` : ""}`;
@@ -88,7 +109,7 @@ function formatIntigriti(f: ExportFinding, includeRemediation: boolean): string 
   return `# ${f.title || "Submission"}
 
 **Type:** ${f.type || "N/A"}
-**Severity (CVSS band):** ${(f.severity || "medium").toUpperCase()}
+**Severity (CVSS band):** ${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
 **Endpoint:** ${f.affectedEndpoint || "N/A"}
 
 ## What is the issue?
@@ -96,7 +117,7 @@ ${f.description || "N/A"}
 
 ## Steps to reproduce
 ${steps(f)}
-
+${pocBlock(f, "Proof of Concept")}
 ## Impact
 ${f.impact || "See description."}
 ${includeRemediation ? `\n## Recommended fix\n${remediation(f)}\n` : ""}`;
@@ -107,6 +128,11 @@ const FORMATTERS: Record<Platform, (f: ExportFinding, r: boolean) => string> = {
   bugcrowd: formatBugcrowd,
   intigriti: formatIntigriti,
 };
+
+// Exported for unit testing the format directly (no HTTP). The route below is
+// the only production caller.
+export { FORMATTERS };
+export type { ExportFinding };
 
 // ── POST /export ──────────────────────────────────────────────────────────────
 router.post("/export", (req: Request, res: Response) => {
