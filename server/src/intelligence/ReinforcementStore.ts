@@ -167,7 +167,7 @@ export class UnifiedReinforcementStore {
    *  Returns null when there's insufficient data to make a call (< 3 samples each). */
   async getBetterModel(
     vulnClass: string,
-    candidates: string[] = ["claude", "ollama"]
+    candidates: string[] = ["claude"]
   ): Promise<string | null> {
     const MIN_SAMPLES = 3;
     let best: string | null = null;

@@ -67,7 +67,6 @@ interface LocalRuntime {
 }
 
 const LOCAL_RUNTIMES = [
-  { name: "ollama",    label: "Ollama",     url: "http://localhost:11434", type: "ollama" as const },
   { name: "lm_studio", label: "LM Studio",  url: "http://localhost:1234",  type: "openai" as const },
   { name: "jan",       label: "Jan",        url: "http://localhost:1337",  type: "openai" as const },
   { name: "localai",   label: "LocalAI",    url: "http://localhost:8080",  type: "openai" as const },
@@ -76,15 +75,9 @@ const LOCAL_RUNTIMES = [
 
 async function probeRuntime(runtime: typeof LOCAL_RUNTIMES[number]): Promise<LocalRuntime | null> {
   try {
-    if (runtime.type === "ollama") {
-      const resp = await axios.get(`${runtime.url}/api/tags`, { timeout: 2000 });
-      const models: string[] = (resp.data?.models ?? []).map((m: { name: string }) => m.name);
-      return { name: runtime.name, label: runtime.label, url: runtime.url, models };
-    } else {
-      const resp = await axios.get(`${runtime.url}/v1/models`, { timeout: 2000 });
-      const models: string[] = (resp.data?.data ?? []).map((m: { id: string }) => m.id);
-      return { name: runtime.name, label: runtime.label, url: runtime.url, models };
-    }
+    const resp = await axios.get(`${runtime.url}/v1/models`, { timeout: 2000 });
+    const models: string[] = (resp.data?.data ?? []).map((m: { id: string }) => m.id);
+    return { name: runtime.name, label: runtime.label, url: runtime.url, models };
   } catch {
     return null;
   }

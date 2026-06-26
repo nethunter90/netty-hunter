@@ -131,15 +131,14 @@ router.post("/", async (req: Request, res: Response) => {
     const raw = await modelRouter.chat(capped);
     const { display, executed } = await withExecution(raw);
     const models = await modelRouter.getModels();
-    return res.json({ response: display, model: models[0] ?? "ollama", executed });
+    return res.json({ response: display, model: models[0] ?? "claude", executed });
   } catch (err) {
     const msg = String(err);
     logger.warn("[Chat] model error", { err: msg });
-    const isConnRefused = msg.includes("ECONNREFUSED") || msg.includes("connect");
     return res.status(503).json({
-      error: isConnRefused
-        ? "Cannot reach Ollama. Make sure `ollama serve` is running."
-        : `Model error: ${msg.replace("Error: Model generation failed: ", "").slice(0, 200)}`,
+      error: msg.includes("ClaudeUnavailableError") || msg.includes("Claude unavailable")
+        ? "Claude unavailable. Check that ANTHROPIC_API_KEY is set correctly."
+        : `Model error: ${msg.slice(0, 200)}`,
     });
   }
 });

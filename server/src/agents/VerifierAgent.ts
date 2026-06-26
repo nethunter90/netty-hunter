@@ -297,26 +297,7 @@ class Layer4AIConfirmation {
     screenshot?: string;
   }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean; errored?: boolean }> {
 
-    // Vision analysis — fire in parallel with text prompt construction if screenshot available
-    let visionDescription = '';
-    let visionUsed = false;
-    if (previousLayers.screenshot) {
-      try {
-        const visionPrompt =
-          `Security vulnerability verification screenshot. ` +
-          `Payload sent: "${result.payload}" to ${result.endpoint} testing for ${result.vulnClass}. ` +
-          `Does the screenshot show evidence of a successful exploit? ` +
-          `Look for: JavaScript alerts, injected content, error messages revealing internals, ` +
-          `unexpected redirects, or any sign the payload executed. ` +
-          `Reply in 2-3 sentences only.`;
-        const desc = await this.modelRouter.describeScreenshot(previousLayers.screenshot, visionPrompt);
-        if (desc) {
-          visionDescription = desc.trim();
-          visionUsed = true;
-          logger.info('VerifierAgent: Vision analysis complete', { vulnClass: result.vulnClass, desc: visionDescription.slice(0, 100) });
-        }
-      } catch { /* non-critical — degrade silently */ }
-    }
+    const visionUsed = false;
 
     // Stateful oracle findings (logic_exploit_agent) need special handling in the
     // L4 prompt: L2's bare-GET result is structurally inapplicable to multi-step
@@ -383,7 +364,6 @@ ${layer2Section}
 Layer 3 (Browser Replay):
 - Confirmed: ${previousLayers.layer3.confirmed}
 - Console/Dialog alerts: ${JSON.stringify(previousLayers.layer3.consoleAlerts)}
-${visionDescription ? `\nVision Model Analysis:\n${visionDescription}\n` : ""}
 Based on ALL the evidence above, determine:
 1. Is this a genuine vulnerability (not a false positive)?
 2. What is the confidence adjustment (-0.5 to +0.3)?

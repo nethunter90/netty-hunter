@@ -16,7 +16,7 @@ import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
-import { ModelRouter } from "../intelligence/ModelRouter";
+import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
 import { promptKB } from "../intelligence/PromptKnowledgeBase";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
@@ -121,7 +121,7 @@ export interface Hypothesis {
   retryCount?: number;
   toolHint?: string;
   /** Which model generated this hypothesis — used to score model performance in RL store. */
-  modelSource?: "claude" | "ollama" | "default";
+  modelSource?: "claude" | "default";
   /** Finding IDs this hypothesis chains from (set by SynthesisAgent). */
   chainedFrom?: string[];
 }
@@ -735,7 +735,7 @@ export class HunterEngine extends EventEmitter {
     logger.info("[HunterEngine] Effort profile", { complexity: effort.complexity, probeLimit: effort.probeLimit, rationale: effort.rationale });
     contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit });
 
-    contextWriter.reset(sessionUuid, params.targetUrl, "ollama");
+    contextWriter.reset(sessionUuid, params.targetUrl, "claude");
 
     // Validate tor is reachable if proxy routing was requested
     if (params.proxyEnabled) {
@@ -1013,11 +1013,6 @@ export class HunterEngine extends EventEmitter {
         aliveSubdomains: alive.length,
         interestingUrls: this.reconContext.interestingUrls.length,
       });
-    }
-
-    // Vision observation — screenshot the target and describe the UI (first pass only, fire-and-forget)
-    if (this.state.iteration === 1) {
-      this.runVisionObservation().catch(() => {});
     }
 
     // CVE-seeded hypothesis injection — first observe pass only
@@ -1741,8 +1736,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
       this.emit("hunt:hypotheses", { count: newHypotheses.length, hypotheses: newHypotheses });
       logger.info("Generated hypotheses", { count: newHypotheses.length });
     } catch (err) {
-      logger.error("Hypothesis generation failed", { err });
-      // Fallback: generate default hypotheses based on common vuln classes
+      if (err instanceof ClaudeUnavailableError) {
+        logger.error("[HunterEngine] Claude unavailable — halting hunt", { err: String(err) });
+        this.aborted = true;
+        this.emit("hunt:error", {
+          sessionUuid: this.state.sessionId,
+          error: "Claude unavailable — hunt halted. Check ANTHROPIC_API_KEY.",
+        });
+        return;
+      }
+      // Non-Claude error (JSON parse, etc.) — use generic defaults so the loop continues
+      logger.error("Hypothesis generation failed — using defaults", { err });
       this.generateDefaultHypotheses();
     }
   }
@@ -2594,53 +2598,6 @@ Return ONLY valid JSON array of hypothesis objects.`;
     return { found: false, output: "", endpoint: "", flagValues: [], duration: Date.now() - start };
   }
 
-  private async runVisionObservation(): Promise<void> {
-    try {
-      // Take a lightweight screenshot via playwright-worker if it's available
-      const { chromium } = await import('playwright');
-      const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-      const page = await browser.newPage();
-      await page.goto(this.state.targetUrl, { timeout: 10000, waitUntil: 'domcontentloaded' });
-      const screenshotBuffer = await page.screenshot({ type: 'png', fullPage: false });
-      await browser.close();
-      const base64 = screenshotBuffer.toString('base64');
-
-      const visionPrompt =
-        `You are a security researcher performing reconnaissance on a web application. ` +
-        `Analyze this screenshot of the target homepage at ${this.state.targetUrl}. ` +
-        `Identify and list: login forms, file upload areas, search fields, admin/dashboard links, ` +
-        `API endpoints mentioned, user roles visible, any unusual UI elements. ` +
-        `Output as a concise bullet list of attack surface observations only.`;
-
-      const description = await this.modelRouter.describeScreenshot(base64, visionPrompt);
-      if (!description) return;
-
-      // Extract tags from vision description
-      const tags: string[] = ['vision', 'ui_analysis'];
-      if (/login|auth|password|sign.?in/i.test(description))   tags.push('auth');
-      if (/upload|file|attachment/i.test(description))          tags.push('file_upload');
-      if (/admin|dashboard|panel/i.test(description))           tags.push('admin_panel');
-      if (/search|query|filter/i.test(description))             tags.push('sqli', 'xss');
-      if (/api|endpoint|rest|graphql/i.test(description))       tags.push('api_surface');
-      if (/register|signup|create.account/i.test(description))  tags.push('idor');
-
-      const visionObs: Observation = {
-        id: uuidv4(),
-        timestamp: Date.now(),
-        source: 'vision_model',
-        data: { description },
-        anomalyScore: 0.3,
-        tags,
-        rawOutput: description,
-      } as unknown as Observation;
-
-      this.state.observations.push(visionObs);
-      this.emit('hunt:observations', { count: 1, observations: [visionObs] });
-      logger.info('[HunterEngine] Vision observation added', { tags, preview: description.slice(0, 120) });
-    } catch (err) {
-      logger.debug('[HunterEngine] Vision observation skipped', { reason: String(err).slice(0, 100) });
-    }
-  }
 
   private computeAnomalyScore(data: Record<string, unknown>): number {
     let score = 0;
