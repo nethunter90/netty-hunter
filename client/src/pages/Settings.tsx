@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2, Cpu, RefreshCw, CheckCircle } from "lucide-react";
+import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2, Cpu, RefreshCw, CheckCircle, Trash2 } from "lucide-react";
 import api from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -47,6 +47,7 @@ export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
   const [scanning, setScanning] = useState(false);
@@ -68,15 +69,39 @@ export default function SettingsPage() {
   };
 
   const handleSave = async () => {
+    // Only send fields the user actually edited. Untouched secrets are held in
+    // state as masked sentinels (••••1234); re-sending them would overwrite the
+    // real stored value, so they must be excluded.
+    const payload = Object.fromEntries(
+      Object.entries(values).filter(([k, v]) => dirty.has(k) && v)
+    );
+    if (Object.keys(payload).length === 0) {
+      toast("No changes to save");
+      return;
+    }
     setSaving(true);
     try {
-      await api.post("/settings", values);
-      setSaved(new Set(Object.keys(values).filter(k => values[k])));
+      await api.post("/settings", payload);
+      setSaved(new Set(Object.keys(payload)));
+      setDirty(new Set());
       toast.success("Settings saved — restart server to apply env var changes");
     } catch {
       toast.error("Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleClear = async (field: SettingField) => {
+    if (!window.confirm(`Clear ${field.label}?`)) return;
+    try {
+      await api.delete(`/settings/${field.key}`);
+      setValues(v => ({ ...v, [field.key]: "" }));
+      setDirty(prev => { const next = new Set(prev); next.delete(field.key); return next; });
+      setSaved(prev => { const next = new Set(prev); next.delete(field.key); return next; });
+      toast.success(`${field.label} cleared`);
+    } catch {
+      toast.error("Failed to clear");
     }
   };
 
@@ -147,11 +172,23 @@ export default function SettingsPage() {
                       type={field.secret && !revealed.has(field.key) ? "password" : "text"}
                       placeholder={field.placeholder}
                       value={values[field.key] || ""}
-                      onChange={e => setValues(v => ({ ...v, [field.key]: e.target.value }))}
+                      onChange={e => {
+                        setValues(v => ({ ...v, [field.key]: e.target.value }));
+                        setDirty(prev => new Set(prev).add(field.key));
+                      }}
                     />
                     {field.secret && (
                       <button onClick={() => toggleReveal(field.key)} className="hack-btn p-1.5">
                         {revealed.has(field.key) ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      </button>
+                    )}
+                    {values[field.key] && (
+                      <button
+                        onClick={() => handleClear(field)}
+                        title={`Clear ${field.label}`}
+                        className="hack-btn p-1.5 text-hack-red hover:bg-hack-red/10"
+                      >
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     )}
                   </div>

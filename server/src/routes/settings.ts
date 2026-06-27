@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import axios from "axios";
 import { db } from "../db";
 import { reinforcementStore } from "../db/schema";
-import { like } from "drizzle-orm";
+import { like, and, eq } from "drizzle-orm";
 import { runtimeConfig, RUNTIME_CONFIG_ALLOWED_KEYS } from "../lib/runtime-config";
 
 const router = Router();
@@ -41,6 +41,9 @@ router.post("/", async (req: Request, res: Response) => {
   for (const [key, value] of Object.entries(body)) {
     if (!ALLOWED_KEYS.has(key)) continue;
     if (!value) continue;
+    // Never persist a masked sentinel — guards against the client echoing back a
+    // GET-masked secret (••••1234) and overwriting the real stored value.
+    if (value.startsWith("••••")) continue;
 
     await db.insert(reinforcementStore).values({
       domain: SETTINGS_DOMAIN,
@@ -54,6 +57,18 @@ router.post("/", async (req: Request, res: Response) => {
     // Apply through RuntimeConfig (validates key, sanitizes value, audits the write)
     runtimeConfig.set(key, value);
   }
+  return res.json({ ok: true });
+});
+
+// DELETE /settings/:key — clear a single stored credential without touching others
+router.delete("/:key", async (req: Request, res: Response) => {
+  const { key } = req.params;
+  if (!ALLOWED_KEYS.has(key)) {
+    return res.status(400).json({ ok: false, error: `Unknown setting key: ${key}` });
+  }
+  await db.delete(reinforcementStore)
+    .where(and(eq(reinforcementStore.domain, SETTINGS_DOMAIN), eq(reinforcementStore.key, key)));
+  runtimeConfig.delete(key);
   return res.json({ ok: true });
 });
 

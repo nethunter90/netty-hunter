@@ -41,6 +41,16 @@ class RuntimeConfig {
     return this.store.get(key) ?? process.env[key];
   }
 
+  delete(key: string): void {
+    if (!RUNTIME_CONFIG_ALLOWED_KEYS.has(key)) {
+      logger.warn("[RuntimeConfig] Rejected delete of disallowed key", { key });
+      return;
+    }
+    this.store.delete(key);
+    delete process.env[key];
+    logger.debug("[RuntimeConfig] Setting cleared", { key });
+  }
+
   /** Load bulk key/value pairs (used at startup from DB). */
   loadAll(entries: Array<{ key: string; value: unknown }>): void {
     for (const { key, value } of entries) {
