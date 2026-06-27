@@ -165,6 +165,31 @@ export interface HypothesisConfirmed {
   videoPath?: string;
 }
 
+// nuclei -tags filter per hypothesis vuln class. Without a tag (or custom template)
+// filter, nuclei runs its entire default template store and always blows past the
+// 60s tool timeout. Mapping each class to its nuclei tag(s) keeps each probe to a
+// small, relevant subset that returns in seconds. The fallback bounds any unmapped
+// class so it can never trigger a full scan.
+export const NUCLEI_TAGS_BY_CLASS: Record<string, string> = {
+  sqli: "sqli",
+  xss: "xss",
+  rce: "rce",
+  ssrf: "ssrf",
+  lfi: "lfi",
+  xxe: "xxe",
+  cors: "cors",
+  open_redirect: "redirect",
+  exposed_panels: "panel,exposure",
+  info_disclosure: "exposure",
+  information_disclosure: "exposure",
+  auth_bypass: "default-login,auth-bypass",
+  idor: "idor",
+  csrf: "csrf",
+  misconfig: "misconfig",
+  security_headers: "misconfig",
+};
+const NUCLEI_TAGS_FALLBACK = "misconfig,exposure,cve";
+
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
 // Commands return { bin, args } arrays — never interpolated shell strings —
 // to prevent command injection via attacker-controlled URLs.
@@ -196,8 +221,12 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "idor", "exposed_panels", "misconfig"],
     command: (url, opts) => ({
       bin: "nuclei",
+      // -disable-update-check: nuclei's periodic template/binary update probe is a
+      // network round-trip that can stall (esp. first run of the day). Template
+      // selection (-tags by vuln class) is injected in runTool so a fresh hunt
+      // doesn't run the full default store and blow past the 60s tool ceiling.
       args: ["-u", url, "-s", opts?.severity || "medium,high,critical",
-             "-j", "-silent", "-timeout", "10"],
+             "-j", "-silent", "-disable-update-check", "-timeout", "10"],
     }),
     parser: (output) => {
       const result = parseNucleiOutput(output);
@@ -2274,7 +2303,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
         if (templates.length > 0) {
           const tmplPath = join(tmpdir(), `netty-custom-${domain.replace(/\./g, "-")}-${Date.now()}.yaml`);
           await writeFile(tmplPath, templates.join("\n---\n"), "utf8");
-          args.push("-t", tmplPath);
+          args.push("-t", tmplPath); // -t restricts nuclei to these custom templates
+        } else {
+          // No custom templates → bound the default store by the hypothesis vuln
+          // class so nuclei runs a small relevant subset instead of the full set
+          // (which always hits the 60s tool ceiling). Skip if -tags already present.
+          if (!args.includes("-tags")) {
+            const tags = NUCLEI_TAGS_BY_CLASS[hypothesis?.vulnClass ?? ""] ?? NUCLEI_TAGS_FALLBACK;
+            args.push("-tags", tags);
+          }
         }
       } catch { /* non-critical — continue without custom templates */ }
     }
