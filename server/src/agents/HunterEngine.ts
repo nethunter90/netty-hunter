@@ -297,7 +297,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["security_headers", "cors", "csrf", "information_disclosure", "open_redirect"],
     command: (url) => ({
       bin: "curl",
-      args: ["-sI", "-L", "--max-time", "10", url],
+      // GET (not HEAD): many real apps implement GET but not HEAD and let HEAD
+      // hang until --max-time. `-D -` dumps response headers to stdout (same shape
+      // the parser reads), `-o /dev/null` discards the body.
+      args: ["-s", "-L", "-D", "-", "-o", "/dev/null", "--max-time", "10", url],
     }),
     parser: (output) => {
       const headers: Record<string, string> = {};
