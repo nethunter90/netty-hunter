@@ -1289,21 +1289,9 @@ router.post("/programs/import", async (req: Request, res: Response) => {
     const scopeList = toList(scope);
     const outList = toList(outOfScope);
 
-    // Fail-closed: path-bearing out-of-scope entries are silently inert against the
-    // hostname-only matcher — the exclusion would never fire. Reject rather than store.
-    const pathBearingOut = outList.filter(s => s.replace(/^https?:\/\//i, "").includes("/"));
-    if (pathBearingOut.length) {
-      return res.status(400).json({
-        error: "Path-level out-of-scope not supported yet — exclude the whole host or wait for v2 path-scoping.",
-        offending: pathBearingOut,
-      });
-    }
-
-    // In-scope path entries collapse to host-level (over-permissive gap, not a violation).
-    const pathBearingIn = scopeList.filter(s => s.replace(/^https?:\/\//i, "").includes("/"));
-    const warnings = pathBearingIn.length
-      ? [`${pathBearingIn.length} in-scope path pattern(s) matched at host level only (v1 limitation): ${pathBearingIn.join(", ")}`]
-      : undefined;
+    // Path-level scope is now enforced by ScopeGuard (host+path matching), so both
+    // in-scope and out-of-scope path-bearing entries are stored verbatim. A path
+    // prefix like "localhost:5000/api/Addresss" restricts the hunt to that subtree.
 
     const [program] = await db.insert(programs).values({
       name: handle,
@@ -1321,7 +1309,6 @@ router.post("/programs/import", async (req: Request, res: Response) => {
     return res.status(201).json({
       message: `Imported ${handle}`,
       program: shapeProgramForScopeUI(program),
-      ...(warnings && { warnings }),
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

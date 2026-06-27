@@ -98,6 +98,90 @@ function classifyTerminal(hostname: string): "block" | "warn" | "ok" {
   return "ok";
 }
 
+// ── Path-aware scope matching (pure, exported for unit testing) ────────────────
+// A scope pattern is host-only ("example.com", "*.example.com", "*") or host+path
+// ("localhost:5000/api/Addresss"). Host-only admits any path (backward-compatible);
+// host+path restricts to that path subtree. Adding path enforcement can only NARROW
+// the allowed set — it never widens what host-level scope already permitted.
+
+/** Strip a `:port` suffix from a host, leaving IPv6 literals intact.
+ *  Handles bracketed IPv6 ("[::1]:5000" → "::1"); only strips host:port when there
+ *  is a single colon (IPv4/hostname) so bare IPv6 ("::1") is untouched. */
+function stripPort(host: string): string {
+  if (host.startsWith("[")) {
+    const m = host.match(/^\[(.+?)\](?::\d+)?$/);
+    if (m) return m[1];
+  }
+  if ((host.match(/:/g) || []).length === 1) return host.replace(/:\d+$/, "");
+  return host;
+}
+
+/** True for intentionally-local targets (loopback / RFC-1918 / link-local literals).
+ *  DNS-rebinding protection only matters when a PUBLIC host resolves to a private IP;
+ *  a target whose hostname is already local has nothing to rebind. */
+export function isLocalHostname(hostname: string): boolean {
+  const h = stripPort(hostname.toLowerCase());
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h === "::1" || h === "0:0:0:0:0:0:0:1") return true;
+  if (h.includes(":") && /^(fc|fd)/i.test(h)) return true; // IPv6 ULA
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return isPrivateIP(h);
+  return false;
+}
+
+/** Split a scope pattern into a host part and an optional normalized path prefix. */
+export function parsePattern(pattern: string): { hostPart: string; pathPrefix: string | null } {
+  const p = pattern.trim().replace(/^https?:\/\//i, ""); // strip scheme
+  const slash = p.indexOf("/");
+  if (slash === -1) return { hostPart: p, pathPrefix: null };
+  const hostPart = p.slice(0, slash);
+  let path = p.slice(slash);                 // includes leading '/'
+  if (path.length > 1) path = path.replace(/\/+$/, ""); // drop trailing slash(es)
+  return { hostPart, pathPrefix: path || "/" };
+}
+
+/** Host comparison. Strips port and wildcard prefix; '*' matches any host.
+ *  Case-insensitive. (Port is not part of host identity — consistent with how
+ *  bug-bounty host scope works, and required for localhost:PORT scoping.) */
+export function hostMatches(hostname: string, hostPart: string): boolean {
+  if (hostPart === "*") return true;
+  const n = stripPort(hostPart).replace(/^\*\./, "").toLowerCase();
+  const h = stripPort(hostname).toLowerCase();
+  return h === n || h.endsWith(`.${n}`);
+}
+
+/** Boundary-safe path-prefix match. A null/root prefix admits any path. */
+export function pathMatches(pathname: string, pathPrefix: string | null): boolean {
+  if (pathPrefix === null || pathPrefix === "" || pathPrefix === "/") return true;
+  const prefix = pathPrefix.replace(/\/+$/, "");
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+/** Pure host+path scope decision (no DNS/CNAME). Out-of-scope takes precedence;
+ *  in-scope requires a pattern matching BOTH host and path. */
+export function evaluateScopeDecision(
+  hostname: string,
+  pathname: string,
+  inScope: string[],
+  outOfScope: string[],
+): { allowed: boolean; reason: string } {
+  for (const pat of outOfScope) {
+    const { hostPart, pathPrefix } = parsePattern(pat);
+    if (hostMatches(hostname, hostPart) && pathMatches(pathname, pathPrefix)) {
+      return { allowed: false, reason: `URL matches out-of-scope pattern: ${pat}` };
+    }
+  }
+  let hostInScope = false;
+  for (const pat of inScope) {
+    const { hostPart, pathPrefix } = parsePattern(pat);
+    if (hostMatches(hostname, hostPart)) {
+      hostInScope = true;
+      if (pathMatches(pathname, pathPrefix)) return { allowed: true, reason: "URL is in scope" };
+    }
+  }
+  if (!hostInScope) return { allowed: false, reason: "URL not found in any in-scope patterns" };
+  return { allowed: false, reason: `host in scope but path '${pathname}' is outside the in-scope path prefix(es)` };
+}
+
 export interface ScopeTarget {
   url: string;
   programId: number;
@@ -143,21 +227,15 @@ export class ScopeGuard {
     try {
       const scope = await this.getScope(programId);
       const hostname = this.extractHostname(url);
+      let pathname = "/";
+      try { pathname = new URL(url).pathname || "/"; } catch { /* non-URL input → root */ }
 
-      // Out-of-scope check on the entry hostname first (fail-closed, fast path).
-      for (const pattern of scope.outOfScope) {
-        if (this.matchesPattern(hostname, pattern)) {
-          return { allowed: false, reason: `URL matches out-of-scope pattern: ${pattern}` };
-        }
-      }
-
-      // In-scope check on the entry hostname.
-      let inScopeMatch = false;
-      for (const pattern of scope.inScope) {
-        if (this.matchesPattern(hostname, pattern)) { inScopeMatch = true; break; }
-      }
-      if (!inScopeMatch) {
-        return { allowed: false, reason: "URL not found in any in-scope patterns" };
+      // Host + path scope gate (out-of-scope precedence; in-scope needs host AND path).
+      // Host-only patterns admit any path, so existing host-level scopes are unchanged;
+      // path-bearing patterns (e.g. "localhost:5000/api/Addresss") restrict to the subtree.
+      const decision = evaluateScopeDecision(hostname, pathname, scope.inScope, scope.outOfScope);
+      if (!decision.allowed) {
+        return { allowed: false, reason: decision.reason };
       }
 
       // Follow the CNAME chain; fall back to [hostname] if DNS is unavailable.
@@ -168,10 +246,11 @@ export class ScopeGuard {
         chain = [hostname];
       }
 
-      // Sweep every hop after the entry against the out-of-scope list.
+      // Sweep every hop after the entry against the out-of-scope HOSTS (path is
+      // irrelevant to a CNAME hop — match on the host part only).
       for (const hop of chain.slice(1)) {
         for (const pattern of scope.outOfScope) {
-          if (this.matchesPattern(hop, pattern)) {
+          if (hostMatches(hop, parsePattern(pattern).hostPart)) {
             logger.warn("ScopeGuard: CNAME chain hop matches out-of-scope", { hop, pattern });
             return { allowed: false, reason: `CNAME chain passes through out-of-scope pattern: ${pattern} (via ${hop})` };
           }
@@ -187,8 +266,10 @@ export class ScopeGuard {
       }
 
       // Check ALL resolved A records on the terminal for private IPs.
-      // Skip for local-lab programs (scope contains "*") — intentionally targeting localhost.
-      const isLocalLabScope = scope.inScope.includes("*");
+      // Skip for intentionally-local targets: scope "*" (local lab) OR an entry
+      // hostname that is itself a loopback/private literal (e.g. localhost:5000).
+      // Rebinding protection only applies when a PUBLIC host resolves to private.
+      const isLocalLabScope = scope.inScope.includes("*") || isLocalHostname(hostname);
       if (!isLocalLabScope) {
         try {
           const ips = await dns.promises.resolve4(terminal);
@@ -241,19 +322,6 @@ export class ScopeGuard {
     } catch {
       return url;
     }
-  }
-
-  private matchesPattern(hostname: string, pattern: string): boolean {
-    // Bare "*" means match everything (used by local-lab / custom programs).
-    if (pattern === "*") return true;
-    // Normalize: strip scheme and path from stored patterns so that entries like
-    // "http://admin.example.com" or "*.example.com/api" still match correctly.
-    // OOS scheme-prefix bug: without this, "http://admin.example.com" stored as OOS
-    // never matches the clean hostname extracted from the incoming URL → scope escape.
-    let normalized = pattern.replace(/^https?:\/\//i, ""); // strip scheme
-    normalized = normalized.split("/")[0];                  // strip path
-    normalized = normalized.replace(/^\*\./, "");           // strip wildcard prefix
-    return hostname === normalized || hostname.endsWith(`.${normalized}`);
   }
 }
 
