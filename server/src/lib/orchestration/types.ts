@@ -22,7 +22,7 @@ export interface Hunt {
   target: string;
   goal: string;
   phase: HuntPhase;
-  status: 'active' | 'paused' | 'completed' | 'failed';
+  status: 'active' | 'paused' | 'completed' | 'failed' | 'aborted';
   scope: {
     inScope: string[];
     outOfScope: string[];

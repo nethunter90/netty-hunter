@@ -452,6 +452,30 @@ export class HuntOrchestrator {
     console.log(`[HuntOrchestrator] Hunt paused: ${huntId}`);
   }
 
+  /** Terminal stop — halts all agents/monitoring and marks the hunt aborted.
+   *  Unlike pauseHunt this is not resumable; used by the Lab "Stop" control. */
+  abortHunt(huntId: string): boolean {
+    const hunt = this.hunts.get(huntId);
+    if (!hunt) return false;
+
+    missionChainManager.stopHunt(huntId);
+    agentLoop.stopAllAgents(huntId);
+    hunt.status = 'aborted';
+
+    const timer = this.monitors.get(huntId);
+    if (timer) {
+      clearInterval(timer);
+      this.monitors.delete(huntId);
+    }
+
+    if ((global as any).io) {
+      (global as any).io.emit('hunt:aborted', { huntId });
+    }
+
+    console.log(`[HuntOrchestrator] Hunt aborted: ${huntId}`);
+    return true;
+  }
+
   async resumeHunt(huntId: string): Promise<void> {
     const hunt = this.hunts.get(huntId);
     if (!hunt) return;

@@ -121,6 +121,13 @@ export class HuntLabRunner {
     };
   }
 
+  /** Stop a running lab hunt: abort the orchestrator hunt and stop monitoring. */
+  stopHunt(huntId: string): { stopped: boolean } {
+    const stopped = huntOrchestrator.abortHunt(huntId);
+    metaReasoner.stopMonitoring(huntId);
+    return { stopped };
+  }
+
   async awaitHuntCompletion(huntId: string, timeoutMs?: number): Promise<LabHuntResult> {
     const timeout = timeoutMs || 30 * 60 * 1000;
     const pollInterval = 5000;

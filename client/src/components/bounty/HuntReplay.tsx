@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   RefreshCw, Loader2, AlertCircle, Clock, GitBranch,
-  BarChart3, FlaskConical, Activity, Award, Split
+  BarChart3, FlaskConical, Activity, Award, Split, Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -296,11 +296,35 @@ export function HuntReplay() {
   };
 
   const [huntStatus, setHuntStatus] = useState<string>('');
+  // Id of the lab hunt currently running (drives the Stop button). The ref lets
+  // the Stop handler cancel the in-flight polling loop.
+  const [runningHuntId, setRunningHuntId] = useState<string>('');
+  const pollCancelRef = useRef(false);
+
+  const stopLabHunt = async () => {
+    if (!runningHuntId) return;
+    pollCancelRef.current = true;            // cancel the polling loop
+    setHuntStatus('Stopping hunt...');
+    try {
+      const res = await fetch('/api/reasoning/lab/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ huntId: runningHuntId }),
+      });
+      const data = await res.json();
+      setHuntStatus(data.success ? 'Hunt aborted' : (data.error || 'Stop failed'));
+    } catch (_) {
+      setHuntStatus('Stop request failed');
+    } finally {
+      setRunningHuntId('');
+    }
+  };
 
   const runLabHunt = async () => {
     if (!selectedProfile) return;
     setLoading(true);
     setError('');
+    pollCancelRef.current = false;
     setHuntStatus('Starting hunt...');
     try {
       const res = await fetch('/api/reasoning/lab/run', {
@@ -312,27 +336,34 @@ export function HuntReplay() {
       if (data.success && data.data?.huntId) {
         const newHuntId = data.data.huntId;
         setSelectedHunt(newHuntId);
+        setRunningHuntId(newHuntId);
         setHuntIds(prev => [newHuntId, ...prev]);
         setHuntStatus(`Hunt ${newHuntId.substring(0, 8)}... running`);
         setTab('timeline');
 
         const pollForData = async (attempts: number) => {
           for (let i = 0; i < attempts; i++) {
+            if (pollCancelRef.current) return;          // stopped by the user
             await new Promise(r => setTimeout(r, 2000));
+            if (pollCancelRef.current) return;
             try {
               const traceRes = await fetch(`/api/reasoning/trace/${newHuntId}`);
               const traceData = await traceRes.json();
               if (traceData.success && traceData.data?.length > 0) {
                 setTrace(traceData.data);
                 setHuntStatus(`Hunt complete — ${traceData.data.length} events`);
+                setRunningHuntId('');
                 await fetchHuntData(newHuntId);
                 return;
               }
               setHuntStatus(`Waiting for trace data... (${i + 1}/${attempts})`);
             } catch (_) {}
           }
-          setHuntStatus('Hunt started — check timeline for events');
-          await fetchHuntData(newHuntId);
+          if (!pollCancelRef.current) {
+            setHuntStatus('Hunt started — check timeline for events');
+            setRunningHuntId('');
+            await fetchHuntData(newHuntId);
+          }
         };
         pollForData(15);
       } else {
@@ -688,15 +719,26 @@ export function HuntReplay() {
             )}
 
             <div className="grid grid-cols-2 gap-2">
-              <Button
-                onClick={runLabHunt}
-                disabled={loading || !selectedProfile}
-                className="bg-green-600 hover:bg-green-700 text-white h-9"
-                data-testid="button-run-lab-hunt"
-              >
-                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Activity className="w-4 h-4 mr-2" />}
-                Run Hunt
-              </Button>
+              {runningHuntId ? (
+                <Button
+                  onClick={stopLabHunt}
+                  className="bg-red-600 hover:bg-red-700 text-white h-9"
+                  data-testid="button-stop-lab-hunt"
+                >
+                  <Square className="w-4 h-4 mr-2" />
+                  Stop Hunt
+                </Button>
+              ) : (
+                <Button
+                  onClick={runLabHunt}
+                  disabled={loading || !selectedProfile}
+                  className="bg-green-600 hover:bg-green-700 text-white h-9"
+                  data-testid="button-run-lab-hunt"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Activity className="w-4 h-4 mr-2" />}
+                  Run Hunt
+                </Button>
+              )}
               <Button
                 onClick={checkDeterminism}
                 disabled={loading || !selectedProfile}

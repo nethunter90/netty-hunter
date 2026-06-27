@@ -100,6 +100,17 @@ router.post("/lab/run", async (req: Request, res: Response) => {
   }
 });
 
+router.post("/lab/stop", (req: Request, res: Response) => {
+  try {
+    const { huntId } = req.body;
+    if (!huntId) return res.status(400).json({ success: false, error: "huntId is required" });
+    const { stopped } = huntLabRunner.stopHunt(String(huntId));
+    return res.json({ success: true, stopped });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get("/lab/profiles", (_req: Request, res: Response) => {
   try {
     const profiles = labScorer.getAllProfiles();
