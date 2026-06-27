@@ -19,6 +19,7 @@ import SettingsPage from './pages/Settings';
 import FloatingChat from './components/FloatingChat';
 import ToolsPage from './pages/Tools';
 import TerminalPage from './pages/TerminalPage';
+import { useHuntEvents } from './lib/huntEventBridge';
 
 interface User {
   id: number;
@@ -31,6 +32,10 @@ function AppLayout({ user, setUser }: { user: User; setUser: (u: User | null) =>
   const location = useLocation();
   const [activeView, setActiveView] = useState<string>("dashboard");
   const isTerminal = location.pathname === "/terminal";
+
+  // Hunt event subscription lives here — above the panel routing — so hunt
+  // progress keeps streaming into huntStore regardless of which panel is mounted.
+  useHuntEvents();
 
   return (
     <div className="flex h-screen bg-hack-bg overflow-hidden">

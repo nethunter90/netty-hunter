@@ -5,18 +5,9 @@ import {
 import { hunterAPI, bountyAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
-import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
+import { LiveActivityFeed } from "../components/LiveActivityFeed";
 import { EgressPoolPanel } from "../components/hunt/EgressPoolPanel";
-import { huntStore } from "../lib/huntStore";
-
-interface ActiveSession {
-  sessionUuid: string;
-  targetUrl: string;
-  status: "running" | "stopping" | "complete" | "error";
-  phase: string;
-  iteration: number;
-  findings: number;
-}
+import { huntStore, useHuntStore } from "../lib/huntStore";
 
 const PHASE_ICONS: Record<string, React.ReactNode> = {
   observe:     <Eye className="w-3 h-3 text-hack-cyan" />,
@@ -37,370 +28,40 @@ export default function HuntConsole() {
   const [huntMode, setHuntMode] = useState<"forward" | "backward">("forward");
   const [goal, setGoal] = useState("");
   const [maxIterations, setMaxIterations] = useState(10);
-  // Initialize from module-level store so state survives panel navigation.
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>(huntStore.activeSessions);
-  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(huntStore.activityEvents);
-  const [hypStats, setHypStats] = useState(huntStore.hypStats);
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Record<string, unknown>[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [corpusEnrichment, setCorpusEnrichment] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(huntStore.proxyEnabled);
-  // B3: hunt started from another panel (orchestration or socket path)
-  const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
+
+  // Live hunt progress is owned by huntStore and fed by the always-mounted event
+  // bridge (huntEventBridge.ts). This panel is a pure reader — switching panels
+  // no longer drops history, because the subscription lives above the routing.
+  const { activeSessions, activityEvents, hypStats, externalHunt } = useHuntStore();
 
   const socket = getSocket();
 
-  function push(ev: ActivityEvent) {
-    // Cap retained events (~300) so long hunts don't grow state unbounded;
-    // the feed only displays the last 150 anyway.
-    huntStore.pushEvent(ev);
-    setActivityEvents(prev => [...prev.slice(-299), ev]);
-  }
-
-  // Sync sessions and hypStats back to the store whenever they change so the
-  // state survives the next panel navigation.
-  useEffect(() => { huntStore.setSessions(activeSessions); }, [activeSessions]);
-  useEffect(() => { huntStore.setHypStats(hypStats); }, [hypStats]);
+  // Keep proxy toggle (a form control) mirrored into the store for startHunt.
   useEffect(() => { huntStore.setProxyEnabled(proxyEnabled); }, [proxyEnabled]);
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     bountyAPI.getHuntTemplates().then(r => setTemplates(r.data || []));
 
-    // Re-subscribe any hunt sessions that survived panel navigation.
-    // If the store has running sessions, the socket room subscription was lost on
-    // unmount — re-emit subscribe so we keep receiving live events.
-    huntStore.activeSessions
-      .filter(s => s.status === 'running' || s.status === 'stopping')
-      .forEach(s => socket.emit('subscribe:hunt', { sessionUuid: s.sessionUuid }));
-
     // B3: check for any hunt running from another panel so the launch button is
     // correctly disabled and a banner is shown.
     hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
       if (r.data.running && r.data.hunt) {
-        // If the running hunt is one we're already tracking locally (restored from
-        // store), don't show the external banner for it.
+        // If the running hunt is one we're already tracking (in the store), don't
+        // show the external banner for it.
         const alreadyTracked = huntStore.activeSessions.some(s => s.sessionUuid === r.data.hunt!.id);
         if (!alreadyTracked) {
-          setExternalHunt(r.data.hunt);
+          huntStore.setExternalHunt(r.data.hunt);
         }
       }
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    socket.on("hunt:started", (_data: any) => {
-      push({ type: "phase", ts: ts(), phase: "observe", iteration: 0 });
-    });
-
-    // Replayed when subscribing to an already-running hunt
-    socket.on("hunt:state", (data: any) => {
-      const state = data.state ?? data;
-      if (state?.phase) {
-        push({ type: "phase", ts: ts(), phase: String(state.phase), iteration: Number(state.iteration ?? 0) });
-      }
-    });
-
-    socket.on("hunt:phase", (data: any) => {
-      const phase = String(data.phase || "observe");
-      const iteration = Number(data.iteration || 0);
-      push({ type: "phase", ts: ts(), phase, iteration });
-      setActiveSessions(prev => prev.map(s =>
-        s.sessionUuid === String(data.sessionUuid || "")
-          ? { ...s, phase, iteration }
-          : s
-      ));
-    });
-
-    socket.on("hunt:observations", (_data: any) => {
-      // observations are context — no explicit event row needed
-    });
-
-    socket.on("hunt:hypotheses", (data: any) => {
-      const hyps: any[] = data.hypotheses ?? [];
-      hyps.forEach(h => {
-        push({
-          type: "hypothesis",
-          ts: ts(),
-          id: h.id ?? String(Math.random()),
-          vulnClass: h.vulnClass ?? "unknown",
-          reasoning: h.reasoning ?? h.evidence?.join("; ") ?? "",
-          confidence: h.confidence ?? 0,
-          modelSource: h.modelSource,
-        });
-      });
-      setHypStats(s => ({ ...s, pending: s.pending + hyps.length }));
-    });
-
-    socket.on("hunt:probing", (data: any) => {
-      push({
-        type: "probe_start",
-        ts: ts(),
-        hypothesisId: String(data.hypothesisId || ""),
-        vulnClass: String(data.vulnClass || ""),
-      });
-      setHypStats(s => ({ ...s, pending: Math.max(0, s.pending - 1), probing: s.probing + 1 }));
-    });
-
-    socket.on("hunt:probe_result", (data: any) => {
-      const r = data.result ?? data;
-      push({
-        type: "probe_result",
-        ts: ts(),
-        hypothesisId: String(data.hypothesisId || ""),
-        tool: String(r.tool ?? "unknown"),
-        success: !!r.success,
-        output: String(r.output ?? r.parsed?.raw ?? ""),
-        durationMs: Number(r.duration ?? 0),
-        proxyId: data.proxyId ? String(data.proxyId) : undefined,
-      });
-    });
-
-    socket.on("hunt:finding_confirmed", (data: any) => {
-      const f = data.finding ?? data;
-      const h = f.hypothesis ?? {};
-      push({
-        type: "finding",
-        ts: ts(),
-        vulnClass: h.vulnClass ?? "unknown",
-        severity: f.severity ?? "medium",
-        confidence: h.confidence ?? 0,
-        payload: f.exploitPayload ?? h.evidence?.join("; "),
-      });
-      setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
-      setHypStats(s => ({ ...s, probing: Math.max(0, s.probing - 1), confirmed: s.confirmed + 1 }));
-      toast.success(`Finding: ${h.vulnClass ?? "unknown"}`);
-    });
-
-    socket.on("hunt:update", (data: any) => {
-      // Sync counts from server at the end of each update phase
-      const pending = Number(data.pendingHypotheses ?? 0);
-      const rejected = Number(data.rejectedHypotheses ?? 0);
-      setHypStats(s => ({ ...s, pending, rejected }));
-    });
-
-    socket.on("hunt:complete", (data: any) => {
-      push({
-        type: "complete",
-        ts: ts(),
-        findings: Number(data.findings ?? 0),
-        iterations: Number(data.iterations ?? 0),
-      });
-      setActiveSessions(prev => prev.map(s =>
-        s.sessionUuid === String(data.sessionId || "") ? { ...s, status: "complete" } : s
-      ));
-      setExternalHunt(null);
-    });
-
-    // B2: backend confirmation that the engine actually halted. Remove the session
-    // from state here (not optimistically in stopHunt).
-    socket.on("hunt:aborted", (_data: any) => {
-      setActiveSessions(prev => prev.filter(s => s.status !== "stopping"));
-      setExternalHunt(null);
-    });
-
-    socket.on("hunt:error", (data: any) => {
-      push({ type: "error", ts: ts(), message: String(data.error || "Unknown error") });
-    });
-
-    socket.on("solver:started", (data: any) => {
-      push({ type: "probe_start", ts: ts(), hypothesisId: "solver", vulnClass: String(data.vulnClass || "") });
-    });
-
-    socket.on("solver:complete", (data: any) => {
-      push({
-        type: "probe_result",
-        ts: ts(),
-        hypothesisId: "solver",
-        tool: "solver",
-        success: Number(data.confidence ?? 0) > 0.5,
-        output: `confidence=${Number(data.confidence ?? 0).toFixed(2)}`,
-        durationMs: 0,
-      });
-    });
-
-    socket.on("solver:finding", (data: any) => {
-      const r = data.result ?? data;
-      push({ type: "solver_finding", ts: ts(), vulnClass: String(r.vulnClass ?? "unknown") });
-      setActiveSessions(prev => prev.map(s => ({ ...s, findings: s.findings + 1 })));
-    });
-
-    socket.on("hunt:cve_seeded", (data: any) => {
-      push({
-        type: "cve_seeded",
-        ts: ts(),
-        tech: String(data.tech || ""),
-        cveIds: Array.isArray(data.cveIds) ? (data.cveIds as unknown[]).map(String) : [],
-        maxCvss: Number(data.maxCvss || 0),
-      });
-    });
-
-    socket.on("hunt:graphql_schema", (data: any) => {
-      push({
-        type: "graphql_schema",
-        ts: ts(),
-        endpoint: String(data.endpoint || ""),
-        typeCount: Number(data.typeCount || 0),
-        injectableCount: Number(data.injectableCount || 0),
-      });
-    });
-
-    socket.on("hunt:oob_hit", (data: any) => {
-      push({
-        type: "oob_hit",
-        ts: ts(),
-        beaconId: String(data.beaconId || ""),
-        ip: String(data.ip || "unknown"),
-      });
-    });
-
-    socket.on("oob:hit", (data: any) => {
-      push({
-        type: "oob_hit",
-        ts: ts(),
-        beaconId: String(data.beaconId || ""),
-        ip: String(data.ip || "unknown"),
-      });
-    });
-
-    socket.on("l5:public_duplicate", (data: any) => {
-      push({
-        type: "public_duplicate",
-        ts: ts(),
-        vulnClass: String(data.vulnClass ?? "unknown"),
-        platform: String(data.platform ?? "unknown"),
-        reportUrl: data.reportUrl,
-        title: data.title,
-        warn: !!data.warn,
-      });
-    });
-
-    socket.on("hunt:ssrf_pivot", (data: any) => {
-      push({
-        type: "ssrf_pivot",
-        ts: ts(),
-        reachable: Array.isArray(data.reachable) ? (data.reachable as unknown[]).map(String) : [],
-        cloudMeta: !!data.cloudMeta,
-        newHypotheses: Number(data.newHypotheses || 0),
-      });
-    });
-
-    socket.on("hunt:changes_detected", (data: any) => {
-      push({
-        type: "changes_detected",
-        ts: ts(),
-        newEndpoints: Array.isArray(data.newEndpoints) ? (data.newEndpoints as unknown[]).map(String) : [],
-        changed: Number(data.changed || 0),
-      });
-    });
-
-    socket.on("l5:report_submitted", (data: any) => {
-      push({
-        type: "report_submitted",
-        ts: ts(),
-        platform: String(data.platform || ""),
-        reportId: data.reportId ? String(data.reportId) : undefined,
-        reportUrl: data.reportUrl ? String(data.reportUrl) : undefined,
-      });
-    });
-
-    socket.on("hunt:secrets_found", (data: any) => {
-      push({ type: "secrets_found", ts: ts(), count: Number(data.count || 0), types: Array.isArray(data.types) ? data.types.map(String) : [] });
-    });
-    socket.on("hunt:ws_vulns", (data: any) => {
-      push({ type: "ws_vulns", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [], issues: Array.isArray(data.issues) ? data.issues.map(String) : [] });
-    });
-    socket.on("hunt:bucket_exposed", (data: any) => {
-      push({ type: "bucket_exposed", ts: ts(), buckets: Array.isArray(data.buckets) ? data.buckets : [] });
-    });
-    socket.on("hunt:proto_pollution", (data: any) => {
-      push({ type: "proto_pollution", ts: ts(), count: Number(data.count || 0), reflected: Boolean(data.reflected) });
-    });
-    socket.on("hunt:race_condition", (data: any) => {
-      push({ type: "race_condition", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [] });
-    });
-    socket.on("hunt:tech_payloads", (data: any) => {
-      push({ type: "tech_payloads", ts: ts(), techs: Array.isArray(data.techs) ? data.techs.map(String) : [], payloadCount: Number(data.payloadCount || 0) });
-    });
-    socket.on("hunt:params_discovered", (data: any) => {
-      push({ type: "params_discovered", ts: ts(), count: Number(data.count || 0), params: Array.isArray(data.params) ? data.params.map(String) : [] });
-    });
-    socket.on("hunt:oauth_vulns", (data: any) => {
-      push({ type: "oauth_vulns", ts: ts(), count: Number(data.count || 0), issues: Array.isArray(data.issues) ? data.issues.map(String) : [] });
-    });
-    socket.on("hunt:mass_assignment", (data: any) => {
-      push({ type: "mass_assignment", ts: ts(), count: Number(data.count || 0), endpoints: Array.isArray(data.endpoints) ? data.endpoints.map(String) : [] });
-    });
-    socket.on("hunt:business_logic", (data: any) => {
-      push({ type: "business_logic", ts: ts(), count: Number(data.count || 0), types: Array.isArray(data.types) ? data.types.map(String) : [] });
-    });
-    socket.on("hunt:2fa_bypass", (data: any) => {
-      push({ type: "two_fa_bypass", ts: ts(), count: Number(data.count || 0), techniques: Array.isArray(data.techniques) ? data.techniques.map(String) : [] });
-    });
-    socket.on("hunt:jwt_vulns", (data: any) => {
-      push({ type: "jwt_vulns", ts: ts(), count: Number(data.count || 0), techniques: Array.isArray(data.techniques) ? data.techniques.map(String) : [] });
-    });
-    socket.on("hunt:open_redirect", (data: any) => {
-      push({ type: "open_redirect", ts: ts(), count: Number(data.count || 0), chained: Number(data.chained || 0) });
-    });
-    socket.on("hunt:xxe_found", (data: any) => {
-      push({ type: "xxe_found", ts: ts(), count: Number(data.count || 0), oobConfirmed: Boolean(data.oobConfirmed) });
-    });
-    socket.on("hunt:zap_scan", (data: any) => {
-      push({ type: "zap_scan", ts: ts(), alertCount: Number(data.alertCount || 0), hypothesesSeeded: Number(data.hypothesesSeeded || 0), endpointsDiscovered: Number(data.endpointsDiscovered || 0), duration: Number(data.duration || 0) });
-    });
-
-    socket.on("hunt:ai_reasoning", (data: any) => {
-      push({
-        type: "ai_reasoning",
-        ts: ts(),
-        task: String(data.task ?? "AI"),
-        phase: data.phase as "thinking" | "complete" | "decision",
-        context: data.context,
-        promptPreview: String(data.promptPreview ?? ""),
-        rawResponse: String(data.rawResponse ?? ""),
-        summary: String(data.summary ?? ""),
-        durationMs: Number(data.durationMs ?? 0),
-        generatedCount: Number(data.generatedCount ?? 0),
-        enrichmentActive: typeof data.enrichmentActive === 'boolean' ? data.enrichmentActive : undefined,
-        corpusEntries: Array.isArray(data.corpusEntries) ? data.corpusEntries : undefined,
-      });
-    });
-
-    socket.on("recon:start", (data: any) => {
-      push({ type: "recon_start", ts: ts(), domain: String(data.domain ?? "") });
-    });
-
-    socket.on("recon:complete", (data: any) => {
-      push({
-        type: "recon_complete",
-        ts: ts(),
-        subdomains: Number(data.subdomains ?? 0),
-        alive: Number(data.alive ?? 0),
-        interestingUrls: Number(data.interestingUrls ?? 0),
-        historicalPathCount: Number(data.historicalPathCount ?? 0),
-      });
-    });
-
-    return () => {
-      [
-        "hunt:started", "hunt:phase", "hunt:observations", "hunt:hypotheses",
-        "hunt:probing", "hunt:probe_result", "hunt:finding_confirmed", "hunt:update",
-        "hunt:complete", "hunt:aborted", "hunt:error", "solver:started", "solver:complete", "solver:finding",
-        "hunt:cve_seeded", "l5:public_duplicate",
-        "hunt:graphql_schema", "hunt:oob_hit", "oob:hit",
-        "hunt:ssrf_pivot", "hunt:changes_detected", "l5:report_submitted",
-        "hunt:secrets_found", "hunt:ws_vulns", "hunt:bucket_exposed",
-        "hunt:proto_pollution", "hunt:race_condition",
-        "hunt:tech_payloads", "hunt:params_discovered", "hunt:oauth_vulns",
-        "hunt:mass_assignment", "hunt:business_logic", "hunt:2fa_bypass",
-        "hunt:jwt_vulns", "hunt:open_redirect", "hunt:xxe_found", "hunt:zap_scan",
-        "hunt:ai_reasoning", "egress:route_changed", "hunt:state",
-        "recon:start", "recon:complete",
-      ].forEach(e => socket.off(e));
-    };
-  }, [socket]);
 
   const startHunt = async () => {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program first");
@@ -409,8 +70,6 @@ export default function HuntConsole() {
 
     setLoading(true);
     huntStore.clearForNewHunt();
-    setActivityEvents([]);
-    setHypStats({ pending: 0, probing: 0, confirmed: 0, rejected: 0 });
 
     try {
       const res = await hunterAPI.startHunt({
@@ -425,17 +84,17 @@ export default function HuntConsole() {
         proxyEnabled,
       });
 
-      const session: ActiveSession = {
+      const session = {
         sessionUuid: res.data.sessionUuid || `backward-${res.data.planId}`,
         targetUrl,
-        status: "running",
+        status: "running" as const,
         phase: "observe",
         iteration: 0,
         findings: 0,
       };
-      // B3: we're now tracking this hunt locally — clear any external banner
-      setExternalHunt(null);
-      setActiveSessions(prev => [...prev, session]);
+      // B3: we're now tracking this hunt — clear any external banner
+      huntStore.setExternalHunt(null);
+      huntStore.updateSessions(prev => [...prev, session]);
 
       if (res.data.sessionUuid) {
         socket.emit("subscribe:hunt", { sessionUuid: res.data.sessionUuid });
@@ -445,12 +104,12 @@ export default function HuntConsole() {
       const resp = axiosErr.response;
       if (resp?.status === 409 && resp.data?.activeHunt) {
         // B3: another hunt is already running — surface it so the user knows
-        setExternalHunt(resp.data.activeHunt);
+        huntStore.setExternalHunt(resp.data.activeHunt);
         toast.error(`Another hunt is already running: ${resp.data.activeHunt.targetUrl}`);
-        push({ type: "error", ts: ts(), message: `Hunt already running: ${resp.data.activeHunt.targetUrl}` });
+        huntStore.pushEvent({ type: "error", ts: ts(), message: `Hunt already running: ${resp.data.activeHunt.targetUrl}` });
       } else {
         toast.error(resp?.data?.error || "Failed to start hunt");
-        push({ type: "error", ts: ts(), message: `Failed to start: ${resp?.data?.error}` });
+        huntStore.pushEvent({ type: "error", ts: ts(), message: `Failed to start: ${resp?.data?.error}` });
       }
     } finally {
       setLoading(false);
@@ -460,17 +119,17 @@ export default function HuntConsole() {
   const stopHunt = async (uuid: string) => {
     // B2: mark stopping immediately (disables button, shows indicator), but don't
     // remove from state until the REST call confirms the backend accepted the stop.
-    setActiveSessions(prev => prev.map(s =>
+    huntStore.updateSessions(prev => prev.map(s =>
       s.sessionUuid === uuid ? { ...s, status: "stopping" } : s
     ));
     try {
       await hunterAPI.stopHunt(uuid);
-      // Backend confirmed stop — remove from local state.
+      // Backend confirmed stop — remove from state.
       // If the engine emits hunt:aborted via socket first, that handler also removes it.
-      setActiveSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
+      huntStore.updateSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
     } catch {
       // Stop failed (maybe already gone) — revert to running so the user can retry
-      setActiveSessions(prev => prev.map(s =>
+      huntStore.updateSessions(prev => prev.map(s =>
         s.sessionUuid === uuid ? { ...s, status: "running" } : s
       ));
       toast.error("Stop request failed — hunt may have already ended");

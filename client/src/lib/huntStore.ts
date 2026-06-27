@@ -1,12 +1,17 @@
 /**
- * Module-level hunt state store.
+ * Module-level hunt state store (observable).
  *
- * Survives React component unmount/remount (panel navigation). HuntConsole
- * reads from this on mount and writes to it on every state change, so
- * switching panels and coming back restores the live hunt UI instantly.
+ * Holds all live hunt progress — activity events, sessions, hypothesis stats —
+ * in a singleton that survives React unmount/remount. The socket subscription
+ * that feeds it lives ABOVE the panel routing (see huntEventBridge.ts), so the
+ * store keeps receiving events no matter which panel is mounted. The Hunt panel
+ * is a pure reader via the useHuntStore() hook.
  *
- * Not a global React context — just a module singleton. No deps required.
+ * State is held immutably: every mutator replaces `_state` with a new object and
+ * notifies subscribers, so useSyncExternalStore gets a stable, change-only
+ * snapshot.
  */
+import { useSyncExternalStore } from 'react';
 import type { ActivityEvent } from '../components/LiveActivityFeed';
 
 export interface StoredSession {
@@ -18,11 +23,18 @@ export interface StoredSession {
   findings: number;
 }
 
-interface HuntStoreState {
+export interface ExternalHunt {
+  id: string;
+  kind: string;
+  targetUrl: string;
+}
+
+export interface HuntStoreState {
   activeSessions: StoredSession[];
   activityEvents: ActivityEvent[];
   hypStats: { pending: number; probing: number; confirmed: number; rejected: number };
   proxyEnabled: boolean;
+  externalHunt: ExternalHunt | null;
 }
 
 const EMPTY: HuntStoreState = {
@@ -30,30 +42,67 @@ const EMPTY: HuntStoreState = {
   activityEvents: [],
   hypStats: { pending: 0, probing: 0, confirmed: 0, rejected: 0 },
   proxyEnabled: false,
+  externalHunt: null,
 };
 
-let _state: HuntStoreState = { ...EMPTY, activityEvents: [] };
+let _state: HuntStoreState = { ...EMPTY };
+
+const listeners = new Set<() => void>();
+function notify(): void {
+  for (const l of listeners) l();
+}
 
 export const huntStore = {
   get activeSessions(): StoredSession[] { return _state.activeSessions; },
   get activityEvents(): ActivityEvent[] { return _state.activityEvents; },
   get hypStats() { return _state.hypStats; },
   get proxyEnabled(): boolean { return _state.proxyEnabled; },
+  get externalHunt(): ExternalHunt | null { return _state.externalHunt; },
 
+  // ── Observable plumbing (for useSyncExternalStore) ──
+  subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+  getSnapshot(): HuntStoreState {
+    return _state;
+  },
+
+  // ── Mutators (each replaces _state immutably, then notifies) ──
   setSessions(sessions: StoredSession[]): void {
-    _state.activeSessions = sessions;
+    _state = { ..._state, activeSessions: sessions };
+    notify();
+  },
+
+  updateSessions(fn: (prev: StoredSession[]) => StoredSession[]): void {
+    _state = { ..._state, activeSessions: fn(_state.activeSessions) };
+    notify();
   },
 
   pushEvent(event: ActivityEvent): void {
-    _state.activityEvents = [..._state.activityEvents.slice(-299), event];
+    // Cap retained events (~300) so long hunts don't grow state unbounded.
+    _state = { ..._state, activityEvents: [..._state.activityEvents.slice(-299), event] };
+    notify();
   },
 
   setHypStats(stats: HuntStoreState['hypStats']): void {
-    _state.hypStats = stats;
+    _state = { ..._state, hypStats: stats };
+    notify();
+  },
+
+  updateHypStats(fn: (prev: HuntStoreState['hypStats']) => HuntStoreState['hypStats']): void {
+    _state = { ..._state, hypStats: fn(_state.hypStats) };
+    notify();
   },
 
   setProxyEnabled(val: boolean): void {
-    _state.proxyEnabled = val;
+    _state = { ..._state, proxyEnabled: val };
+    notify();
+  },
+
+  setExternalHunt(hunt: ExternalHunt | null): void {
+    _state = { ..._state, externalHunt: hunt };
+    notify();
   },
 
   hasActiveSessions(): boolean {
@@ -61,10 +110,19 @@ export const huntStore = {
   },
 
   /** Called at the start of a new hunt — clears events and hyp stats but leaves
-   *  the session list untouched until the new session is added. */
+   *  proxy/externalHunt as the caller manages them. */
   clearForNewHunt(): void {
-    _state.activityEvents = [];
-    _state.hypStats = { pending: 0, probing: 0, confirmed: 0, rejected: 0 };
-    _state.activeSessions = [];
+    _state = {
+      ..._state,
+      activityEvents: [],
+      hypStats: { pending: 0, probing: 0, confirmed: 0, rejected: 0 },
+      activeSessions: [],
+    };
+    notify();
   },
 };
+
+/** React 18 hook — re-renders the caller whenever the store changes. */
+export function useHuntStore(): HuntStoreState {
+  return useSyncExternalStore(huntStore.subscribe, huntStore.getSnapshot);
+}
