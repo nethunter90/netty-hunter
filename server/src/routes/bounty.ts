@@ -274,19 +274,55 @@ router.get("/models", async (_req: Request, res: Response) => {
 });
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
+
+// Per-vuln-type remediation hints (mirrors the report-export REMEDIATION map).
+const ANALYSIS_REMEDIATION: Record<string, string> = {
+  xss: "Apply context-aware output encoding and a strict Content-Security-Policy.",
+  sqli: "Use parameterized queries / prepared statements and least-privilege DB accounts.",
+  ssrf: "Allowlist outbound destinations; block private IP ranges and cloud metadata.",
+  idor: "Enforce server-side authorization on every object access; use non-sequential ids.",
+  auth_bypass: "Harden authentication/authorization checks and review session handling.",
+  open_redirect: "Allowlist redirect destinations; never redirect to user-controlled input.",
+  info_disclosure: "Remove sensitive data from responses and restrict verbose errors.",
+  rce: "Eliminate unsafe deserialization/command execution; sandbox and validate all input.",
+};
+
+/** Compute a real analysis from the stored findings of one hunt session. */
+async function computeAnalysis(session: typeof huntSessions.$inferSelect) {
+  const rows = await db.select().from(findings).where(eq(findings.huntSessionId, session.id));
+
+  const severity_distribution: Record<string, number> = {};
+  const surface = new Set<string>();
+  const vulnTypes = new Set<string>();
+  for (const f of rows) {
+    const sev = (f.severity || "info").toLowerCase();
+    severity_distribution[sev] = (severity_distribution[sev] || 0) + 1;
+    if (f.affectedUrl) {
+      try { surface.add(new URL(f.affectedUrl).host); } catch { surface.add(f.affectedUrl); }
+    }
+    if (f.vulnType) vulnTypes.add(f.vulnType.toLowerCase());
+  }
+
+  const recommendations = Array.from(vulnTypes).map(vt =>
+    ANALYSIS_REMEDIATION[vt] || `Review and remediate ${vt} findings per OWASP guidance.`);
+
+  return {
+    total_findings: rows.length,
+    severity_distribution,
+    attack_surface: Array.from(surface),
+    recommendations,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 router.get("/analysis/:sessionId", async (req: Request, res: Response) => {
   try {
     const [session] = await db.select().from(huntSessions)
       .where(eq(huntSessions.sessionUuid, req.params.sessionId)).limit(1);
-    if (!session) return res.status(404).json({ error: "Session not found" });
-    return res.json({
-      sessionId: req.params.sessionId,
-      reasoningLog: session.reasoningLog,
-      hypotheses: session.hypotheses,
-      status: session.status,
-    });
+    if (!session) return res.status(404).json({ success: false, error: "Session not found" });
+    return res.json({ success: true, sessionId: req.params.sessionId, analysis: await computeAnalysis(session) });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -294,16 +330,10 @@ router.post("/analysis/:sessionId/generate", async (req: Request, res: Response)
   try {
     const [session] = await db.select().from(huntSessions)
       .where(eq(huntSessions.sessionUuid, req.params.sessionId)).limit(1);
-    if (!session) return res.status(404).json({ error: "Session not found" });
-    return res.json({
-      sessionId: req.params.sessionId,
-      reasoningLog: session.reasoningLog,
-      hypotheses: session.hypotheses,
-      generated: true,
-      timestamp: new Date().toISOString(),
-    });
+    if (!session) return res.status(404).json({ success: false, error: "Session not found" });
+    return res.json({ success: true, sessionId: req.params.sessionId, analysis: await computeAnalysis(session) });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1216,15 +1246,12 @@ function shapeProgramForScopeUI(p: any) {
   };
 }
 
-// Lightweight scope-guard telemetry. ScopeGuard itself is governance-protected and
-// must not be modified, so we record allow/block stats here as targets are validated.
-const scopeGuardStats = { totalChecks: 0, allowed: 0, blocked: 0 };
-
+// Scope-guard telemetry. Counts are kept inside ScopeGuard.isInScope() — the single
+// chokepoint every caller (hunt-phase probes AND manual UI validation) passes
+// through — so hunt-phase blocks are tallied, not just manual validations. The
+// counter is additive telemetry only and does not affect enforcement.
 router.get("/scope-guard/stats", (_req: Request, res: Response) => {
-  const blockRate = scopeGuardStats.totalChecks > 0
-    ? scopeGuardStats.blocked / scopeGuardStats.totalChecks
-    : 0;
-  return res.json({ stats: { ...scopeGuardStats, blockRate } });
+  return res.json({ stats: ScopeGuard.getInstance().getStats() });
 });
 
 router.get("/scope-guard/audit", async (req: Request, res: Response) => {
@@ -1320,10 +1347,9 @@ router.post("/programs/validate-target", async (req: Request, res: Response) => 
       return res.json({ allowed: false, reason: "No program available to validate against — import a program first." });
     }
 
+    // isInScope() tallies allow/block telemetry internally now.
     const result = await ScopeGuard.getInstance().isInScope(targetUrl, pid);
 
-    scopeGuardStats.totalChecks++;
-    if (result.allowed) scopeGuardStats.allowed++; else scopeGuardStats.blocked++;
     await appendAudit({
       id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       action: result.allowed ? "scope.validate" : "scope.block",

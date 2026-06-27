@@ -3,7 +3,7 @@ import {
   ShieldAlert, CheckCircle2, XCircle, AlertTriangle,
   FileText, Code2, Search, RefreshCw, Pencil, Save, X, Download
 } from "lucide-react";
-import { hunterAPI } from "../lib/api";
+import { hunterAPI, bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
 
 interface Finding {
@@ -21,6 +21,17 @@ interface Finding {
   dedupHash?: string;
   nucleiTemplate?: string;
   reportDraft?: string;
+  programId?: number | null;
+}
+
+// Source label for a finding's programId. Lab/local hunts use a sentinel id
+// (<= 0); real bug-bounty programs carry their positive program id. Keeping lab
+// and real findings visibly separate guards against exporting a lab finding
+// toward a real target.
+function sourceLabel(programId: number | null | undefined, names: Record<number, string>): string {
+  if (programId === null || programId === undefined) return "Unknown";
+  if (programId <= 0) return "Local Lab";
+  return names[programId] || `Program #${programId}`;
 }
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
@@ -39,6 +50,8 @@ export default function Findings() {
   const [selected, setSelected] = useState<Finding | null>(null);
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterProgram, setFilterProgram] = useState<string>("all");
+  const [programNames, setProgramNames] = useState<Record<number, string>>({});
   const [search, setSearch] = useState("");
   const [detailTab, setDetailTab] = useState<"details" | "nuclei" | "report">("details");
   const [verifying, setVerifying] = useState(false);
@@ -59,18 +72,34 @@ export default function Findings() {
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Program id → name map for source labelling of findings.
+    bountyAPI.getPrograms().then(r => {
+      const map: Record<number, string> = {};
+      for (const p of (r.data || []) as Array<{ id: number; name: string }>) map[Number(p.id)] = String(p.name);
+      setProgramNames(map);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let f = [...findings];
     if (filterSeverity !== "all") f = f.filter(x => x.severity === filterSeverity);
     if (filterStatus !== "all") f = f.filter(x => x.verificationStatus === filterStatus);
+    if (filterProgram !== "all") {
+      if (filterProgram === "lab") f = f.filter(x => (x.programId ?? 1) <= 0);
+      else if (filterProgram === "real") f = f.filter(x => (x.programId ?? 0) > 0);
+      else f = f.filter(x => String(x.programId) === filterProgram);
+    }
     if (search) f = f.filter(x =>
       x.title.toLowerCase().includes(search.toLowerCase()) ||
       x.vulnType.toLowerCase().includes(search.toLowerCase())
     );
     setFiltered(f);
-  }, [filterSeverity, filterStatus, search, findings]);
+  }, [filterSeverity, filterStatus, filterProgram, search, findings]);
+
+  // Distinct program ids present in the current findings, for the source filter.
+  const presentProgramIds = Array.from(new Set(findings.map(f => f.programId).filter(v => v !== null && v !== undefined))) as number[];
 
   const verify = async (id: number) => {
     setVerifying(true);
@@ -203,6 +232,17 @@ export default function Findings() {
               </button>
             ))}
           </div>
+          {/* Source / program filter — keeps lab (Juice Shop/DVWA) findings from
+              co-mingling with real-target findings before going live. */}
+          <select className="hack-input w-full text-[10px]" value={filterProgram}
+            onChange={e => setFilterProgram(e.target.value)}>
+            <option value="all">All sources</option>
+            <option value="real">Real programs only</option>
+            <option value="lab">Labs only (Juice Shop / DVWA)</option>
+            {presentProgramIds.map(pid => (
+              <option key={pid} value={String(pid)}>{sourceLabel(pid, programNames)} (id {pid})</option>
+            ))}
+          </select>
         </div>
 
         {/* Bulk action bar */}
@@ -247,6 +287,9 @@ export default function Findings() {
                   <span className="text-[9px] text-hack-dim font-mono">{f.vulnType}</span>
                   <span className="text-[9px] text-hack-dim font-mono">conf:{Math.round(f.confidence * 100)}%</span>
                   {f.cvssScore && <span className="text-[9px] text-hack-orange font-mono">CVSS:{f.cvssScore}</span>}
+                  <span className={`text-[9px] font-mono ml-auto ${(f.programId ?? 1) <= 0 ? "text-hack-yellow" : "text-hack-blue"}`}>
+                    {sourceLabel(f.programId, programNames)}
+                  </span>
                 </div>
               </div>
             ))

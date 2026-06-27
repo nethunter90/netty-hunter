@@ -329,12 +329,16 @@ router.get("/campaigns/:id", async (req: Request, res: Response) => {
 
 // Get all findings with filters — applied in SQL (indexed) rather than in JS
 router.get("/findings", async (req: Request, res: Response) => {
-  const { campaignId, severity, vulnType, status } = req.query;
+  const { campaignId, programId, severity, vulnType, status } = req.query;
 
   const conditions = [];
   if (campaignId) {
     const cid = parseInt(String(campaignId), 10);
     if (!Number.isNaN(cid)) conditions.push(eq(findings.campaignId, cid));
+  }
+  if (programId !== undefined && programId !== "") {
+    const pid = parseInt(String(programId), 10);
+    if (!Number.isNaN(pid)) conditions.push(eq(findings.programId, pid));
   }
   if (severity) conditions.push(eq(findings.severity, String(severity)));
   if (vulnType) conditions.push(eq(findings.vulnType, String(vulnType)));

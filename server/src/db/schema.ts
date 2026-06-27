@@ -102,6 +102,10 @@ export const findings = pgTable("findings", {
   campaignId: integer("campaign_id").references(() => campaigns.id),
   huntSessionId: integer("hunt_session_id").references(() => huntSessions.id),
   targetId: integer("target_id").references(() => targets.id),
+  // Denormalized program/source id so lab (sentinel id, e.g. -1) and real-target
+  // findings can be filtered apart without a campaign join — direct hunts have
+  // campaignId=0, so the join alone can't isolate them. Set in persistFinding.
+  programId: integer("program_id"),
   title: text("title").notNull(),
   vulnType: varchar("vuln_type", { length: 64 }).notNull(),
   severity: varchar("severity", { length: 16 }).notNull(), // critical, high, medium, low, info
@@ -136,6 +140,7 @@ export const findings = pgTable("findings", {
   severityIdx: index("findings_severity_idx").on(t.severity),
   statusIdx: index("findings_status_idx").on(t.status),
   campaignIdx: index("findings_campaign_idx").on(t.campaignId),
+  programIdx: index("findings_program_idx").on(t.programId),
 }));
 
 // ─── WAF Profiles ─────────────────────────────────────────────────────────────

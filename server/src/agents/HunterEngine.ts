@@ -2729,6 +2729,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
         huntSessionId: this.dbSessionId,
         campaignId: this.campaignId,
         targetId: this.targetId,
+        // Source tag: lab/local hunts carry a sentinel programId (e.g. -1) so lab
+        // findings never co-mingle with real-target findings in the UI/export.
+        programId: this.state.programId,
         title: `${confirmed.hypothesis.vulnClass.toUpperCase()} found at ${confirmed.hypothesis.targetUrl}`,
         vulnType: confirmed.hypothesis.vulnClass,
         severity: confirmed.severity,

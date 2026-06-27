@@ -113,7 +113,29 @@ export class ScopeGuard {
     return ScopeGuard.instance;
   }
 
+  // Telemetry only — counts every scope decision (hunt-phase AND manual UI checks)
+  // since all callers funnel through isInScope(). Does NOT affect enforcement.
+  private stats = { totalChecks: 0, allowed: 0, blocked: 0 };
+
+  getStats(): { totalChecks: number; allowed: number; blocked: number; blockRate: number } {
+    const { totalChecks, allowed, blocked } = this.stats;
+    return { totalChecks, allowed, blocked, blockRate: totalChecks > 0 ? blocked / totalChecks : 0 };
+  }
+
+  /** Public entry point — tallies the decision then returns the unchanged verdict. */
   async isInScope(url: string, programId: number): Promise<{
+    allowed: boolean;
+    reason: string;
+    sharedInfraWarning?: string;
+  }> {
+    const result = await this.evaluateScope(url, programId);
+    this.stats.totalChecks++;
+    if (result.allowed) this.stats.allowed++; else this.stats.blocked++;
+    return result;
+  }
+
+  // Enforcement logic — unchanged. isInScope() wraps this to add telemetry.
+  private async evaluateScope(url: string, programId: number): Promise<{
     allowed: boolean;
     reason: string;
     sharedInfraWarning?: string;

@@ -53,6 +53,45 @@ function getSeverityColor(severity: string): string {
   }
 }
 
+// The /api/bounty/audit store writes entries as { id, action, details, timestamp }
+// but this view renders { type, description, severity }. Normalize so the events
+// that ARE written (hunt start, scope validate/block) render instead of blank rows.
+// Entries already in the UI shape pass through unchanged.
+function normalizeAuditEntry(raw: any): SecurityEvent {
+  if (raw && typeof raw.type === 'string' && typeof raw.description === 'string') {
+    return {
+      id: String(raw.id ?? `${raw.timestamp}-${Math.random().toString(36).slice(2, 7)}`),
+      timestamp: String(raw.timestamp ?? new Date().toISOString()),
+      type: raw.type,
+      description: raw.description,
+      severity: String(raw.severity ?? 'info'),
+    };
+  }
+  const action = String(raw?.action ?? 'event');
+  const TYPE_MAP: Record<string, string> = {
+    'scope.block': 'security_event',
+    'scope.validate': 'task_complete',
+    'hunt.start': 'task_start',
+    'hunt.complete': 'task_complete',
+    'hunt.error': 'task_failed',
+  };
+  const SEV_MAP: Record<string, string> = {
+    'scope.block': 'high',
+    'hunt.error': 'high',
+  };
+  const details = raw?.details ?? {};
+  const detailStr = typeof details === 'object'
+    ? Object.entries(details).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')
+    : String(details);
+  return {
+    id: String(raw?.id ?? `${raw?.timestamp ?? Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    timestamp: String(raw?.timestamp ?? new Date().toISOString()),
+    type: TYPE_MAP[action] ?? action,
+    description: `${action}${detailStr ? ` — ${detailStr}` : ''}`,
+    severity: SEV_MAP[action] ?? 'info',
+  };
+}
+
 export function AuditTrail() {
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -65,11 +104,9 @@ export function AuditTrail() {
     try {
       const response = await fetch('/api/bounty/audit');
       const data = await response.json();
-      if (data.success && Array.isArray(data.events)) {
-        setEvents(data.events);
-      } else if (Array.isArray(data)) {
-        setEvents(data);
-      }
+      const raw = Array.isArray(data) ? data : (Array.isArray(data.events) ? data.events : []);
+      // Newest first, normalized to the view's shape.
+      setEvents(raw.slice().reverse().map(normalizeAuditEntry));
     } catch (error) {
       console.error('Failed to fetch security events:', error);
     }

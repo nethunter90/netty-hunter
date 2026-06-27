@@ -233,7 +233,10 @@ export function HuntReplay() {
     try {
       const res = await fetch('/api/reasoning/calibration');
       const data = await res.json();
-      if (data.success) setCalibration(data.data || []);
+      // The endpoint returns meta-reasoner stats (an object), not a
+      // CalibrationPoint[]. Only accept a real array so the Calibration tab's
+      // .reduce() can't crash — otherwise fall back to the empty state.
+      setCalibration(data.success && Array.isArray(data.data) ? data.data : []);
     } catch (err) {
       console.error('Failed to fetch calibration:', err);
     }
