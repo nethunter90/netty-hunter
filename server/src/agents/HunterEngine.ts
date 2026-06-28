@@ -203,11 +203,18 @@ export const TOOL_KNOWLEDGE: Record<string, {
   nmap: {
     description: "Network port scanner and service fingerprinter",
     vulnClasses: ["open_ports", "service_enumeration", "os_detection"],
-    command: (url) => ({
-      bin: "nmap",
-      args: ["-sV", "-sC", "--script=http-headers,http-title", "-p", "80,443,8080,8443",
-             new URL(url).hostname, "--open", "-oX", "-"],
-    }),
+    command: (url) => {
+      // Include the target URL's actual port — real/vibe-coded apps run on arbitrary
+      // ports (3000, 5000, 8000, 5173…). The old hardcoded list missed them, so nmap
+      // scanned nothing on e.g. localhost:5000.
+      const u = new URL(url);
+      const ports = Array.from(new Set([u.port, "80", "443", "8080", "8443"].filter(Boolean))).join(",");
+      return {
+        bin: "nmap",
+        args: ["-sV", "-sC", "--script=http-headers,http-title", "-p", ports,
+               u.hostname, "--open", "-oX", "-"],
+      };
+    },
     parser: (output) => {
       const ports: string[] = [];
       const matches = output.match(/portid="(\d+)"[^>]*state="open"/g) || [];
@@ -247,17 +254,15 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["hidden_endpoints", "backup_files", "admin_panels", "parameter_pollution"],
     command: (url) => ({
       bin: "ffuf",
-      args: ["-u", `${url}/FUZZ`, "-w", "/usr/share/wordlists/dirb/common.txt",
-             "-mc", "200,301,302,403", "-t", "50", "-timeout", "5", "-json"],
+      // `-s` (silent) prints matched results one per line — ffuf has no `-json` flag
+      // (it's `-of json`, which writes a file). Strip a trailing slash so we don't
+      // request `//FUZZ` when the target URL ends in `/`.
+      args: ["-u", `${url.replace(/\/+$/, "")}/FUZZ`, "-w", "/usr/share/wordlists/dirb/common.txt",
+             "-mc", "200,301,302,403", "-t", "50", "-timeout", "5", "-s"],
     }),
     parser: (output) => {
-      try {
-        const data = JSON.parse(output);
-        return { results: data.results || [], total: data.results?.length || 0 };
-      } catch {
-        const results = output.match(/:: Progress.*?\n/g) || [];
-        return { results, total: results.length };
-      }
+      const paths = output.split("\n").map(l => l.trim()).filter(Boolean);
+      return { results: paths, total: paths.length };
     },
     rateLimit: 10,
   },
@@ -266,7 +271,9 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["sqli", "blind_sqli", "time_based_sqli", "error_based_sqli"],
     command: (url) => ({
       bin: "sqlmap",
-      args: ["-u", url, "--batch", "--level=2", "--risk=2",
+      // --crawl=0: test only the given URL/forms, don't wander the site (keeps the
+      // run from blowing past the 60s tool ceiling). The breaker remains the backstop.
+      args: ["-u", url, "--batch", "--level=2", "--risk=2", "--crawl=0",
              "--timeout=10", "--output-dir=/tmp/sqlmap", "--forms"],
     }),
     parser: (output) => {
@@ -298,7 +305,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["misconfig", "outdated_software", "dangerous_files", "headers"],
     command: (url) => ({
       bin: "nikto",
-      args: ["-h", url, "-Format", "json", "-timeout", "10", "-maxtime", "60"],
+      // No -Format json: the parser below reads nikto's default TEXT output
+      // ("+ ...", "OSVDB-..."), and -Format requires -output (errors without it).
+      // -maxtime bounds the run under the 60s tool ceiling.
+      args: ["-h", url, "-timeout", "10", "-maxtime", "60"],
     }),
     parser: (output) => {
       const vulns = output.match(/OSVDB-\d+:.+/g) || [];
@@ -351,7 +361,9 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["ssti", "rce"],
     command: (url) => ({
       bin: "tplmap",
-      args: ["-u", url, "--level", "5", "--os-cmd", "id"],
+      // --level 2 (not 5/max): a first-pass probe that can finish under the 60s
+      // ceiling instead of always being killed.
+      args: ["-u", url, "--level", "2", "--os-cmd", "id"],
     }),
     parser: (output) => {
       const found = /Template Injection|Tplmap identified|injection point/i.test(output);
