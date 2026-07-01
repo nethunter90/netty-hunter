@@ -163,6 +163,8 @@ describe('WAF adaptation (sporadic policy, virtual clock)', () => {
     //     rate limiting. This is the one property that must not regress.
     expect(block429InE).toBe(0);
     expect(backoffActivationsInE).toBe(0);
+    // (e) NOISE FIX (Item 1): sporadic 429s among successes must not cost backoff.
+    expect(bump('D:sporadic-noise').waitMs).toBeLessThan(5_000);
     void q0;
   });
 });

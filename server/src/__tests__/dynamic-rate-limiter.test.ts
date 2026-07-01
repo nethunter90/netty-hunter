@@ -1,16 +1,11 @@
 /**
- * DynamicRateLimiter — 429-backoff behaviour.
+ * DynamicRateLimiter — 429 backoff with noise/burst discrimination.
  *
- * Keys off status-code only (no latency tracking), so the mock is trivial:
- * call recordResponse() with the desired status code.
- *
- * Scenarios:
- *  1. Baseline — 2xx responses never block.
- *  2. Single 429 activates backoff; checkRateLimit returns allowed:false.
- *  3. Repeat 429 doubles the backoff window (exponential).
- *  4. Retry-After header overrides the default 30 s backoff.
- *  5. 2xx after 429 resets backoff (re-adaptation).
- *  6. Five consecutive 429s trigger quarantine (not just backoff).
+ * A lone/sporadic 429 (no Retry-After) is treated as NOISE and does not back off;
+ * a genuine rate limit shows up as a burst (>= RATE_LIMIT_429_BURST_COUNT 429s
+ * within the burst window) or an explicit Retry-After, either of which backs off.
+ * This stops scattered 429s among successes from throttling the hunt, while keeping
+ * real-tighten detection fast and preserving the 5-consecutive-429 quarantine.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { dynamicRateLimiter } from '../lib/stealth/dynamic-rate-limiter';
@@ -22,71 +17,61 @@ beforeEach(() => {
   dynamicRateLimiter.resetAll();
 });
 
-describe('DynamicRateLimiter — 429 backoff', () => {
+describe('DynamicRateLimiter — 429 noise vs burst', () => {
   it('allows requests when all responses are 2xx', () => {
-    for (let i = 0; i < 5; i++) {
-      dynamicRateLimiter.recordResponse(TARGET, EP, 200, {});
-    }
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-    expect(result.allowed).toBe(true);
+    for (let i = 0; i < 5; i++) dynamicRateLimiter.recordResponse(TARGET, EP, 200, {});
+    expect(dynamicRateLimiter.checkRateLimit(TARGET, EP).allowed).toBe(true);
   });
 
-  it('blocks immediately after a single 429 with ~30 s retryAfter', () => {
+  it('does NOT back off on a single sporadic 429 (noise)', () => {
     dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
-
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('1 consecutive 429s');
-    // Default first backoff is 30 000 ms; allow up to 500 ms of wall-clock drift.
-    expect(result.retryAfter).toBeGreaterThan(29_500);
-    expect(result.retryAfter).toBeLessThanOrEqual(30_000);
+    // One stray 429 with no Retry-After is noise — requests keep flowing.
+    expect(dynamicRateLimiter.checkRateLimit(TARGET, EP).allowed).toBe(true);
   });
 
-  it('doubles the backoff window on the second consecutive 429', () => {
+  it('does NOT back off on 2 scattered 429s below the burst threshold', () => {
     dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
     dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
-
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('2 consecutive 429s');
-    // 2nd 429: lastBackoffMs was 30 000 → new = 30 000 × 2 = 60 000 ms.
-    expect(result.retryAfter).toBeGreaterThan(59_500);
-    expect(result.retryAfter).toBeLessThanOrEqual(60_000);
+    expect(dynamicRateLimiter.checkRateLimit(TARGET, EP).allowed).toBe(true);
   });
 
-  it('respects the Retry-After header instead of the default 30 s', () => {
+  it('backs off (~30 s) once a burst of 3 rapid 429s is seen', () => {
+    for (let i = 0; i < 3; i++) dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
+    const r = dynamicRateLimiter.checkRateLimit(TARGET, EP);
+    expect(r.allowed).toBe(false);
+    expect(r.retryAfter).toBeGreaterThan(29_500);
+    expect(r.retryAfter).toBeLessThanOrEqual(30_000);
+  });
+
+  it('doubles the backoff on the next 429 after a burst', () => {
+    for (let i = 0; i < 4; i++) dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
+    const r = dynamicRateLimiter.checkRateLimit(TARGET, EP);
+    expect(r.allowed).toBe(false);
+    // 3rd 429 → 30 s; 4th → doubled to 60 s.
+    expect(r.retryAfter).toBeGreaterThan(59_500);
+    expect(r.retryAfter).toBeLessThanOrEqual(60_000);
+  });
+
+  it('honors an explicit Retry-After immediately, even on a single 429', () => {
     dynamicRateLimiter.recordResponse(TARGET, EP, 429, { 'retry-after': '120' });
-
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-
-    expect(result.allowed).toBe(false);
-    // 120 s × 1 000 = 120 000 ms; allow up to 500 ms clock drift.
-    expect(result.retryAfter).toBeGreaterThan(119_500);
-    expect(result.retryAfter).toBeLessThanOrEqual(120_000);
+    const r = dynamicRateLimiter.checkRateLimit(TARGET, EP);
+    expect(r.allowed).toBe(false); // server said wait — never treated as noise
+    expect(r.retryAfter).toBeGreaterThan(119_500);
+    expect(r.retryAfter).toBeLessThanOrEqual(120_000);
   });
 
   it('clears backoff after a 2xx — re-adapts to allowed', () => {
-    dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
+    dynamicRateLimiter.recordResponse(TARGET, EP, 429, { 'retry-after': '60' });
     expect(dynamicRateLimiter.checkRateLimit(TARGET, EP).allowed).toBe(false);
-
     dynamicRateLimiter.recordResponse(TARGET, EP, 200, {});
-
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-    expect(result.allowed).toBe(true);
+    expect(dynamicRateLimiter.checkRateLimit(TARGET, EP).allowed).toBe(true);
   });
 
   it('quarantines the target after 5 consecutive 429s', () => {
-    for (let i = 0; i < 5; i++) {
-      dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
-    }
-
-    const result = dynamicRateLimiter.checkRateLimit(TARGET, EP);
-
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toMatch(/quarantined/i);
-    // Quarantine window is 10 min by default; retryAfter should reflect that.
-    expect(result.retryAfter).toBeGreaterThan(590_000);
+    for (let i = 0; i < 5; i++) dynamicRateLimiter.recordResponse(TARGET, EP, 429, {});
+    const r = dynamicRateLimiter.checkRateLimit(TARGET, EP);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/quarantined/i);
+    expect(r.retryAfter).toBeGreaterThan(590_000);
   });
 });

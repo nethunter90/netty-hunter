@@ -8,6 +8,11 @@ const ENV = {
   maxBackoffMs: () => parseInt(process.env.RATE_LIMIT_MAX_BACKOFF_MS || '300000'),
   quarantineMs: () => parseInt(process.env.RATE_LIMIT_QUARANTINE_MS || '600000'),
   burstThreshold: () => parseInt(process.env.RATE_LIMIT_BURST_THRESHOLD || '3'),
+  // A 429 with no Retry-After only triggers backoff once this many 429s land within
+  // the burst window — so scattered/noise 429s among successes are ignored, while a
+  // genuine rate limit (a rapid run of 429s) still trips it within ~a second.
+  noiseBurstCount: () => parseInt(process.env.RATE_LIMIT_429_BURST_COUNT || '3'),
+  noiseBurstWindowMs: () => parseInt(process.env.RATE_LIMIT_429_BURST_WINDOW_MS || '10000'),
 };
 
 interface RateBucket {
@@ -19,6 +24,7 @@ interface RateBucket {
   resetTime: number | null;
   windowDurationMs: number;
   lastActivity: number;
+  recent429s: number[]; // timestamps of recent 429s, for burst-vs-noise discrimination
   backoff: {
     active: boolean;
     until: number;
@@ -99,6 +105,7 @@ class DynamicRateLimiter {
         resetTime: null,
         windowDurationMs: ENV.windowMs(),
         lastActivity: Date.now(),
+        recent429s: [],
         backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
         hardBan: { active: false, until: 0, count: 0 },
@@ -120,6 +127,7 @@ class DynamicRateLimiter {
         resetTime: null,
         windowDurationMs: ENV.windowMs(),
         lastActivity: Date.now(),
+        recent429s: [],
         backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
         hardBan: { active: false, until: 0, count: 0 },
@@ -487,30 +495,56 @@ class DynamicRateLimiter {
       this.stats.total429s++;
       bucket.backoff.consecutive429s++;
 
-      let backoffMs: number;
-      if (parsed.retryAfter !== null && parsed.retryAfter > 0) {
-        backoffMs = parsed.retryAfter;
-      } else if (bucket.backoff.lastBackoffMs > 0) {
-        backoffMs = Math.min(bucket.backoff.lastBackoffMs * 2, ENV.maxBackoffMs());
+      // Track 429 arrival times in a short window to tell a real rate limit (a rapid
+      // run of 429s) from noise (scattered single 429s among successes).
+      bucket.recent429s.push(now);
+      const burstCutoff = now - ENV.noiseBurstWindowMs();
+      bucket.recent429s = bucket.recent429s.filter(t => t > burstCutoff);
+
+      const hasRetryAfter = parsed.retryAfter !== null && parsed.retryAfter > 0;
+      const isBurst = bucket.recent429s.length >= ENV.noiseBurstCount();
+
+      // Back off only on an explicit server Retry-After (never noise — the server
+      // told us to wait) OR a genuine burst. A lone/sporadic 429 among successes is
+      // treated as noise: no backoff. Quarantine (5 consecutive) still applies — but
+      // consecutive429s is reset by any 2xx, so scattered 429s never reach it.
+      if (hasRetryAfter || isBurst) {
+        let backoffMs: number;
+        if (hasRetryAfter) {
+          backoffMs = parsed.retryAfter as number;
+        } else if (bucket.backoff.lastBackoffMs > 0) {
+          backoffMs = Math.min(bucket.backoff.lastBackoffMs * 2, ENV.maxBackoffMs());
+        } else {
+          backoffMs = 30000;
+        }
+
+        backoffMs = Math.min(backoffMs, ENV.maxBackoffMs());
+        bucket.backoff.active = true;
+        bucket.backoff.until = now + backoffMs;
+        bucket.backoff.lastBackoffMs = backoffMs;
+
+        stealthLogger.log('alert', {
+          type: 'rate_limit_backoff',
+          target,
+          endpoint,
+          statusCode: 429,
+          consecutive429s: bucket.backoff.consecutive429s,
+          recent429s: bucket.recent429s.length,
+          trigger: hasRetryAfter ? 'retry-after' : 'burst',
+          backoffMs,
+          retryAfterHeader: parsed.retryAfter,
+          until: new Date(bucket.backoff.until).toISOString()
+        });
       } else {
-        backoffMs = 30000;
+        // Sporadic/noise 429 — record it but do NOT back off; let successes flow.
+        stealthLogger.log('alert', {
+          type: 'rate_limit_429_noise',
+          target,
+          endpoint,
+          consecutive429s: bucket.backoff.consecutive429s,
+          recent429s: bucket.recent429s.length,
+        });
       }
-
-      backoffMs = Math.min(backoffMs, ENV.maxBackoffMs());
-      bucket.backoff.active = true;
-      bucket.backoff.until = now + backoffMs;
-      bucket.backoff.lastBackoffMs = backoffMs;
-
-      stealthLogger.log('alert', {
-        type: 'rate_limit_backoff',
-        target,
-        endpoint,
-        statusCode: 429,
-        consecutive429s: bucket.backoff.consecutive429s,
-        backoffMs,
-        retryAfterHeader: parsed.retryAfter,
-        until: new Date(bucket.backoff.until).toISOString()
-      });
 
       if (bucket.backoff.consecutive429s >= 5) {
         const quarantineMs = ENV.quarantineMs() * (bucket.quarantine.count > 0 ? 2 : 1);
