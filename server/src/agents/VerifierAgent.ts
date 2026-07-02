@@ -148,7 +148,9 @@ class Layer2Reprobe {
       if (result.vulnClass === "xss" && result.payload) {
         confirmed = body.includes(result.payload) || resp.status < 400;
       } else if (result.vulnClass === "sqli") {
-        confirmed = /sql|syntax|mysql|ora-\d+/i.test(body) || resp.status < 400;
+        // Matches actual SQL error phrases. Intentionally excludes bare "sql"/"sqlite" which appear
+        // in filenames inside ENOENT messages from path-traversal probes (false-positive vector).
+        confirmed = /you have an error in your sql syntax|mysql_error|sql syntax error|ora-\d+|sqlstate\[|unclosed quotation mark|psql:|sqlite error:|syntax error near|Warning.*mysql_/i.test(body) || resp.status < 400;
       } else if (result.vulnClass === "ssrf") {
         confirmed = body.includes("ami-id") || body.match(/root:.*:0:0:/) !== null;
       } else {

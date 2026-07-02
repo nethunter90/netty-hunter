@@ -44,6 +44,8 @@ ALREADY TESTED: ${testedVulnClasses.join(", ")}
 
 KNOWN URLS (sample): ${discoveredUrls.slice(0, 20).join(", ")}
 
+CLASSIFICATION RULE: Path traversal payloads (../../) targeting files or directories are ALWAYS labeled \`lfi\` or \`path_traversal\` — NEVER \`sqli\`. This applies even when the target is a .sqlite file, database file, or database directory. \`sqli\` requires actual SQL injection into a database query, not reading a file via path traversal.
+
 Identify exploit chains by combining these findings. Common patterns:
 - XSS + CORS → exfiltrate authenticated data
 - IDOR + info_disclosure → enumerate and extract all user records
@@ -52,6 +54,8 @@ Identify exploit chains by combining these findings. Common patterns:
 - SSRF + internal → cloud metadata credential theft
 - CSRF + auth_bypass → persistent account compromise
 - SQLi + info_disclosure → credential dump
+- lfi + info_disclosure → read source code, config files, or environment secrets via path traversal
+- path_traversal + lfi → escalate from directory listing to arbitrary file read
 
 For each chain worth pursuing, generate a chained hypothesis. Return JSON array:
 [{

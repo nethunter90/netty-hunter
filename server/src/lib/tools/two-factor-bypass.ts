@@ -24,8 +24,35 @@ const TWOFA_ENDPOINTS = [
 
 const PROTECTED_RESOURCES = ["/api/me", "/api/dashboard"];
 
-function isAccepted(status: number): boolean {
-  return status === 200 || status === 204;
+function isAccepted(status: number, data: unknown, headers?: Record<string, string>): boolean {
+  if (status !== 200 && status !== 204) return false;
+
+  // A 200/204 with an explicit error body is a rejection, not a bypass
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    // Explicit failure indicators
+    if (obj["success"] === false) return false;
+    if (obj["authenticated"] === false) return false;
+    if (typeof obj["error"] === "string" && obj["error"].length > 0) return false;
+    if (typeof obj["message"] === "string") {
+      const msg = obj["message"].toLowerCase();
+      if (/invalid|incorrect|expired|denied|failed|wrong|unauthorized/.test(msg)) return false;
+    }
+    // Explicit success indicators
+    if (obj["success"] === true) return true;
+    if (obj["authenticated"] === true) return true;
+    if (obj["token"] || obj["accessToken"] || obj["access_token"] || obj["sessionToken"]) return true;
+  }
+
+  // Session cookie set = accepted (redirect to authenticated area)
+  const setCookie = headers?.["set-cookie"] ?? "";
+  if (/session|auth|jwt|token/i.test(setCookie)) return true;
+
+  // HTML body (SPA fallback) is never a 2FA acceptance
+  if (typeof data === "string" && data.trimStart().startsWith("<")) return false;
+
+  // No clear signal — treat as not accepted (conservative)
+  return false;
 }
 
 function hasUserData(data: unknown): boolean {
@@ -54,15 +81,23 @@ class TwoFactorBypassProber {
     const headers = { "Content-Type": "application/json", ...(authHeaders ?? {}) };
     const axiosOpts = { timeout: 5000, validateStatus: () => true };
 
-    // Detect active 2FA endpoints
+    // Detect active 2FA endpoints — require a JSON response to exclude SPA HTML fallbacks
+    // and 405 (method not allowed) to exclude routes that don't handle POST.
     const activeEndpoints: string[] = [];
     for (const ep of TWOFA_ENDPOINTS) {
       try {
         const res = await axios.post(`${baseUrl}${ep}`, {}, { ...axiosOpts, headers });
-        if (res.status !== 404) {
-          activeEndpoints.push(ep);
-          logger.debug(`[2FA] Detected endpoint: ${ep} (status ${res.status})`);
+        // 404 → route doesn't exist
+        // 405 → route exists but doesn't accept POST (not a 2FA handler)
+        if (res.status === 404 || res.status === 405) continue;
+        // SPA fallbacks return text/html — a real API endpoint returns JSON
+        const ct = String(res.headers["content-type"] ?? "");
+        if (!ct.includes("application/json")) {
+          logger.debug(`[2FA] Skipping ${ep} — non-JSON response (${ct.split(";")[0]}), likely SPA fallback`);
+          continue;
         }
+        activeEndpoints.push(ep);
+        logger.debug(`[2FA] Detected endpoint: ${ep} (status ${res.status})`);
       } catch (err) {
         logger.debug(`[2FA] Error probing ${ep}: ${err}`);
       }
@@ -78,7 +113,7 @@ class TwoFactorBypassProber {
           { code: null, otp: null, token: null },
           { ...axiosOpts, headers }
         );
-        if (isAccepted(res.status)) {
+        if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "null_code",
             endpoint: ep,
@@ -99,7 +134,7 @@ class TwoFactorBypassProber {
           { code: "", otp: "" },
           { ...axiosOpts, headers }
         );
-        if (isAccepted(res.status)) {
+        if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "response_manipulation",
             endpoint: ep,
@@ -158,7 +193,7 @@ class TwoFactorBypassProber {
         const code = "123456";
         await axios.post(url, { code }, { ...axiosOpts, headers });
         const res2 = await axios.post(url, { code }, { ...axiosOpts, headers });
-        if (isAccepted(res2.status)) {
+        if (isAccepted(res2.status, res2.data, res2.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "code_reuse",
             endpoint: ep,
@@ -177,7 +212,7 @@ class TwoFactorBypassProber {
       for (const backup_code of backupCodes) {
         try {
           const res = await axios.post(url, { backup_code }, { ...axiosOpts, headers });
-          if (isAccepted(res.status)) {
+          if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
             const vuln: TwoFAVuln = {
               technique: "backup_code_brute",
               endpoint: ep,
