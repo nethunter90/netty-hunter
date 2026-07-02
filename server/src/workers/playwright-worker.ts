@@ -157,7 +157,7 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
       const currentUrl = page.url();
       confirmed = currentUrl.includes('evil.com') || !currentUrl.includes(new URL(result.endpoint).hostname);
     } else {
-      confirmed = result.found;
+      confirmed = false; // L3 not applicable for this vuln class; verdict uses L2/L4
     }
 
     return { confirmed, screenshot, consoleAlerts, networkRequests };
