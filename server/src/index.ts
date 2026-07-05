@@ -240,10 +240,12 @@ const callbackLimiter = rateLimit({
 app.all("/api/callback/:beaconId", callbackLimiter, (req, res) => {
   const { beaconId } = req.params;
   const ip = req.ip || "";
-  const body = JSON.stringify(req.body || req.query || {});
-  callbackServer.recordHit(beaconId, ip, body);
+  const query = (req.query || {}) as Record<string, unknown>;
+  const body = JSON.stringify(req.body || query || {});
+  callbackServer.recordHit(beaconId, ip, body, query);
   const hitAt = new Date();
-  io.emit("oob:hit", { beaconId, ip, ts: hitAt.toISOString() });
+  // exfil = command output folded into the callback query (e.g. ?u=$(whoami))
+  io.emit("oob:hit", { beaconId, ip, exfil: query, ts: hitAt.toISOString() });
 
   // Persist OOB confirmation to any finding that owns this beacon
   db.update(findings)

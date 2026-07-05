@@ -103,7 +103,7 @@ class BlindXXEProber {
         validateStatus: () => true,
       });
 
-      const oobReceived = await callbackServer.waitForHit(beaconId, 10000);
+      const oobReceived = (await callbackServer.waitForHit(beaconId, 10000)) !== null;
 
       if (oobReceived) {
         const detail = `OOB callback received for OOB DTD XXE at ${endpoint} (beacon: ${beaconId})`;
@@ -134,7 +134,7 @@ class BlindXXEProber {
         validateStatus: () => true,
       });
 
-      const oobReceived = await callbackServer.waitForHit(beaconId, 10000);
+      const oobReceived = (await callbackServer.waitForHit(beaconId, 10000)) !== null;
 
       if (oobReceived) {
         const detail = `OOB callback received for parameter entity XXE at ${endpoint} (beacon: ${beaconId})`;

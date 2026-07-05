@@ -1,12 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import logger from "../../utils/logger";
 
-interface BeaconRecord {
+export interface BeaconRecord {
   createdAt: number;
   received: boolean;
   receivedAt?: number;
   requestIp?: string;
   requestBody?: string;
+  // Command output exfiltrated via the callback query string (e.g. ?u=$(whoami)
+  // → { u: "root" }). Present when the injected payload folded command output
+  // into the beacon URL.
+  exfil?: Record<string, string>;
 }
 
 class CallbackServer {
@@ -27,25 +31,32 @@ class CallbackServer {
     return { beaconId, callbackUrl: `${this.serverHost}/api/callback/${beaconId}` };
   }
 
-  recordHit(beaconId: string, ip: string, body: string): void {
+  recordHit(beaconId: string, ip: string, body: string, query?: Record<string, unknown>): void {
     const rec = this.beacons.get(beaconId);
     if (rec) {
       rec.received = true;
       rec.receivedAt = Date.now();
       rec.requestIp = ip;
       rec.requestBody = body;
-      logger.info("[OOB] Callback received", { beaconId, ip });
+      if (query && Object.keys(query).length > 0) {
+        const exfil: Record<string, string> = {};
+        for (const [k, v] of Object.entries(query)) exfil[k] = String(v);
+        rec.exfil = exfil;
+      }
+      logger.info("[OOB] Callback received", { beaconId, ip, exfil: rec.exfil });
     }
   }
 
-  async waitForHit(beaconId: string, timeoutMs: number): Promise<boolean> {
+  /** Resolves the beacon record once a hit lands (so callers can read `exfil`),
+   *  or null on timeout. */
+  async waitForHit(beaconId: string, timeoutMs: number): Promise<BeaconRecord | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const rec = this.beacons.get(beaconId);
-      if (rec?.received) return true;
+      if (rec?.received) return rec;
       await new Promise(r => setTimeout(r, 500));
     }
-    return false;
+    return null;
   }
 
   cleanup(beaconId: string): void {
