@@ -18,3 +18,12 @@ server/context/
 scripts/finetune-dataset.jsonl
 scripts/hf-supplement.jsonl
 scripts/bounty-scrape.jsonl
+
+# Runtime-generated during hunts/verification — not source
+server/evidence/
+server/workspace/target-crashes.jsonl
+server/nikto_*.json
+
+# Nested external repo (xbow benchmarks clone, has its own .git, ~2.3GB) —
+# never commit this into netty-hunter's own history
+server/workspace/xbow-repo/

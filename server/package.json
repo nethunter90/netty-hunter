@@ -4,7 +4,7 @@
   "description": "Bug Bounty Intelligence Platform - Backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore 'logs/**' --ignore 'context/**' --ignore 'evidence/**' --ignore 'workspace/**' --ignore '*.log' src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "db:push": "drizzle-kit push",

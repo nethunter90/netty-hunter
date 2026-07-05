@@ -352,26 +352,45 @@ export class IntelligenceSynthesizer {
       return true;
     });
 
-    // Execute bypass attempts (limited to 5 to avoid detection)
+    // Execute bypass attempts (limited to 5 to avoid detection). Bypass-technique
+    // probing only makes sense when a WAF was actually fingerprinted — on a
+    // no-WAF target (e.g. local dev/lab) this loop was still running up to 5
+    // HTTP round-trips plus per-attempt stealth-pacing delays, which is what
+    // pushed waf_intel to the full 30s ceiling every hunt against localhost.
     const results: EvasionResult[] = [];
-    for (const variant of variants.slice(0, 5)) {
-      // Get timing recommendation from decay engine before each attempt
-      const probe = await stealthCoordinator.prepareProbe(
-        `${url}?q=${encodeURIComponent(variant.payload)}`,
-        variant.payload,
-        'waf_bypass',
-        { sessionId, domain, vendor: waf.vendor, stealthMode: 'balanced' }
-      );
-      if (probe.delayMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, probe.delayMs));
+    // This loop is fingerprinting, not the actual attack — it must never inherit
+    // full hunt-level stealth pacing (which can recommend many-second delays once
+    // a session has accrued backoff state). Budget it independently so a decayed
+    // pacer state can't drag waf_intel back up toward the 30s outer ceiling.
+    const SYNTHESIZE_BUDGET_MS = 8000;
+    const loopStart = Date.now();
+    if (waf.detected) {
+      for (const variant of variants.slice(0, 5)) {
+        if (Date.now() - loopStart > SYNTHESIZE_BUDGET_MS) {
+          logger.info("WAF Intelligence: bypass-probe budget exhausted — stopping early", { url, attempted: results.length });
+          break;
+        }
+        // Get timing recommendation from decay engine before each attempt
+        const probe = await stealthCoordinator.prepareProbe(
+          `${url}?q=${encodeURIComponent(variant.payload)}`,
+          variant.payload,
+          'waf_bypass',
+          { sessionId, domain, vendor: waf.vendor, stealthMode: 'balanced' }
+        );
+        const remaining = SYNTHESIZE_BUDGET_MS - (Date.now() - loopStart);
+        if (probe.delayMs > 0 && remaining > 0) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(probe.delayMs, remaining)));
+        }
+
+        const result = await this.executor.execute(url, variant.payload, variant.technique);
+        results.push(result);
+        await this.vendorProfiles.updateProfile(waf.vendor, domain, result);
+
+        // Record outcome in decay engine — use blockRate not success; a 404 is not a WAF block
+        stealthCoordinator.recordOutcome(sessionId, domain, waf.vendor, result.blockRate < 0.5, variant.technique);
       }
-
-      const result = await this.executor.execute(url, variant.payload, variant.technique);
-      results.push(result);
-      await this.vendorProfiles.updateProfile(waf.vendor, domain, result);
-
-      // Record outcome in decay engine — use blockRate not success; a 404 is not a WAF block
-      stealthCoordinator.recordOutcome(sessionId, domain, waf.vendor, result.blockRate < 0.5, variant.technique);
+    } else {
+      logger.info("WAF Intelligence: no WAF fingerprinted — skipping bypass-technique probing", { url });
     }
 
     // Use TemporalDecayEngine for accurate decay state (replaces manual 7-day calc)

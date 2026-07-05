@@ -21,6 +21,7 @@ import { ModelRouter } from "../intelligence/ModelRouter";
 import { ClaudeClient } from "../lib/claude-client";
 import type { SolverResult } from "./SolverPool";
 import { SimHashDedup } from "../lib/intelligence/simhash";
+import { adaptPayload, isKnownAdaptationRule } from "../lib/verification/payload-adaptation";
 
 export interface VerificationResult {
   findingId: string;
@@ -31,6 +32,20 @@ export interface VerificationResult {
   finalVerdict: "confirmed" | "rejected" | "inconclusive" | "deduplicated";
   finalConfidence: number;
   dedupHash: string;
+  /**
+   * Set when a payload-adaptation retry ran (L4 signalled "capability real,
+   * proof payload mechanically wrong"). Only present when the retry actually
+   * flipped the verdict to confirmed — see VerifierAgent.verify() for the gate.
+   * statusCode/responseSnippet/screenshot/reasoning are the RETRY's own L2/L3/L4
+   * evidence (distinct from the top-level layer2_reprobe/layer3_playwright/
+   * layer4_ai fields above, which stay the ORIGINAL failing payload's evidence)
+   * — this is what a report must cite as the actual proof, since that's what
+   * was actually demonstrated.
+   */
+  adaptation?: {
+    rule: string; adaptedUrl: string; adaptedPayload: string;
+    statusCode: number; responseSnippet: string; screenshot?: string;
+  };
 }
 
 // Tools whose findings are STATEFUL — only reproducible inside a live
@@ -115,7 +130,7 @@ class Layer1Dedup {
 }
 
 // ─── Layer 2: Dynamic Re-probe ────────────────────────────────────────────────
-class Layer2Reprobe {
+export class Layer2Reprobe {
   async reprobe(result: SolverResult): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     // result.request is sometimes a campaign/finding ID (numeric string) rather than
     // a URL — e.g. for LogicExploitAgent-confirmed findings. Fall back to result.endpoint
@@ -131,6 +146,16 @@ class Layer2Reprobe {
 
     if (!reprobeUrl) {
       return { confirmed: false, statusCode: 0, responseSnippet: "No replayable URL" };
+    }
+
+    // rce gets its own independent, non-destructive proof gate rather than
+    // falling through to the generic `status<400 && found` check below — that
+    // generic check proves nothing about actual code execution. Self-verifying:
+    // a random nonce that can only appear in the response if the injected
+    // command was actually executed (not merely reflected — the exact-match +
+    // anti-reflection guard in reprobeRceNonceEcho rules that out).
+    if (result.vulnClass === "rce") {
+      return await this.reprobeRceNonceEcho(reprobeUrl);
     }
 
     try {
@@ -165,6 +190,67 @@ class Layer2Reprobe {
     } catch {
       return { confirmed: false, statusCode: 0, responseSnippet: "Reprobe failed" };
     }
+  }
+
+  /**
+   * Read-only RCE proof — nonce-echo oracle (handoff Task 2a, method 2).
+   * Injects a fresh random nonce via `echo <nonce>` command-injection variants
+   * into each query parameter and confirms ONLY if the response contains that
+   * EXACT nonce. Self-verifying, no human judgment: a coincidental match is
+   * not possible (the nonce is generated per-call and never sent anywhere
+   * else), and the anti-reflection guard (`!body.includes(variant)`) rules out
+   * the payload merely bouncing back unexecuted. Non-destructive — `echo` has
+   * no side effects on the target. Proves command execution only; does not
+   * by itself prove interactive shell access, file read/write, or full
+   * compromise — callers must not escalate the claim beyond that.
+   */
+  private async reprobeRceNonceEcho(
+    reprobeUrl: string
+  ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
+    let url: URL;
+    try {
+      url = new URL(reprobeUrl);
+    } catch {
+      return { confirmed: false, statusCode: 0, responseSnippet: "Invalid URL" };
+    }
+
+    const params = Array.from(url.searchParams.keys());
+    if (params.length === 0) {
+      return { confirmed: false, statusCode: 0, responseSnippet: "No injectable parameter for nonce-echo probe" };
+    }
+
+    // Fresh, unguessable per-call nonce — never transmitted anywhere but this probe.
+    const nonce = `rcp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    const variants = [`; echo ${nonce}`, `| echo ${nonce}`, `\`echo ${nonce}\``, `$(echo ${nonce})`];
+
+    const { default: axios } = await import("axios");
+    for (const variant of variants) {
+      for (const param of params) {
+        const probeUrl = new URL(url.toString());
+        probeUrl.searchParams.set(param, variant);
+        try {
+          const resp = await axios.get(probeUrl.toString(), {
+            timeout: 8000,
+            validateStatus: () => true,
+            headers: { "User-Agent": getRandomUserAgent() },
+          });
+          const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+          // Exact nonce present AND the literal injected string is not echoed
+          // back verbatim — the latter would mean reflection, not execution.
+          if (body.includes(nonce) && !body.includes(variant)) {
+            return {
+              confirmed: true,
+              statusCode: resp.status,
+              responseSnippet: `Command execution confirmed via nonce echo (param="${param}", payload="${variant}"): ${body.slice(0, 300)}`,
+            };
+          }
+        } catch {
+          // Try the next variant/param — a single failed request isn't a verdict.
+        }
+      }
+    }
+
+    return { confirmed: false, statusCode: 0, responseSnippet: "Nonce echo not observed in any variant/parameter" };
   }
 }
 
@@ -297,7 +383,10 @@ class Layer4AIConfirmation {
     layer3: { confirmed: boolean; consoleAlerts: string[] };
     layer3Available?: boolean;
     screenshot?: string;
-  }): Promise<{ confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean; errored?: boolean }> {
+  }): Promise<{
+    confirmed: boolean; reasoning: string; confidenceAdjustment: number; visionUsed: boolean; errored?: boolean;
+    capabilityConfirmed?: boolean; adaptationRule?: string | null;
+  }> {
 
     const visionUsed = false;
 
@@ -370,8 +459,22 @@ Based on ALL the evidence above, determine:
 1. Is this a genuine vulnerability (not a false positive)?
 2. What is the confidence adjustment (-0.5 to +0.3)?
 3. Brief reasoning.
+4. Separately: is the underlying CAPABILITY real (the target is provably
+   unsanitized/exploitable) even if THIS SPECIFIC payload's proof failed for a
+   mechanical/endpoint-shape reason — not because the vuln is absent? Only say
+   yes when the evidence itself proves the mechanism reached the vulnerable sink
+   (e.g. an ENOENT/500 error naming the exact injected path proves the traversal
+   was passed unsanitized to a filesystem call — it just targeted the wrong
+   shape). If so, set "capabilityConfirmed": true and pick the ONE matching rule
+   from this fixed list (do NOT invent new rule names, do NOT set a rule for
+   anything not in this list):
+   - "target_directory_not_file": the endpoint reads via a directory-listing
+     call (scandir/readdir) and errored (ENOENT/400) because the payload
+     targeted a file instead of a directory.
+   If no rule from the list applies, or you are not certain the capability is
+   real, set "capabilityConfirmed": false and "adaptationRule": null.
 
-Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment": number }`;
+Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment": number, "capabilityConfirmed": boolean, "adaptationRule": string | null }`;
 
     // Stateless per-finding session: L4 is a self-contained judgment, so it gets
     // a fresh thread. Sharing the "default" thread across concurrent verifications
@@ -398,11 +501,16 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
         });
         return { confirmed: false, reasoning: "L4 output unparseable — needs review", confidenceAdjustment: 0, visionUsed, errored: true };
       }
+      const adaptationRule = isKnownAdaptationRule(parsed.adaptationRule) ? parsed.adaptationRule : null;
       return {
         confirmed: Boolean(parsed.confirmed),
         reasoning: String(parsed.reasoning || "AI analysis complete"),
         confidenceAdjustment: Math.min(0.3, Math.max(-0.5, Number(parsed.confidenceAdjustment) || 0)),
         visionUsed,
+        // Only trust capabilityConfirmed when paired with a rule we actually implement —
+        // a signal with no concrete adaptation is not actionable, so treat it as absent.
+        capabilityConfirmed: Boolean(parsed.capabilityConfirmed) && adaptationRule !== null,
+        adaptationRule,
       };
     } catch (err) {
       logger.warn("VerifierAgent: Layer 4 AI confirmation failed — needs review (not auto-rejected)", {
@@ -527,6 +635,103 @@ export class VerifierAgent {
     logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed, visionUsed: l4.visionUsed });
 
     // ── Final verdict: per-class oracle authority ────────────────────────────
+    let { finalVerdict, finalConfidence } = this.computeVerdict(
+      result, l2, l3, l4, browserVerifiable, statefulOracle
+    );
+
+    // ── Payload-adaptation retry (gated, capped at exactly one attempt) ──────
+    // Fires ONLY when L4 explicitly signalled the capability is real but this
+    // specific proof payload failed for a mechanical/endpoint-shape reason, AND
+    // it named a rule we actually implement a concrete transform for. A finding
+    // that's genuinely not exploitable never reaches here — capabilityConfirmed
+    // is false and no retry churn happens. This never loosens verification: the
+    // adapted payload runs through the exact same L2/L3/L4 gate as any proof.
+    let adaptation: VerificationResult["adaptation"];
+    if (finalVerdict !== "confirmed" && l4.capabilityConfirmed && l4.adaptationRule) {
+      const urlToAdapt = this.reprobeUrl(result);
+      const adapted = urlToAdapt ? adaptPayload(l4.adaptationRule, urlToAdapt) : null;
+      if (adapted) {
+        logger.info("VerifierAgent: retrying with adapted payload", {
+          findingId, rule: adapted.rule, adaptedUrl: adapted.adaptedUrl,
+        });
+        const adaptedResult: SolverResult = {
+          ...result,
+          endpoint: adapted.adaptedUrl,
+          request: adapted.adaptedUrl,
+          payload: adapted.adaptedPayload,
+        };
+        // Re-run L2/L3/L4 directly on the adapted payload — deliberately bypasses
+        // L1 (this is a same-finding retry, not a new discovery; running it through
+        // L1 would permanently pollute the SimHash dedup store with an attempt that
+        // never gets persisted). Capped to exactly this one attempt — no recursion.
+        const retryL2 = await this.layer2.reprobe(adaptedResult);
+        const retryL3 = browserVerifiable ? await this.layer3.replay(adaptedResult) : l3;
+        const retryL4 = await this.layer4.confirm(adaptedResult, {
+          layer2: retryL2, layer3: retryL3, layer3Available: this.layer3.layer3Available, screenshot: retryL3.screenshot,
+        });
+        const retryVerdict = this.computeVerdict(adaptedResult, retryL2, retryL3, retryL4, browserVerifiable, statefulOracle);
+        if (retryVerdict.finalVerdict === "confirmed") {
+          // The adapted proof legitimately passed the SAME gate — adopt it as the
+          // real evidence instead of the original failed payload.
+          finalVerdict = "confirmed";
+          finalConfidence = retryVerdict.finalConfidence;
+          adaptation = {
+            rule: adapted.rule, adaptedUrl: adapted.adaptedUrl, adaptedPayload: adapted.adaptedPayload,
+            statusCode: retryL2.statusCode, responseSnippet: retryL2.responseSnippet, screenshot: retryL3.screenshot,
+          };
+          logger.info("VerifierAgent: adaptation retry succeeded", { findingId, rule: adapted.rule });
+        } else {
+          // Adapted payload also failed the gate — keep the ORIGINAL verdict/
+          // evidence untouched. No churn, no partial credit.
+          logger.info("VerifierAgent: adaptation retry did not confirm — original verdict stands", {
+            findingId, retryVerdict: retryVerdict.finalVerdict,
+          });
+        }
+      }
+    }
+
+    // L4 is the reasoning backstop; if it errored, a missing oracle is "unknown",
+    // which is needs-review, never a refutation. Never hard-reject on a dead L4.
+    if (l4.errored && finalVerdict === "rejected") {
+      finalVerdict = "inconclusive";
+      finalConfidence = result.confidence + l4.confidenceAdjustment;
+    }
+
+    logger.info("VerifierAgent: Verification complete", { findingId, finalVerdict, finalConfidence });
+
+    return {
+      findingId,
+      layer1_dedup: l1,
+      layer2_reprobe: l2,
+      layer3_playwright: l3,
+      layer4_ai: l4,
+      finalVerdict,
+      finalConfidence: Math.max(0, Math.min(1, finalConfidence)),
+      dedupHash,
+      ...(adaptation ? { adaptation } : {}),
+    };
+  }
+
+  /** Same URL resolution Layer2Reprobe uses — needed here to derive the adaptation target. */
+  private reprobeUrl(result: SolverResult): string | null {
+    const isHttpUrl = (u: unknown): u is string => {
+      if (typeof u !== "string" || !u) return false;
+      try { const p = new URL(u); return p.protocol === "http:" || p.protocol === "https:"; }
+      catch { return false; }
+    };
+    if (isHttpUrl(result.request)) return result.request;
+    if (isHttpUrl(result.endpoint)) return result.endpoint;
+    return null;
+  }
+
+  private computeVerdict(
+    result: SolverResult,
+    l2: { confirmed: boolean },
+    l3: { confirmed: boolean },
+    l4: { confirmed: boolean; confidenceAdjustment: number },
+    browserVerifiable: boolean,
+    statefulOracle: boolean,
+  ): { finalVerdict: "confirmed" | "rejected" | "inconclusive"; finalConfidence: number } {
     // Fixes the structural bug where confirmation hard-required L2 and the reject
     // branch fired on (!L2 && !L3) while ignoring L4 — so a correct L4 "confirmed"
     // was discarded whenever the HTTP/browser oracles were unreachable or simply
@@ -588,26 +793,7 @@ export class VerifierAgent {
         finalConfidence = Math.max(0, finalConfidence - 0.3);
       }
     }
-
-    // L4 is the reasoning backstop; if it errored, a missing oracle is "unknown",
-    // which is needs-review, never a refutation. Never hard-reject on a dead L4.
-    if (l4.errored && finalVerdict === "rejected") {
-      finalVerdict = "inconclusive";
-      finalConfidence = result.confidence + l4.confidenceAdjustment;
-    }
-
-    logger.info("VerifierAgent: Verification complete", { findingId, finalVerdict, finalConfidence });
-
-    return {
-      findingId,
-      layer1_dedup: l1,
-      layer2_reprobe: l2,
-      layer3_playwright: l3,
-      layer4_ai: l4,
-      finalVerdict,
-      finalConfidence: Math.max(0, Math.min(1, finalConfidence)),
-      dedupHash,
-    };
+    return { finalVerdict, finalConfidence };
   }
 
   async close(): Promise<void> {

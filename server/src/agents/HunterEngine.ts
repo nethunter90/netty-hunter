@@ -55,7 +55,7 @@ import { programs } from "../db/schema";
 import { parameterDiscovery } from "../lib/tools/parameter-discovery";
 import { parseNucleiOutput } from "../lib/parsers/nuclei-parser";
 import { failurePrediction } from "../lib/intelligence/failure-prediction";
-import { effortScaler } from "../lib/intelligence/effort-scaling";
+import { effortScaler, isHigherTier } from "../lib/intelligence/effort-scaling";
 import { oauthProber } from "../lib/tools/oauth-probe";
 import { massAssignmentProber } from "../lib/tools/mass-assignment-probe";
 import { businessLogicProber } from "../lib/tools/business-logic-probe";
@@ -116,7 +116,12 @@ export interface Hypothesis {
   confidence: number;
   priority: number;
   evidence: Observation[];
-  status: "pending" | "probing" | "confirmed" | "rejected" | "inconclusive";
+  // "rejected" means a real probe ran and the evidence didn't support the
+  // hypothesis. "deferred" means it was never probed at all — vetoed by
+  // failure-prediction or out of scope. Collapsing these into one status
+  // is exactly how "wifi was probed and rejected" turned out to be false:
+  // it was deferred, never probed, and the label didn't say so.
+  status: "pending" | "probing" | "confirmed" | "rejected" | "inconclusive" | "deferred";
   createdAt: number;
   retryCount?: number;
   toolHint?: string;
@@ -153,6 +158,10 @@ export interface HuntState {
   budget: { maxRequests: number; requestsMade: number; maxTime: number; elapsed: number };
   corpusEnrichment: boolean;
   proxyEnabled: boolean;
+  /** Endpoint paths/URLs observed by deepCrawl during observe() — feeds the
+   *  post-crawl EffortScaler rescale so complexity reflects what the target
+   *  actually exposes, not just the launch string. */
+  discoveredEndpoints: string[];
 }
 
 export interface HypothesisConfirmed {
@@ -188,7 +197,9 @@ export const NUCLEI_TAGS_BY_CLASS: Record<string, string> = {
   misconfig: "misconfig",
   security_headers: "misconfig",
 };
-const NUCLEI_TAGS_FALLBACK = "misconfig,exposure,cve";
+// "misconfig,exposure,cve" loaded 5081 templates and always hit the 60s runTool
+// ceiling. "misconfig" alone loads ~624 templates and completes in ~10-15s.
+const NUCLEI_TAGS_FALLBACK = "misconfig";
 
 // ─── Tool Knowledge System ────────────────────────────────────────────────────
 // Commands return { bin, args } arrays — never interpolated shell strings —
@@ -232,8 +243,10 @@ export const TOOL_KNOWLEDGE: Record<string, {
       // network round-trip that can stall (esp. first run of the day). Template
       // selection (-tags by vuln class) is injected in runTool so a fresh hunt
       // doesn't run the full default store and blow past the 60s tool ceiling.
+      // -ni: disable Interactsh OOB server — without it nuclei waits for OOB
+      // callbacks on every run, adding 7-60s of wait that blows the runTool ceiling.
       args: ["-u", url, "-s", opts?.severity || "medium,high,critical",
-             "-j", "-silent", "-disable-update-check", "-timeout", "10"],
+             "-j", "-silent", "-disable-update-check", "-timeout", "10", "-ni"],
     }),
     parser: (output) => {
       const result = parseNucleiOutput(output);
@@ -377,7 +390,7 @@ export const TOOL_KNOWLEDGE: Record<string, {
     vulnClasses: ["xss"],
     command: (url) => ({
       bin: "nuclei",
-      args: ["-u", url, "-tags", "xss", "-s", "medium,high,critical", "-j", "-silent", "-timeout", "10"],
+      args: ["-u", url, "-tags", "xss", "-s", "medium,high,critical", "-j", "-silent", "-disable-update-check", "-timeout", "10", "-ni"],
     }),
     parser: (output) => {
       const findings: unknown[] = [];
@@ -566,6 +579,13 @@ export class HunterEngine extends EventEmitter {
   private targetId = 0;
   private hardBanned = false;
   private aborted = false;
+  // Tracks vuln classes already pre-seeded (by params.focusVulnClasses or the
+  // EffortScaler's focusVulnClasses, at initial start or post-crawl rescale)
+  // so a rescale that raises the tier doesn't re-seed classes already present.
+  private seededFocusClasses = new Set<string>();
+  private provisionalEffortComplexity: import("../lib/intelligence/failure-prediction").Complexity = "trivial";
+  private effortRescaled = false;
+  private huntGoal = "";
   private consecutiveFailures = 0;
   private banCheckDone = false;
   private authHeaders: Record<string, string> = {};
@@ -682,6 +702,7 @@ export class HunterEngine extends EventEmitter {
       },
       corpusEnrichment: params.corpusEnrichment !== false,
       proxyEnabled: params.proxyEnabled === true,
+      discoveredEndpoints: [],
     };
 
     // Persist session and capture the real DB ID
@@ -706,19 +727,7 @@ export class HunterEngine extends EventEmitter {
 
     // Pre-seed hypotheses from template focus classes if provided
     if (params.focusVulnClasses?.length) {
-      for (const vc of params.focusVulnClasses) {
-        this.state.hypotheses.push({
-          id: uuidv4(),
-          vulnClass: vc,
-          targetUrl: params.targetUrl,
-          reasoning: `Template-focused: ${vc} is a priority for this hunt`,
-          confidence: 0.6,
-          priority: 9,
-          evidence: [],
-          status: "pending",
-          createdAt: Date.now(),
-        });
-      }
+      this.seedFocusHypotheses(params.focusVulnClasses, params.targetUrl, "Template-focused");
     }
 
     // Store secondary auth for dual-context IDOR probes
@@ -770,14 +779,25 @@ export class HunterEngine extends EventEmitter {
       programType: "web_app",
     });
 
-    // Effort scaling — calibrate probe budget to target complexity before loop starts
-    const effort = effortScaler.analyze(params.targetUrl, params.goal ?? "");
-    if (this.state.budget.maxRequests === 200) {
-      // Only override if still at default — let explicit overrides win
+    // Effort scaling — PROVISIONAL only, before any crawling has happened.
+    // This call has no real signal about the target beyond the launch
+    // string, so it must never be trusted to gate high-severity vuln classes
+    // away — that's what caused a real sentprime hunt to score "trivial" and
+    // never even consider rce/auth_bypass/idor before observe() ran. The
+    // floor in effort-scaling.ts guarantees those three are always in
+    // focusVulnClasses regardless of tier; a real rescale happens after the
+    // first observe() completes, once actual crawl signal exists (below).
+    this.huntGoal = params.goal ?? "";
+    const effort = effortScaler.analyze(params.targetUrl, this.huntGoal);
+    this.provisionalEffortComplexity = effort.complexity;
+    if (params.budget?.maxRequests === undefined) {
+      // Only override if the caller didn't explicitly request a budget —
+      // let explicit overrides win over the provisional estimate.
       this.state.budget.maxRequests = effort.probeLimit;
     }
-    logger.info("[HunterEngine] Effort profile", { complexity: effort.complexity, probeLimit: effort.probeLimit, rationale: effort.rationale });
-    contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit });
+    this.seedFocusHypotheses(effort.focusVulnClasses, params.targetUrl, "Effort-profile priority (provisional)");
+    logger.info("[HunterEngine] Effort profile (provisional, pre-crawl)", { complexity: effort.complexity, probeLimit: effort.probeLimit, rationale: effort.rationale, focusVulnClasses: effort.focusVulnClasses });
+    contextWriter.alert("effort", { complexity: effort.complexity, probeLimit: effort.probeLimit, provisional: true });
 
     contextWriter.reset(sessionUuid, params.targetUrl, "claude");
 
@@ -805,6 +825,11 @@ export class HunterEngine extends EventEmitter {
       await stealthCoordinator.runWarmup(domain, 'generic', false, params.programId);
     } catch { /* non-critical — target may not be reachable yet */ }
 
+    // Pre-warm logic_exploit_agent's system+tools prompt cache — fire-and-forget
+    // so a slow warm-up call never delays the first observe() phase. Idempotent
+    // (no-ops after the first warm call of the process), so safe to call per hunt.
+    logicExploitAgent.prewarmCache().catch(() => {});
+
     // Phase 0: passive OSINT recon — runs concurrently with first observe()
     // Resolves before hypothesize() is called so the model reasons over real attack surface.
     this.reconPromise = new ReconRunner(params.targetUrl, sessionUuid, (e, d) => this.emit(e, d))
@@ -828,6 +853,60 @@ export class HunterEngine extends EventEmitter {
    *  can process pending callbacks between heavy model-inference phases. */
   private yieldToEventLoop(): Promise<void> {
     return new Promise(resolve => setImmediate(resolve));
+  }
+
+  /** Pre-seed priority hypotheses for a set of vuln classes, deduped against
+   *  classes already seeded (by an earlier call to this same method, whether
+   *  from an explicit template override or the EffortScaler's focusVulnClasses
+   *  — at initial start or a post-crawl rescale). */
+  private seedFocusHypotheses(vulnClasses: string[], targetUrl: string, reasonPrefix: string): void {
+    for (const vc of vulnClasses) {
+      if (this.seededFocusClasses.has(vc)) continue;
+      this.seededFocusClasses.add(vc);
+      this.state.hypotheses.push({
+        id: uuidv4(),
+        vulnClass: vc,
+        targetUrl,
+        reasoning: `${reasonPrefix}: ${vc} is a priority for this hunt`,
+        confidence: 0.6,
+        priority: 9,
+        evidence: [],
+        status: "pending",
+        createdAt: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Re-run EffortScaler once real crawl signal exists (post-first-observe),
+   * using discovered endpoints instead of just the launch string. Only ever
+   * escalates — never downgrades — the provisional pre-crawl profile: under-
+   * provisioning (the actual failure this fixes) is the risk; over-
+   * provisioning from a false-positive escalation is comparatively cheap.
+   * Newly-added focus vuln classes from the higher tier get seeded via the
+   * same dedup path as the provisional call, so nothing is seeded twice.
+   */
+  private rescaleEffortFromCrawlSignal(): void {
+    if (this.state.discoveredEndpoints.length === 0) return; // nothing new to rescale from
+    const rescaled = effortScaler.analyze(this.state.targetUrl, this.huntGoal, this.state.discoveredEndpoints);
+    if (!isHigherTier(rescaled.complexity, this.provisionalEffortComplexity)) {
+      logger.debug("[HunterEngine] Post-crawl effort rescale did not raise the tier — keeping provisional profile", {
+        provisional: this.provisionalEffortComplexity, rescaled: rescaled.complexity,
+      });
+      return;
+    }
+    this.provisionalEffortComplexity = rescaled.complexity;
+    // Never shrink an explicitly-set budget — only raise it if the rescaled
+    // tier calls for more than what's currently configured.
+    if (rescaled.probeLimit > this.state.budget.maxRequests) {
+      this.state.budget.maxRequests = rescaled.probeLimit;
+    }
+    this.seedFocusHypotheses(rescaled.focusVulnClasses, this.state.targetUrl, "Effort-profile priority (post-crawl rescale)");
+    logger.info("[HunterEngine] Effort profile rescaled from crawl signal", {
+      complexity: rescaled.complexity, probeLimit: rescaled.probeLimit, rationale: rescaled.rationale,
+      endpointsSeen: this.state.discoveredEndpoints.length,
+    });
+    contextWriter.alert("effort", { complexity: rescaled.complexity, probeLimit: rescaled.probeLimit, provisional: false });
   }
 
   private async runLoop(): Promise<void> {
@@ -860,6 +939,10 @@ export class HunterEngine extends EventEmitter {
           case "observe":
             await this.observe();
             await this.yieldToEventLoop();
+            if (!this.effortRescaled) {
+              this.effortRescaled = true;
+              this.rescaleEffortFromCrawlSignal();
+            }
             this.state.phase = "hypothesize";
             break;
           case "hypothesize":
@@ -936,11 +1019,30 @@ export class HunterEngine extends EventEmitter {
     }
 
     this.state.phase = "complete";
+    // Diagnostic (2026-07-03): several sentprime benchmark runs completed far
+    // short of maxIterations with budget/time nowhere near their ceilings, and
+    // it wasn't obvious from the alerts/digest files which of the 5 while-loop
+    // conditions actually went false. Log all 5 explicitly so the NEXT early
+    // completion is diagnosable directly instead of re-derived by elimination.
+    logger.info("[HunterEngine] runLoop exited — condition snapshot", {
+      sessionId: this.state.sessionId,
+      iteration: this.state.iteration, maxIterations: this.state.maxIterations,
+      requestsMade: this.state.budget.requestsMade, maxRequests: this.state.budget.maxRequests,
+      elapsedSec: this.state.budget.elapsed, maxTimeSec: this.state.budget.maxTime,
+      hardBanned: this.hardBanned, aborted: this.aborted,
+    });
     contextWriter.updateState({ phase: "complete", findingsCount: this.state.confirmedFindings.length });
     contextWriter.alert("complete", {
       findings: this.state.confirmedFindings.length,
       iterations: this.state.iteration,
       probes: this.state.probes.length,
+      exitReason: {
+        iterationCap: this.state.iteration >= this.state.maxIterations,
+        requestCap: this.state.budget.requestsMade >= this.state.budget.maxRequests,
+        timeCap: this.state.budget.elapsed >= this.state.budget.maxTime,
+        hardBanned: this.hardBanned,
+        aborted: this.aborted,
+      },
     });
     observationCompressor.clearSession(this.state.sessionId);
     ClaudeClient.clearSession(this.state.sessionId);
@@ -976,7 +1078,9 @@ export class HunterEngine extends EventEmitter {
     // so the activity feed shows immediate activity rather than a blank wait.
     const t0 = Date.now();
     this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "whatweb" });
+    logger.info("[OBSERVE] running whatweb", { session: this.state.sessionId });
     const techObs = await this.runTool("whatweb", this.state.targetUrl);
+    logger.info("[OBSERVE] whatweb done", { session: this.state.sessionId, ms: Date.now() - t0 });
     this.emit("hunt:probe_result", {
       hypothesisId: this.state.sessionId,
       result: { tool: "whatweb", success: true, output: JSON.stringify(techObs).slice(0, 300), duration: Date.now() - t0 },
@@ -984,7 +1088,9 @@ export class HunterEngine extends EventEmitter {
 
     const t1 = Date.now();
     this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "curl_probe" });
+    logger.info("[OBSERVE] running curl_probe", { session: this.state.sessionId });
     const headerObs = await this.runTool("curl_probe", this.state.targetUrl);
+    logger.info("[OBSERVE] curl_probe done", { session: this.state.sessionId, ms: Date.now() - t1 });
     this.emit("hunt:probe_result", {
       hypothesisId: this.state.sessionId,
       result: { tool: "curl_probe", success: true, output: JSON.stringify(headerObs).slice(0, 300), duration: Date.now() - t1 },
@@ -992,7 +1098,21 @@ export class HunterEngine extends EventEmitter {
 
     const t2 = Date.now();
     this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "waf_intel" });
-    const wafIntel = await this.wafSynthesizer.synthesize(this.state.targetUrl, "<script>alert(1)</script>");
+    logger.info("[OBSERVE] running waf_intel", { session: this.state.sessionId });
+    // synthesize() now internally caps its bypass-probe loop at 8s (see WAFBypass.ts)
+    // and skips it entirely when no WAF is fingerprinted, so it should never approach
+    // this outer ceiling in practice — this is just the hard safety net.
+    const WAF_TIMEOUT = 12000;
+    const wafIntel = await Promise.race([
+      this.wafSynthesizer.synthesize(this.state.targetUrl, "<script>alert(1)</script>"),
+      new Promise<{ detectionConfidence: number }>((resolve) =>
+        setTimeout(() => {
+          logger.warn("[OBSERVE] waf_intel timed out after 12s — continuing", { session: this.state.sessionId });
+          resolve({ detectionConfidence: 0 });
+        }, WAF_TIMEOUT)
+      ),
+    ]);
+    logger.info("[OBSERVE] waf_intel done", { session: this.state.sessionId, ms: Date.now() - t2 });
     this.emit("hunt:probe_result", {
       hypothesisId: this.state.sessionId,
       result: { tool: "waf_intel", success: true, output: `waf=${(wafIntel as unknown as Record<string, unknown>).detectedWAF ?? "none"} confidence=${wafIntel.detectionConfidence?.toFixed(2)}`, duration: Date.now() - t2 },
@@ -1061,13 +1181,18 @@ export class HunterEngine extends EventEmitter {
 
     // CVE-seeded hypothesis injection — first observe pass only
     if (this.state.iteration === 1) {
+      logger.info("[OBSERVE] running seedCVEHypotheses", { session: this.state.sessionId });
       await this.seedCVEHypotheses(techObs).catch(err =>
         logger.warn("[HunterEngine] CVE seeding failed (non-critical)", { err: String(err) })
       );
+      logger.info("[OBSERVE] seedCVEHypotheses done", { session: this.state.sessionId });
       // GraphQL probing — detect and introspect any GraphQL endpoints
+      logger.info("[OBSERVE] running probeGraphQL", { session: this.state.sessionId });
       await this.probeGraphQL().catch(err =>
         logger.warn("[HunterEngine] GraphQL probing failed (non-critical)", { err: String(err) })
       );
+      logger.info("[OBSERVE] probeGraphQL done", { session: this.state.sessionId });
+      logger.info("[OBSERVE] running Promise.allSettled parallel probes", { session: this.state.sessionId });
       await Promise.allSettled([
       // Secret scanning — look for leaked credentials in response bodies
       (async () => {
@@ -1241,6 +1366,9 @@ export class HunterEngine extends EventEmitter {
           }
           if (crawlResult.endpointsFound.length > 0) {
             this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });
+            // Feeds the post-crawl EffortScaler rescale (see runLoop) — real
+            // discovered surface, not the launch string.
+            this.state.discoveredEndpoints.push(...crawlResult.endpointsFound.map(e => e.url));
           }
           if (crawlResult.visualTags.length > 0) {
             // Inject visual tags as an observation so the model can reason over them
@@ -1496,6 +1624,7 @@ export class HunterEngine extends EventEmitter {
         } catch (err) { logger.debug("[HunterEngine] ZAP scan skipped (non-critical)", { err: String(err) }); }
       })(),
       ]);
+      logger.info("[OBSERVE] Promise.allSettled parallel probes done", { session: this.state.sessionId });
     }
   }
 
@@ -1599,10 +1728,47 @@ export class HunterEngine extends EventEmitter {
   }
 
   // ── Phase 2: Hypothesize ────────────────────────────────────────────────────
+  /**
+   * Fresh, named endpoint roster for the hypothesize() prompt — built directly
+   * from discoveredEndpoints on every call rather than routed through
+   * observationCompressor. The compressor summarizes old observations into
+   * tag/count aggregates, which would silently re-collapse "/api/wifi/interfaces"
+   * back into "N endpoints discovered" once enough iterations pass. Endpoint
+   * identity has to survive as text the model can copy into targetUrl, not a count.
+   */
+  private buildEndpointRoster(): string {
+    const already = new Set(this.state.hypotheses.map(h => h.targetUrl));
+    const unique = [...new Set(this.state.discoveredEndpoints)];
+    if (unique.length === 0) return '';
+
+    const INTERESTING = /(admin|internal|debug|private|wifi|network|monitor|scan|capture|build|deploy|exec|shell|terminal|config|secret|token|key|user|account|upload|file|password|auth)/i;
+    const scored = unique.map(url => ({
+      url,
+      alreadyHypothesized: already.has(url),
+      interesting: INTERESTING.test(url),
+    }));
+    scored.sort((a, b) => {
+      if (a.alreadyHypothesized !== b.alreadyHypothesized) return a.alreadyHypothesized ? 1 : -1;
+      if (a.interesting !== b.interesting) return a.interesting ? -1 : 1;
+      return 0;
+    });
+
+    const CAP = 60;
+    const shown = scored.slice(0, CAP);
+    const omitted = unique.length - shown.length;
+    const lines = shown.map(s => `- ${s.url}${s.alreadyHypothesized ? '  (already hypothesized)' : ''}`);
+    return [
+      `Discovered endpoints (${unique.length} total${omitted > 0 ? `, showing top ${shown.length} by relevance` : ''}):`,
+      ...lines,
+      omitted > 0 ? `...and ${omitted} more endpoints not shown (still available for future iterations).` : '',
+    ].filter(Boolean).join('\n');
+  }
+
   private async hypothesize(): Promise<void> {
     logger.info("HYPOTHESIZE phase", { session: this.state.sessionId });
 
     const context = this.buildContext();
+    const endpointRoster = this.buildEndpointRoster();
 
     // Pull smart orchestration template as structured context
     const chainTemplate = promptKB.render("smart_tool_chain", {
@@ -1697,7 +1863,7 @@ Target: ${this.state.targetUrl}
 ${historicalSummary ? `${historicalSummary}\n\n` : ''}Recent observations (anomaly-sorted):
 ${JSON.stringify(recentObs, null, 2)}
 
-Current confirmed findings: ${this.state.confirmedFindings.length}
+${endpointRoster ? `${endpointRoster}\nPrefer targetUrl values from this roster over the base target — a hypothesis naming a specific discovered endpoint is more valuable than one aimed at the root URL.\n\n` : ''}Current confirmed findings: ${this.state.confirmedFindings.length}
 Previously tested hypotheses: ${this.state.hypotheses.length}
 
 Orchestration context:
@@ -1844,18 +2010,28 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const complexity = failurePrediction.complexityFrom(evidenceTags, hypothesis.reasoning);
       const prediction = failurePrediction.predict(hypothesis.vulnClass, complexity);
       if (prediction.shouldSkip) {
-        hypothesis.status = "rejected";
-        logger.debug("[HunterEngine] Failure prediction skip", { vulnClass: hypothesis.vulnClass, reason: prediction.reason });
+        hypothesis.status = "deferred";
+        // info, not debug — this used to be invisible at the default log level,
+        // which is exactly how a whole vuln class silently going unprobed for
+        // an entire hunt went undetected across the whole arc.
+        logger.info("[HunterEngine] Failure prediction skip — hypothesis never probed", {
+          hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass, targetUrl: hypothesis.targetUrl,
+          complexity, reason: prediction.reason,
+        });
+        this.emit("hunt:hypothesis_skipped", {
+          hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass, targetUrl: hypothesis.targetUrl,
+          reason: prediction.reason,
+        });
         continue;
       }
 
       hypothesis.status = "probing";
       this.emit("hunt:probing", { hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass });
 
-      // Scope check before probing
+      // Scope check before probing — also never-probed, not a tested negative
       const { allowed } = await this.scopeGuard.isInScope(hypothesis.targetUrl, this.state.programId);
       if (!allowed) {
-        hypothesis.status = "rejected";
+        hypothesis.status = "deferred";
         continue;
       }
 
@@ -1877,8 +2053,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.rlWiring.onToolResult("deserialize_probe", hypothesis.vulnClass, true, hypothesis.confidence);
           failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, true);
           this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
-          // Jump straight to update — hypothesis handled
-          hypothesis.status = "pending"; // let update phase confirm it
+          // Jump straight to update — hypothesis handled. Must be "probing", not
+          // "pending": update() only ever looks at status==="probing" (line ~2234).
+          // Setting this back to "pending" left it eligible for probe()'s own
+          // pending-hypothesis selector (line ~1981) to re-pick it every single
+          // probe() call forever — update() could never see it to resolve a
+          // verdict, so it never left this loop. Confirmed in the field: 8 rce
+          // hypotheses accumulated 10-12 repeat deserialize_probe hits each,
+          // burning 83 of 113 requests in one hunt without ever confirming.
+          hypothesis.status = "probing"; // let update phase confirm it
           hypothesis.confidence = Math.min(0.95, hypothesis.confidence + 0.3);
           (hypothesis as unknown as Record<string, unknown>)._deserialProbeHit = true;
           (hypothesis as unknown as Record<string, unknown>)._deserialOutput = deserialResult.output;
@@ -1996,9 +2179,52 @@ Return ONLY valid JSON array of hypothesis objects.`;
           // the target dropped our connection entirely rather than returning 403.
           const code = (err as { code?: string })?.code ?? '';
           if (code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ENOTFOUND') {
+            const host = canaryHostname || (() => { try { return new URL(hypothesis.targetUrl).hostname; } catch { return ''; } })();
+            const isLoopback = /^(localhost|127(\.\d+){0,2}\.\d+|::1|0\.0\.0\.0)$/i.test(host);
+            if (isLoopback) {
+              // A loopback target refusing connections isn't a WAF/IP ban — there's
+              // no network device between us and it to impose one. It means the
+              // local dev server process itself died (crashed or was killed),
+              // plausibly *by* the probe/crawl action that just ran against it.
+              // That's a candidate unauthenticated service-disruption finding, not
+              // a reason to log a nonsensical "IP banned" and discard it.
+              const recentProbes = this.state.probes.slice(-6).map(p => ({ tool: p.tool, command: p.command, success: p.success }));
+              this.emit('hunt:target_crashed', {
+                target: host, code,
+                lastHypothesis: { id: hypothesis.id, vulnClass: hypothesis.vulnClass, targetUrl: hypothesis.targetUrl },
+                recentProbes,
+              });
+              contextWriter.alert('target_crash', {
+                target: host, code,
+                targetUrl: hypothesis.targetUrl,
+                reasoning: `Local target became unreachable (${code}) after probing ${hypothesis.targetUrl} — candidate unauthenticated service-disruption finding, not an IP ban.`,
+              });
+              this.state.hypotheses.push({
+                id: uuidv4(),
+                vulnClass: 'service_disruption',
+                targetUrl: hypothesis.targetUrl,
+                reasoning: `Target (${host}) stopped accepting connections (${code}) immediately after this endpoint was probed. On a loopback target this cannot be a network-level IP ban — it indicates the local server process crashed or was killed, which is itself a candidate unauthenticated service-disruption vulnerability. Requires manual confirmation once the target is restarted; recent probes leading up to the crash: ${JSON.stringify(recentProbes)}.`,
+                confidence: 0.4,
+                priority: 9,
+                evidence: [],
+                status: 'pending',
+                createdAt: Date.now(),
+              });
+              // Deliberately do NOT set hardBanned or otherwise stop the hunt here.
+              // A local dev-server crash is recoverable — an external supervisor
+              // (server/scripts/kali-web-ide-supervisor.ts) restarts it independently
+              // of this engine. If the hunt stopped the moment it saw the crash, the
+              // supervisor's restart would have nothing left to resume: the finding
+              // would be captured but the recall run would still be dead. Subsequent
+              // probes will simply keep failing (harmlessly) until the target answers
+              // again, at which point the hunt continues as normal. banCheckDone above
+              // already prevents this branch from firing more than once per hunt.
+              logger.warn('[HunterEngine] Loopback target became unreachable — recorded as candidate finding, continuing hunt (target expected to be restarted externally)', { code, target: host });
+              continue;
+            }
             this.hardBanned = true;
-            this.emit('hunt:hard_banned', { target: canaryHostname || hypothesis.targetUrl, reason: `IP hard-banned (network drop: ${code})` });
-            logger.warn('[HunterEngine] Network-level block detected — terminating hunt early', { code, target: canaryHostname });
+            this.emit('hunt:hard_banned', { target: host || hypothesis.targetUrl, reason: `IP hard-banned (network drop: ${code})` });
+            logger.warn('[HunterEngine] Network-level block detected — terminating hunt early', { code, target: host });
             break;
           }
         }
@@ -2208,10 +2434,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     const pending = this.state.hypotheses.filter(h => h.status === "pending").length;
     const rejected = this.state.hypotheses.filter(h => h.status === "rejected").length;
+    const deferred = this.state.hypotheses.filter(h => h.status === "deferred").length;
     this.emit("hunt:update", {
       confirmed: this.state.confirmedFindings.length,
       pendingHypotheses: pending,
       rejectedHypotheses: rejected,
+      deferredHypotheses: deferred, // never probed — distinct from rejected (tested, negative)
     });
 
     if (this.campaignId) {

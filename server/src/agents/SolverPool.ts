@@ -750,38 +750,87 @@ class MisconfigSolver extends BaseSolver {
   }
 }
 
-class RCESolver extends BaseSolver {
-  private readonly probes = [
+export class RCESolver extends BaseSolver {
+  // Command-execution oracles: output is SYSTEM-DERIVED (uid/gid from the
+  // `id` binary), not present anywhere in the payload we send, so a match
+  // cannot be a reflection of our own input. Kept as-is — sound.
+  private static readonly CMD_ORACLES: { payload: string; pattern: RegExp }[] = [
     { payload: "; id", pattern: /uid=\d+.*gid=\d+/ },
     { payload: "| id", pattern: /uid=\d+.*gid=\d+/ },
     { payload: "`id`", pattern: /uid=\d+.*gid=\d+/ },
     { payload: "$(id)", pattern: /uid=\d+.*gid=\d+/ },
-    { payload: "{{7*7}}", pattern: /49/ },
-    { payload: "${7*7}", pattern: /49/ },
-    { payload: "<%=7*7%>", pattern: /49/ },
   ];
+
+  /**
+   * 2026-07-03: the previous SSTI oracle matched bare `/49/` for `{{7*7}}` —
+   * that fires a 0.95 RCE confirm on ANY response that merely contains "49"
+   * anywhere (a price, a port, a count, a year). Same false-positive class the
+   * nonce-echo oracle (VerifierAgent.reprobeRceNonceEcho) was built to avoid;
+   * fixed the same way: a random, unguessable product the response can only
+   * contain if the expression was actually EVALUATED, plus a guard that the
+   * literal sent expression must NOT be echoed back verbatim (which would
+   * mean reflection, not evaluation, of the payload).
+   */
+  static confirmsEvaluation(body: string, sentExpr: string, product: string): boolean {
+    if (product.length < 6) return false;      // unguessable-token floor
+    if (!body.includes(product)) return false; // server must have produced it
+    if (body.includes(sentExpr)) return false; // literal echo => reflection, not eval
+    return true;
+  }
+
+  private buildEvalProbes(): { payload: string; sentExpr: string; product: string }[] {
+    const a = 1000 + Math.floor(Math.random() * 9000); // 4-digit factor
+    const b = 1000 + Math.floor(Math.random() * 9000); // 4-digit factor
+    const sentExpr = `${a}*${b}`;
+    const product = String(a * b); // 7-8 digits, unguessable — never "49" or similarly common
+    return [
+      { payload: `{{${sentExpr}}}`,    sentExpr, product }, // Jinja2 / Twig / Nunjucks
+      { payload: `\${${sentExpr}}`,    sentExpr, product }, // FreeMarker / Velocity / JSP EL
+      { payload: `<%= ${sentExpr} %>`, sentExpr, product }, // ERB / EJS
+      { payload: `#{${sentExpr}}`,     sentExpr, product }, // Ruby / Thymeleaf
+    ];
+  }
 
   async solve(task: SolverTask): Promise<SolverResult> {
     const start = Date.now();
     let found = false;
     let bestPayload = "";
     let bestResp = "";
+    let proof = "";
     const params = ["cmd", "exec", "command", "run", "ping", "host", "q", "query", "input"];
 
-    for (const probe of this.probes) {
+    cmdLoop:
+    for (const probe of RCESolver.CMD_ORACLES) {
       for (const param of params) {
         const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`);
         if (probe.pattern.test(resp.body)) {
-          found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500); break;
+          found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500);
+          proof = "command execution confirmed via `id` output (uid/gid returned)";
+          break cmdLoop;
         }
       }
-      if (found) break;
+    }
+
+    if (!found) {
+      const evalProbes = this.buildEvalProbes();
+      evalLoop:
+      for (const probe of evalProbes) {
+        for (const param of params) {
+          const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`);
+          if (RCESolver.confirmsEvaluation(resp.body, probe.sentExpr, probe.product)) {
+            found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500);
+            proof = `server-side template evaluation confirmed (${probe.sentExpr} evaluated to ${probe.product})`;
+            break evalLoop;
+          }
+        }
+      }
     }
 
     return {
       taskId: task.id, solverId: `rce-solver-${uuidv4().slice(0, 8)}`,
       endpoint: task.endpoint, vulnClass: "rce", found,
-      confidence: found ? 0.95 : 0.05, evidence: { probesTested: this.probes.length * params.length },
+      confidence: found ? 0.95 : 0.05,
+      evidence: { probesTested: (RCESolver.CMD_ORACLES.length + 4) * params.length, proof },
       payload: bestPayload, request: found ? `${task.endpoint}?cmd=${encodeURIComponent(bestPayload)}` : "",
       response: bestResp, duration: Date.now() - start, toolsUsed: ["http_probe", "rce_payload_library"],
     };

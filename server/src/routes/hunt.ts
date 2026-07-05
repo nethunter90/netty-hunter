@@ -465,23 +465,31 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
     payload: finding.exploitPayload || "", request: finding.affectedUrl || "", response: "",
     duration: 0, toolsUsed: [],
   };
-  const mockVerification = {
+  // Use the finding's REAL verification result (with real L2/L3/L4 evidence and,
+  // when applicable, the adaptation record) instead of a hardcoded fake — a
+  // fake all-"confirmed" stub with empty reasoning/response silently discarded
+  // the actual proof and left the report with nothing real to cite.
+  const realVerificationLog = (finding.verificationLog as unknown as Array<Record<string, unknown>>) ?? [];
+  const realVerification = realVerificationLog[realVerificationLog.length - 1];
+  const mockVerification = realVerification ?? {
     findingId: String(finding.id),
     layer1_dedup: { isDuplicate: false },
-    layer2_reprobe: { confirmed: true, statusCode: 200, responseSnippet: "" },
-    layer3_playwright: { confirmed: true, consoleAlerts: [], networkRequests: [] },
-    layer4_ai: { confirmed: true, reasoning: "", confidenceAdjustment: 0 },
-    finalVerdict: "confirmed" as const,
+    layer2_reprobe: { confirmed: false, statusCode: 0, responseSnippet: "" },
+    layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] },
+    layer4_ai: { confirmed: false, reasoning: "", confidenceAdjustment: 0 },
+    finalVerdict: "inconclusive" as const,
     finalConfidence: finding.confidence,
     dedupHash: finding.dedupHash || "",
   };
 
-  // Extract raw HTTP evidence and video PoC path stored by the hunt engine
+  // Extract raw HTTP evidence and video PoC path stored by the hunt engine —
+  // prefer the LAST matching entry (adaptation evidence is appended after any
+  // pre-existing raw_http entry from the original hunt-loop discovery).
   const evidenceArr = (finding.evidence as Array<Record<string, unknown>>) ?? [];
-  const rawHttpEntry = evidenceArr.find(e => e.type === "raw_http");
+  const rawHttpEntry = [...evidenceArr].reverse().find(e => e.type === "raw_http");
   const videoEntry = evidenceArr.find(e => e.type === "video_poc");
 
-  const report = await generator.generate(mockSolverResult, mockVerification, {
+  const report = await generator.generate(mockSolverResult, mockVerification as unknown as Parameters<typeof generator.generate>[1], {
     severity: finding.severity,
     programName: req.body.programName || "Target Program",
     targetUrl: finding.affectedUrl || "",

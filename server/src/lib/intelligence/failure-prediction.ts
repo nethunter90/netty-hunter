@@ -45,6 +45,21 @@ const COMPLEXITY_MULTIPLIER: Record<Complexity, number> = {
 // Skip threshold: if predicted failure probability exceeds this, skip
 const SKIP_THRESHOLD = 0.82;
 
+// A prior-only estimate (zero real outcomes recorded yet) must never trigger
+// a skip on its own. Without this floor, rce (0.70 base) × "complex" (1.4x,
+// matched by the word "rce"/"chain" in its own auto-generated reasoning)
+// clamps to 0.95 and gets vetoed before the very first probe — on every
+// hunt, forever, with no way to ever gather disconfirming evidence. A skip
+// has to be earned by real observed failures, not guessed from the prior.
+const MIN_SAMPLES_BEFORE_SKIP = 3;
+
+// Even once a (vulnClass, complexity) bucket has earned a skip verdict from
+// real failures, letting it skip *every* subsequent hypothesis forever means
+// it can never recover — skipped hypotheses never call recordOutcome, so an
+// unlucky early streak permanently freezes the empirical rate that caused
+// it. Periodically probe anyway so fresh evidence keeps flowing.
+const EXPLORATION_RATE = 0.15;
+
 class FailurePredictionEngine {
   private outcomes = new Map<string, OutcomeRecord>();
 
@@ -88,7 +103,14 @@ class FailurePredictionEngine {
 
     failureProbability = Math.min(0.95, Math.max(0.05, failureProbability));
 
-    const shouldSkip = failureProbability >= SKIP_THRESHOLD;
+    const hasEnoughSamples = (rec?.total ?? 0) >= MIN_SAMPLES_BEFORE_SKIP;
+    let shouldSkip = hasEnoughSamples && failureProbability >= SKIP_THRESHOLD;
+
+    if (shouldSkip && Math.random() < EXPLORATION_RATE) {
+      shouldSkip = false;
+      dataSource = `${dataSource}, exploration override`;
+    }
+
     const reason = shouldSkip
       ? `${vulnClass} on ${complexity} target: ${Math.round(failureProbability * 100)}% predicted failure rate [${dataSource}] — skipping`
       : `${vulnClass}: ${Math.round(failureProbability * 100)}% predicted failure [${dataSource}]`;

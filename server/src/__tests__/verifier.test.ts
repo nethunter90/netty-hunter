@@ -493,6 +493,115 @@ describe('VerifierAgent', () => {
     });
   });
 
+  // ─── Payload-adaptation retry ──────────────────────────────────────────────
+  // L4 can signal "capability real, proof payload mechanically wrong" — gated,
+  // capped to exactly one retry, and must NEVER fire on a plain rejection.
+  describe('Payload-adaptation retry', () => {
+    async function runAdaptiveVerify(
+      result: SolverResult,
+      l4Sequence: any[],
+      { l2Sequence, l3 = l3Rejected }: { l2Sequence?: any[]; l3?: any } = {}
+    ) {
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue({ isDuplicate: false });
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('adapthash');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      const l2Spy = vi.spyOn((a as any).layer2, 'reprobe');
+      (l2Sequence ?? [l2Rejected, l2Rejected]).forEach(v => l2Spy.mockResolvedValueOnce(v));
+      vi.spyOn((a as any).layer3, 'replay').mockResolvedValue(l3);
+      const l4Spy = vi.spyOn((a as any).layer4, 'confirm');
+      l4Sequence.forEach(v => l4Spy.mockResolvedValueOnce(v));
+      return { vr: await a.verify(result), l2Spy, l4Spy };
+    }
+
+    const lfiResult = () => makeSolverResult({
+      vulnClass: 'lfi',
+      endpoint: 'http://target.com/api/files/list?path=../../../../../../etc/passwd',
+      request: 'http://target.com/api/files/list?path=../../../../../../etc/passwd',
+      payload: '../../../../../../etc/passwd',
+      confidence: 0.5,
+    });
+
+    it('capability-real signal + known rule → retries with adapted URL and confirms', async () => {
+      const capabilityRealL4 = {
+        confirmed: false, reasoning: 'ENOENT proves traversal reached scandir; wrong shape',
+        confidenceAdjustment: 0, capabilityConfirmed: true, adaptationRule: 'target_directory_not_file',
+      };
+      const retryL4Confirmed = { confirmed: true, reasoning: 'directory listing succeeded', confidenceAdjustment: 0.1 };
+
+      const { vr, l2Spy, l4Spy } = await runAdaptiveVerify(
+        lfiResult(),
+        [capabilityRealL4, retryL4Confirmed],
+        { l2Sequence: [l2Rejected, l2Confirmed] },
+      );
+
+      expect(vr.finalVerdict).toBe('confirmed');
+      expect(vr.adaptation?.rule).toBe('target_directory_not_file');
+      expect(vr.adaptation?.adaptedUrl).toContain('path=..%2F..%2F..%2F..%2F..%2F..%2Fetc%2F');
+      expect(vr.adaptation?.adaptedPayload).toBe('../../../../../../etc/');
+      // Exactly one retry: L2/L4 each called at most twice (original + one retry).
+      expect(l2Spy).toHaveBeenCalledTimes(2);
+      expect(l4Spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('capability-real signal but adapted payload also fails → original verdict stands, no churn', async () => {
+      const capabilityRealL4 = {
+        confirmed: false, reasoning: 'wrong shape', confidenceAdjustment: 0,
+        capabilityConfirmed: true, adaptationRule: 'target_directory_not_file',
+      };
+      const retryL4Rejected = { confirmed: false, reasoning: 'still not proven', confidenceAdjustment: 0 };
+
+      const { vr, l2Spy, l4Spy } = await runAdaptiveVerify(
+        lfiResult(),
+        [capabilityRealL4, retryL4Rejected],
+        { l2Sequence: [l2Rejected, l2Rejected] },
+      );
+
+      expect(vr.finalVerdict).toBe('rejected');
+      expect(vr.adaptation).toBeUndefined();
+      expect(l2Spy).toHaveBeenCalledTimes(2);
+      expect(l4Spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('no capabilityConfirmed signal → genuinely-not-exploitable finding rejects WITHOUT any retry', async () => {
+      const plainRejectedL4 = { confirmed: false, reasoning: 'not a vuln', confidenceAdjustment: -0.2 };
+
+      const { vr, l2Spy, l4Spy } = await runAdaptiveVerify(lfiResult(), [plainRejectedL4]);
+
+      expect(vr.finalVerdict).toBe('rejected');
+      expect(vr.adaptation).toBeUndefined();
+      // No retry fired — L2/L4 called exactly once each.
+      expect(l2Spy).toHaveBeenCalledTimes(1);
+      expect(l4Spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('capabilityConfirmed true but adaptationRule unknown/null → no retry (no concrete adaptation)', async () => {
+      const vagueL4 = {
+        confirmed: false, reasoning: 'maybe real, unclear why it failed', confidenceAdjustment: 0,
+        capabilityConfirmed: true, adaptationRule: null,
+      };
+      const { vr, l2Spy, l4Spy } = await runAdaptiveVerify(lfiResult(), [vagueL4]);
+      expect(vr.finalVerdict).toBe('rejected');
+      expect(vr.adaptation).toBeUndefined();
+      expect(l2Spy).toHaveBeenCalledTimes(1);
+      expect(l4Spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('already-confirmed finding never triggers a retry (only fires when verdict is not confirmed)', async () => {
+      const confirmedButFlagged = {
+        confirmed: true, reasoning: 'confirmed on first pass', confidenceAdjustment: 0.1,
+        capabilityConfirmed: true, adaptationRule: 'target_directory_not_file',
+      };
+      const { vr, l2Spy, l4Spy } = await runAdaptiveVerify(
+        lfiResult(), [confirmedButFlagged], { l2Sequence: [l2Confirmed] },
+      );
+      expect(vr.finalVerdict).toBe('confirmed');
+      expect(vr.adaptation).toBeUndefined();
+      expect(l2Spy).toHaveBeenCalledTimes(1);
+      expect(l4Spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ─── Stateful oracle authority (the root-bug fix) ─────────────────────────
   // Findings discovered by LogicExploitAgent are stateful — a bare L2 GET can't
   // replay them. For these, L2 must NOT vote; authority is L4 over captured proof.

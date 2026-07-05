@@ -125,6 +125,12 @@ export async function verifyAndPersistFinding(
   // without touching dedupHash so the canonical row keeps sole ownership.
   const isDuplicate = verification.finalVerdict === "deduplicated";
 
+  // When a payload-adaptation retry is what actually confirmed the finding, the
+  // original exploitPayload/affectedUrl are the ones that FAILED — persist the
+  // adapted payload that legitimately passed the same verification gate so the
+  // report documents real, reproducible proof instead of the failing original.
+  const adaptation = verification.adaptation;
+
   await db.update(findings).set({
     verificationStatus: isDuplicate ? "duplicate" : verification.finalVerdict,
     verificationLog: [verification] as unknown as Record<string, unknown>[],
@@ -134,6 +140,16 @@ export async function verifyAndPersistFinding(
       severity: escalation.severity,
       cvssScore: escalation.cvssScore,
       impact: escalation.impact,
+    } : {}),
+    ...(adaptation ? {
+      exploitPayload: adaptation.adaptedPayload,
+      affectedUrl: adaptation.adaptedUrl,
+      // Stash the real adapted request/response as raw_http evidence — the
+      // report builder reads this instead of citing the failing original.
+      evidence: [
+        ...evidenceArr,
+        { type: "raw_http", data: `GET ${adaptation.adaptedUrl} HTTP/1.1\n\nHTTP/1.1 ${adaptation.statusCode}\n${adaptation.responseSnippet}` },
+      ] as unknown as Record<string, unknown>[],
     } : {}),
     updatedAt: new Date(),
   }).where(eq(findings.id, finding.id)).catch(e =>

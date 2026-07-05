@@ -931,6 +931,40 @@ export class CampaignOrchestrator extends EventEmitter {
           // before verification, so it never inflates an unverified finding).
           const escalation = pendingEscalation(dbFinding);
 
+          // When a payload-adaptation retry is what actually confirmed the finding,
+          // the original exploitPayload/affectedUrl are the ones that FAILED —
+          // persist the adapted payload that legitimately passed the same gate
+          // (mirrors verify-finding.ts's verifyAndPersistFinding, which this
+          // orchestrator-driven path duplicates rather than shares).
+          const adaptation = verification.adaptation;
+
+          // Archive the ADAPTED request's screenshot separately from the original
+          // (failing) probe's screenshot above — citing the original 400-error
+          // screenshot as proof of the adapted result would itself be an over-claim.
+          // Also stash the real adapted request/response as raw_http evidence so
+          // the report builder has actual proof to cite instead of N/A.
+          let adaptedEvidenceEntries: Record<string, unknown>[] = [];
+          if (adaptation) {
+            let adaptedScreenshotPath: string | undefined;
+            if (adaptation.screenshot) {
+              try {
+                const evidenceDir = path.join(process.cwd(), "evidence", String(dbFinding.id));
+                mkdirSync(evidenceDir, { recursive: true });
+                adaptedScreenshotPath = path.join(evidenceDir, "adapted_screenshot.png");
+                await fsp.writeFile(adaptedScreenshotPath, Buffer.from(adaptation.screenshot, "base64"));
+              } catch (fsErr) {
+                logger.warn("Layer 5: Failed to write adapted screenshot file", { err: String(fsErr) });
+              }
+            }
+            adaptedEvidenceEntries = [
+              {
+                type: "raw_http",
+                data: `GET ${adaptation.adaptedUrl} HTTP/1.1\n\nHTTP/1.1 ${adaptation.statusCode}\n${adaptation.responseSnippet}`,
+              },
+              ...(adaptedScreenshotPath ? [{ type: "adapted_screenshot", path: adaptedScreenshotPath }] : []),
+            ];
+          }
+
           // Update finding record
           await db.update(findings).set({
             verificationStatus: verification.finalVerdict,
@@ -942,6 +976,11 @@ export class CampaignOrchestrator extends EventEmitter {
               severity: escalation.severity,
               cvssScore: escalation.cvssScore,
               impact: escalation.impact,
+            } : {}),
+            ...(adaptation ? {
+              exploitPayload: adaptation.adaptedPayload,
+              affectedUrl: adaptation.adaptedUrl,
+              evidence: [...((dbFinding.evidence as Record<string, unknown>[]) ?? []), ...adaptedEvidenceEntries],
             } : {}),
             updatedAt: new Date(),
           }).where(eq(findings.id, dbFinding.id));
@@ -1082,31 +1121,56 @@ export class CampaignOrchestrator extends EventEmitter {
     // 6a. Generate reports + Nuclei templates for each verified finding
     for (const { finding, verification } of verifiedFindings) {
       try {
+        // `finding` is the DB row captured BEFORE Layer 5's update ran, so on an
+        // adaptation-confirmed finding it still holds the ORIGINAL failing
+        // payload/URL — read the adaptation off `verification` (in-memory, always
+        // current) rather than trusting the stale row. Falls back to the finding's
+        // own fields for the (much more common) non-adaptation case.
+        const adaptation = verification.adaptation as
+          { adaptedUrl: string; adaptedPayload: string; statusCode: number; responseSnippet: string } | undefined;
+        const verifiedEndpoint = adaptation?.adaptedUrl || finding.affectedUrl || params.targetUrl;
+        const verifiedPayload = adaptation?.adaptedPayload || finding.exploitPayload || "";
+
         const mockSolverResult = {
           taskId: String(finding.id),
           solverId: "orchestrator",
-          endpoint: String(finding.targetId || params.targetUrl),
+          endpoint: verifiedEndpoint,
           vulnClass: finding.vulnType as Parameters<typeof reportGen.generate>[0]["vulnClass"],
           found: true,
           confidence: finding.confidence,
           evidence: {},
-          payload: finding.exploitPayload || "",
-          request: "",
-          response: "",
+          payload: verifiedPayload,
+          request: verifiedEndpoint,
+          response: adaptation?.responseSnippet || "",
           duration: 0,
           toolsUsed: [],
         };
 
+        // Real L2/L3/L4 evidence from this finding's actual verification — the
+        // report/nuclei generators reason over this, so a hardcoded "confirmed"
+        // stub here was silently discarding the real proof (empty responses,
+        // no reasoning) in favour of a fake all-green result.
         const mockVerification = {
           findingId: String(finding.id),
-          layer1_dedup: { isDuplicate: false },
-          layer2_reprobe: { confirmed: true, statusCode: 200, responseSnippet: "" },
-          layer3_playwright: { confirmed: true, consoleAlerts: [], networkRequests: [] },
-          layer4_ai: { confirmed: true, reasoning: "", confidenceAdjustment: 0 },
+          layer1_dedup: (verification.layer1_dedup as { isDuplicate: boolean }) ?? { isDuplicate: false },
+          layer2_reprobe: (verification.layer2_reprobe as { confirmed: boolean; statusCode: number; responseSnippet: string })
+            ?? { confirmed: false, statusCode: 0, responseSnippet: "" },
+          layer3_playwright: (verification.layer3_playwright as { confirmed: boolean; consoleAlerts: string[]; networkRequests: string[] })
+            ?? { confirmed: false, consoleAlerts: [], networkRequests: [] },
+          layer4_ai: (verification.layer4_ai as { confirmed: boolean; reasoning: string; confidenceAdjustment: number })
+            ?? { confirmed: false, reasoning: "", confidenceAdjustment: 0 },
           finalVerdict: (verification.finalVerdict as "confirmed") || "confirmed",
           finalConfidence: (verification.finalConfidence as number | undefined) ?? finding.confidence,
           dedupHash: finding.dedupHash || "",
         };
+
+        // Adapted proof (or, absent adaptation, any captured raw_http evidence)
+        // as the raw HTTP block for the report's Summary/PoC generation.
+        const evidenceArr = (finding.evidence as Array<Record<string, unknown>>) ?? [];
+        const rawHttpEntry = [...evidenceArr].reverse().find(e => e.type === "raw_http");
+        const rawEvidence = adaptation
+          ? `GET ${adaptation.adaptedUrl} HTTP/1.1\n\nHTTP/1.1 ${adaptation.statusCode}\n${adaptation.responseSnippet}`
+          : rawHttpEntry ? String(rawHttpEntry.data ?? "") : undefined;
 
         // Idempotency: skip regeneration if the report was already written
         // (handles crash-then-resume between L5 update and L6 report writes).
@@ -1118,6 +1182,7 @@ export class CampaignOrchestrator extends EventEmitter {
             programName: "Bug Bounty Program",
             targetUrl: params.targetUrl,
             huntDate: finding.createdAt.toISOString().split("T")[0],
+            rawEvidence,
           });
           reports.push(report.reportMarkdown);
           await db.update(findings)
@@ -1156,8 +1221,8 @@ export class CampaignOrchestrator extends EventEmitter {
       try {
         await bountyIntelligenceService.addKnownFinding({
           id: String(finding.id),
-          title: `${finding.vulnType} on ${String(finding.targetId || params.targetUrl)}`,
-          endpoint: String(finding.targetId || params.targetUrl),
+          title: `${finding.vulnType} on ${finding.affectedUrl || params.targetUrl}`,
+          endpoint: finding.affectedUrl || params.targetUrl,
           vulnerabilityType: finding.vulnType,
           severity: finding.severity ?? 'medium',
           program: String(params.programId),
