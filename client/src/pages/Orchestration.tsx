@@ -8,19 +8,8 @@ import { bountyAPI, hunterAPI } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import axios from "axios";
-import { LiveActivityFeed, ActivityEvent } from "../components/LiveActivityFeed";
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface LayerStatus {
-  layer: number;
-  name: string;
-  phase: "pending" | "running" | "passed" | "failed" | "skipped";
-  startedAt?: number;
-  completedAt?: number;
-  durationMs?: number;
-  error?: string;
-}
+import { LiveActivityFeed } from "../components/LiveActivityFeed";
+import { orchestrationStore, useOrchestrationStore } from "../lib/orchestrationStore";
 
 // ── Layer metadata ─────────────────────────────────────────────────────────────
 
@@ -67,39 +56,19 @@ export default function Orchestration() {
   const [toolStatusExpanded, setToolStatusExpanded] = useState(false);
   const [toolStatusLoading, setToolStatusLoading] = useState(false);
 
-  // B1: true between socket.emit("orchestration:run") and orchestration:created
-  // confirmation — prevents showing "running" before the backend confirms it started.
-  const [launching, setLaunching] = useState(false);
-  // B2: true between handleStop() and orchestration:aborted confirmation.
-  const [stopping, setStopping] = useState(false);
-  // B3: hunt running in another panel (kind==="hunt" or unrecognised orchestration)
-  const [externalHunt, setExternalHunt] = useState<{ id: string; kind: string; targetUrl: string } | null>(null);
-
-  const [orchestrationId, setOrchestrationId] = useState<string | null>(null);
-  const [layers, setLayers] = useState<LayerStatus[]>(
-    Array.from({ length: 6 }, (_, i) => ({
-      layer: i + 1,
-      name: ["GOVERNANCE GATE", "TARGET INTELLIGENCE", "STRATEGY PLANNING",
-        "EXECUTION ENGINE", "VERIFICATION GATE", "INTELLIGENCE HARVEST"][i],
-      phase: "pending",
-    }))
-  );
-  const [phase, setPhase] = useState<string>("idle");
-  const [findings, setFindings] = useState(0);
-  const [verified, setVerified] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [layerMeta, setLayerMeta] = useState<Record<string, unknown>[]>([]);
-
-  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
   const [campaigns, setCampaigns] = useState<Array<{id: number; createdAt: string; status: string; findingsTotal?: number; targetUrl?: string}>>([]);
   const [showTimeline, setShowTimeline] = useState(false);
 
-  const socket = getSocket();
+  // Live orchestration state is owned by orchestrationStore and fed by the
+  // always-mounted event bridge (orchestrationEventBridge.ts). This panel is a pure
+  // reader — leaving and returning restores the full prior execution stream.
+  const {
+    orchestrationId, layers, phase, findings, verified, loading,
+    launching, stopping, externalHunt, activityEvents,
+  } = useOrchestrationStore();
 
-  function pushEvent(ev: ActivityEvent) {
-    // Cap retained events (~300) so long orchestrations don't grow state unbounded.
-    setActivityEvents(prev => [...prev.slice(-299), ev]);
-  }
+  const socket = getSocket();
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -120,230 +89,36 @@ export default function Orchestration() {
     // orchestration-kind path; this catches kind==="hunt".
     hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
       if (r.data.running && r.data.hunt?.kind === "hunt") {
-        setExternalHunt(r.data.hunt);
+        orchestrationStore.setExternalHunt(r.data.hunt);
       }
     }).catch(() => {});
 
-    // Reconnect to any orchestration already running when this panel opens.
-    axios.get("/api/orchestration").then(r => {
-      const liveList: Array<{ orchestrationId: string; state: any }> = r.data?.live || [];
-      if (liveList.length === 0) return;
-      const { orchestrationId: id, state } = liveList[0];
-      setOrchestrationId(id);
-      socket.emit("subscribe:orchestration", { orchestrationId: id });
-      setPhase("running");
-      setLoading(true);
-      if (state?.findingsCount != null) setFindings(state.findingsCount);
-      if (state?.verifiedCount != null) setVerified(state.verifiedCount);
-      if (Array.isArray(state?.layers)) {
-        setLayers(prev => prev.map((l, i) => {
-          const s = state.layers[i];
-          return s ? { ...l, phase: s.phase, startedAt: s.startedAt, completedAt: s.completedAt, durationMs: s.durationMs, error: s.error } : l;
-        }));
-      }
-      pushEvent({ type: "phase", ts: now(), phase: "reconnected", iteration: 0 });
-    }).catch(() => {});
+    // Reconnect to a running orchestration ONLY on a fresh load (store empty). On
+    // panel navigation the always-mounted bridge already holds the live state +
+    // full execution stream, so we must not re-hydrate (it would be stale/dup).
+    if (!orchestrationStore.getSnapshot().orchestrationId) {
+      axios.get("/api/orchestration").then(r => {
+        const liveList: Array<{ orchestrationId: string; state: any }> = r.data?.live || [];
+        if (liveList.length === 0) return;
+        const { orchestrationId: id, state } = liveList[0];
+        orchestrationStore.setOrchestrationId(id);
+        socket.emit("subscribe:orchestration", { orchestrationId: id });
+        orchestrationStore.setPhase("running");
+        orchestrationStore.setLoading(true);
+        if (state?.findingsCount != null) orchestrationStore.setFindings(state.findingsCount);
+        if (state?.verifiedCount != null) orchestrationStore.setVerified(state.verifiedCount);
+        if (Array.isArray(state?.layers)) {
+          orchestrationStore.updateLayers(prev => prev.map((l, i) => {
+            const s = state.layers[i];
+            return s ? { ...l, phase: s.phase, startedAt: s.startedAt, completedAt: s.completedAt, durationMs: s.durationMs, error: s.error } : l;
+          }));
+        }
+        orchestrationStore.pushEvent({ type: "phase", ts: now(), phase: "reconnected", iteration: 0 });
+      }).catch(() => {});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Socket.IO wiring ───────────────────────────────────────────────────────
-
-  useEffect(() => {
-    socket.on("orchestration:created", ({ orchestrationId: id }: { orchestrationId: string }) => {
-      setOrchestrationId(id);
-      // B1: backend confirmed the orchestration was created — transition from
-      // "launching" (unconfirmed) to "loading" (confirmed running).
-      setLaunching(false);
-      setLoading(true);
-      setExternalHunt(null);
-      socket.emit("subscribe:orchestration", { orchestrationId: id });
-    });
-
-    socket.on("orchestration:started", () => {
-      setPhase("running");
-    });
-
-    socket.on("orchestration:layer_start", (d: { layer: number; name: string }) => {
-      setLayers(prev => prev.map(l =>
-        l.layer === d.layer ? { ...l, phase: "running", startedAt: Date.now() } : l
-      ));
-      setPhase(`l${d.layer}`);
-      pushEvent({ type: "layer_start", ts: now(), layer: d.layer, name: d.name });
-    });
-
-    socket.on("orchestration:layer_complete", (d: {
-      layer: number; name: string; passed: boolean; durationMs: number;
-    }) => {
-      setLayers(prev => prev.map(l =>
-        l.layer === d.layer ? { ...l, phase: d.passed ? "passed" : "failed", completedAt: Date.now(), durationMs: d.durationMs } : l
-      ));
-      pushEvent({ type: "layer_done", ts: now(), layer: d.layer, name: d.name, passed: d.passed, durationMs: d.durationMs });
-    });
-
-    socket.on("orchestration:layer_error", (d: { layer: number; name: string; error: string }) => {
-      setLayers(prev => prev.map(l =>
-        l.layer === d.layer ? { ...l, phase: "failed", error: d.error } : l
-      ));
-      pushEvent({ type: "error", ts: now(), message: `L${d.layer} ${d.name}: ${d.error}` });
-    });
-
-    socket.on("orchestration:aborted", (d: { reason: string }) => {
-      // B2: backend confirmed the abort — only now flip to aborted state.
-      setPhase("aborted");
-      setLoading(false);
-      setStopping(false);
-      pushEvent({ type: "error", ts: now(), message: `Aborted: ${d.reason}` });
-      toast.error(`Aborted: ${d.reason}`);
-    });
-
-    socket.on("orchestration:complete", () => {
-      setPhase("complete");
-      setLoading(false);
-      setStopping(false);
-      setExternalHunt(null);
-      toast.success("Orchestration complete!");
-    });
-
-    socket.on("orchestration:error", (d: { error: string; activeHunt?: { id: string; kind: string; targetUrl: string } }) => {
-      setPhase("error");
-      setLaunching(false);
-      setLoading(false);
-      setStopping(false);
-      if (d.activeHunt) {
-        // B3: rejected because another hunt is running — surface it
-        setExternalHunt(d.activeHunt);
-      }
-      pushEvent({ type: "error", ts: now(), message: d.error });
-      toast.error(`Orchestration error: ${d.error}`);
-    });
-
-    // ── L4 Execution Engine ────────────────────────────────────────────────
-
-    socket.on("l4:phase", (d: { phase: string; iteration?: number }) => {
-      pushEvent({ type: "phase", ts: now(), phase: d.phase, iteration: d.iteration ?? 0 });
-    });
-
-    socket.on("l4:hypotheses", (d: { count: number; hypotheses?: any[] }) => {
-      const hyps: any[] = d.hypotheses ?? [];
-      hyps.forEach(h => {
-        pushEvent({
-          type: "hypothesis",
-          ts: now(),
-          id: h.id ?? String(Math.random()),
-          vulnClass: h.vulnClass ?? "unknown",
-          reasoning: h.reasoning ?? h.evidence?.join("; ") ?? "",
-          confidence: h.confidence ?? 0,
-        });
-      });
-    });
-
-    socket.on("l4:probing", (d: { hypothesisId: string; vulnClass: string }) => {
-      pushEvent({ type: "probe_start", ts: now(), hypothesisId: d.hypothesisId, vulnClass: d.vulnClass });
-    });
-
-    socket.on("l4:probe_result", (d: { hypothesisId: string; result: any }) => {
-      const r = d.result ?? {};
-      pushEvent({
-        type: "probe_result",
-        ts: now(),
-        hypothesisId: d.hypothesisId,
-        tool: r.tool ?? "unknown",
-        success: !!r.success,
-        output: r.output ?? r.parsed?.raw ?? "",
-        durationMs: r.duration ?? 0,
-      });
-    });
-
-    socket.on("l4:finding_raw", (d: { finding?: any }) => {
-      const f = d.finding ?? d;
-      const h = f.hypothesis ?? {};
-      setFindings(n => n + 1);
-      pushEvent({
-        type: "finding",
-        ts: now(),
-        vulnClass: h.vulnClass ?? "unknown",
-        severity: f.severity ?? "medium",
-        confidence: h.confidence ?? 0,
-        payload: f.exploitPayload ?? h.evidence?.join("; "),
-      });
-    });
-
-    socket.on("l4:solver_finding", (d: { result?: any }) => {
-      const r = d.result ?? d;
-      setFindings(n => n + 1);
-      pushEvent({ type: "solver_finding", ts: now(), vulnClass: r.vulnClass ?? "unknown" });
-    });
-
-    socket.on("l4:error", (d: { error: string }) => {
-      pushEvent({ type: "error", ts: now(), message: `[L4] ${d.error}` });
-    });
-
-    // ── L5 Verification ────────────────────────────────────────────────────
-
-    socket.on("l5:verified", (d: { findingId: number; verdict: string }) => {
-      setVerified(v => v + 1);
-      pushEvent({ type: "verified", ts: now(), findingId: d.findingId, verdict: d.verdict });
-    });
-
-    socket.on("l5:rejected", (d: { findingId: number; verdict: string }) => {
-      pushEvent({ type: "rejected", ts: now(), findingId: d.findingId, verdict: d.verdict });
-    });
-
-    socket.on("l5:public_duplicate", (d: any) => {
-      pushEvent({
-        type: "public_duplicate",
-        ts: now(),
-        vulnClass: d.vulnClass ?? "unknown",
-        platform: d.platform ?? "unknown",
-        reportUrl: d.reportUrl,
-        title: d.title,
-        warn: !!d.warn,
-      });
-    });
-
-    // ── L6 Harvest ────────────────────────────────────────────────────────
-
-    socket.on("l6:report_generated", (d: { findingId: number }) => {
-      pushEvent({ type: "verified", ts: now(), findingId: d.findingId, verdict: "report generated" });
-    });
-
-    socket.on("l6:autonomy_updated", (_d: { compositeScore: number }) => {
-      // no visual needed — kept for completeness
-    });
-
-    const pushAIReasoning = (data: any) => {
-      pushEvent({
-        type: "ai_reasoning",
-        ts: now(),
-        task: String(data.task ?? "AI"),
-        phase: data.phase as "thinking" | "complete" | "decision",
-        context: data.context,
-        promptPreview: String(data.promptPreview ?? ""),
-        rawResponse: String(data.rawResponse ?? ""),
-        summary: String(data.summary ?? ""),
-        durationMs: Number(data.durationMs ?? 0),
-        generatedCount: Number(data.generatedCount ?? 0),
-      });
-    };
-
-    // l4:ai_reasoning — from hunts started via the Orchestration panel (room-scoped)
-    socket.on("l4:ai_reasoning", pushAIReasoning);
-    // hunt:ai_reasoning — from hunts started directly via the Hunt panel (global)
-    socket.on("hunt:ai_reasoning", pushAIReasoning);
-
-    return () => {
-      [
-        "orchestration:created", "orchestration:started", "orchestration:layer_start",
-        "orchestration:layer_complete", "orchestration:layer_error",
-        "orchestration:complete", "orchestration:aborted", "orchestration:error",
-        "l4:phase", "l4:hypotheses", "l4:probing", "l4:probe_result",
-        "l4:finding_raw", "l4:solver_finding", "l4:error", "l4:ai_reasoning",
-        "l5:verified", "l5:rejected", "l5:public_duplicate",
-        "l6:report_generated", "l6:autonomy_updated",
-        "hunt:ai_reasoning",
-      ].forEach(evt => socket.off(evt));
-    };
-  }, [socket]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -351,17 +126,11 @@ export default function Orchestration() {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
 
-    // Reset UI for a fresh run (safe to do immediately — these are display resets).
-    setLayers(prev => prev.map(l => ({ ...l, phase: "pending", startedAt: undefined, completedAt: undefined, durationMs: undefined, error: undefined })));
-    setActivityEvents([]);
-    setFindings(0);
-    setVerified(0);
-    setOrchestrationId(null);
-    setExternalHunt(null);
+    // Reset live state for a fresh run (layers → pending, stream cleared, counts 0).
+    orchestrationStore.clearForNewRun();
     // B1: do NOT set phase/loading yet — wait for orchestration:created confirmation.
     // If the server rejects (slot taken), orchestration:error will fire and we stay idle.
-    setLaunching(true);
-    setPhase("idle");
+    orchestrationStore.setLaunching(true);
 
     const auth: Record<string, string> = {};
     if (authCookie.trim()) auth.cookie = authCookie.trim();
@@ -382,9 +151,9 @@ export default function Orchestration() {
     if (!orchestrationId) return;
     // B2: show "stopping" indicator but do NOT flip phase/loading — only the
     // orchestration:aborted socket event (from the actual engine halt) does that.
-    setStopping(true);
+    orchestrationStore.setStopping(true);
     axios.post(`/api/orchestration/stop/${orchestrationId}`).catch(() => {
-      setStopping(false);
+      orchestrationStore.setStopping(false);
       toast.error("Stop request failed");
     });
     toast("Stop signal sent");
