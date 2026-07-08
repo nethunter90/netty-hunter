@@ -18,7 +18,6 @@ import { Payloads } from './Payloads';
 import { Deadlines } from './Deadlines';
 import { BountyIntelligence } from './BountyIntelligence';
 import { HuntReplay } from './HuntReplay';
-import { CTFBenchmark } from './CTFBenchmark';
 import type { BountyView } from '../sidebar/BountyNavigation';
 
 interface ErrorBoundaryState {
@@ -118,8 +117,6 @@ function BountyViewContent({ view }: BountyViewRouterProps) {
       return <BountyIntelligence />;
     case 'hunt-replay':
       return <HuntReplay />;
-    case 'ctf-benchmark':
-      return <CTFBenchmark />;
     default:
       return <BackwardHunt />;
   }

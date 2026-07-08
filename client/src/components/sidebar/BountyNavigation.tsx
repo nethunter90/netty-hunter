@@ -17,5 +17,4 @@ export type BountyView =
   | 'payloads'
   | 'deadlines'
   | 'bounty-intelligence'
-  | 'hunt-replay'
-  | 'ctf-benchmark';
+  | 'hunt-replay';

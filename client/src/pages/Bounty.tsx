@@ -22,7 +22,6 @@ const BOUNTY_VIEWS: { id: BountyView; label: string }[] = [
   { id: 'cve-intel', label: 'CVE Intel' },
   { id: 'poc-lab', label: 'PoC Lab' },
   { id: 'hunt-replay', label: 'Hunt Replay' },
-  { id: 'ctf-benchmark', label: 'CTF Bench' },
 ];
 
 export default function Bounty() {
