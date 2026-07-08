@@ -807,7 +807,27 @@ export class HunterEngine extends EventEmitter {
         this.authConfig = prog.authConfig as AuthConfig;
         const session = await sessionManager.login(params.programId, this.authConfig);
         this.authHeaders = session.headers;
-        logger.info("[HunterEngine] Authenticated session established", { programId: params.programId });
+        // login() NEVER throws — it returns an empty session when the target login
+        // couldn't be reached (e.g. AggregateError on a localhost ::1 refusal) or
+        // returned no session material. Detect that and surface it LOUDLY: a hunt
+        // silently running unauthenticated can't exercise idor/auth_bypass/business_
+        // logic/authed-info_disclosure and produces misleading 0-verified results.
+        const hasAuthMaterial = Object.keys(session.headers).length > 0 || Boolean(session.cookies);
+        if (hasAuthMaterial) {
+          logger.info("[HunterEngine] Authenticated session established", { programId: params.programId });
+        } else {
+          logger.error("[HunterEngine] AUTH CONFIGURED BUT LOGIN PRODUCED NO SESSION — hunting UNAUTHENTICATED", {
+            programId: params.programId,
+            loginUrl: this.authConfig.loginUrl,
+            authType: this.authConfig.authType ?? "form",
+          });
+          this.emit("hunt:auth_failed", {
+            sessionId: this.state?.sessionId ?? "",
+            programId: params.programId,
+            loginUrl: this.authConfig.loginUrl,
+            reason: "Login reached no session (check loginUrl reachability + credentials). Auth-gated vuln classes will not be tested.",
+          });
+        }
       }
     } catch (err) {
       logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });

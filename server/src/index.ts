@@ -46,6 +46,14 @@ import { activeHunts } from "./lib/state/active-hunts";
 import { db } from "./db";
 import { programs, findings } from "./db/schema";
 import { gt, eq } from "drizzle-orm";
+import dns from "node:dns";
+
+// Prefer IPv4 in DNS resolution so Node's HTTP clients (axios/fetch) behave like the
+// curl/nuclei binaries do. `localhost` resolves to ::1 (IPv6) first, but dev servers
+// (Replit, Flask, Express) usually bind IPv4 only → ::1 is refused → Node raises an
+// AggregateError and the call fails even though 127.0.0.1:PORT is up. This one line
+// fixes it globally: SessionManager login, SolverPool probes, OOB callbacks — all of it.
+dns.setDefaultResultOrder("ipv4first");
 
 const PgSession = connectPg(session);
 
