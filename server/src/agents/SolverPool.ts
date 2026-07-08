@@ -78,6 +78,16 @@ export interface SolverResult {
    * reprobe cannot reproduce a stateful finding, so it must not vote on one.
    */
   discoveryTool?: string;
+  /**
+   * True when this finding was confirmed by an out-of-band interaction (an
+   * Interactsh/local callback beacon that actually fired during the hunt). An OOB
+   * callback is definitional, non-destructive proof of execution — the target
+   * reached our controlled server, which can only happen if the payload ran. A
+   * stateless L2 reprobe cannot replay an already-fired callback, so for OOB-oracle
+   * classes (rce/ssrf/xxe/blind-sqli/rfi/ssti) this is authoritative and L2 must
+   * not veto it. Sourced from findings.oobHitReceived at verify time.
+   */
+  oobConfirmed?: boolean;
 }
 
 // ─── Per-domain behavioral mimicry sessions ──────────────────────────────────

@@ -143,6 +143,10 @@ export interface ProbeResult {
   rawHttpLog?: string;
   videoPath?: string;
   oobBeaconId?: string;
+  /** True only when this probe's OOB beacon actually fired (not merely attempted).
+   *  Distinguishes a real out-of-band hit from a beacon that was planted but never
+   *  called back — oobBeaconId is set on both, so it alone cannot mean "confirmed". */
+  oobConfirmed?: boolean;
 }
 
 export interface HuntState {
@@ -174,6 +178,10 @@ export interface HypothesisConfirmed {
   rawEvidence?: string;
   videoPath?: string;
   oobBeaconId?: string;
+  /** True when one of the confirming probes was validated by a real OOB beacon hit.
+   *  Drives findings.oobHitReceived at persist time so the verifier can treat the
+   *  callback as an authoritative, non-destructive oracle. */
+  oobConfirmed?: boolean;
 }
 
 // nuclei -tags filter per hypothesis vuln class. Without a tag (or custom template)
@@ -2201,6 +2209,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         duration: Number(probeResult.duration || 0),
         rawHttpLog: oobHit && oob.summary ? oob.summary : undefined,
         oobBeaconId: oob.beaconId,
+        oobConfirmed: oobHit,
       };
 
       this.state.probes.push(result);
@@ -3060,6 +3069,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // Link the OOB beacon (if any probe confirmed via callback) so the callback
       // route can persist oobHitReceived/oobHitAt against this finding.
       oobBeaconId: probes.find(p => p.oobBeaconId)?.oobBeaconId,
+      // True when a beacon actually FIRED (not just planted). Drives
+      // findings.oobHitReceived at persist time — inline hits (the common case)
+      // never reach the /api/callback route because the finding row doesn't exist
+      // yet, so this is the only reliable place to record the confirmation.
+      oobConfirmed: probes.some(p => p.oobConfirmed),
     };
   }
 
@@ -3109,6 +3123,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
         reproductionSteps: this.buildReproductionSteps(confirmed) as unknown as Record<string, unknown>[],
         exploitPayload: confirmed.exploitPayload,
         oobBeaconId: confirmed.oobBeaconId,
+        // Record the OOB confirmation NOW (not via the async /api/callback route,
+        // which can't match an inline hit — the finding row doesn't exist yet during
+        // the probe's waitForHit). This makes oobHitReceived reliably true at verify
+        // time so the VerifierAgent can treat the callback as an authoritative oracle.
+        oobHitReceived: confirmed.oobConfirmed === true,
+        oobHitAt: confirmed.oobConfirmed ? new Date() : undefined,
         affectedUrl: confirmed.hypothesis.targetUrl,
         verificationStatus: "pending",
         status: "new",

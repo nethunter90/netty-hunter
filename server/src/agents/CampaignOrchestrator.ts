@@ -857,6 +857,9 @@ export class CampaignOrchestrator extends EventEmitter {
           duration: 0,
           toolsUsed: [],
           discoveryTool: findingDiscoveryTool,
+          // OOB beacon hit = authoritative non-destructive proof for rce/ssrf/xxe/
+          // blind classes; the verifier confirms on this without L2 vetoing.
+          oobConfirmed: dbFinding.oobHitReceived === true,
         };
 
         const verification = await this.verifierAgent.verify(mockResult);

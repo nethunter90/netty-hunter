@@ -106,6 +106,10 @@ export async function verifyAndPersistFinding(
     duration: 0,
     toolsUsed: [],
     discoveryTool,
+    // An OOB beacon that fired during the hunt is authoritative, non-destructive
+    // proof — the verifier uses this to confirm rce/ssrf/xxe/blind classes without
+    // a stateless L2 reprobe (which can't replay an already-fired callback) vetoing.
+    oobConfirmed: finding.oobHitReceived === true,
   };
 
   // Pass the finding's own stored dedupHash so Layer 1 doesn't reject it as a

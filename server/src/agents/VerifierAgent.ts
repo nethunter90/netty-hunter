@@ -53,6 +53,14 @@ export interface VerificationResult {
 // replay these, so it is barred from voting on their verdict (see verify()).
 const STATEFUL_ORACLE_TOOLS = new Set<string>(["logic_exploit_agent"]);
 
+// Vuln classes where an out-of-band callback (an Interactsh/local beacon that
+// actually fired) is a definitional, non-destructive proof of execution: the
+// target reached our controlled server, which can only happen if the injected
+// payload ran out-of-band. A stateless L2 reprobe cannot replay an already-fired
+// callback, so for these classes an OOB hit is the authoritative oracle and L2
+// must not veto it. Does NOT touch the xss/dom_xss mandatory L3 gate.
+const OOB_ORACLE_CLASSES = new Set<string>(["rce", "ssrf", "xxe", "sqli", "rfi", "ssti"]);
+
 // ─── Layer 1: Static Deduplication ───────────────────────────────────────────
 class Layer1Dedup {
   private hashCache = new Set<string>();
@@ -762,6 +770,15 @@ export class VerifierAgent {
         finalVerdict = "rejected";
         finalConfidence = Math.max(0, finalConfidence - 0.3);
       }
+    } else if (result.oobConfirmed && OOB_ORACLE_CLASSES.has(result.vulnClass)) {
+      // OOB oracle: a beacon that actually fired is definitional, non-destructive
+      // proof of out-of-band execution (rce / ssrf / xxe / blind-sqli / rfi / ssti).
+      // The target reached our controlled server — impossible unless the injected
+      // payload ran. A stateless L2 reprobe cannot replay an already-fired callback,
+      // so it must not veto this. This is the strongest proof in the pipeline; an L4
+      // dissent does not downgrade it. (Does not touch the xss/dom_xss L3 gate above.)
+      finalVerdict = "confirmed";
+      finalConfidence = Math.min(0.98, finalConfidence + 0.15);
     } else if (statefulOracle) {
       // Stateful agent-discovered finding (idor / auth_bypass / business_logic via
       // the Claude-directed Playwright agent). L2 is barred — a contextless GET
