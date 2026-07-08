@@ -173,8 +173,10 @@ export default function Dashboard() {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+        ) : loading ? (
+          <div className="text-[10px] text-hack-dim font-mono animate-pulse">Loading ROI data...</div>
         ) : (
-          <div className="text-[10px] text-hack-dim font-mono">Loading ROI data...</div>
+          <div className="text-[10px] text-hack-dim font-mono">No ROI data yet — run a hunt to build vulnerability rankings.</div>
         )}
       </div>
 
