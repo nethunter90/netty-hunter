@@ -68,6 +68,8 @@ export default function ActivityBar({ activeView, onViewChange, user, onLogout }
               key={item.id}
               onClick={() => handleNav(item)}
               title={item.label}
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
               className={`
                 group relative w-10 h-10 flex items-center justify-center rounded
                 transition-all duration-150
@@ -104,6 +106,7 @@ export default function ActivityBar({ activeView, onViewChange, user, onLogout }
         <button
           onClick={handleLogout}
           title="Logout"
+          aria-label="Logout"
           className="w-10 h-10 flex items-center justify-center rounded text-hack-dim hover:text-hack-red hover:bg-hack-red/10 transition-all"
         >
           <LogOut className="w-4 h-4" strokeWidth={1.5} />
