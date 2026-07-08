@@ -66,7 +66,31 @@ class BusinessLogicProber {
     await Promise.allSettled(discoveryTasks);
     logger.debug(`[business-logic-probe] discovered ${activeEndpoints.length} active endpoints`);
 
-    // Helper: record a vuln if the response is accepted (2xx)
+    // Sanity baseline (false-positive gate): an endpoint that returns 2xx to a
+    // nonsense control payload is NON-DISCRIMINATING — it accepts everything (a SPA
+    // catch-all route, or an API that ignores the request body). For such an endpoint
+    // a "malicious payload accepted" signal proves nothing, so we suppress its
+    // findings. Without this, one accept-all endpoint fabricates a business-logic
+    // "vuln" for every technique — the 102-accepted-vulns false-positive flood.
+    const acceptsEverything = new Set<string>();
+    await Promise.allSettled(activeEndpoints.map(async (endpoint) => {
+      const controlPayload = {
+        [`__sanity_control_${Math.random().toString(36).slice(2, 10)}`]: "invalid_value_zzz",
+        notarealfield: true,
+      };
+      try {
+        const res = await axios.post(endpoint, controlPayload, {
+          timeout: 6000, validateStatus: () => true, headers,
+        });
+        if (res.status >= 200 && res.status < 300) acceptsEverything.add(endpoint);
+      } catch { /* unreachable — real attack posts will also fail, no suppression needed */ }
+    }));
+    if (acceptsEverything.size > 0) {
+      logger.info(`[business-logic-probe] ${acceptsEverything.size} endpoint(s) 2xx any payload — suppressing their findings as non-discriminating (false-positive gate)`);
+    }
+
+    // Helper: record a vuln only when the response is accepted (2xx) AND the endpoint
+    // actually discriminates (did NOT 2xx the nonsense control probe above).
     const record = (
       endpoint: string,
       technique: BizLogicVuln["technique"],
@@ -75,7 +99,7 @@ class BusinessLogicProber {
       severity: BizLogicVuln["severity"],
       detail: string,
     ) => {
-      const accepted = status >= 200 && status < 300;
+      const accepted = status >= 200 && status < 300 && !acceptsEverything.has(endpoint);
       vulns.push({ endpoint, technique, payload, responseStatus: status, accepted, severity, detail });
     };
 
