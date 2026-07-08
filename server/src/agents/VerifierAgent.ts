@@ -186,6 +186,17 @@ export class Layer2Reprobe {
         confirmed = /you have an error in your sql syntax|mysql_error|sql syntax error|ora-\d+|sqlstate\[|unclosed quotation mark|psql:|sqlite error:|syntax error near|Warning.*mysql_/i.test(body) || resp.status < 400;
       } else if (result.vulnClass === "ssrf") {
         confirmed = body.includes("ami-id") || body.match(/root:.*:0:0:/) !== null;
+      } else if (result.vulnClass === "lfi" || result.vulnClass === "rfi") {
+        // Positive content oracle: confirm ONLY on an exact file-disclosure signature,
+        // never on a bare status code. Reading /etc/passwd (or win.ini) is the canonical
+        // NON-DESTRUCTIVE LFI PoC — the response literally contains the file. This kills
+        // both false positives (a 200 "file not found" page has no passwd signature) and
+        // false negatives (a real disclosure confirms regardless of status-code quirks —
+        // the old `status<400 && found` else-branch was the source of the LFI misses).
+        confirmed = /root:.*:0:0:/.test(body)                       // /etc/passwd root line
+          || /(daemon|bin|sys|nobody):[^:]*:\d+:\d+:/.test(body)    // other passwd entries
+          || /\[(fonts|extensions|mci extensions)\]/i.test(body)    // win.ini sections
+          || /for 16-bit app support/i.test(body);                  // win.ini boilerplate
       } else {
         confirmed = resp.status < 400 && result.found;
       }
