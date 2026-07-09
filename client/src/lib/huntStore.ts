@@ -34,6 +34,7 @@ export interface HuntStoreState {
   activityEvents: ActivityEvent[];
   hypStats: { pending: number; probing: number; confirmed: number; rejected: number };
   proxyEnabled: boolean;
+  wafBypassEnabled: boolean;
   externalHunt: ExternalHunt | null;
 }
 
@@ -42,6 +43,7 @@ const EMPTY: HuntStoreState = {
   activityEvents: [],
   hypStats: { pending: 0, probing: 0, confirmed: 0, rejected: 0 },
   proxyEnabled: false,
+  wafBypassEnabled: false,
   externalHunt: null,
 };
 
@@ -57,6 +59,7 @@ export const huntStore = {
   get activityEvents(): ActivityEvent[] { return _state.activityEvents; },
   get hypStats() { return _state.hypStats; },
   get proxyEnabled(): boolean { return _state.proxyEnabled; },
+  get wafBypassEnabled(): boolean { return _state.wafBypassEnabled; },
   get externalHunt(): ExternalHunt | null { return _state.externalHunt; },
 
   // ── Observable plumbing (for useSyncExternalStore) ──
@@ -97,6 +100,11 @@ export const huntStore = {
 
   setProxyEnabled(val: boolean): void {
     _state = { ..._state, proxyEnabled: val };
+    notify();
+  },
+
+  setWafBypassEnabled(val: boolean): void {
+    _state = { ..._state, wafBypassEnabled: val };
     notify();
   },
 

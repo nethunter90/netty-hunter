@@ -50,6 +50,8 @@ export default function Orchestration() {
   const [maxRequests, setMaxRequests] = useState(2000);
   const [authCookie, setAuthCookie] = useState("");
   const [authBearer, setAuthBearer] = useState("");
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [wafBypassEnabled, setWafBypassEnabled] = useState(false);
 
   type ToolStatus = { name: string; binary: string; tier: "critical" | "important" | "optional"; available: boolean };
   const [toolStatus, setToolStatus] = useState<ToolStatus[]>([]);
@@ -144,6 +146,8 @@ export default function Orchestration() {
       maxIterations,
       budget: { maxRequests, maxTime: 3600 },
       auth: Object.keys(auth).length > 0 ? auth : undefined,
+      proxyEnabled,
+      wafBypassEnabled,
     });
   };
 
@@ -394,6 +398,50 @@ export default function Orchestration() {
                 onChange={e => setAuthBearer(e.target.value)}
                 disabled={isRunning}
               />
+            </div>
+
+            <div className="border-t border-hack-border/40 pt-3 mb-3">
+              <div className="text-[9px] text-hack-dim tracking-widest mb-2">STEALTH (OPTIONAL)</div>
+
+              <div className="mb-3">
+                <label className="hack-label">Proxy Routing (Tor)</label>
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => setProxyEnabled(v => !v)}
+                    disabled={isRunning}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40 ${proxyEnabled ? 'bg-hack-red/70' : 'bg-hack-border'}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${proxyEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                  </button>
+                  <span className={`ml-2 text-[10px] font-mono ${proxyEnabled ? 'text-hack-red' : 'text-hack-dim'}`}>
+                    {proxyEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <div className="text-[9px] text-hack-dim font-mono mt-1">
+                  Routes all tool traffic through Tor (proxychains4). Requires <span className="text-hack-yellow">tor</span> running on 127.0.0.1:9050
+                </div>
+              </div>
+
+              <div>
+                <label className="hack-label">WAF Bypass / Evasion</label>
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => setWafBypassEnabled(v => !v)}
+                    disabled={isRunning}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40 ${wafBypassEnabled ? 'bg-hack-red/70' : 'bg-hack-border'}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${wafBypassEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                  </button>
+                  <span className={`ml-2 text-[10px] font-mono ${wafBypassEnabled ? 'text-hack-red' : 'text-hack-dim'}`}>
+                    {wafBypassEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <div className="text-[9px] text-hack-dim font-mono mt-1">
+                  Off by default — some program scopes explicitly disallow WAF evasion techniques. Only enable for a program whose rules you've confirmed permit it (a program marked "disallowed" in Programs is blocked regardless of this toggle).
+                </div>
+              </div>
             </div>
 
             {externalHunt && (

@@ -33,6 +33,7 @@ export default function HuntConsole() {
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [corpusEnrichment, setCorpusEnrichment] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(huntStore.proxyEnabled);
+  const [wafBypassEnabled, setWafBypassEnabled] = useState(huntStore.wafBypassEnabled);
 
   // Live hunt progress is owned by huntStore and fed by the always-mounted event
   // bridge (huntEventBridge.ts). This panel is a pure reader — switching panels
@@ -41,8 +42,9 @@ export default function HuntConsole() {
 
   const socket = getSocket();
 
-  // Keep proxy toggle (a form control) mirrored into the store for startHunt.
+  // Keep proxy/WAF toggles (form controls) mirrored into the store for startHunt.
   useEffect(() => { huntStore.setProxyEnabled(proxyEnabled); }, [proxyEnabled]);
+  useEffect(() => { huntStore.setWafBypassEnabled(wafBypassEnabled); }, [wafBypassEnabled]);
 
   useEffect(() => {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
@@ -82,6 +84,7 @@ export default function HuntConsole() {
         budget: { maxRequests: 2000, maxTime: 3600 },
         corpusEnrichment,
         proxyEnabled,
+        wafBypassEnabled,
       });
 
       const session = {
@@ -265,6 +268,25 @@ export default function HuntConsole() {
               </div>
               <div className="text-[9px] text-hack-dim font-mono mt-1">
                 Routes all tool traffic through Tor (proxychains4). Requires <span className="text-hack-yellow">tor</span> running on 127.0.0.1:9050
+              </div>
+            </div>
+
+            <div>
+              <label className="hack-label">WAF Bypass / Evasion</label>
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setWafBypassEnabled(v => !v)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${wafBypassEnabled ? 'bg-hack-red/70' : 'bg-hack-border'}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${wafBypassEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                </button>
+                <span className={`ml-2 text-[10px] font-mono ${wafBypassEnabled ? 'text-hack-red' : 'text-hack-dim'}`}>
+                  {wafBypassEnabled ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <div className="text-[9px] text-hack-dim font-mono mt-1">
+                Off by default — some program scopes explicitly disallow WAF evasion techniques. Only enable for a program whose rules you've confirmed permit it (a program marked "disallowed" in Programs is blocked regardless of this toggle).
               </div>
             </div>
 
