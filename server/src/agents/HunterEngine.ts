@@ -653,6 +653,7 @@ export class HunterEngine extends EventEmitter {
   private huntGoal = "";
   private consecutiveFailures = 0;
   private banCheckDone = false;
+  private oobDegradedWarned = false;
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
   private secondaryAuthHeaders: Record<string, string> = {};
@@ -2687,18 +2688,27 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }).catch(() => {});
       return { ...parsed, duration: Date.now() - start, command: cmdString };
     } catch (err: unknown) {
-      const error = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
+      const error = err as { killed?: boolean; code?: string; stdout?: string; stderr?: string; message?: string };
+      // ENOENT (binary not installed) was previously indistinguishable from a real
+      // timeout — both silently returned {timeout: true} with zero logging. Surface
+      // the missing-binary case loudly and distinctly so it doesn't read as "tool ran
+      // and found nothing" or "tool was just slow."
+      const toolMissing = error.code === 'ENOENT';
       try {
         const { getAutonomousBrain } = await import('../lib/intelligence');
-        getAutonomousBrain().recordActionResult(this.state.sessionId, toolName, false, error.killed ? 'timeout' : (error.message || 'unknown error'));
+        getAutonomousBrain().recordActionResult(this.state.sessionId, toolName, false,
+          toolMissing ? 'tool not installed' : (error.killed ? 'timeout' : (error.message || 'unknown error')));
       } catch { /* non-critical */ }
+      if (toolMissing) {
+        logger.warn(`[HunterEngine] Tool "${toolName}" (${bin}) is not installed — probe skipped, not a timeout`, { toolName, bin });
+      }
       const timedOut = error.killed === true;
       const partialOutput = (error.stdout || '') + (error.stderr || '');
       this.toolLastUsed.set(toolName, Date.now());
       if (partialOutput.trim()) {
-        return { ...tool.parser(partialOutput), timedOut, duration: Date.now() - start, command: cmdString };
+        return { ...tool.parser(partialOutput), timedOut, toolMissing, duration: Date.now() - start, command: cmdString };
       }
-      return { timeout: true, timedOut, duration: Date.now() - start, command: cmdString };
+      return { timeout: true, timedOut, toolMissing, duration: Date.now() - start, command: cmdString };
     }
   }
 
@@ -2877,6 +2887,23 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const interactshBeacon = interactshManager.generateBeacon();
       const { beaconId, callbackUrl } = interactshBeacon ?? callbackServer.generateBeacon();
       const useInteractsh = Boolean(interactshBeacon);
+
+      // A public target can never reach our local callback server — falling back to
+      // it silently means every blind ssrf/xss/xxe/sqli/rce probe against that target
+      // just times out and looks identical to "not vulnerable." Surface this once per
+      // hunt so it's visible instead of a silent false-negative sink.
+      if (!useInteractsh) {
+        const targetHostname = (() => { try { return new URL(targetUrl).hostname; } catch { return ""; } })();
+        const isLocalTarget = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1)/.test(targetHostname);
+        if (!isLocalTarget && !this.oobDegradedWarned) {
+          this.oobDegradedWarned = true;
+          this.emit("hunt:oob_degraded", {
+            sessionId: this.state.sessionId, targetUrl,
+            reason: "Interactsh unavailable and target is public — local OOB callback server is unreachable from it",
+          });
+          logger.warn("[HunterEngine] OOB degraded — blind vuln classes (ssrf/xss/xxe/sqli/rce) cannot confirm against this public target without Interactsh", { targetUrl });
+        }
+      }
 
       const reqOpts = { headers: this.authHeaders, timeout: 8000, validateStatus: () => true };
 
