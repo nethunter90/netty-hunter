@@ -2746,22 +2746,30 @@ Return ONLY valid JSON array of hypothesis objects.`;
   // Candidate tool sets per vuln class — the realistic options the engine can
   // pick among. Used by selectToolRL to let learned success rates choose the
   // best performer rather than always firing the hardcoded default.
+  // Candidates beyond the original tool are catalog tools (server/src/lib/hunter/
+  // kali-catalog.ts) that are only registered into mergedTools when checkBinarySync
+  // actually finds the binary installed — so these entries are harmless no-ops on a
+  // box that doesn't have them (runTool returns {error:"Unknown tool"}, scored as a
+  // plain non-finding) and real added diversity on a box that does.
   private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
     sqli:             ["sqlmap", "nuclei", "curl_probe"],
-    xss:              ["dalfox", "nuclei", "curl_probe"],
+    xss:              ["dalfox", "xsstrike", "nuclei", "curl_probe"],
     ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
     lfi:              ["nuclei", "curl_probe"],
     rce:              ["nuclei", "curl_probe"],
     cors:             ["corsy", "curl_probe", "nuclei"],
     nosqli:           ["nosqlmap", "nuclei"],
     csrf:             ["curl_probe", "nuclei"],
-    idor:             ["curl_probe", "nuclei"],
+    idor:             ["curl_probe", "nuclei", "arjun"],
     info_disclosure:  ["curl_probe", "nuclei"],
-    auth_bypass:      ["jwt_tool", "nuclei", "curl_probe"],
+    auth_bypass:      ["jwt_tool", "nuclei", "curl_probe", "nomore403"],
     misconfig:        ["nikto", "nuclei"],
     xxe:              ["nuclei", "curl_probe"],
     security_headers: ["curl_probe", "nuclei"],
-    open_redirect:    ["nuclei", "curl_probe"],
+    open_redirect:    ["nuclei", "curl_probe", "crlfuzz"],
+    hidden_endpoints: ["ffuf", "gobuster", "feroxbuster", "wfuzz"],
+    hidden_params:    ["ffuf", "arjun"],
+    crlf_injection:   ["curl_probe", "crlfuzz"],
   };
 
   /**
@@ -2780,19 +2788,23 @@ Return ONLY valid JSON array of hypothesis objects.`;
     // Rotation per vuln class — each entry is an ordered list of tool alternatives
     const TOOL_ROTATION: Record<string, string[]> = {
       sqli:             ["sqlmap", "nuclei", "curl_probe"],
-      xss:              ["nuclei", "curl_probe"],
+      xss:              ["nuclei", "xsstrike", "curl_probe"],
       ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
       lfi:              ["nuclei", "curl_probe"],
       rce:              ["nuclei", "curl_probe"],
       cors:             ["corsy", "curl_probe", "nuclei"],
       nosqli:           ["nosqlmap", "nuclei"],
       csrf:             ["curl_probe", "nuclei"],
-      idor:             ["curl_probe", "nuclei"],
+      idor:             ["curl_probe", "nuclei", "arjun"],
       info_disclosure:  ["curl_probe", "nuclei"],
-      auth_bypass:      ["nuclei", "curl_probe"],
+      auth_bypass:      ["nuclei", "curl_probe", "nomore403"],
       misconfig:        ["nikto", "nuclei"],
       xxe:              ["nuclei", "curl_probe"],
       security_headers: ["curl_probe", "nuclei"],
+      open_redirect:    ["nuclei", "curl_probe", "crlfuzz"],
+      hidden_endpoints: ["ffuf", "gobuster", "feroxbuster", "wfuzz"],
+      hidden_params:    ["ffuf", "arjun"],
+      crlf_injection:   ["curl_probe", "crlfuzz"],
     };
     const rotation = TOOL_ROTATION[hypothesis.vulnClass] || ["nuclei", "curl_probe"];
     const currentTool = this.selectTool(hypothesis.vulnClass);
