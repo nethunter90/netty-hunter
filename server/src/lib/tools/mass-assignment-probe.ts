@@ -14,7 +14,7 @@ interface MassAssignmentVuln {
 interface MassAssignmentResult {
   endpointsTested: number;
   vulns: MassAssignmentVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const MARKER = "netty_ma_test";
@@ -274,6 +274,7 @@ class MassAssignmentProber {
       reasoning: v.detail,
       confidence: v.reflected ? 0.75 : 0.6,
       priority: v.severity === "critical" ? 9 : v.severity === "high" ? 7 : 5,
+      endpoint: v.endpoint,
     }));
 
     const endpointsTested = UPDATE_ENDPOINTS.length + REGISTER_ENDPOINTS.length;

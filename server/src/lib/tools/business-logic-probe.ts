@@ -13,7 +13,7 @@ interface BizLogicVuln {
 
 interface BizLogicResult {
   vulns: BizLogicVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const CART_PATHS = [
@@ -282,6 +282,11 @@ class BusinessLogicProber {
         reasoning: `Endpoint ${v.endpoint} accepted a ${v.technique} payload (HTTP ${v.responseStatus}). ${v.detail}`,
         confidence: 0.7,
         priority: v.severity === "critical" ? 9 : 7,
+        // The specific endpoint this technique was actually confirmed against —
+        // HunterEngine previously discarded this and pointed re-verification at
+        // the hunt's root URL instead, so a real, already-proven finding (e.g.
+        // /api/apply-coupon) could never be successfully reprobed.
+        endpoint: v.endpoint,
       }));
 
     logger.info(`[business-logic-probe] found ${vulns.filter((v) => v.accepted).length} accepted business-logic vulnerabilities`);

@@ -1599,9 +1599,10 @@ export class HunterEngine extends EventEmitter {
           const paramResult = await parameterDiscovery.discover(this.state.targetUrl, this.authHeaders);
           for (const hyp of paramResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "parameter_discovery", data: { reasoning: hyp.reasoning, targetUrl: hyp.targetUrl }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (paramResult.discovered.length > 0) {
@@ -1616,9 +1617,10 @@ export class HunterEngine extends EventEmitter {
           const oauthResult = await oauthProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of oauthResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "oauth_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (oauthResult.vulns.length > 0) {
@@ -1633,9 +1635,10 @@ export class HunterEngine extends EventEmitter {
           const maResult = await massAssignmentProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of maResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "mass_assignment_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (maResult.vulns.length > 0) {
@@ -1650,9 +1653,10 @@ export class HunterEngine extends EventEmitter {
           const bizResult = await businessLogicProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of bizResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "business_logic_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (bizResult.vulns.length > 0) {
@@ -1667,9 +1671,10 @@ export class HunterEngine extends EventEmitter {
           const tfaResult = await twoFactorBypassProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of tfaResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "two_factor_bypass_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (tfaResult.vulns.length > 0) {
@@ -1683,10 +1688,15 @@ export class HunterEngine extends EventEmitter {
         try {
           const jwtResult = await jwtConfusionProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of jwtResult.hypotheses) {
+            // No per-vuln endpoint here — JWT confusion is a token-validation-
+            // mechanism flaw, not tied to one specific URL, so the root target
+            // is the correct (only) anchor. Evidence is still preserved below,
+            // unlike before.
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "jwt_confusion_probe", data: { detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (jwtResult.vulns.length > 0) {
@@ -1701,9 +1711,10 @@ export class HunterEngine extends EventEmitter {
           const orResult = await openRedirectChainProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of orResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "open_redirect_chain_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (orResult.vulns.length > 0) {
@@ -1718,9 +1729,10 @@ export class HunterEngine extends EventEmitter {
           const xxeResult = await blindXXEProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of xxeResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "blind_xxe_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (xxeResult.vulns.length > 0) {

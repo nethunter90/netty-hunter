@@ -13,7 +13,7 @@ interface RedirectVuln {
 
 interface OpenRedirectResult {
   vulns: RedirectVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const REDIRECT_PARAMS = [
@@ -214,7 +214,7 @@ class OpenRedirectChainProber {
   private buildHypotheses(
     vulns: RedirectVuln[],
     hasOAuthEndpoints: boolean
-  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }> {
+  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> {
     if (vulns.length === 0) return [];
 
     const hypotheses: Array<{
@@ -222,15 +222,20 @@ class OpenRedirectChainProber {
       reasoning: string;
       confidence: number;
       priority: number;
+      endpoint: string;
     }> = [];
 
-    // Base open_redirect hypothesis
+    // Base open_redirect hypothesis — these are aggregate hypotheses across
+    // possibly several vulnerable params/URLs, so there's no single "the"
+    // endpoint; the first matching vuln's URL is used as a representative,
+    // already-confirmed-vulnerable anchor rather than the hunt's root URL.
     const paramSample = [...new Set(vulns.map(v => v.param))].slice(0, 3).join(", ");
     hypotheses.push({
       vulnClass: "open_redirect",
       reasoning: `Open redirect confirmed on ${vulns.length} parameter(s) (${paramSample}) — attacker can redirect victims to arbitrary external domains.`,
       confidence: 0.75,
       priority: 7,
+      endpoint: vulns[0].url,
     });
 
     // OAuth misconfiguration chain
@@ -241,6 +246,7 @@ class OpenRedirectChainProber {
         reasoning: `Open redirect on param(s) ${[...new Set(chainableVulns.map(v => v.param))].join(", ")} is chainable with OAuth endpoints detected on target — redirect_uri bypass may allow OAuth token theft.`,
         confidence: 0.7,
         priority: 9,
+        endpoint: chainableVulns[0].url,
       });
     }
 
@@ -253,6 +259,7 @@ class OpenRedirectChainProber {
         reasoning: `Open redirect on param(s) ${xssParams} accepts javascript: or data: URIs — direct XSS execution possible via redirect chain.`,
         confidence: 0.8,
         priority: 9,
+        endpoint: xssVulns[0].url,
       });
     }
 

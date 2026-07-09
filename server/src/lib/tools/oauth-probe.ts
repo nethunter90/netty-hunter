@@ -11,7 +11,7 @@ interface OAuthVuln {
 interface OAuthProbeResult {
   oauthEndpointsFound: string[];
   vulns: OAuthVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const axiosOpts = {
@@ -277,6 +277,7 @@ class OAuthProber {
       reasoning: v.detail,
       confidence: v.severity === "high" ? 0.8 : 0.65,
       priority: v.severity === "high" ? 9 : 7,
+      endpoint: v.endpoint,
     }));
 
     return { oauthEndpointsFound, vulns, hypotheses };

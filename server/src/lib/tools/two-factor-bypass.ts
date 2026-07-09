@@ -10,7 +10,7 @@ interface TwoFAVuln {
 
 interface TwoFAResult {
   vulns: TwoFAVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const TWOFA_ENDPOINTS = [
@@ -64,13 +64,17 @@ function hasUserData(data: unknown): boolean {
 
 function toHypothesis(
   technique: string,
-  severity: "critical" | "high"
-): { vulnClass: string; reasoning: string; confidence: number; priority: number } {
+  severity: "critical" | "high",
+  endpoint: string
+): { vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string } {
   return {
     vulnClass: "auth_bypass",
     reasoning: `2FA bypass via ${technique} — authentication second factor can be circumvented`,
     confidence: severity === "critical" ? 0.8 : 0.7,
     priority: severity === "critical" ? 10 : 8,
+    // The specific endpoint this bypass was actually confirmed against —
+    // previously discarded, forcing re-verification to guess at the root URL.
+    endpoint,
   };
 }
 
@@ -229,7 +233,7 @@ class TwoFactorBypassProber {
       }
     }
 
-    const hypotheses = vulns.map((v) => toHypothesis(v.technique, v.severity));
+    const hypotheses = vulns.map((v) => toHypothesis(v.technique, v.severity, v.endpoint));
 
     return { vulns, hypotheses };
   }

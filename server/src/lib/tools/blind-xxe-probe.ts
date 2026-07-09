@@ -14,7 +14,7 @@ interface XXEVuln {
 interface XXEProbeResult {
   xmlEndpointsFound: string[];
   vulns: XXEVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const XML_PROBE_PATHS = [
@@ -109,7 +109,7 @@ class BlindXXEProber {
         const detail = `OOB callback received for OOB DTD XXE at ${endpoint} (beacon: ${beaconId})`;
         logger.warn("[BlindXXEProber] XXE vuln detected (oob_dtd)", { endpoint, oobReceived, severity: "critical" });
         result.vulns.push({ endpoint, technique: "oob_dtd", beaconId, oobReceived, severity: "critical", detail });
-        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10, endpoint });
       } else {
         logger.debug("[BlindXXEProber] oob_dtd: no OOB callback", { endpoint });
       }
@@ -140,7 +140,7 @@ class BlindXXEProber {
         const detail = `OOB callback received for parameter entity XXE at ${endpoint} (beacon: ${beaconId})`;
         logger.warn("[BlindXXEProber] XXE vuln detected (parameter_entity)", { endpoint, oobReceived, severity: "critical" });
         result.vulns.push({ endpoint, technique: "parameter_entity", beaconId, oobReceived, severity: "critical", detail });
-        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10, endpoint });
       } else {
         logger.debug("[BlindXXEProber] parameter_entity: no OOB callback", { endpoint });
       }
@@ -175,7 +175,7 @@ class BlindXXEProber {
         const detail = `Cloud metadata leaked via SSRF-via-XXE at ${endpoint} — instance metadata in response body`;
         logger.warn("[BlindXXEProber] XXE vuln detected (ssrf_via_xxe)", { endpoint, ssrfLeak, severity: "critical" });
         result.vulns.push({ endpoint, technique: "ssrf_via_xxe", beaconId, oobReceived: true, severity: "critical", detail });
-        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10 });
+        result.hypotheses.push({ vulnClass: "xxe", reasoning: detail, confidence: 0.9, priority: 10, endpoint });
       } else {
         logger.debug("[BlindXXEProber] ssrf_via_xxe: no metadata leak", { endpoint });
       }
