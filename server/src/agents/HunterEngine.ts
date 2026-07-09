@@ -2471,7 +2471,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
             const nextStep = chain.steps.find(s => s.stepNumber === matchingStep.stepNumber + 1);
             if (!nextStep) continue;
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: nextStep.vulnClass, targetUrl: this.state.targetUrl,
+              // Inherit the parent's actual exploited endpoint+query (not the bare
+              // this.state.targetUrl) — otherwise the probe, persisted affectedUrl,
+              // and VerifierAgent's L2 reprobe all hit the homepage instead of the
+              // real injectable URL, so chain-seeded findings can never verify.
+              id: uuidv4(), vulnClass: nextStep.vulnClass, targetUrl: hypothesis.targetUrl,
               reasoning: `Exploit chain [${chain.name}] step ${nextStep.stepNumber}: ${nextStep.description}`,
               confidence: 0.65, priority: 9,
               evidence: [], status: "pending", createdAt: Date.now(),
