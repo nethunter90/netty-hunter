@@ -102,6 +102,11 @@ const io = new SocketServer(httpServer, {
 
 // Make io available to routes
 app.set("io", io);
+// Also make it reachable from singleton modules with no request context (e.g.
+// governance/core-governance.ts's broadcast(), governance-immunizer.ts) —
+// core-governance.ts already checked `(global as any).io` but nothing ever
+// set it, so that broadcast path silently no-op'd since it was written.
+(global as any).io = io;
 
 // Forward egress route-change events to all connected sockets
 egressAllocator.setSocketEmitter((event, data) => io.emit(event, data));

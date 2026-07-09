@@ -9,6 +9,15 @@ import {
 } from './types';
 import { GOVERNANCE_PILLARS } from './pillars';
 
+// Below these absolute sample counts, a percentage-point delta is noise, not
+// signal — e.g. baseline=0,recent=1 swings a rate 100pp on a single decision.
+// This platform's usage is episodic (sporadic solo hunts), not continuous
+// high-volume traffic, so a quiet baseline window is the NORMAL case, not
+// evidence of anything. Below the floor, drift computation returns "no
+// signal" rather than a wild, meaningless percentage.
+const MIN_SAMPLE_FOR_VERDICT_DRIFT = 5;
+const MIN_BASELINE_ACTIVITY_FOR_PILLAR_DRIFT = 3;
+
 export class DriftDetector {
   private snapshots: GovernanceSnapshot[] = [];
   private configChanges: Array<{ timestamp: Date; change: string; severity: 'low' | 'medium' | 'high' | 'critical' }> = [];
@@ -139,7 +148,14 @@ export class DriftDetector {
     for (const pillarName of Object.keys(GOVERNANCE_PILLARS) as GovernancePillar[]) {
       const recentActivity = this.aggregatePillarActivity(recentSnapshots, pillarName);
       const baselineActivity = this.aggregatePillarActivity(baselineSnapshots, pillarName);
-      const change = this.calculateRateChange(baselineActivity, 1, recentActivity, 1);
+      // A pillar going from 0 baseline activity to anything (or vice versa) is
+      // the normal shape of episodic, sporadic hunting — not evidence that
+      // active enforcement was silenced. Only compute a percentage once the
+      // pillar had enough baseline activity to establish a real pattern to
+      // drift away from.
+      const change = baselineActivity >= MIN_BASELINE_ACTIVITY_FOR_PILLAR_DRIFT
+        ? ((recentActivity - baselineActivity) / baselineActivity) * 100
+        : 0;
       pillarDrift.push({
         pillar: pillarName,
         activityChange: change,
@@ -219,6 +235,9 @@ export class DriftDetector {
     baselineCount: number, baselineTotal: number,
     recentCount: number, recentTotal: number
   ): number {
+    if (baselineTotal < MIN_SAMPLE_FOR_VERDICT_DRIFT || recentTotal < MIN_SAMPLE_FOR_VERDICT_DRIFT) {
+      return 0;
+    }
     const baselineRate = baselineTotal > 0 ? (baselineCount / baselineTotal) * 100 : 0;
     const recentRate = recentTotal > 0 ? (recentCount / recentTotal) * 100 : 0;
     return recentRate - baselineRate;

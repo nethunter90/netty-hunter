@@ -21,6 +21,7 @@ import ToolsPage from './pages/Tools';
 import TerminalPage from './pages/TerminalPage';
 import { useHuntEvents } from './lib/huntEventBridge';
 import { useOrchestrationEvents } from './lib/orchestrationEventBridge';
+import { useGovernanceAlerts } from './lib/governanceAlertBridge';
 
 interface User {
   id: number;
@@ -39,6 +40,7 @@ function AppLayout({ user, setUser }: { user: User; setUser: (u: User | null) =>
   // mounted, and returning to a panel restores the full prior stream.
   useHuntEvents();
   useOrchestrationEvents();
+  useGovernanceAlerts();
 
   return (
     <div className="flex h-screen bg-hack-bg overflow-hidden">

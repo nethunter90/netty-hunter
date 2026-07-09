@@ -186,6 +186,17 @@ class GovernanceImmunizer {
       confidence: 1.0,
     }).catch(() => {});
 
+    // huntCortex has no subscriber for these signal types anywhere in the
+    // codebase, so a detected drift event was previously loud in the server
+    // console/DB but invisible to the operator. This is deliberately a
+    // passive, informational notification only — it does not pause, block, or
+    // otherwise restrict any hunt. A distinct event name (not the generic
+    // governance:event decision broadcast, which now fires on every routine
+    // scope check) keeps this rare and meaningful rather than noisy.
+    try {
+      (global as any).io?.emit('governance:drift_alert', { ...payload, timestamp: Date.now() });
+    } catch { /* non-critical */ }
+
     if (action === 'full_reset') {
       console.warn('[GovernanceImmunizer] FULL_RESET — rebuilding baseline from live GOVERNANCE_PILLARS constants');
       // Previously this recomputed the hash from the SAME in-memory object's own
