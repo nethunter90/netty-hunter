@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Target, Plus, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, CalendarClock, Bell, PlusCircle, MinusCircle, AlertTriangle } from "lucide-react";
+import { Target, Plus, TrendingUp, Clock, DollarSign, RefreshCw, Trash2, Lock, CalendarClock, Bell, PlusCircle, MinusCircle, AlertTriangle, Shield } from "lucide-react";
 import { bountyAPI } from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -28,6 +28,7 @@ interface Program {
   tags: string[];
   authConfig?: AuthConfig;
   scheduleInterval?: number;
+  wafBypassPolicy?: "allowed" | "disallowed" | "unspecified";
 }
 
 interface ChangeRecord {
@@ -73,10 +74,12 @@ export default function Programs() {
   const [authForm, setAuthForm] = useState<AuthConfig>({ authType: "form" });
   const [savingAuth, setSavingAuth] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState<number | null>(null);
+  const [savingWafPolicy, setSavingWafPolicy] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "", platform: "hackerone", programHandle: "",
     scope: "", outOfScope: "", maxPayout: "5000", avgPayout: "500",
     responseTime: "72", tags: "",
+    wafBypassPolicy: "unspecified" as "allowed" | "disallowed" | "unspecified",
   });
 
   const load = () => {
@@ -118,6 +121,7 @@ export default function Programs() {
         avgPayout: parseFloat(form.avgPayout) || 0,
         responseTime: parseFloat(form.responseTime) || 72,
         tags: form.tags.split(",").map(t => t.trim()).filter(Boolean),
+        wafBypassPolicy: form.wafBypassPolicy,
       });
       toast.success("Program added");
       setShowForm(false);
@@ -165,6 +169,19 @@ export default function Programs() {
       toast.error("Failed to update schedule");
     } finally {
       setSavingSchedule(null);
+    }
+  };
+
+  const setWafPolicy = async (id: number, policy: "allowed" | "disallowed" | "unspecified") => {
+    setSavingWafPolicy(id);
+    try {
+      await bountyAPI.updateProgram(id, { wafBypassPolicy: policy });
+      toast.success(`WAF bypass policy set to ${policy}`);
+      load();
+    } catch {
+      toast.error("Failed to update WAF bypass policy");
+    } finally {
+      setSavingWafPolicy(null);
     }
   };
 
@@ -287,6 +304,16 @@ export default function Programs() {
                   <label className="hack-label">Tags (comma-separated)</label>
                   <input className="hack-input w-full" value={form.tags} onChange={e => setForm({...form, tags: e.target.value})} placeholder="web, api, fintech" />
                 </div>
+                <div>
+                  <label className="hack-label">WAF Bypass Policy</label>
+                  <select className="hack-input w-full" value={form.wafBypassPolicy}
+                    onChange={e => setForm({...form, wafBypassPolicy: e.target.value as typeof form.wafBypassPolicy})}>
+                    <option value="unspecified">Unspecified (default)</option>
+                    <option value="allowed">Explicitly allowed</option>
+                    <option value="disallowed">Explicitly disallowed</option>
+                  </select>
+                  <div className="text-[9px] text-hack-dim font-mono mt-1">What this program's rules say about WAF evasion — "disallowed" blocks it even if enabled per-hunt.</div>
+                </div>
               </div>
               <div className="col-span-3 flex justify-end gap-2">
                 <button type="button" onClick={() => setShowForm(false)} className="hack-btn">CANCEL</button>
@@ -346,6 +373,11 @@ export default function Programs() {
                             <CalendarClock className="w-2.5 h-2.5" /> every {prog.scheduleInterval}h
                           </span>
                         )}
+                        {prog.wafBypassPolicy && prog.wafBypassPolicy !== "unspecified" && (
+                          <span className={`flex items-center gap-1 text-[10px] font-mono ${prog.wafBypassPolicy === "disallowed" ? "text-hack-red" : "text-hack-green"}`}>
+                            <Shield className="w-2.5 h-2.5" /> WAF bypass {prog.wafBypassPolicy}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -365,6 +397,21 @@ export default function Programs() {
                           <button key={h} onClick={() => setSchedule(prog.id, h)}
                             className={`block w-full text-left px-3 py-1.5 text-[10px] font-mono hover:bg-hack-muted transition-colors ${(prog.scheduleInterval ?? 0) === h ? "text-hack-accent" : "text-hack-dim"}`}>
                             {h === 0 ? "Disabled" : h < 24 ? `Every ${h}h` : h === 24 ? "Daily" : h === 48 ? "Every 2d" : "Weekly"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="relative group/waf">
+                      <button title="Set WAF bypass policy for this program's rules of engagement"
+                        className={`hack-btn p-1.5 ${prog.wafBypassPolicy === "disallowed" ? "text-hack-red border-hack-red/30" : prog.wafBypassPolicy === "allowed" ? "text-hack-green border-hack-green/30" : ""}`}
+                        disabled={savingWafPolicy === prog.id}>
+                        <Shield className="w-3 h-3" />
+                      </button>
+                      <div className="absolute right-0 top-full mt-1 bg-hack-surface border border-hack-border rounded shadow-lg z-10 hidden group-hover/waf:block min-w-[160px]">
+                        {(["unspecified", "allowed", "disallowed"] as const).map(p => (
+                          <button key={p} onClick={() => setWafPolicy(prog.id, p)}
+                            className={`block w-full text-left px-3 py-1.5 text-[10px] font-mono hover:bg-hack-muted transition-colors ${(prog.wafBypassPolicy ?? "unspecified") === p ? "text-hack-accent" : "text-hack-dim"}`}>
+                            {p === "unspecified" ? "Unspecified (default)" : p === "allowed" ? "Explicitly allowed" : "Explicitly disallowed"}
                           </button>
                         ))}
                       </div>
