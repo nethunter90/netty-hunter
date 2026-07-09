@@ -29,7 +29,7 @@ interface ChangeReport {
   changedEndpoints: Array<{ url: string; changes: string[] }>;
   removedEndpoints: string[];
   newHeaders: Array<{ url: string; header: string; value: string }>;
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const COMMON_PATHS = [
@@ -134,6 +134,7 @@ class ChangeDetector {
             reasoning: `New endpoint appeared since last scan: ${snap.url} (HTTP ${snap.statusCode})`,
             confidence: 0.65,
             priority: 7,
+            endpoint: snap.url,
           });
         }
         continue;
@@ -160,6 +161,7 @@ class ChangeDetector {
               reasoning: `New CORS header detected on ${snap.url}: ${header}: ${value}`,
               confidence: 0.7,
               priority: 6,
+              endpoint: snap.url,
             });
           }
         }
@@ -173,6 +175,7 @@ class ChangeDetector {
             reasoning: `Content change detected at ${snap.url}: ${changes.join(", ")}. May indicate new exposed data.`,
             confidence: 0.55,
             priority: 5,
+            endpoint: snap.url,
           });
         }
       }

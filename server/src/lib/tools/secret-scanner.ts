@@ -16,7 +16,7 @@ export interface SecretMatch {
 export interface SecretScanResult {
   matches: SecretMatch[];
   urlsScanned: number;
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const SECRET_PATTERNS: Array<{ name: string; regex: RegExp; redactFrom: number }> = [
@@ -98,6 +98,9 @@ class SecretScanner {
       reasoning: `Secret scanning found ${unique.length} potential credential leak(s) in ${base}: ${unique.map(m => m.type).join(", ")}`,
       confidence: Math.min(0.9, 0.5 + unique.length * 0.1),
       priority: unique.some(m => m.type.includes("aws") || m.type === "private_key_pem") ? 10 : 8,
+      // Representative anchor — the first secret's actual URL, not the bare
+      // base — since re-verification needs a real page to fetch.
+      endpoint: unique[0].url,
     }] : [];
 
     if (unique.length > 0) {

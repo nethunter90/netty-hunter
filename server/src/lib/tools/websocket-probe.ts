@@ -11,7 +11,7 @@ interface WSVuln {
 interface WSProbeResult {
   endpointsFound: string[];
   vulns: WSVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const WS_PATHS = [
@@ -205,6 +205,7 @@ class WebSocketProber {
           reasoning: `WebSocket endpoint ${vuln.endpoint} accepts connections from arbitrary origins. A malicious page can initiate cross-origin WebSocket connections and perform CSRF-like actions.`,
           confidence: 0.7,
           priority: 8,
+          endpoint: vuln.endpoint,
         });
       } else if (vuln.issue === "unauthenticated_access") {
         result.hypotheses.push({
@@ -212,6 +213,7 @@ class WebSocketProber {
           reasoning: `WebSocket endpoint ${vuln.endpoint} accepts unauthenticated connections. Sensitive data or functionality may be accessible without valid credentials.`,
           confidence: 0.75,
           priority: 9,
+          endpoint: vuln.endpoint,
         });
       } else if (vuln.issue === "reflection") {
         result.hypotheses.push({
@@ -219,6 +221,7 @@ class WebSocketProber {
           reasoning: `WebSocket endpoint ${vuln.endpoint} reflects input back to the client verbatim. This may be exploitable for reflected or stored XSS via WebSocket messages.`,
           confidence: 0.65,
           priority: 7,
+          endpoint: vuln.endpoint,
         });
       }
     }

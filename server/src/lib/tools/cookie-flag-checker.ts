@@ -17,7 +17,7 @@ interface CookieIssue {
 interface CookieCheckResult {
   cookiesFound: number;
   issues: CookieIssue[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const SESSION_COOKIE_KEYWORDS = ["session", "token", "auth", "jwt", "sid", "csrf", "connect.sid"];
@@ -173,8 +173,8 @@ class CookieFlagChecker {
 
   private buildHypotheses(
     issues: CookieIssue[]
-  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }> {
-    const hyps: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }> = [];
+  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> {
+    const hyps: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> = [];
     const added = new Set<string>();
 
     for (const issue of issues) {
@@ -185,6 +185,7 @@ class CookieFlagChecker {
           reasoning: "Session cookie missing HttpOnly flag — XSS could steal session",
           confidence: 0.6,
           priority: 6,
+          endpoint: issue.url,
         });
       }
       if (issue.isSessionCookie && issue.missingFlags.includes("Secure") && !added.has("info_disclosure")) {
@@ -194,6 +195,7 @@ class CookieFlagChecker {
           reasoning: "Session cookie missing Secure flag — session may be transmitted over unencrypted HTTP",
           confidence: 0.65,
           priority: 6,
+          endpoint: issue.url,
         });
       }
       if (issue.missingFlags.includes("SameSite") && !added.has("csrf")) {
@@ -203,6 +205,7 @@ class CookieFlagChecker {
           reasoning: "Cookie missing SameSite attribute — cross-site request forgery may be possible",
           confidence: 0.55,
           priority: 5,
+          endpoint: issue.url,
         });
       }
     }

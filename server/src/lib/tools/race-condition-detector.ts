@@ -17,7 +17,7 @@ interface RaceResult {
 interface RaceProbeResult {
   endpointsTested: number;
   vulns: RaceResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const STATE_CHANGE_PATHS = [
@@ -180,6 +180,7 @@ class RaceConditionDetector {
       reasoning: vuln.detail,
       confidence: vuln.isDuplicate ? 0.8 : 0.55,
       priority: vuln.severity === "critical" ? 9 : 7,
+      endpoint: vuln.endpoint,
     }));
 
     return {

@@ -12,7 +12,7 @@ interface CRLFVuln {
 
 interface CRLFProbeResult {
   vulns: CRLFVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const CRLF_PAYLOADS = [
@@ -90,6 +90,7 @@ class CRLFProber {
         reasoning: vuln.detail,
         confidence: headerReflected ? 0.8 : 0.55,
         priority: 7,
+        endpoint: vuln.url,
       };
     });
 

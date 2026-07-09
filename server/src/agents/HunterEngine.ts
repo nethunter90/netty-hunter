@@ -1350,9 +1350,10 @@ export class HunterEngine extends EventEmitter {
           if (secretResult.matches.length > 0) {
             for (const hyp of secretResult.hypotheses) {
               this.state.hypotheses.push({
-                id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+                id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
                 reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-                evidence: [], status: "pending", createdAt: Date.now(),
+                evidence: [{ id: uuidv4(), source: "secret_scanner", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+                status: "pending", createdAt: Date.now(),
               });
             }
             this.emit("hunt:secrets_found", {
@@ -1379,11 +1380,11 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(),
               vulnClass: hyp.vulnClass,
-              targetUrl: this.state.targetUrl,
+              targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning,
               confidence: hyp.confidence,
               priority: hyp.priority,
-              evidence: [],
+              evidence: [{ id: uuidv4(), source: "change_detector", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending",
               createdAt: Date.now(),
             });
@@ -1406,9 +1407,10 @@ export class HunterEngine extends EventEmitter {
           const wsResult = await webSocketProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of wsResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "websocket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (wsResult.vulns.length > 0) {
@@ -1423,9 +1425,10 @@ export class HunterEngine extends EventEmitter {
           const bucketResult = await cloudBucketProber.probe(this.state.targetUrl);
           for (const hyp of bucketResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "cloud_bucket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (bucketResult.buckets.length > 0) {
@@ -1445,9 +1448,10 @@ export class HunterEngine extends EventEmitter {
           const ppResult = await prototypePollutionProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of ppResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "prototype_pollution_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (ppResult.vulns.length > 0) {
@@ -1462,9 +1466,10 @@ export class HunterEngine extends EventEmitter {
           const raceResult = await raceConditionDetector.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of raceResult.hypotheses) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [], status: "pending", createdAt: Date.now(),
+              evidence: [{ id: uuidv4(), source: "race_condition_detector", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
             });
           }
           if (raceResult.vulns.length > 0) {
@@ -1478,7 +1483,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of hhResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "host_header_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (hhResult.vulns.length > 0) this.emit("hunt:host_header", { sessionId: this.state.sessionId, count: hhResult.vulns.length, techniques: hhResult.vulns.map(v => v.technique) });
         } catch (err) { logger.debug("[HunterEngine] Host header probe skipped", { err: String(err) }); }
@@ -1489,7 +1494,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of crlfResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "crlf_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (crlfResult.vulns.length > 0) this.emit("hunt:crlf", { sessionId: this.state.sessionId, count: crlfResult.vulns.length });
         } catch (err) { logger.debug("[HunterEngine] CRLF probe skipped", { err: String(err) }); }
@@ -1500,7 +1505,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders);
           for (const hyp of cookieResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "cookie_flag_checker", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (cookieResult.issues.length > 0) this.emit("hunt:cookie_flags", { sessionId: this.state.sessionId, issues: cookieResult.issues.length, sessionCookies: cookieResult.issues.filter(i => i.isSessionCookie).length });
         } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
@@ -1511,7 +1516,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders });
           for (const hyp of crawlResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "deep_crawl", data: { endpoint: hyp.targetUrl, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (crawlResult.endpointsFound.length > 0) {
             this.emit("hunt:endpoints_discovered", { sessionId: this.state.sessionId, count: crawlResult.endpointsFound.length, endpoints: crawlResult.endpointsFound.slice(0, 10).map(e => e.url), pagesVisited: crawlResult.pagesVisited });

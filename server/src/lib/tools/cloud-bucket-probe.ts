@@ -14,7 +14,7 @@ interface BucketResult {
 
 interface BucketProbeResult {
   buckets: BucketResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 class CloudBucketProber {
@@ -208,6 +208,7 @@ class CloudBucketProber {
       reasoning: bucket.detail,
       confidence: 0.9,
       priority: 10,
+      endpoint: bucket.bucketUrl,
     }));
 
     return { buckets, hypotheses };

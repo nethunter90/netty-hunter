@@ -12,7 +12,7 @@ interface HostHeaderVuln {
 
 interface HostHeaderProbeResult {
   vulns: HostHeaderVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 class HostHeaderProber {
@@ -205,6 +205,7 @@ class HostHeaderProber {
       reasoning: vuln.detail,
       confidence: vuln.severity === "high" ? 0.75 : 0.6,
       priority: vuln.severity === "high" ? 8 : 6,
+      endpoint: vuln.url,
     }));
 
     return { vulns, hypotheses };

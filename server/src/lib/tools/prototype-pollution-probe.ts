@@ -14,7 +14,7 @@ interface PollutionResult {
 interface PollutionProbeResult {
   tested: number;
   vulns: PollutionResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
 }
 
 const MARKER = "__pp_netty__";
@@ -177,6 +177,7 @@ class PrototypePollutionProber {
       reasoning: v.detail,
       confidence: v.reflected ? 0.75 : 0.5,
       priority: 8,
+      endpoint: v.url,
     }));
 
     return {
