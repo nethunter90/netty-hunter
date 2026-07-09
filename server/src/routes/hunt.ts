@@ -47,6 +47,7 @@ const StartHuntSchema = z.object({
   corpusEnrichment: z.boolean().optional().default(false),
   proxyEnabled: z.boolean().optional().default(false),
   wafBypassEnabled: z.boolean().optional().default(false),
+  customVulnPriority: z.array(z.string()).max(15).optional(),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled } = parsed.data;
+  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, customVulnPriority } = parsed.data;
 
   // ── Single-flight gate (cost-safety core) ───────────────────────────────────
   // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
@@ -136,12 +137,14 @@ router.post("/start", async (req: Request, res: Response) => {
   }
 
   try {
-    if (mode === "backward" && goal) {
-      // Backward hunt: build plan then immediately execute via HunterEngine
+    if (mode === "backward" && (goal || customVulnPriority?.length)) {
+      // Backward hunt: build plan (goal-matched, or a direct user-ordered
+      // vuln-class priority list) then immediately execute via HunterEngine
       const plan = await backwardHunt.createPlan({
         campaignId: campaign.id,
-        objective: goal,
+        objective: goal || "",
         targetUrl,
+        customVulnPriority,
       });
 
       // Auto-execute: seed HunterEngine with the plan's attack approaches as hypotheses

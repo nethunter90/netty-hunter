@@ -52,6 +52,7 @@ const RunOrchestrationSchema = z.object({
   }).optional(),
   proxyEnabled: z.boolean().optional().default(false),
   wafBypassEnabled: z.boolean().optional().default(false),
+  customVulnPriority: z.array(z.string()).max(15).optional(),
 });
 
 // ── Layer metadata endpoint ────────────────────────────────────────────────────

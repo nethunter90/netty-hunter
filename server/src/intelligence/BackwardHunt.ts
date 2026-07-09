@@ -140,24 +140,39 @@ export class BackwardHuntEngine {
     campaignId: number;
     objective: string;
     targetUrl: string;
+    /** Bypasses objective matching entirely — a user-ordered vuln-class priority
+     *  list becomes a synthetic single-node tree with one approach per class,
+     *  success rates assigned in descending order so getNextActions()'s existing
+     *  sort-by-success-rate preserves the exact order the user chose. */
+    customVulnPriority?: string[];
   }): Promise<BackwardPlan> {
     const planId = uuidv4();
+    let rootNode: AttackTreeNode;
+    let treeKey: string | null = null;
 
-    // Match objective to pre-built tree
-    const treeKey = this.matchObjective(params.objective);
-    let rootNode = ATTACK_TREE_LIBRARY[treeKey];
-
-    // If no pre-built tree, generate one via AI
-    if (!rootNode) {
-      rootNode = await this.generateAttackTree(params.objective, params.targetUrl);
+    if (params.customVulnPriority && params.customVulnPriority.length > 0) {
+      rootNode = this.buildCustomPriorityTree(params.customVulnPriority);
+      treeKey = "custom_priority";
+    } else {
+      // Match objective to a pre-built tree; if nothing matches confidently,
+      // generate a bespoke tree via AI instead of silently defaulting to an
+      // unrelated canned tree.
+      treeKey = this.matchObjective(params.objective);
+      rootNode = treeKey
+        ? ATTACK_TREE_LIBRARY[treeKey]
+        : await this.generateAttackTree(params.objective, params.targetUrl);
     }
 
     // Inject target URL into all nodes
     rootNode = this.injectTarget(rootNode, params.targetUrl);
 
+    const objective = params.customVulnPriority?.length
+      ? `Custom priority order: ${params.customVulnPriority.join(" > ")}`
+      : params.objective;
+
     const plan: BackwardPlan = {
       planId,
-      objective: params.objective,
+      objective,
       rootNode,
       currentNode: rootNode.id,
       budgetCheckpoint: 500,
@@ -170,14 +185,31 @@ export class BackwardHuntEngine {
     await db.insert(attackPlans).values({
       campaignId: params.campaignId,
       planUuid: planId,
-      goal: params.objective,
+      goal: objective,
       attackTree: rootNode as unknown as Record<string, unknown>,
       currentNode: rootNode.id,
       status: "active",
     });
 
-    logger.info("BackwardHunt: Plan created", { planId, objective: params.objective, treeKey });
+    logger.info("BackwardHunt: Plan created", { planId, objective, treeKey });
     return plan;
+  }
+
+  private buildCustomPriorityTree(vulnClasses: string[]): AttackTreeNode {
+    const approaches: AttackApproach[] = vulnClasses.map((vulnClass, i) => ({
+      id: `custom_${vulnClass}_${i}`,
+      description: `User-prioritized (rank ${i + 1}): ${vulnClass}`,
+      vulnClass,
+      estimatedSuccessRate: Math.max(0.05, 1 - i * 0.1),
+      tools: [],
+      payloads: [],
+    }));
+    return {
+      id: "root",
+      goal: `Custom priority order: ${vulnClasses.join(" > ")}`,
+      preconditions: [],
+      approaches,
+    };
   }
 
   async retrievePlan(planId: string): Promise<BackwardPlan | null> {
@@ -233,12 +265,26 @@ export class BackwardHuntEngine {
     return allApproaches.sort((a, b) => b.estimatedSuccessRate - a.estimatedSuccessRate);
   }
 
-  private matchObjective(objective: string): string {
-    const o = objective.toLowerCase();
-    if (o.includes("account") || o.includes("takeover") || o.includes("login")) return "full_account_compromise";
-    if (o.includes("data") || o.includes("exfil") || o.includes("pii")) return "data_exfiltration";
-    if (o.includes("rce") || o.includes("execute") || o.includes("shell")) return "rce";
-    return "data_exfiltration"; // default
+  // Word-boundary regex (not raw includes()) so "execution" matches "execut\w*"
+  // without a substring accident, and broader synonym coverage per tree. Checked
+  // in this priority order — RCE and account-takeover are more specific signals
+  // than the data-exfiltration catch-all, so they're tried first to avoid a goal
+  // like "steal data via RCE" landing on the wrong tree.
+  private static readonly TREE_KEYWORDS: Array<[string, RegExp]> = [
+    ["rce", /\b(rce|remote\s*code|execut\w*|shell|command\s*inject\w*|cmdi)\b/i],
+    ["full_account_compromise", /\b(account|takeover|login|credential\w*|session\s*hijack\w*|impersonat\w*)\b/i],
+    ["data_exfiltration", /\b(data|exfil\w*|pii|leak\w*|dump\w*|database|sensitive)\b/i],
+  ];
+
+  // Returns null (no confident match) instead of silently defaulting to an
+  // unrelated tree — the caller falls back to AI-generated bespoke tree
+  // generation in that case, rather than forcing every unmatched objective
+  // into "data_exfiltration".
+  private matchObjective(objective: string): string | null {
+    for (const [tree, pattern] of BackwardHuntEngine.TREE_KEYWORDS) {
+      if (pattern.test(objective)) return tree;
+    }
+    return null;
   }
 
   private async generateAttackTree(objective: string, targetUrl: string): Promise<AttackTreeNode> {

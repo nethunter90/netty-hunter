@@ -96,6 +96,10 @@ export interface OrchestrateParams {
   /** WAF bypass/evasion synthesis — opt-in per hunt; a program whose policy is
    *  "disallowed" hard-blocks it regardless (see WAFBypass.ts). Off by default. */
   wafBypassEnabled?: boolean;
+  /** Backward-mode only: bypasses goal-text matching entirely — an explicit,
+   *  user-ordered vuln-class priority list becomes the attack plan directly
+   *  (see BackwardHuntEngine.createPlan's customVulnPriority param). */
+  customVulnPriority?: string[];
 }
 
 export interface LayerStatus {
@@ -502,13 +506,15 @@ export class CampaignOrchestrator extends EventEmitter {
     let strategy: Record<string, unknown> = {};
     let attackPlan: Record<string, unknown> | null = null;
 
-    if (params.mode === "backward" && params.goal) {
-      // 3a. Backward: build goal-first attack plan
+    if (params.mode === "backward" && (params.goal || params.customVulnPriority?.length)) {
+      // 3a. Backward: build goal-first attack plan (or a direct user-ordered
+      // vuln-class priority plan, which bypasses goal-text matching entirely)
       try {
         const plan = await this.backwardHunt.createPlan({
           campaignId: this.state.campaignId!,
-          objective: params.goal,
+          objective: params.goal || "",
           targetUrl: params.targetUrl,
+          customVulnPriority: params.customVulnPriority,
         });
 
         // Count total approaches across all nodes to detect an empty tree.
