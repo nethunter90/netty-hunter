@@ -16,6 +16,7 @@ import { activeHunts } from "../lib/state/active-hunts";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 import { verifyAndPersistFinding, verifyPendingForSession } from "../lib/verification/verify-finding";
+import { HUNT_TOOLS } from "../lib/hunter/binary-check";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -542,25 +543,9 @@ router.post("/solve", async (req: Request, res: Response) => {
   }
 });
 
-// Tool preflight — check which hunt engine binaries are installed
-const HUNT_TOOLS: Array<{ name: string; binary: string; tier: "critical" | "important" | "optional" }> = [
-  { name: "nmap",      binary: "nmap",      tier: "critical"  },
-  { name: "nuclei",    binary: "nuclei",    tier: "critical"  },
-  { name: "ffuf",      binary: "ffuf",      tier: "critical"  },
-  { name: "sqlmap",    binary: "sqlmap",    tier: "critical"  },
-  { name: "nikto",     binary: "nikto",     tier: "important" },
-  { name: "gobuster",  binary: "gobuster",  tier: "important" },
-  { name: "whatweb",   binary: "whatweb",   tier: "important" },
-  { name: "dalfox",    binary: "dalfox",    tier: "important" },
-  { name: "tplmap",    binary: "tplmap",    tier: "important" },
-  { name: "jwt_tool",  binary: "jwt_tool",  tier: "optional"  },
-  { name: "xsser",     binary: "xsser",     tier: "optional"  },
-  { name: "ssrfmap",   binary: "ssrfmap",   tier: "optional"  },
-  { name: "nosqlmap",  binary: "nosqlmap",  tier: "optional"  },
-  { name: "corsy",     binary: "corsy",     tier: "optional"  },
-  { name: "smuggler",  binary: "smuggler",  tier: "optional"  },
-];
-
+// Tool preflight — check which hunt engine binaries are installed. HUNT_TOOLS is
+// imported from binary-check.ts, the same list the startup check uses, so this
+// on-demand endpoint (called by the Orchestration panel) can't drift from it.
 router.get("/tools/preflight", (_req: Request, res: Response) => {
   const results = HUNT_TOOLS.map(t => {
     try {

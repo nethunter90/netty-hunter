@@ -6,6 +6,11 @@
  * runs once at boot and logs a clear summary of which tools are present so the
  * operator knows the real capability surface up front. It does NOT fail the
  * boot — the platform runs (degraded) with only curl/axios.
+ *
+ * HUNT_TOOLS is the single source of truth for the engine's binary set — the
+ * routes/hunt.ts `/tools/preflight` endpoint (used by the Orchestration panel)
+ * reuses this same list instead of maintaining its own copy, so the two no
+ * longer drift out of sync.
  */
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -13,10 +18,23 @@ import logger from "../../utils/logger";
 
 const execFileAsync = promisify(execFile);
 
-// Tools the engine/solvers shell out to. "critical" ones materially reduce
-// coverage when absent; the rest are situational enhancers.
-const CRITICAL = ["nmap", "nuclei", "sqlmap", "ffuf"];
-const OPTIONAL = ["whatweb", "nikto", "gobuster", "subfinder", "tplmap", "zaproxy", "curl"];
+export const HUNT_TOOLS: Array<{ name: string; binary: string; tier: "critical" | "important" | "optional" }> = [
+  { name: "nmap",      binary: "nmap",      tier: "critical"  },
+  { name: "nuclei",    binary: "nuclei",    tier: "critical"  },
+  { name: "ffuf",      binary: "ffuf",      tier: "critical"  },
+  { name: "sqlmap",    binary: "sqlmap",    tier: "critical"  },
+  { name: "nikto",     binary: "nikto",     tier: "important" },
+  { name: "gobuster",  binary: "gobuster",  tier: "important" },
+  { name: "whatweb",   binary: "whatweb",   tier: "important" },
+  { name: "dalfox",    binary: "dalfox",    tier: "important" },
+  { name: "tplmap",    binary: "tplmap",    tier: "important" },
+  { name: "jwt_tool",  binary: "jwt_tool",  tier: "optional"  },
+  { name: "xsser",     binary: "xsser",     tier: "optional"  },
+  { name: "ssrfmap",   binary: "ssrfmap",   tier: "optional"  },
+  { name: "nosqlmap",  binary: "nosqlmap",  tier: "optional"  },
+  { name: "corsy",     binary: "corsy",     tier: "optional"  },
+  { name: "smuggler",  binary: "smuggler",  tier: "optional"  },
+];
 
 async function has(binary: string): Promise<boolean> {
   try {
@@ -29,16 +47,15 @@ async function has(binary: string): Promise<boolean> {
 
 export async function checkBinariesAtStartup(): Promise<void> {
   try {
-    const all = [...CRITICAL, ...OPTIONAL];
-    const results = await Promise.all(all.map(async b => [b, await has(b)] as const));
-    const present = results.filter(([, ok]) => ok).map(([b]) => b);
-    const missingCritical = CRITICAL.filter(b => !present.includes(b));
-    const missingOptional = OPTIONAL.filter(b => !present.includes(b));
+    const results = await Promise.all(HUNT_TOOLS.map(async t => [t, await has(t.binary)] as const));
+    const present = results.filter(([, ok]) => ok).map(([t]) => t.name);
+    const missingCritical = results.filter(([t, ok]) => !ok && t.tier === "critical").map(([t]) => t.name);
+    const missingOther = results.filter(([t, ok]) => !ok && t.tier !== "critical").map(([t]) => t.name);
 
     logger.info("[BinaryCheck] Tool availability", {
       present,
       missingCritical,
-      missingOptional,
+      missingOther,
     });
 
     if (missingCritical.length > 0) {
