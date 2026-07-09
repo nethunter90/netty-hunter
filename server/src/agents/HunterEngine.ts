@@ -14,7 +14,7 @@ import { huntSessions, findings, exploitChains, customTools, campaigns } from ".
 import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
-import IntelligenceSynthesizer from "./WAFBypass";
+import IntelligenceSynthesizer, { type UnifiedIntelligence } from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
@@ -163,6 +163,10 @@ export interface HuntState {
   budget: { maxRequests: number; requestsMade: number; maxTime: number; elapsed: number };
   corpusEnrichment: boolean;
   proxyEnabled: boolean;
+  /** User must explicitly opt in per hunt — WAFBypass.synthesize() is skipped
+   *  entirely when false, and even when true a program whose wafBypassPolicy is
+   *  "disallowed" hard-blocks it (see WAFBypass.ts). */
+  wafBypassEnabled: boolean;
   /** Endpoint paths/URLs observed by deepCrawl during observe() — feeds the
    *  post-crawl EffortScaler rescale so complexity reflects what the target
    *  actually exposes, not just the launch string. */
@@ -742,6 +746,7 @@ export class HunterEngine extends EventEmitter {
     auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
     corpusEnrichment?: boolean;
     proxyEnabled?: boolean;
+    wafBypassEnabled?: boolean;
   }): Promise<string> {
     await this.loadCustomTools();
 
@@ -768,6 +773,7 @@ export class HunterEngine extends EventEmitter {
       },
       corpusEnrichment: params.corpusEnrichment !== false,
       proxyEnabled: params.proxyEnabled === true,
+      wafBypassEnabled: params.wafBypassEnabled === true,
       discoveredEndpoints: [],
     };
 
@@ -1183,22 +1189,38 @@ export class HunterEngine extends EventEmitter {
     });
 
     const t2 = Date.now();
-    this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "waf_intel" });
-    logger.info("[OBSERVE] running waf_intel", { session: this.state.sessionId });
-    // synthesize() now internally caps its bypass-probe loop at 8s (see WAFBypass.ts)
-    // and skips it entirely when no WAF is fingerprinted, so it should never approach
-    // this outer ceiling in practice — this is just the hard safety net.
-    const WAF_TIMEOUT = 12000;
-    const wafIntel = await Promise.race([
-      this.wafSynthesizer.synthesize(this.state.targetUrl, "<script>alert(1)</script>"),
-      new Promise<{ detectionConfidence: number }>((resolve) =>
-        setTimeout(() => {
-          logger.warn("[OBSERVE] waf_intel timed out after 12s — continuing", { session: this.state.sessionId });
-          resolve({ detectionConfidence: 0 });
-        }, WAF_TIMEOUT)
-      ),
-    ]);
-    logger.info("[OBSERVE] waf_intel done", { session: this.state.sessionId, ms: Date.now() - t2 });
+    let wafIntel: UnifiedIntelligence | { detectionConfidence: number };
+    if (!this.state.wafBypassEnabled) {
+      // WAF bypass/evasion is opt-in per hunt (some program scopes explicitly
+      // disallow it, some are silent, some explicitly allow it) — skip entirely
+      // rather than defaulting to running it.
+      logger.info("[OBSERVE] waf_intel skipped — WAF bypass not enabled for this hunt", { session: this.state.sessionId });
+      wafIntel = { detectionConfidence: 0 };
+    } else {
+      this.emit("hunt:probing", { hypothesisId: this.state.sessionId, vulnClass: "observe", tool: "waf_intel" });
+      logger.info("[OBSERVE] running waf_intel", { session: this.state.sessionId });
+      // synthesize() now internally caps its bypass-probe loop at 8s (see WAFBypass.ts)
+      // and skips it entirely when no WAF is fingerprinted, so it should never approach
+      // this outer ceiling in practice — this is just the hard safety net.
+      const WAF_TIMEOUT = 12000;
+      try {
+        wafIntel = await Promise.race([
+          this.wafSynthesizer.synthesize(this.state.targetUrl, "<script>alert(1)</script>", this.state.sessionId, this.state.programId),
+          new Promise<{ detectionConfidence: number }>((resolve) =>
+            setTimeout(() => {
+              logger.warn("[OBSERVE] waf_intel timed out after 12s — continuing", { session: this.state.sessionId });
+              resolve({ detectionConfidence: 0 });
+            }, WAF_TIMEOUT)
+          ),
+        ]);
+      } catch (err) {
+        // A program whose wafBypassPolicy is "disallowed" throws here (fail-closed) —
+        // treat it the same as WAF bypass being off rather than failing the hunt.
+        logger.warn("[OBSERVE] waf_intel blocked or errored — continuing without it", { session: this.state.sessionId, err: String(err) });
+        wafIntel = { detectionConfidence: 0 };
+      }
+      logger.info("[OBSERVE] waf_intel done", { session: this.state.sessionId, ms: Date.now() - t2 });
+    }
     this.emit("hunt:probe_result", {
       hypothesisId: this.state.sessionId,
       result: { tool: "waf_intel", success: true, output: `waf=${(wafIntel as unknown as Record<string, unknown>).detectedWAF ?? "none"} confidence=${wafIntel.detectionConfidence?.toFixed(2)}`, duration: Date.now() - t2 },

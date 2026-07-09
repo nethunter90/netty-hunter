@@ -10,7 +10,7 @@
  */
 import axios from "axios";
 import { db } from "../db";
-import { wafProfiles } from "../db/schema";
+import { wafProfiles, programs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import logger from "../utils/logger";
 import { temporalDecay } from "../lib/hunter/temporal-decay";
@@ -327,6 +327,18 @@ export class IntelligenceSynthesizer {
       if (!allowed) {
         logger.warn('WAFBypass synthesize blocked by scope guard', { url, programId, reason });
         throw new Error(`Out of scope: ${reason}`);
+      }
+
+      // Program policy gate: a program whose rules explicitly disallow WAF
+      // evasion is blocked regardless of the per-hunt toggle — the user's
+      // opt-in for THIS hunt cannot override an explicit prohibition from the
+      // program itself. Silent/unspecified and explicitly-allowed programs
+      // both proceed (the per-hunt toggle already gated getting this far).
+      const [program] = await db.select({ wafBypassPolicy: programs.wafBypassPolicy })
+        .from(programs).where(eq(programs.id, programId)).limit(1);
+      if (program?.wafBypassPolicy === 'disallowed') {
+        logger.warn('WAFBypass synthesize blocked — program policy disallows WAF evasion', { url, programId });
+        throw new Error('WAF bypass disallowed by program policy');
       }
     }
 

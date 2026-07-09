@@ -111,6 +111,7 @@ const ProgramSchema = z.object({
   avgPayout: z.number().min(0).default(0),
   responseTime: z.number().min(0).default(72),
   tags: z.array(z.string()).default([]),
+  wafBypassPolicy: z.enum(["allowed", "disallowed", "unspecified"]).default("unspecified"),
 });
 
 router.get("/programs", async (_req: Request, res: Response) => {

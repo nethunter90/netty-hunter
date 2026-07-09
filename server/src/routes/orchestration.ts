@@ -50,6 +50,8 @@ const RunOrchestrationSchema = z.object({
     bearerToken: z.string().optional(),
     headers: z.record(z.string()).optional(),
   }).optional(),
+  proxyEnabled: z.boolean().optional().default(false),
+  wafBypassEnabled: z.boolean().optional().default(false),
 });
 
 // ── Layer metadata endpoint ────────────────────────────────────────────────────

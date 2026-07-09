@@ -91,6 +91,11 @@ export interface OrchestrateParams {
   resumeCampaignId?: number;
   /** Auth credentials/tokens injected into every tool invocation and HTTP probe */
   auth?: HuntAuth;
+  /** Stealth routing (proxychains4/Tor) for tools that support it — off by default. */
+  proxyEnabled?: boolean;
+  /** WAF bypass/evasion synthesis — opt-in per hunt; a program whose policy is
+   *  "disallowed" hard-blocks it regardless (see WAFBypass.ts). Off by default. */
+  wafBypassEnabled?: boolean;
 }
 
 export interface LayerStatus {
@@ -632,6 +637,8 @@ export class CampaignOrchestrator extends EventEmitter {
         maxIterations: params.maxIterations || 10,
         budget: params.budget,
         auth: params.auth,
+        proxyEnabled: params.proxyEnabled,
+        wafBypassEnabled: params.wafBypassEnabled,
       });
       this.state.sessionUuid = sessionUuid;
 
@@ -718,6 +725,8 @@ export class CampaignOrchestrator extends EventEmitter {
               campaignId: this.state.campaignId!,
               maxIterations: Math.min(params.maxIterations || 10, 5),
               budget: { maxRequests: 500, maxTime: 600 },
+              proxyEnabled: params.proxyEnabled,
+              wafBypassEnabled: params.wafBypassEnabled,
             });
             await new Promise<void>((resolve) => {
               const t = setTimeout(resolve, 660_000);

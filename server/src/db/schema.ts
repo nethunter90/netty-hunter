@@ -28,6 +28,12 @@ export const programs = pgTable("programs", {
   roiScore: real("roi_score").default(0),
   tags: jsonb("tags").notNull().default([]),
   active: boolean("active").notNull().default(true),
+  // Whether this program's rules of engagement address WAF bypass/evasion
+  // techniques — "unspecified" (default) means the user hasn't recorded a
+  // policy yet; "disallowed" hard-blocks WAFBypass.synthesize() regardless of
+  // the per-hunt toggle (see WAFBypass.ts); "allowed" permits it when the
+  // per-hunt toggle is also on.
+  wafBypassPolicy: varchar("waf_bypass_policy", { length: 16 }).notNull().default("unspecified"),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
   scheduleInterval: integer("schedule_interval").default(0), // hours between auto re-scans; 0 = disabled
