@@ -447,16 +447,20 @@ export const TOOL_KNOWLEDGE: Record<string, {
     rateLimit: 30,
   },
   dalfox: {
-    description: "XSS detection via nuclei (dalfox fallback)",
+    description: "Parameter analysis and XSS scanner",
     vulnClasses: ["xss"],
     command: (url) => ({
-      bin: "nuclei",
-      args: ["-u", url, "-tags", "xss", "-s", "medium,high,critical", "-j", "-silent", "-disable-update-check", "-timeout", "10", "-ni"],
+      bin: "dalfox",
+      // --format json: one JSON object per finding on stdout, same streaming
+      // shape the parser below already expected from the old nuclei fallback.
+      // --skip-bav skips the slow basic-auth-vuln checks so a first pass stays
+      // under the 60s tool ceiling; --timeout bounds each individual request.
+      args: ["url", url, "--silence", "--format", "json", "--no-color", "--skip-bav", "--timeout", "10"],
     }),
     parser: (output) => {
       const findings: unknown[] = [];
       output.split("\n").filter(l => l.trim()).forEach(line => {
-        try { findings.push(JSON.parse(line)); } catch { /* skip */ }
+        try { findings.push(JSON.parse(line)); } catch { /* skip non-JSON banner/log lines */ }
       });
       return { found: findings.length > 0, findings, count: findings.length, rawOutput: output.slice(0, 800) };
     },
