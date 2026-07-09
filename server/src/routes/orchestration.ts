@@ -53,6 +53,8 @@ const RunOrchestrationSchema = z.object({
   proxyEnabled: z.boolean().optional().default(false),
   wafBypassEnabled: z.boolean().optional().default(false),
   customVulnPriority: z.array(z.string()).max(15).optional(),
+  // Only consulted when programId === -1: see resolveCustomTargetProgram.
+  customScope: z.array(z.string()).max(20).optional(),
 });
 
 // ── Layer metadata endpoint ────────────────────────────────────────────────────

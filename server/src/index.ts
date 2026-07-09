@@ -310,6 +310,7 @@ io.on("connection", (socket) => {
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
     customVulnPriority?: string[];
+    customScope?: string[];
   }) => {
     // ── Single-flight gate (cost-safety core) ──────────────────────────────────
     // The Socket.IO launch path is gated by the same global slot as the REST

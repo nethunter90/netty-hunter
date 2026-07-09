@@ -17,6 +17,7 @@ import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 import { verifyAndPersistFinding, verifyPendingForSession } from "../lib/verification/verify-finding";
 import { HUNT_TOOLS } from "../lib/hunter/binary-check";
+import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
 import logger from "../utils/logger";
 
 const router = Router();
@@ -28,9 +29,15 @@ verifierAgent.initialize().catch(err => logger.warn("Verifier init failed", { er
 
 // ── Schema Validation ─────────────────────────────────────────────────────────
 const StartHuntSchema = z.object({
-  // -1 signals a custom/local-lab target — no bug-bounty platform required.
+  // -1 signals a custom/ad-hoc target — no bug-bounty platform required
+  // (e.g. an individual customer pentest engagement).
   programId: z.number().int().min(-1),
   targetUrl: z.string().url(),
+  // Only consulted when programId === -1: the engagement's actual authorized
+  // scope. Without it, scope defaults to "*.<target hostname>" (the target
+  // host and its subdomains) rather than an unbounded wildcard — see
+  // resolveCustomTargetProgram.
+  customScope: z.array(z.string()).max(20).optional(),
   mode: z.enum(["forward", "backward"]).default("forward"),
   goal: z.string().min(5).max(500).optional(),
   maxIterations: z.number().int().min(1).max(50).default(10),
@@ -65,7 +72,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, customVulnPriority } = parsed.data;
+  const { programId: rawProgramId, targetUrl, customScope, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, customVulnPriority } = parsed.data;
 
   // ── Single-flight gate (cost-safety core) ───────────────────────────────────
   // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
@@ -85,24 +92,12 @@ router.post("/start", async (req: Request, res: Response) => {
   // flight slot is released on ANY failure path (DB error, 404, engine throw)
   // and is only converted to a bound run via activeHunts.bind() on success.
   try {
-  // Resolve effective program — for custom/local-lab hunts (programId === -1) we
-  // find-or-create a synthetic "Custom Lab" program so FK constraints are satisfied.
+  // Resolve effective program — for custom/ad-hoc hunts (programId === -1) we
+  // find-or-create a program scoped to the actual target (see
+  // resolveCustomTargetProgram), not a standing wildcard.
   let programId = rawProgramId;
   if (rawProgramId === -1) {
-    const [existing] = await db.select().from(programs)
-      .where(eq(programs.platform, "local"))
-      .limit(1);
-    if (existing) {
-      programId = existing.id;
-    } else {
-      const [created] = await db.insert(programs).values({
-        name: "Custom / Local Lab",
-        platform: "local",
-        scope: ["*"],
-        outOfScope: [],
-      }).returning();
-      programId = created.id;
-    }
+    programId = await resolveCustomTargetProgram(targetUrl, customScope);
   } else {
     // Verify real program exists
     const [program] = await db.select().from(programs).where(eq(programs.id, rawProgramId)).limit(1);
