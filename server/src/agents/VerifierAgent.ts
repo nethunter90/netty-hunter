@@ -509,13 +509,20 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
     const l4Session = `verify-${result.taskId}`;
     try {
       const response = await this.modelRouter.reason(prompt, l4Session);
+      // A flagged response previously only logged a warning and its verdict was
+      // parsed and trusted anyway — meaning a target whose response body feeds
+      // this prompt (e.g. the captured HTTP evidence above) could inject a
+      // "confirmed: true" verdict for a finding that isn't real, with nothing
+      // but a log line to show for it. Discard the verdict instead: same
+      // errored/needs-review shape already used below for an unparseable response.
       try {
         const { promptInjectionDetector } = await import('../governance');
         const check = promptInjectionDetector.detect(response, 'verifier-l4', 'Layer4AIConfirmation');
         if (!check.safe) {
-          logger.warn('[VerifierAgent] Prompt injection in L4 response', { score: check.score, reasons: check.reasons });
+          logger.warn('[VerifierAgent] Prompt injection in L4 response — discarding verdict, needs review', { score: check.score, reasons: check.reasons });
+          return { confirmed: false, reasoning: `L4 response flagged as prompt injection (score ${check.score}) — needs manual review`, confidenceAdjustment: 0, visionUsed, errored: true };
         }
-      } catch { /* non-critical */ }
+      } catch { /* non-critical — detector unavailable, proceed with verdict as before */ }
 
       const parsed = this.extractJson(response);
       if (!parsed) {

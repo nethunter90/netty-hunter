@@ -2036,14 +2036,26 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // Yield after model response so the event loop can process other callbacks
       // before the synchronous JSON.parse (which can be slow for large responses).
       await this.yieldToEventLoop();
-      // Guard against prompt injection in LLM output before parsing
+      // Guard against prompt injection in LLM output before parsing. A flagged
+      // response previously only logged a warning and was parsed/used anyway —
+      // meaning a target that can shape observation data (its own HTTP
+      // responses) fed into this prompt could inject hypotheses that steer the
+      // hunt itself (waste budget, target other domains, etc.) with nothing
+      // but a log line to show for it. Throwing here routes to the existing
+      // catch block's generateDefaultHypotheses() fallback — the same safe
+      // path already used for a JSON-parse failure — instead of trusting a
+      // response the detector itself just flagged as compromised.
       try {
         const { promptInjectionDetector } = await import('../governance');
         const injection = promptInjectionDetector.detect(response, 'hunter-engine', 'HunterEngine');
         if (!injection.safe) {
-          logger.warn('[HunterEngine] Prompt injection detected in model response', { score: injection.score, reasons: injection.reasons });
+          logger.warn('[HunterEngine] Prompt injection detected in model response — discarding, using default hypotheses', { score: injection.score, reasons: injection.reasons });
+          throw new Error('Prompt injection detected in hypothesis-generation response');
         }
-      } catch { /* non-critical — governance unavailable */ }
+      } catch (injectionErr) {
+        if (injectionErr instanceof Error && injectionErr.message.startsWith('Prompt injection detected')) throw injectionErr;
+        // Detector itself unavailable/errored — non-critical, proceed with the response.
+      }
       // Cap response slice to 64KB before parsing to prevent OOM from huge model outputs
       const rawSlice = response.match(/\[[\s\S]+\]/)?.[0]?.slice(0, 65536) || "[]";
       const parsed = JSON.parse(rawSlice);
