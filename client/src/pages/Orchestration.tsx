@@ -127,6 +127,9 @@ export default function Orchestration() {
   const handleRun = () => {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
+    // Without a goal, the server silently degrades backward mode to an ordinary
+    // forward hunt (no error) — catch it here so that never happens invisibly.
+    if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
 
     // Reset live state for a fresh run (layers → pending, stream cleared, counts 0).
     orchestrationStore.clearForNewRun();

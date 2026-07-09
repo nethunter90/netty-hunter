@@ -33,7 +33,7 @@ import { SolverPool } from "./SolverPool";
 import { VerifierAgent } from "./VerifierAgent";
 import { TargetSelectionIntelligence } from "../intelligence/TargetSelection";
 import { ROIModel } from "../intelligence/ROIModel";
-import { BackwardHuntEngine } from "../intelligence/BackwardHunt";
+import { BackwardHuntEngine, type BackwardPlan } from "../intelligence/BackwardHunt";
 import { UnifiedReinforcementStore } from "../intelligence/ReinforcementStore";
 import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
 import { DraftReportGenerator } from "../intelligence/ReportGenerator";
@@ -627,6 +627,20 @@ export class CampaignOrchestrator extends EventEmitter {
     engine.on("hunt:graphql_schema", d => this.emit("hunt:graphql_schema", d));
     engine.on("hunt:oob_hit", d => this.emit("hunt:oob_hit", d));
 
+    // Layer 3 builds a real goal-directed attack plan for backward mode, but it
+    // was previously computed and persisted then discarded here — every hunt
+    // launched identically regardless of mode. Pull the plan's highest-odds
+    // vuln classes back out so backward mode actually steers the hunt.
+    let focusVulnClasses: string[] | undefined;
+    if (stratData.attackPlan) {
+      try {
+        const approaches = await this.backwardHunt.getNextActions(stratData.attackPlan as BackwardPlan);
+        focusVulnClasses = approaches.map(a => a.vulnClass).slice(0, 6);
+      } catch (err) {
+        logger.warn("Failed to derive focusVulnClasses from backward plan — continuing without them", { err });
+      }
+    }
+
     let sessionUuid: string | undefined;
     try {
       sessionUuid = await engine.startHunt({
@@ -636,6 +650,7 @@ export class CampaignOrchestrator extends EventEmitter {
         targetId,
         maxIterations: params.maxIterations || 10,
         budget: params.budget,
+        focusVulnClasses,
         auth: params.auth,
         proxyEnabled: params.proxyEnabled,
         wafBypassEnabled: params.wafBypassEnabled,
