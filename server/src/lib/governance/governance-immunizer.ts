@@ -187,13 +187,23 @@ class GovernanceImmunizer {
     }).catch(() => {});
 
     if (action === 'full_reset') {
-      console.warn('[GovernanceImmunizer] FULL_RESET — reasserting frozen baseline');
-      // Re-hash and update in-memory baseline from live pillar constants
+      console.warn('[GovernanceImmunizer] FULL_RESET — rebuilding baseline from live GOVERNANCE_PILLARS constants');
+      // Previously this recomputed the hash from the SAME in-memory object's own
+      // unchanged fields and wrote it back — tautological, since nothing had
+      // actually been mutated; "reasserting the frozen baseline" changed
+      // nothing. Now genuinely rebuilds pillarSensitivities/thresholds from
+      // GOVERNANCE_PILLARS (the real source of truth) and re-derives the hash
+      // from that, so a real divergence (e.g. a future code path that mutates
+      // sensitivities at runtime) actually gets corrected rather than re-signed
+      // as-is. Keeps the same baseline id/createdAt — this refreshes the
+      // existing baseline record, it doesn't mint a new one.
       if (this.frozenBaseline) {
+        const rebuilt = this.buildBaselineFromLivePolicy();
+        this.frozenBaseline = { ...rebuilt, id: this.frozenBaseline.id, createdAt: this.frozenBaseline.createdAt };
         this.frozenBaseline.hash = this.computeHash(this.frozenBaseline);
         await pool.query(
-          `UPDATE governance_baselines SET hash = $1 WHERE id = $2`,
-          [this.frozenBaseline.hash, this.frozenBaseline.id]
+          `UPDATE governance_baselines SET hash = $1, baseline = $2 WHERE id = $3`,
+          [this.frozenBaseline.hash, JSON.stringify(this.frozenBaseline), this.frozenBaseline.id]
         ).catch(() => {});
       }
     }
