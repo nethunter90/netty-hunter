@@ -748,6 +748,21 @@ export class HunterEngine extends EventEmitter {
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
   }): Promise<string> {
+    // Hard scope gate, enforced here rather than only inside the per-hypothesis
+    // probe dispatch (line ~2140) or CampaignOrchestrator's own layer1 gate —
+    // several entry points (routes/hunt.ts's REST route, the "hunt:start"
+    // socket handler) construct HunterEngine directly and bypass the
+    // orchestrator entirely, which meant observe()'s recon traffic
+    // (whatweb/curl_probe) could fire against the root target with no scope
+    // check at all. This runs before any network traffic, for every caller.
+    const rootScopeCheck = await this.scopeGuard.isInScope(params.targetUrl, params.programId);
+    if (!rootScopeCheck.allowed) {
+      logger.error("[HunterEngine] Target out of scope — hunt aborted before any probing", {
+        targetUrl: params.targetUrl, programId: params.programId, reason: rootScopeCheck.reason,
+      });
+      throw new Error(`Target out of scope: ${rootScopeCheck.reason}`);
+    }
+
     await this.loadCustomTools();
 
     const sessionUuid = params.sessionId || uuidv4();
@@ -1214,8 +1229,19 @@ export class HunterEngine extends EventEmitter {
           ),
         ]);
       } catch (err) {
-        // A program whose wafBypassPolicy is "disallowed" throws here (fail-closed) —
-        // treat it the same as WAF bypass being off rather than failing the hunt.
+        // Two distinct failure modes were previously conflated here. A program
+        // whose wafBypassPolicy is "disallowed" throws too — that's fine to
+        // swallow, it just means skip WAF bypass for this hunt. But a genuine
+        // "Out of scope" throw (WAFBypass's own ScopeGuard check) means the
+        // TARGET ITSELF isn't authorized — silently continuing the hunt in
+        // that case would be exactly the swallowed-scope-violation bug this
+        // was flagged for. The root scope check in startHunt() should make this
+        // unreachable for the initial target, but re-throw rather than swallow
+        // in case scope changed mid-hunt (program edited while running).
+        if (String(err).includes("Out of scope")) {
+          logger.error("[OBSERVE] Target went out of scope mid-hunt — aborting", { session: this.state.sessionId, err: String(err) });
+          throw err;
+        }
         logger.warn("[OBSERVE] waf_intel blocked or errored — continuing without it", { session: this.state.sessionId, err: String(err) });
         wafIntel = { detectionConfidence: 0 };
       }
