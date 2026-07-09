@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 import axios from "axios";
 import { LiveActivityFeed } from "../components/LiveActivityFeed";
 import { orchestrationStore, useOrchestrationStore } from "../lib/orchestrationStore";
+import GoalPresetPicker from "../components/hunt/GoalPresetPicker";
 
 // ── Layer metadata ─────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ export default function Orchestration() {
   const [authBearer, setAuthBearer] = useState("");
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [wafBypassEnabled, setWafBypassEnabled] = useState(false);
+  const [customPriority, setCustomPriority] = useState<string[]>([]);
 
   type ToolStatus = { name: string; binary: string; tier: "critical" | "important" | "optional"; available: boolean };
   const [toolStatus, setToolStatus] = useState<ToolStatus[]>([]);
@@ -127,9 +129,12 @@ export default function Orchestration() {
   const handleRun = () => {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program");
     if (!targetUrl) return toast.error("Enter target URL");
-    // Without a goal, the server silently degrades backward mode to an ordinary
-    // forward hunt (no error) — catch it here so that never happens invisibly.
-    if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
+    // Without a goal OR a custom priority order, the server silently degrades
+    // backward mode to an ordinary forward hunt (no error) — catch it here so
+    // that never happens invisibly.
+    if (huntMode === "backward" && !goal && customPriority.length === 0) {
+      return toast.error("Enter a hunt goal or pick a custom priority order for backward mode");
+    }
 
     // Reset live state for a fresh run (layers → pending, stream cleared, counts 0).
     orchestrationStore.clearForNewRun();
@@ -151,6 +156,7 @@ export default function Orchestration() {
       auth: Object.keys(auth).length > 0 ? auth : undefined,
       proxyEnabled,
       wafBypassEnabled,
+      customVulnPriority: customPriority.length > 0 ? customPriority : undefined,
     });
   };
 
@@ -294,17 +300,13 @@ export default function Orchestration() {
             </div>
 
             {huntMode === "backward" && (
-              <>
-                <label className="hack-label">Goal</label>
-                <textarea
-                  className="hack-input w-full mb-2 resize-none"
-                  rows={2}
-                  placeholder="e.g. Achieve RCE on admin panel"
-                  value={goal}
-                  onChange={e => setGoal(e.target.value)}
-                  disabled={isRunning}
-                />
-              </>
+              <GoalPresetPicker
+                goal={goal}
+                setGoal={setGoal}
+                customPriority={customPriority}
+                setCustomPriority={setCustomPriority}
+                disabled={isRunning}
+              />
             )}
 
             <label className="hack-label">Max Iterations</label>

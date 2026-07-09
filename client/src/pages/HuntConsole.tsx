@@ -7,6 +7,7 @@ import { getSocket } from "../lib/socket";
 import toast from "react-hot-toast";
 import { LiveActivityFeed } from "../components/LiveActivityFeed";
 import { EgressPoolPanel } from "../components/hunt/EgressPoolPanel";
+import GoalPresetPicker from "../components/hunt/GoalPresetPicker";
 import { huntStore, useHuntStore } from "../lib/huntStore";
 
 const PHASE_ICONS: Record<string, React.ReactNode> = {
@@ -34,6 +35,7 @@ export default function HuntConsole() {
   const [corpusEnrichment, setCorpusEnrichment] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(huntStore.proxyEnabled);
   const [wafBypassEnabled, setWafBypassEnabled] = useState(huntStore.wafBypassEnabled);
+  const [customPriority, setCustomPriority] = useState<string[]>([]);
 
   // Live hunt progress is owned by huntStore and fed by the always-mounted event
   // bridge (huntEventBridge.ts). This panel is a pure reader — switching panels
@@ -68,7 +70,9 @@ export default function HuntConsole() {
   const startHunt = async () => {
     if (!selectedProgram && selectedProgram !== -1) return toast.error("Select a program first");
     if (!targetUrl) return toast.error("Enter target URL");
-    if (huntMode === "backward" && !goal) return toast.error("Enter hunt goal for backward mode");
+    if (huntMode === "backward" && !goal && customPriority.length === 0) {
+      return toast.error("Enter a hunt goal or pick a custom priority order for backward mode");
+    }
 
     setLoading(true);
     huntStore.clearForNewHunt();
@@ -85,6 +89,7 @@ export default function HuntConsole() {
         corpusEnrichment,
         proxyEnabled,
         wafBypassEnabled,
+        customVulnPriority: customPriority.length > 0 ? customPriority : undefined,
       });
 
       const session = {
@@ -204,15 +209,12 @@ export default function HuntConsole() {
             </div>
 
             {huntMode === "backward" && (
-              <div>
-                <label className="hack-label">Hunt Goal</label>
-                <input
-                  className="hack-input w-full"
-                  value={goal}
-                  onChange={e => setGoal(e.target.value)}
-                  placeholder="e.g. Account takeover, RCE, Data exfiltration"
-                />
-              </div>
+              <GoalPresetPicker
+                goal={goal}
+                setGoal={setGoal}
+                customPriority={customPriority}
+                setCustomPriority={setCustomPriority}
+              />
             )}
 
             <div>
