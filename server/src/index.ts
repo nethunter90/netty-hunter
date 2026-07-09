@@ -38,6 +38,7 @@ import { writeupScraper } from "./lib/intelligence/writeup-scraper";
 import { egressAllocator } from "./lib/stealth/egress-route-allocator";
 import { wireHuntEngineToSocket } from "./lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "./lib/state/hunt-sessions";
+import { checkPlaywrightHealth } from "./lib/verification/playwright-health";
 import { activeHunts } from "./lib/state/active-hunts";
 import { db } from "./db";
 import { programs, findings } from "./db/schema";
@@ -531,6 +532,21 @@ httpServer.listen(PORT, () => {
   logger.info(`Sentinel Primordial – Bug Bounty Intelligence Platform`);
   logger.info(`Server running on http://localhost:${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || "development"}`);
+});
+
+// Runs concurrently with server startup (not blocking .listen) so a slow or
+// hanging Chromium launch can't delay the server coming up — the result just
+// lands in the log a few seconds later, loudly, instead of being discovered
+// mid-hunt when Layer 3 (Playwright browser verification) silently degrades.
+checkPlaywrightHealth().then(({ ok, error }) => {
+  if (ok) {
+    logger.info("[Startup] Playwright health check: OK — Layer 3 (browser verification) is available");
+  } else {
+    logger.error("[Startup] Playwright health check: FAILED — Layer 3 (browser verification) will be unavailable until this is fixed", {
+      error,
+      fix: "cd server && npx playwright install --with-deps chromium",
+    });
+  }
 });
 
 // Session type extension
