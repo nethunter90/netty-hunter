@@ -35,6 +35,7 @@ import { TargetSelectionIntelligence } from "../intelligence/TargetSelection";
 import { ROIModel } from "../intelligence/ROIModel";
 import { BackwardHuntEngine, type BackwardPlan } from "../intelligence/BackwardHunt";
 import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
+import { coreGovernance } from "../governance";
 import { UnifiedReinforcementStore } from "../intelligence/ReinforcementStore";
 import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
 import { DraftReportGenerator } from "../intelligence/ReportGenerator";
@@ -306,6 +307,23 @@ export class CampaignOrchestrator extends EventEmitter {
   ): Promise<{ passed: boolean; data: Record<string, unknown> }> {
     this.audit(1, "scope_check_start", { url: params.targetUrl, programId: params.programId });
 
+    // The orchestrator's own audit() trail is in-memory + a socket event only —
+    // it vanishes on disconnect and never reaches the governance API/dashboard
+    // (coreGovernance.recordDecision() previously had exactly one caller in the
+    // whole codebase: the prompt-injection detector). These are the real
+    // per-hunt scope/budget gate decisions; recording them here is what makes
+    // /api/governance/decisions and /stats reflect what's actually enforced,
+    // instead of a near-empty history that looks clean because nothing was
+    // ever recorded there.
+    const recordGate = (verdict: "approved" | "blocked", reason: string) =>
+      coreGovernance.recordDecision({
+        agentId: "campaign-orchestrator", agentName: "CampaignOrchestrator Layer 1",
+        action: `Scope/budget gate for ${params.targetUrl}`, actionType: "scope_check",
+        verdict, pillar: "Pillar 3 - Ethical Boundary",
+        confidence: 1, reason,
+        coachMessage: verdict === "blocked" ? `Hunt rejected: ${reason}` : "Hunt authorized to proceed",
+      });
+
     // 1a. Verify program exists — for custom/ad-hoc hunts (programId -1) find-or-create
     //     a program scoped to the actual target (see resolveCustomTargetProgram),
     //     not a standing wildcard that would pass every scope check.
@@ -317,10 +335,12 @@ export class CampaignOrchestrator extends EventEmitter {
       .where(eq(programs.id, params.programId)).limit(1);
     if (!program) {
       this.audit(1, "governance_rejected", { reason: "Program not found" });
+      recordGate("blocked", "Program not found");
       return { passed: false, data: { reason: "Program not found" } };
     }
     if (!program.active) {
       this.audit(1, "governance_rejected", { reason: "Program inactive" });
+      recordGate("blocked", "Program inactive");
       return { passed: false, data: { reason: "Program inactive" } };
     }
 
@@ -328,12 +348,14 @@ export class CampaignOrchestrator extends EventEmitter {
     const scopeCheck = await this.scopeGuard.isInScope(params.targetUrl, params.programId);
     if (!scopeCheck.allowed) {
       this.audit(1, "governance_rejected", { reason: scopeCheck.reason });
+      recordGate("blocked", scopeCheck.reason);
       return { passed: false, data: { reason: scopeCheck.reason } };
     }
 
     // 1c. Budget guard
     const budget = params.budget || { maxRequests: 2000, maxTime: 3600 };
     if (budget.maxRequests < 10 || budget.maxRequests > 50000) {
+      recordGate("blocked", "Budget maxRequests out of bounds (10-50000)");
       return { passed: false, data: { reason: "Budget maxRequests out of bounds (10–50000)" } };
     }
 
@@ -390,6 +412,7 @@ export class CampaignOrchestrator extends EventEmitter {
       targetId: target.id,
       scopeCheck: "in-scope",
     });
+    recordGate("approved", `${program.name} — in scope, budget within bounds`);
 
     return {
       passed: true,

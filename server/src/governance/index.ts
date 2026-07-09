@@ -13,6 +13,11 @@ export const selfAttestationService = new SelfAttestationService();
 export const driftDetector = new DriftDetector();
 export const promptInjectionDetector = new PromptInjectionDetector(coreGovernance);
 
+// Activates the previously-dead persistence layer: decisionLogger.log() ran its
+// full WAL/flush machinery from startup but had zero callers, so every decision
+// recorded via coreGovernance.recordDecision() vanished on restart.
+coreGovernance.setDecisionLogger(decisionLogger);
+
 driftDetector.setSnapshotProvider(() => {
   const stats = coreGovernance.getStats();
   const pillarActivity: Record<string, number> = {};

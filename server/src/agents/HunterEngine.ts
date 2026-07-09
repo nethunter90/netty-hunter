@@ -16,6 +16,7 @@ import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer, { type UnifiedIntelligence } from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
+import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
 import { promptKB } from "../intelligence/PromptKnowledgeBase";
@@ -760,8 +761,22 @@ export class HunterEngine extends EventEmitter {
       logger.error("[HunterEngine] Target out of scope — hunt aborted before any probing", {
         targetUrl: params.targetUrl, programId: params.programId, reason: rootScopeCheck.reason,
       });
+      coreGovernance.recordDecision({
+        agentId: "hunter-engine", agentName: "HunterEngine.startHunt",
+        action: `Root scope gate for ${params.targetUrl}`, actionType: "scope_check",
+        verdict: "blocked", pillar: "Pillar 3 - Ethical Boundary",
+        confidence: 1, reason: rootScopeCheck.reason,
+        coachMessage: `Hunt rejected: ${rootScopeCheck.reason}`,
+      });
       throw new Error(`Target out of scope: ${rootScopeCheck.reason}`);
     }
+    coreGovernance.recordDecision({
+      agentId: "hunter-engine", agentName: "HunterEngine.startHunt",
+      action: `Root scope gate for ${params.targetUrl}`, actionType: "scope_check",
+      verdict: "approved", pillar: "Pillar 3 - Ethical Boundary",
+      confidence: 1, reason: "In scope",
+      coachMessage: "Hunt authorized to proceed",
+    });
 
     await this.loadCustomTools();
 

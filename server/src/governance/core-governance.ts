@@ -31,6 +31,18 @@ const ALWAYS_ALLOWED = [
 export class CoreGovernance {
   private auditLog: AuditEvent[] = [];
   private decisions: GovernanceDecision[] = [];
+  // Optional persistence sink — decisionLogger.log() was a fully-built WAL/
+  // NDJSON persistence layer with zero callers anywhere in the codebase, so
+  // every decision recorded here vanished on restart despite the persistence
+  // machinery running the whole time. Wired in by governance/index.ts (which
+  // owns both singletons) rather than importing DecisionLogger directly here,
+  // to avoid constructing a second logger instance with its own competing
+  // flush interval and WAL file.
+  private decisionLogger: { log(decision: GovernanceDecision): void } | null = null;
+
+  setDecisionLogger(logger: { log(decision: GovernanceDecision): void }): void {
+    this.decisionLogger = logger;
+  }
 
   private broadcast(event: string, data: any): void {
     if ((global as any).io) {
@@ -81,6 +93,8 @@ export class CoreGovernance {
     if (this.decisions.length > 10000) {
       this.decisions = this.decisions.slice(-5000);
     }
+
+    try { this.decisionLogger?.log(decision); } catch { /* non-critical — persistence is best-effort */ }
 
     this.broadcast('decision', {
       id: decision.id,
