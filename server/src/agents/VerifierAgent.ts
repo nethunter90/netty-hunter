@@ -317,7 +317,14 @@ class Layer3BrowserReplay {
         }
       });
       w.on('error', err => logger.warn('[VerifierAgent] Worker error', { err }));
-      w.on('exit', () => { this.worker = null; });
+      w.on('exit', () => {
+        // A dead worker must un-set the mandatory-gate flag too — otherwise every
+        // XSS finding after a mid-session crash silently reads as "browser tested
+        // it and found nothing" (rejected) instead of "oracle offline" (inconclusive).
+        this.worker = null;
+        this.layer3Available = false;
+        logger.warn('[VerifierAgent] Browser worker exited — Layer 3 offline until next init');
+      });
 
       // Wait for browser-ready signal
       await new Promise<void>((resolve, reject) => {

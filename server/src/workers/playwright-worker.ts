@@ -174,7 +174,11 @@ parentPort?.on('message', async (msg: any) => {
       await initBrowser();
       parentPort?.postMessage({ type: 'ready' });
     } catch (err) {
-      parentPort?.postMessage({ type: 'ready' }); // still signal ready; replay will return empty
+      // A failed launch must NOT report ready — the main thread's init handshake
+      // (VerifierAgent.ts) treats 'ready' as "Layer 3 is live," so faking it here
+      // let a browser that never launched silently reject every XSS finding as if
+      // a real replay had tested and disproved it.
+      parentPort?.postMessage({ type: 'error', id: 'init', message: String(err) });
     }
   } else if (msg.type === 'replay') {
     try {
