@@ -562,8 +562,12 @@ class RFISolver extends BaseSolver {
 
     for (const param of params) {
       const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(rfiPayload)}`);
-      // RFI if server attempted to fetch the URL (often shows connection refused or timeout to attacker domain)
-      if (resp.body.includes("evil.com") || resp.status === 0) {
+      // resp.status === 0 means OUR OWN request failed (ECONNREFUSED/DNS/timeout —
+      // see BaseSolver.httpProbe's catch) and says nothing about the target ever
+      // touching evil.com. Treating it as an RFI signal fabricated a positive
+      // finding on any plain network blip or dead target. Only the target's
+      // response actually reflecting our callback domain is real evidence.
+      if (resp.body.includes("evil.com")) {
         found = true;
         evidence = `Param '${param}' may include remote URLs`;
         break;
