@@ -1,6 +1,6 @@
 import logger from "../../utils/logger";
 
-interface TechPayload {
+export interface TechPayload {
   vulnClass: string;
   payload: string;
   targetPath?: string;   // specific path to probe for this tech
@@ -9,7 +9,7 @@ interface TechPayload {
   priority: number;
 }
 
-interface TechProfile {
+export interface TechProfile {
   detected: string[];    // e.g. ["Rails", "Ruby", "PostgreSQL"]
   payloads: TechPayload[];
   debugRoutes: string[]; // paths to probe for debug/admin exposure

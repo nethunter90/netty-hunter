@@ -64,6 +64,7 @@ import { businessLogicProber } from "../lib/tools/business-logic-probe";
 import { twoFactorBypassProber } from "../lib/tools/two-factor-bypass";
 import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
 import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
+import { techPayloadProber } from "../lib/tools/tech-payload-prober";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { postExploitAgent } from "./PostExploitAgent";
@@ -1641,7 +1642,38 @@ export class HunterEngine extends EventEmitter {
           }
           if (techList.length > 0) {
             const profile = techPayloadSelector.select(techList);
-            for (const payload of profile.payloads.slice(0, 5)) {
+
+            // Actually SEND the tech-tailored payloads and probe the debug
+            // routes — these used to be built and then discarded before
+            // dispatch (only the description string survived, as a hypothesis
+            // with no real evidence ever tested). Real evidence now attaches
+            // to real hypotheses, same pattern as every other OBSERVE-phase
+            // prober fixed this session.
+            const probed = await techPayloadProber.probe(
+              this.state.targetUrl, profile.payloads, profile.debugRoutes, this.authHeaders
+            );
+            for (const hyp of probed.hypotheses) {
+              this.state.hypotheses.push({
+                id: uuidv4(), vulnClass: hyp.vulnClass,
+                targetUrl: hyp.endpoint || this.state.targetUrl,
+                reasoning: `Tech-specific (${profile.detected.join(",")}): ${hyp.reasoning}`,
+                confidence: hyp.confidence, priority: hyp.priority,
+                evidence: [{
+                  id: uuidv4(), source: "tech_payload_prober",
+                  data: { endpoint: hyp.endpoint, detail: hyp.reasoning, response: hyp.evidenceSnippet },
+                  tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now(),
+                }],
+                status: "pending", createdAt: Date.now(),
+              });
+            }
+
+            // Remaining tech payloads (mass_assignment/lfi/info_disclosure/
+            // prototype_pollution) already have dedicated, more rigorous
+            // probers elsewhere in the hunt — still seed them as priority
+            // signal for those probers rather than testing them a second way
+            // here.
+            const remaining = profile.payloads.filter(p => p.vulnClass !== "ssti" && p.vulnClass !== "rce");
+            for (const payload of remaining.slice(0, 5)) {
               this.state.hypotheses.push({
                 id: uuidv4(), vulnClass: payload.vulnClass,
                 targetUrl: this.state.targetUrl,
@@ -1650,7 +1682,8 @@ export class HunterEngine extends EventEmitter {
                 evidence: [], status: "pending", createdAt: Date.now(),
               });
             }
-            if (profile.payloads.length > 0) this.emit("hunt:tech_payloads", { sessionId: this.state.sessionId, techs: profile.detected, payloadCount: profile.payloads.length });
+
+            if (profile.payloads.length > 0) this.emit("hunt:tech_payloads", { sessionId: this.state.sessionId, techs: profile.detected, payloadCount: profile.payloads.length, confirmedByProbing: probed.findings.length });
           }
         } catch (err) { logger.debug("[HunterEngine] Tech payload selector skipped", { err: String(err) }); }
       })(),
