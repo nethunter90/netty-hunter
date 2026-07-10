@@ -41,6 +41,8 @@ const RunOrchestrationSchema = z.object({
   goal: z.string().min(5).max(500).optional(),
   maxIterations: z.number().int().min(1).max(50).default(10),
   focusVulnClasses: z.array(z.string()).max(10).optional(),
+  // Hard filter — when set, only these vuln classes ever reach PROBE/verification.
+  vulnClassAllowlist: z.array(z.string()).max(10).optional(),
   budget: z.object({
     maxRequests: z.number().int().min(10).max(50000).default(2000),
     maxTime: z.number().int().min(60).max(86400).default(3600),

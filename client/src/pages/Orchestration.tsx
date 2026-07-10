@@ -54,6 +54,7 @@ export default function Orchestration() {
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [wafBypassEnabled, setWafBypassEnabled] = useState(false);
   const [customPriority, setCustomPriority] = useState<string[]>([]);
+  const [vulnClassAllowlist, setVulnClassAllowlist] = useState("");
 
   type ToolStatus = { name: string; binary: string; tier: "critical" | "important" | "optional"; available: boolean };
   const [toolStatus, setToolStatus] = useState<ToolStatus[]>([]);
@@ -146,6 +147,11 @@ export default function Orchestration() {
     if (authCookie.trim()) auth.cookie = authCookie.trim();
     if (authBearer.trim()) auth.bearerToken = authBearer.trim();
 
+    const allowlist = vulnClassAllowlist
+      .split(",")
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+
     socket.emit("orchestration:run", {
       programId: selectedProgram,
       targetUrl,
@@ -157,6 +163,7 @@ export default function Orchestration() {
       proxyEnabled,
       wafBypassEnabled,
       customVulnPriority: customPriority.length > 0 ? customPriority : undefined,
+      vulnClassAllowlist: allowlist.length > 0 ? allowlist : undefined,
     });
   };
 
@@ -382,6 +389,24 @@ export default function Orchestration() {
                 <RefreshCw className="w-3 h-3 animate-spin" /> checking tools…
               </div>
             )}
+
+            <div className="border-t border-hack-border/40 pt-3 mb-3">
+              <div className="text-[9px] text-hack-dim tracking-widest mb-2">VULN CLASS ALLOWLIST (OPTIONAL)</div>
+              <input
+                type="text"
+                className="hack-input w-full mb-1 font-mono text-[10px]"
+                placeholder="rce"
+                value={vulnClassAllowlist}
+                onChange={e => setVulnClassAllowlist(e.target.value)}
+                disabled={isRunning}
+              />
+              <div className="text-[9px] text-hack-dim leading-relaxed">
+                Comma-separated (e.g. "rce, ssrf"). When set, ONLY these vuln
+                classes ever reach verification or reports — everything else
+                discovered is silently excluded, not just deprioritized. Leave
+                empty to hunt all classes (default).
+              </div>
+            </div>
 
             <div className="border-t border-hack-border/40 pt-3 mb-3">
               <div className="text-[9px] text-hack-dim tracking-widest mb-2">AUTH (OPTIONAL)</div>

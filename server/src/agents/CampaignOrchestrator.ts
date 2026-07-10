@@ -89,6 +89,11 @@ export interface OrchestrateParams {
   budget?: { maxRequests: number; maxTime: number };
   /** Override: force specific vuln classes */
   focusVulnClasses?: string[];
+  /** Hard filter: ONLY these vuln classes ever reach PROBE/verification, whatever
+   *  else gets discovered upstream. Unlike focusVulnClasses (additive priority
+   *  seeding), this is exclusionary — for narrowing a hunt down to a single
+   *  vuln class deliberately. Empty/unset = unrestricted (default). */
+  vulnClassAllowlist?: string[];
   /** Resume an interrupted campaign instead of creating a new one */
   resumeCampaignId?: number;
   /** Auth credentials/tokens injected into every tool invocation and HTTP probe */
@@ -674,6 +679,7 @@ export class CampaignOrchestrator extends EventEmitter {
         maxIterations: params.maxIterations || 10,
         budget: params.budget,
         focusVulnClasses,
+        vulnClassAllowlist: params.vulnClassAllowlist,
         auth: params.auth,
         proxyEnabled: params.proxyEnabled,
         wafBypassEnabled: params.wafBypassEnabled,

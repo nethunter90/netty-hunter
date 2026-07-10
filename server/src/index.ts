@@ -312,6 +312,8 @@ io.on("connection", (socket) => {
     maxIterations?: number;
     budget?: { maxRequests: number; maxTime: number };
     focusVulnClasses?: string[];
+    vulnClassAllowlist?: string[];
+    auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
     customVulnPriority?: string[];

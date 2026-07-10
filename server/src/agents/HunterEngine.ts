@@ -228,6 +228,23 @@ const MAX_RCE_OOB_ATTEMPTS = 24;
 
 interface RceOobAttempt { method: "GET" | "POST"; url: string; body?: Record<string, string>; }
 
+/**
+ * Hard scope-narrowing gate: mutates any "pending" hypothesis whose vulnClass
+ * isn't in `allowlist` to "deferred" — excluded from this and every later
+ * iteration (not silently dropped, not endlessly re-filtered). A no-op when
+ * `allowlist` is empty (unrestricted, the default). Pure/testable — operates
+ * on plain hypothesis-shaped objects, no HunterEngine instance required.
+ */
+export function applyVulnClassAllowlist<T extends { status: string; vulnClass: string }>(
+  hypotheses: T[],
+  allowlist: string[]
+): T[] {
+  if (allowlist.length === 0) return [];
+  const excluded = hypotheses.filter(h => h.status === "pending" && !allowlist.includes(h.vulnClass));
+  for (const h of excluded) h.status = "deferred";
+  return excluded;
+}
+
 /** Build a bounded set of OOB command-injection attempts against a target, across
  *  common param names and shell-breakout contexts, GET + a few POST. Pure/testable. */
 export function buildRceOobAttempts(targetUrl: string, callbackUrl: string): RceOobAttempt[] {
@@ -662,6 +679,13 @@ export class HunterEngine extends EventEmitter {
   private oobDegradedWarned = false;
   private authHeaders: Record<string, string> = {};
   private authConfig: AuthConfig | null = null;
+  // Hard scope-narrowing gate — when non-empty, probe() only ever advances
+  // hypotheses whose vulnClass is in this list, regardless of what OBSERVE-phase
+  // probers or the LLM hypothesis generator produce upstream. Unlike
+  // focusVulnClasses (additive — seeds extra priority hypotheses, doesn't stop
+  // anything else), this is exclusionary: a smaller, more consistent surface for
+  // when broad multi-class hunting is more noise than signal.
+  private vulnClassAllowlist: string[] = [];
   private secondaryAuthHeaders: Record<string, string> = {};
   private mergedTools: typeof TOOL_KNOWLEDGE = TOOL_KNOWLEDGE;
   private reconContext: ReconContext | null = null;
@@ -749,7 +773,11 @@ export class HunterEngine extends EventEmitter {
     corpusEnrichment?: boolean;
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
+    /** Hard filter — when set, only these vulnClasses ever reach PROBE/verification.
+     *  See the vulnClassAllowlist field comment for how this differs from focusVulnClasses. */
+    vulnClassAllowlist?: string[];
   }): Promise<string> {
+    this.vulnClassAllowlist = params.vulnClassAllowlist?.filter(Boolean) ?? [];
     // Hard scope gate, enforced here rather than only inside the per-hypothesis
     // probe dispatch (line ~2140) or CampaignOrchestrator's own layer1 gate —
     // several entry points (routes/hunt.ts's REST route, the "hunt:start"
@@ -2182,6 +2210,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
         const refreshed = await sessionManager.ensureSession(this.state.programId, this.authConfig);
         this.authHeaders = refreshed.headers;
       } catch { /* non-critical — continue unauthenticated */ }
+    }
+
+    const allowlistExcluded = applyVulnClassAllowlist(this.state.hypotheses, this.vulnClassAllowlist);
+    if (allowlistExcluded.length > 0) {
+      logger.info("[HunterEngine] vulnClassAllowlist excluded hypotheses", {
+        session: this.state.sessionId,
+        allowlist: this.vulnClassAllowlist,
+        excludedCount: allowlistExcluded.length,
+        excludedClasses: [...new Set(allowlistExcluded.map(h => h.vulnClass))],
+      });
     }
 
     const pending = this.state.hypotheses
