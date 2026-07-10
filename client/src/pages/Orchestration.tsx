@@ -395,16 +395,19 @@ export default function Orchestration() {
               <input
                 type="text"
                 className="hack-input w-full mb-1 font-mono text-[10px]"
-                placeholder="rce"
+                placeholder="rce, ssti, ssrf, lfi, rfi, auth_bypass, exposed_admin, prototype_pollution"
                 value={vulnClassAllowlist}
                 onChange={e => setVulnClassAllowlist(e.target.value)}
                 disabled={isRunning}
               />
               <div className="text-[9px] text-hack-dim leading-relaxed">
-                Comma-separated (e.g. "rce, ssrf"). When set, ONLY these vuln
-                classes ever reach verification or reports — everything else
-                discovered is silently excluded, not just deprioritized. Leave
-                empty to hunt all classes (default).
+                Comma-separated. When set, ONLY these vuln classes ever reach
+                verification or reports — everything else discovered is
+                silently excluded, not just deprioritized. RCE rarely stands
+                alone — include its real precursor chains (ssti, ssrf, lfi/
+                rfi, auth_bypass, exposed_admin, prototype_pollution), not
+                just "rce" by itself, or the hunt can't build the path to it.
+                Leave empty to hunt all classes (default).
               </div>
             </div>
 
