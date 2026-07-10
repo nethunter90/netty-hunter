@@ -1,8 +1,8 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, jsonb,
+  pgTable, serial, bigserial, text, integer, boolean, timestamp, jsonb,
   real, varchar, index, uniqueIndex
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // ─── Users ───────────────────────────────────────────────────────────────────
 export const users = pgTable("users", {
@@ -370,3 +370,88 @@ export const missionMemorySnapshots = pgTable("mission_memory_snapshots", {
 }, (t) => ({
   huntIdIdx: uniqueIndex("mission_memory_hunt_id_idx").on(t.huntId),
 }));
+
+// ─── Cross-Hunt Learning (formal declarations for tables that are actually
+// self-bootstrapped at runtime via CREATE TABLE IF NOT EXISTS — see
+// lib/intelligence/learning-schema.ts, offensive-graph-db.ts, decision-trace.ts.
+// These definitions exist ONLY so drizzle-kit push recognizes the tables as
+// intentional instead of proposing to DROP them (they predate being added to
+// this file, and a diff-based push has no other way to know they're not
+// orphaned cruft). The runtime bootstrap remains the actual source of truth —
+// if you change a column here, update the matching CREATE TABLE there too. ──
+export const decisionJournal = pgTable("decision_journal", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  huntId: text("hunt_id").notNull(),
+  strategyBefore: text("strategy_before"),
+  strategyAfter: text("strategy_after"),
+  action: text("action").notNull(),
+  rationale: text("rationale"),
+  healthSnapshot: jsonb("health_snapshot").notNull().default({}),
+  contextVector: real("context_vector").array().notNull().default(sql`'{}'::real[]`),
+  findingsCount: integer("findings_count").notNull().default(0),
+  cycleNumber: integer("cycle_number").notNull().default(0),
+  outcomeScore: real("outcome_score"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => ({
+  huntIdx: index("decision_journal_hunt_idx").on(t.huntId),
+  outcomeIdx: index("decision_journal_outcome_idx").on(t.outcomeScore),
+}));
+
+export const thresholdHistory = pgTable("threshold_history", {
+  targetType: text("target_type").primaryKey(),
+  thresholds: jsonb("thresholds").notNull().default({}),
+  huntCount: integer("hunt_count").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const cortexSignals = pgTable("cortex_signals", {
+  id: varchar("id").primaryKey(),
+  signalType: text("signal_type").notNull(),
+  sourceSystem: text("source_system").notNull(),
+  huntId: text("hunt_id"),
+  payload: jsonb("payload").notNull().default({}),
+  confidence: real("confidence").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => ({
+  createdIdx: index("cortex_signals_created_idx").on(t.createdAt),
+}));
+
+export const graphNodes = pgTable("graph_nodes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  huntId: varchar("hunt_id").notNull(),
+  nodeType: text("node_type").notNull(),
+  label: text("label").notNull(),
+  confidence: real("confidence").notNull().default(0.5),
+  severity: text("severity"),
+  properties: jsonb("properties").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => ({
+  huntIdx: index("idx_graph_nodes_hunt").on(t.huntId),
+  typeIdx: index("idx_graph_nodes_type").on(t.nodeType),
+}));
+
+export const graphEdges = pgTable("graph_edges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  huntId: varchar("hunt_id").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  targetId: varchar("target_id").notNull(),
+  relationship: text("relationship").notNull(),
+  weight: real("weight").notNull().default(1.0),
+  properties: jsonb("properties").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => ({
+  huntIdx: index("idx_graph_edges_hunt").on(t.huntId),
+  sourceIdx: index("idx_graph_edges_source").on(t.sourceId),
+  targetIdx: index("idx_graph_edges_target").on(t.targetId),
+}));
+
+export const decisionTraces = pgTable("decision_traces", {
+  id: varchar("id").primaryKey(),
+  huntId: text("hunt_id").notNull(),
+  eventType: text("event_type").notNull(),
+  sourceSystem: text("source_system").notNull(),
+  data: jsonb("data").notNull().default({}),
+  reasoning: text("reasoning"),
+  confidenceAtEvent: real("confidence_at_event").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
