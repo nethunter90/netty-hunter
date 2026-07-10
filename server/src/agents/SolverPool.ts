@@ -725,7 +725,7 @@ class CSRFSolver extends BaseSolver {
   }
 }
 
-class AuthBypassSolver extends BaseSolver {
+export class AuthBypassSolver extends BaseSolver {
   private readonly bypassHeaders: Record<string, string>[] = [
     { "X-Original-URL": "/admin" },
     { "X-Forwarded-For": "127.0.0.1" },
@@ -739,6 +739,7 @@ class AuthBypassSolver extends BaseSolver {
     let found = false;
     let bypassHeader: Record<string, string> = {};
     let evidence = "";
+    let noopAuthMiddleware = false;
 
     const baseline = await this.httpProbe(task.endpoint);
     const baseStatus = baseline.status;
@@ -760,10 +761,38 @@ class AuthBypassSolver extends BaseSolver {
       }
     }
 
+    // Distinct from the bypass-header/JWT-none checks above (which require the
+    // baseline to already be gated): this endpoint is reachable with ZERO
+    // credentials at all (baseline 200). That alone is a finding the checks above
+    // never surface — they both short-circuit on baseStatus !== 200. Confirming
+    // with an obviously-invalid credential distinguishes two root causes that look
+    // identical from a bare 200: "no auth check exists on this route" vs "an auth
+    // check exists but validates nothing it's given" (the exact shape proven live
+    // against a real target — isAuthenticated as a no-op middleware stub). The
+    // latter is the stronger signal since it demonstrates the app processes a
+    // credential-shaped header without it discriminating anything, not just that
+    // this one path forgot a check. Note: an intentionally-public route will also
+    // match this signal — callers should only dispatch auth_bypass tasks against
+    // endpoints already suspected of needing protection, same assumption the
+    // existing checks above already rely on.
+    if (!found && baseStatus === 200) {
+      const garbage = await this.httpProbe(task.endpoint, "GET", undefined, {
+        "Authorization": "Bearer not-a-real-token-zzz",
+        "Cookie": "session=not-a-real-session-zzz",
+      });
+      found = true;
+      noopAuthMiddleware = garbage.status === 200 && garbage.body.length === baseline.body.length;
+      evidence = noopAuthMiddleware
+        ? `Endpoint accepts both zero credentials and an obviously-invalid token identically (${baseStatus}) — auth middleware present but validates nothing`
+        : `Endpoint reachable with zero credentials (${baseStatus}) — no auth enforcement at all`;
+    }
+
     return {
       taskId: task.id, solverId: `authbypass-solver-${uuidv4().slice(0, 8)}`,
       endpoint: task.endpoint, vulnClass: "auth_bypass", found,
-      confidence: found ? 0.88 : 0.05, evidence: { detail: evidence, baselineStatus: baseStatus },
+      confidence: found ? (bypassHeader && Object.keys(bypassHeader).length > 0 ? 0.88
+        : noopAuthMiddleware ? 0.85 : evidence.includes("JWT") ? 0.88 : 0.65) : 0.05,
+      evidence: { detail: evidence, baselineStatus: baseStatus, noopAuthMiddleware },
       payload: JSON.stringify(bypassHeader), request: task.endpoint, response: evidence,
       duration: Date.now() - start, toolsUsed: ["http_probe", "header_injection", "jwt_testing"],
     };
