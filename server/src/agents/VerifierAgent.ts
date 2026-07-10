@@ -22,6 +22,7 @@ import { ClaudeClient } from "../lib/claude-client";
 import type { SolverResult } from "./SolverPool";
 import { SimHashDedup } from "../lib/intelligence/simhash";
 import { adaptPayload, isKnownAdaptationRule } from "../lib/verification/payload-adaptation";
+import { PostExploitAgent } from "./PostExploitAgent";
 
 export interface VerificationResult {
   findingId: string;
@@ -193,10 +194,15 @@ export class Layer2Reprobe {
         // both false positives (a 200 "file not found" page has no passwd signature) and
         // false negatives (a real disclosure confirms regardless of status-code quirks —
         // the old `status<400 && found` else-branch was the source of the LFI misses).
+        // The passwd/win.ini signatures only cover the two canonical PoC targets — an
+        // LFI read of anything else (SSH keys, .env, credentialed config) is real proof
+        // too, so it also confirms via the same discriminating secret/credential matcher
+        // PostExploitAgent uses for impact demonstration (never bare status-code alone).
         confirmed = /root:.*:0:0:/.test(body)                       // /etc/passwd root line
           || /(daemon|bin|sys|nobody):[^:]*:\d+:\d+:/.test(body)    // other passwd entries
           || /\[(fonts|extensions|mci extensions)\]/i.test(body)    // win.ini sections
-          || /for 16-bit app support/i.test(body);                  // win.ini boilerplate
+          || /for 16-bit app support/i.test(body)                   // win.ini boilerplate
+          || PostExploitAgent.provesSensitiveDisclosure(body);      // key/secret/credential disclosure
       } else {
         confirmed = resp.status < 400 && result.found;
       }
