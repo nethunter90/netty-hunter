@@ -43,12 +43,22 @@ export class SimHashDedup {
     return dist;
   }
 
-  isDuplicate(hash: bigint, threshold = 3): boolean {
+  /**
+   * `record` controls whether a non-duplicate hash gets remembered for future
+   * comparisons. Callers that don't yet know whether this attempt will actually
+   * be confirmed (e.g. a dedup pre-check running before verification) should
+   * pass `record: false` and commit the hash separately once the real verdict
+   * is known — otherwise an attempt that turns out to be rejected would still
+   * permanently block future near-identical attempts from ever being tried.
+   */
+  isDuplicate(hash: bigint, threshold = 3, record = true): boolean {
     for (const seen of this.seenHashes) {
       if (this.hammingDistance(hash, seen) <= threshold) return true;
     }
-    this.seenHashes.push(hash);
-    if (this.seenHashes.length > 5000) this.seenHashes.shift();
+    if (record) {
+      this.seenHashes.push(hash);
+      if (this.seenHashes.length > 5000) this.seenHashes.shift();
+    }
     return false;
   }
 

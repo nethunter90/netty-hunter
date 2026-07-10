@@ -15,7 +15,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getRandomUserAgent } from "../lib/stealth/browser-fingerprint";
 import { db } from "../db";
 import { findings } from "../db/schema";
-import { eq, desc, isNotNull } from "drizzle-orm";
+import { eq, desc, isNotNull, and } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { ClaudeClient } from "../lib/claude-client";
@@ -69,10 +69,16 @@ class Layer1Dedup {
 
   async initialize(): Promise<void> {
     // Preload the last 500 dedup hashes from DB so restarts don't reprocess
-    // findings that were already confirmed before the process stopped.
+    // findings that were already CONFIRMED before the process stopped. Only
+    // confirmed hashes count as "already seen" — a rejected/inconclusive verdict
+    // is what the last verification logic concluded, not durable ground truth
+    // (a verifier bug fix, e.g. a broadened content oracle or a reprobe that now
+    // carries auth it didn't before, can make the exact same hash provable on a
+    // later hunt). Blocking on any prior verdict meant a rejected finding could
+    // never be re-attempted after a fix, even against the same live target.
     const recent = await db.select({ dedupHash: findings.dedupHash })
       .from(findings)
-      .where(isNotNull(findings.dedupHash))
+      .where(and(isNotNull(findings.dedupHash), eq(findings.verificationStatus, "confirmed")))
       .orderBy(desc(findings.createdAt))
       .limit(500);
     for (const row of recent) {
@@ -116,10 +122,11 @@ class Layer1Dedup {
       return { isDuplicate: true, existingHash: hash };
     }
 
-    // Check DB for exact duplicate
+    // Check DB for an exact duplicate that was actually CONFIRMED — a rejected/
+    // inconclusive prior verdict must not block this attempt from running.
     const existing = await db.select({ id: findings.id })
       .from(findings)
-      .where(eq(findings.dedupHash, hash))
+      .where(and(eq(findings.dedupHash, hash), eq(findings.verificationStatus, "confirmed")))
       .limit(1);
 
     if (existing.length > 0) {
@@ -127,14 +134,26 @@ class Layer1Dedup {
       return { isDuplicate: true, existingHash: hash };
     }
 
-    // Near-duplicate check via SimHash (same vuln class + similar endpoint/payload)
-    if (this.simHash.isDuplicate(simhash)) {
-      this.hashCache.add(hash);
+    // Near-duplicate check via SimHash (same vuln class + similar endpoint/payload).
+    // Deliberately does NOT record `simhash` here — check() runs before the
+    // verdict is known, so recording unconditionally would mean a rejected
+    // finding's shape permanently blocks near-duplicate re-attempts too. Only
+    // recordIfConfirmed() (called once the real verdict is in) commits a hash into
+    // either cache, matching the same "only confirmed blocks retries" rule as the
+    // exact-hash check above.
+    if (this.simHash.isDuplicate(simhash, 3, /* record */ false)) {
       return { isDuplicate: true, existingHash: "simhash-near-duplicate" };
     }
 
-    this.hashCache.add(hash);
     return { isDuplicate: false };
+  }
+
+  /** Call once the real verdict is known — only a CONFIRMED finding should ever
+   *  cause a future identical/near-identical attempt to be skipped. */
+  recordIfConfirmed(hash: string, simhash: bigint, verdict: string): void {
+    if (verdict !== "confirmed") return;
+    this.hashCache.add(hash);
+    this.simHash.isDuplicate(simhash, 3, /* record */ true);
   }
 }
 
@@ -738,6 +757,10 @@ export class VerifierAgent {
     }
 
     logger.info("VerifierAgent: Verification complete", { findingId, finalVerdict, finalConfidence });
+
+    // Only a confirmed verdict should ever cause a future identical/near-identical
+    // attempt to be skipped — see Layer1Dedup.check()'s comment.
+    this.layer1.recordIfConfirmed(dedupHash, simhash, finalVerdict);
 
     return {
       findingId,

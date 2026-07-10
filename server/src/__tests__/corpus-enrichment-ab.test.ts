@@ -54,11 +54,11 @@ vi.mock('../db', () => ({
 }));
 
 vi.mock('../db/schema', () => ({
-  findings: { dedupHash: 'dedupHash', createdAt: 'createdAt', id: 'id' },
+  findings: { dedupHash: 'dedupHash', createdAt: 'createdAt', id: 'id', verificationStatus: 'verificationStatus' },
   huntSessions: { id: 'id', sessionUuid: 'sessionUuid' },
 }));
 
-vi.mock('drizzle-orm', () => ({ eq: vi.fn(), desc: vi.fn(), isNotNull: vi.fn() }));
+vi.mock('drizzle-orm', () => ({ eq: vi.fn(), desc: vi.fn(), isNotNull: vi.fn(), and: vi.fn() }));
 
 vi.mock('../utils/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

@@ -128,6 +128,11 @@ export async function verifyAndPersistFinding(
   // belongs to the canonical finding). Mark it "duplicate" and persist the log
   // without touching dedupHash so the canonical row keeps sole ownership.
   const isDuplicate = verification.finalVerdict === "deduplicated";
+  // dedupHash is only persisted on a CONFIRMED verdict (see CampaignOrchestrator.ts's
+  // matching guard) — Layer1Dedup now only blocks future attempts on a prior
+  // CONFIRMED match, so the same hash can legitimately recur across several
+  // rejected findings for the same target; writing it on every non-duplicate
+  // verdict would violate the unique constraint the second such hash appears.
 
   // When a payload-adaptation retry is what actually confirmed the finding, the
   // original exploitPayload/affectedUrl are the ones that FAILED — persist the
@@ -139,7 +144,7 @@ export async function verifyAndPersistFinding(
     verificationStatus: isDuplicate ? "duplicate" : verification.finalVerdict,
     verificationLog: [verification] as unknown as Record<string, unknown>[],
     confidence: verification.finalConfidence,
-    ...(isDuplicate ? {} : { dedupHash: verification.dedupHash }),
+    ...(verification.finalVerdict === "confirmed" ? { dedupHash: verification.dedupHash } : {}),
     ...(escalation ? {
       severity: escalation.severity,
       cvssScore: escalation.cvssScore,

@@ -1024,12 +1024,17 @@ export class CampaignOrchestrator extends EventEmitter {
             ];
           }
 
-          // Update finding record
+          // Update finding record. dedupHash is only persisted on a CONFIRMED
+          // verdict — the column is unique, and now that Layer1Dedup only blocks
+          // future attempts on a prior CONFIRMED match (not any prior verdict),
+          // the same hash can legitimately recur across many rejected findings
+          // for the same target; writing it unconditionally would violate the
+          // unique constraint on the second such occurrence.
           await db.update(findings).set({
             verificationStatus: verification.finalVerdict,
             verificationLog: [sanitisedVerification] as unknown as Record<string, unknown>[],
             confidence: verification.finalConfidence,
-            dedupHash: verification.dedupHash,
+            ...(verification.finalVerdict === "confirmed" ? { dedupHash: verification.dedupHash } : {}),
             ...(cweId !== null ? { cweId } : {}),
             ...(escalation ? {
               severity: escalation.severity,

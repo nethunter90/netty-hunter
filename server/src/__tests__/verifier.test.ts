@@ -29,7 +29,7 @@ vi.mock('../db', () => ({
 }));
 
 vi.mock('../db/schema', () => ({
-  findings: { dedupHash: 'dedupHash', createdAt: 'createdAt', id: 'id' },
+  findings: { dedupHash: 'dedupHash', createdAt: 'createdAt', id: 'id', verificationStatus: 'verificationStatus' },
   huntSessions: { id: 'id', sessionUuid: 'sessionUuid' },
 }));
 
@@ -37,6 +37,7 @@ vi.mock('drizzle-orm', () => ({
   eq: vi.fn(),
   desc: vi.fn(),
   isNotNull: vi.fn(),
+  and: vi.fn(),
 }));
 
 vi.mock('../utils/logger', () => ({
@@ -181,14 +182,44 @@ describe('VerifierAgent', () => {
       expect(check.existingHash).toBe(hash);
     });
 
-    it('returns isDuplicate=false and adds to cache for a novel finding', async () => {
+    it('returns isDuplicate=false for a novel finding WITHOUT caching it yet', async () => {
+      // check() runs before the verdict is known — a novel hash must not be
+      // cached until recordIfConfirmed() commits it, otherwise a finding that
+      // turns out to be rejected would still block future identical attempts.
       const l1 = (agent as any).layer1;
       const result = makeSolverResult({ taskId: 'novel-finding-999' });
       const hash = l1.computeHash(result);
       const simhash = l1.computeSimHash(result);
       const check = await l1.check(hash, simhash);
       expect(check.isDuplicate).toBe(false);
+      expect(l1.hashCache.has(hash)).toBe(false);
+    });
+
+    it('recordIfConfirmed caches the hash only when verdict is "confirmed"', async () => {
+      const l1 = (agent as any).layer1;
+      const result = makeSolverResult({ taskId: 'rejected-then-confirmed' });
+      const hash = l1.computeHash(result);
+      const simhash = l1.computeSimHash(result);
+
+      l1.recordIfConfirmed(hash, simhash, 'rejected');
+      expect(l1.hashCache.has(hash)).toBe(false);
+
+      l1.recordIfConfirmed(hash, simhash, 'confirmed');
       expect(l1.hashCache.has(hash)).toBe(true);
+    });
+
+    it('a rejected finding does not block a later re-attempt with the same hash', async () => {
+      const l1 = (agent as any).layer1;
+      const result = makeSolverResult({ taskId: 'retry-after-fix' });
+      const hash = l1.computeHash(result);
+      const simhash = l1.computeSimHash(result);
+
+      const first = await l1.check(hash, simhash);
+      expect(first.isDuplicate).toBe(false);
+      l1.recordIfConfirmed(hash, simhash, 'rejected'); // no-op, verdict wasn't confirmed
+
+      const second = await l1.check(hash, simhash);
+      expect(second.isDuplicate).toBe(false);
     });
   });
 
