@@ -163,7 +163,7 @@ export class Layer2Reprobe {
     // command was actually executed (not merely reflected — the exact-match +
     // anti-reflection guard in reprobeRceNonceEcho rules that out).
     if (result.vulnClass === "rce") {
-      return await this.reprobeRceNonceEcho(reprobeUrl);
+      return await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders);
     }
 
     try {
@@ -171,7 +171,7 @@ export class Layer2Reprobe {
       const resp = await axios.get(reprobeUrl, {
         timeout: 10000,
         validateStatus: () => true,
-        headers: { "User-Agent": getRandomUserAgent() },
+        headers: { "User-Agent": getRandomUserAgent(), ...result.authHeaders },
       });
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
@@ -224,7 +224,8 @@ export class Layer2Reprobe {
    * compromise — callers must not escalate the claim beyond that.
    */
   private async reprobeRceNonceEcho(
-    reprobeUrl: string
+    reprobeUrl: string,
+    authHeaders?: Record<string, string>,
   ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     let url: URL;
     try {
@@ -251,7 +252,7 @@ export class Layer2Reprobe {
           const resp = await axios.get(probeUrl.toString(), {
             timeout: 8000,
             validateStatus: () => true,
-            headers: { "User-Agent": getRandomUserAgent() },
+            headers: { "User-Agent": getRandomUserAgent(), ...authHeaders },
           });
           const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
           // Exact nonce present AND the literal injected string is not echoed

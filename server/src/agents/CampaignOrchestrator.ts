@@ -868,6 +868,14 @@ export class CampaignOrchestrator extends EventEmitter {
       needsVerification: needsVerification.length,
     });
 
+    // Replay the same auth the hunt discovered findings under — an unauthenticated
+    // reprobe of an auth-gated endpoint hits a login redirect/401 and wrongly
+    // reproduces as "not confirmed" regardless of whether the finding is real.
+    const verificationAuthHeaders: Record<string, string> = {};
+    if (params.auth?.cookie) verificationAuthHeaders["Cookie"] = params.auth.cookie;
+    if (params.auth?.bearerToken) verificationAuthHeaders["Authorization"] = `Bearer ${params.auth.bearerToken}`;
+    if (params.auth?.headers) Object.assign(verificationAuthHeaders, params.auth.headers);
+
     const dbFindings = needsVerification;
     // Run 4-layer anti-hallucination pipeline on each finding
     for (const dbFinding of dbFindings) {
@@ -907,6 +915,7 @@ export class CampaignOrchestrator extends EventEmitter {
           // OOB beacon hit = authoritative non-destructive proof for rce/ssrf/xxe/
           // blind classes; the verifier confirms on this without L2 vetoing.
           oobConfirmed: dbFinding.oobHitReceived === true,
+          authHeaders: Object.keys(verificationAuthHeaders).length > 0 ? verificationAuthHeaders : undefined,
         };
 
         const verification = await this.verifierAgent.verify(mockResult);

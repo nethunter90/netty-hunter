@@ -88,6 +88,15 @@ export interface SolverResult {
    * not veto it. Sourced from findings.oobHitReceived at verify time.
    */
   oobConfirmed?: boolean;
+  /**
+   * Auth headers (Cookie / Authorization / custom) captured from the hunt's
+   * configured auth. Layer2Reprobe replays these so its "independent" reprobe
+   * hits the target under the same authenticated context the original
+   * discovery used — without this, any finding behind a login session
+   * reproduces as a 401/redirect and is wrongly rejected regardless of
+   * whether the vulnerability is real.
+   */
+  authHeaders?: Record<string, string>;
 }
 
 // ─── Per-domain behavioral mimicry sessions ──────────────────────────────────
