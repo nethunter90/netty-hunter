@@ -148,13 +148,19 @@ export class DriftDetector {
     for (const pillarName of Object.keys(GOVERNANCE_PILLARS) as GovernancePillar[]) {
       const recentActivity = this.aggregatePillarActivity(recentSnapshots, pillarName);
       const baselineActivity = this.aggregatePillarActivity(baselineSnapshots, pillarName);
-      // A pillar going from 0 baseline activity to anything (or vice versa) is
-      // the normal shape of episodic, sporadic hunting — not evidence that
-      // active enforcement was silenced. Only compute a percentage once the
-      // pillar had enough baseline activity to establish a real pattern to
-      // drift away from.
-      const change = baselineActivity >= MIN_BASELINE_ACTIVITY_FOR_PILLAR_DRIFT
-        ? ((recentActivity - baselineActivity) / baselineActivity) * 100
+      // recentSnapshots spans recentWindowMs (default 1h); baselineSnapshots spans
+      // baselineWindowMs MINUS recentWindowMs (default 23h) — a raw-count compare
+      // between windows of very different lengths is not a rate comparison. Under
+      // perfectly steady activity the 23h window naturally sums to ~23x the 1h
+      // window, which would read as a huge "drop" even though nothing changed.
+      // Normalize both to activity-per-snapshot before comparing, the same way
+      // verdict drift above compares rates (%) rather than raw counts — this also
+      // requires a real baseline sample size (episodic solo-hunter usage means an
+      // empty or thin baseline window is the normal case, not a signal).
+      const recentAvg = recentSnapshots.length > 0 ? recentActivity / recentSnapshots.length : 0;
+      const baselineAvg = baselineSnapshots.length > 0 ? baselineActivity / baselineSnapshots.length : 0;
+      const change = baselineActivity >= MIN_BASELINE_ACTIVITY_FOR_PILLAR_DRIFT && baselineAvg > 0
+        ? ((recentAvg - baselineAvg) / baselineAvg) * 100
         : 0;
       pillarDrift.push({
         pillar: pillarName,
