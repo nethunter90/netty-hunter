@@ -39,6 +39,7 @@ import { ssrfChainProber } from "../lib/tools/ssrf-chain-prober";
 import { payloadMutator } from "../lib/tools/payload-mutator";
 import { changeDetector } from "../lib/tools/change-detector";
 import { secretScanner } from "../lib/tools/secret-scanner";
+import { errorDisclosureProber } from "../lib/tools/error-disclosure-prober";
 import { notificationService } from "../lib/services/notification-service";
 import { webSocketProber } from "../lib/tools/websocket-probe";
 import { cloudBucketProber } from "../lib/tools/cloud-bucket-probe";
@@ -1369,6 +1370,34 @@ export class HunterEngine extends EventEmitter {
           }
         } catch (err) {
           logger.debug("[HunterEngine] Secret scan skipped (non-critical)", { err: String(err) });
+        }
+      })(),
+
+      // Error-disclosure probing — deliberately provoke exceptions with
+      // malformed input and scan the error response for leaked secrets or
+      // internal paths/stack traces. secretScanner above only ever scans clean
+      // 200 responses on a fixed static-path list — an app that echoes raw
+      // error.message back to the client on failure is invisible to that scan.
+      (async () => {
+        try {
+          const disclosureResult = await errorDisclosureProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of disclosureResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [{ id: uuidv4(), source: "error_disclosure_prober", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (disclosureResult.findings.length > 0) {
+            this.emit("hunt:secrets_found", {
+              sessionId: this.state.sessionId,
+              count: disclosureResult.findings.length,
+              types: [...new Set(disclosureResult.findings.flatMap(f => f.secretsFound.length > 0 ? f.secretsFound : f.pathsLeaked))],
+            });
+          }
+        } catch (err) {
+          logger.debug("[HunterEngine] Error-disclosure probe skipped (non-critical)", { err: String(err) });
         }
       })(),
 

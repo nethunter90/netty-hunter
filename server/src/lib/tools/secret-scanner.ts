@@ -134,7 +134,10 @@ class SecretScanner {
     }
   }
 
-  private scanBody(body: string, url: string): SecretMatch[] {
+  /** Public: reused by error-disclosure-prober.ts to run the same credential/
+   *  secret regex set against deliberately-provoked error response bodies,
+   *  which fetchAndScan() never sees (it excludes non-200 responses). */
+  scanBody(body: string, url: string): SecretMatch[] {
     const matches: SecretMatch[] = [];
 
     for (const { name, regex, redactFrom } of SECRET_PATTERNS) {
