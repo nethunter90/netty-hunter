@@ -1660,7 +1660,10 @@ export class HunterEngine extends EventEmitter {
                 confidence: hyp.confidence, priority: hyp.priority,
                 evidence: [{
                   id: uuidv4(), source: "tech_payload_prober",
-                  data: { endpoint: hyp.endpoint, detail: hyp.reasoning, response: hyp.evidenceSnippet },
+                  data: {
+                    endpoint: hyp.endpoint, detail: hyp.reasoning, response: hyp.evidenceSnippet,
+                    technique: hyp.technique, rawPayload: hyp.rawPayload,
+                  },
                   tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now(),
                 }],
                 status: "pending", createdAt: Date.now(),
@@ -2311,6 +2314,49 @@ Return ONLY valid JSON array of hypothesis objects.`;
       if (!allowed) {
         hypothesis.status = "deferred";
         continue;
+      }
+
+      // Tech-payload-prober replay — fires before regular tool dispatch for any
+      // hypothesis whose evidence came from techPayloadProber (ssti/exposed_admin,
+      // and the tech-tailored rce shapes it tests that the generic deserialize
+      // branch below doesn't cover). Same reasoning as the deserialize branch:
+      // a generic RL-selected tool has no idea how to resend an SSTI oracle or
+      // recheck a debug route, so without this the real evidence gathered at
+      // OBSERVE time would be discarded and replaced with a probe that can't
+      // possibly confirm it — the exact bug already fixed once for deserialize.
+      const techProberEvidence = hypothesis.evidence.find(e => e.source === "tech_payload_prober");
+      if (techProberEvidence) {
+        const { technique, rawPayload } = techProberEvidence.data as { technique?: string; rawPayload?: string };
+        if (technique) {
+          const reprobe = await techPayloadProber.reprobeHypothesis(
+            technique as Parameters<typeof techPayloadProber.reprobeHypothesis>[0],
+            hypothesis.targetUrl, this.authHeaders, rawPayload
+          );
+          this.state.budget.requestsMade++;
+          if (reprobe.found) {
+            const result: ProbeResult = {
+              hypothesisId: hypothesis.id,
+              tool: "tech_payload_prober",
+              command: `${technique} ${hypothesis.targetUrl}`,
+              output: reprobe.evidence,
+              parsed: { found: true, vulnerable: true, rawOutput: reprobe.evidence },
+              success: true,
+              duration: 0,
+            };
+            this.state.probes.push(result);
+            this.rlWiring.onToolResult("tech_payload_prober", hypothesis.vulnClass, true, hypothesis.confidence);
+            failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, true);
+            this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
+            hypothesis.status = "probing"; // let update phase confirm it
+            hypothesis.confidence = Math.min(0.95, hypothesis.confidence + 0.2);
+            continue;
+          }
+          // Replay didn't reproduce it — mark inconclusive rather than falling
+          // through to a generic tool that's equally unequipped to test this.
+          hypothesis.status = "inconclusive";
+          failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, false);
+          continue;
+        }
       }
 
       // Deserialization POST probe — fires before regular tool dispatch for rce hypotheses

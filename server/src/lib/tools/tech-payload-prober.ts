@@ -6,11 +6,21 @@
  * generic RCE/SSTI payloads regardless of its real stack, and Spring's
  * /actuator/heapdump, /h2-console, and Laravel's Ignition health-check (real,
  * well-known RCE-adjacent exposures) were built and never probed at all.
+ *
+ * findings/hypotheses carry a `technique` tag (+ `rawPayload` where relevant)
+ * specifically so HunterEngine's PROBE phase can call reprobeHypothesis() and
+ * exactly replay the test that produced the evidence, instead of falling
+ * through to a generic RL-selected tool that has no idea what to send for a
+ * newly-introduced vulnClass like "ssti" — the same "evidence gathered then
+ * discarded before verification" bug already fixed for 18 other probers this
+ * session, which would otherwise have reappeared here for a 19th.
  */
 import axios from "axios";
 import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 import type { TechPayload } from "./tech-payload-selector";
+
+export type TechProbeTechnique = "ssti" | "rce_content_type" | "rce_object_injection" | "debug_route";
 
 export interface TechProbeFinding {
   vulnClass: string;
@@ -18,13 +28,17 @@ export interface TechProbeFinding {
   detail: string;
   evidenceSnippet: string;
   confidence: number;
+  technique: TechProbeTechnique;
+  /** The exact payload sent, when replaying requires resending a fixed body
+   *  (rce_object_injection) rather than a freshly-generated one (ssti). */
+  rawPayload?: string;
 }
 
 export interface TechProbeResult {
   findings: TechProbeFinding[];
   hypotheses: Array<{
     vulnClass: string; reasoning: string; confidence: number; priority: number;
-    endpoint: string; evidenceSnippet: string;
+    endpoint: string; evidenceSnippet: string; technique: TechProbeTechnique; rawPayload?: string;
   }>;
 }
 
@@ -39,6 +53,20 @@ function detectSyntaxBuilder(payload: string): ((expr: string) => string) | null
   if (payload.startsWith("{{")) return expr => `{{${expr}}}`;
   if (payload.startsWith("${")) return expr => `\${${expr}}`;
   if (payload.startsWith("#{")) return expr => `#{${expr}}`;
+  return null;
+}
+
+// Given a URL that already carries an SSTI payload embedded in a query param
+// (e.g. from a prior finding's `endpoint`), recover which syntax family it
+// used so a reprobe can build a fresh expression in the SAME syntax.
+function findEmbeddedSyntax(url: string): { param: string; build: (expr: string) => string } | null {
+  try {
+    const u = new URL(url);
+    for (const [key, value] of u.searchParams.entries()) {
+      const build = detectSyntaxBuilder(decodeURIComponent(value));
+      if (build) return { param: key, build };
+    }
+  } catch { /* malformed URL — no embedded syntax to recover */ }
   return null;
 }
 
@@ -64,6 +92,8 @@ class TechPayloadProber {
       priority: f.vulnClass === "rce" || f.vulnClass === "ssti" ? 9 : 7,
       endpoint: f.endpoint,
       evidenceSnippet: f.evidenceSnippet,
+      technique: f.technique,
+      rawPayload: f.rawPayload,
     }));
 
     if (findings.length > 0) {
@@ -74,6 +104,63 @@ class TechPayloadProber {
     }
 
     return { findings, hypotheses };
+  }
+
+  /**
+   * Replays the exact technique that produced a finding, called from
+   * HunterEngine's PROBE phase instead of letting the generic RL-selected
+   * tool dispatch (which has no idea how to test ssti/exposed_admin/these
+   * specific rce shapes) silently fail to reproduce real evidence.
+   */
+  async reprobeHypothesis(
+    technique: TechProbeTechnique,
+    endpoint: string,
+    authHeaders: Record<string, string> = {},
+    rawPayload?: string
+  ): Promise<{ found: boolean; evidence: string }> {
+    try {
+      if (technique === "debug_route") {
+        const resp = await axios.get(endpoint, { timeout: 6000, validateStatus: () => true, headers: authHeaders });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        return { found: resp.status === 200 && body.length >= 20, evidence: body.slice(0, 300) };
+      }
+
+      if (technique === "ssti") {
+        const syntax = findEmbeddedSyntax(endpoint);
+        if (!syntax) return { found: false, evidence: "Could not recover SSTI syntax from endpoint" };
+        const a = 1000 + Math.floor(Math.random() * 9000);
+        const b = 1000 + Math.floor(Math.random() * 9000);
+        const sentExpr = `${a}*${b}`;
+        const product = String(a * b);
+        const u = new URL(endpoint);
+        u.searchParams.set(syntax.param, syntax.build(sentExpr));
+        const resp = await axios.get(u.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        const found = body.includes(product) && !body.includes(sentExpr);
+        return { found, evidence: found ? body.slice(0, 300) : `No re-evaluation of ${sentExpr} observed` };
+      }
+
+      if (technique === "rce_content_type") {
+        const resp = await axios.post(endpoint, "", {
+          timeout: 7000, validateStatus: () => true,
+          headers: { ...authHeaders, "Content-Type": "application/x-java-serialized-object" },
+        });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        const found = resp.status === 500 || /exception|stack ?trace|deserializ|unserialize/i.test(body);
+        return { found, evidence: body.slice(0, 300) };
+      }
+
+      if (technique === "rce_object_injection" && rawPayload) {
+        const resp = await csrfAwareRequest(endpoint, "POST", rawPayload, { ...authHeaders, "Content-Type": "application/octet-stream" }, 7000);
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        const found = resp.status === 500 || /exception|stack ?trace|deserializ|unserialize/i.test(body);
+        return { found, evidence: body.slice(0, 300) };
+      }
+
+      return { found: false, evidence: "Unknown technique" };
+    } catch (err) {
+      return { found: false, evidence: `Reprobe failed: ${(err as Error).message}` };
+    }
   }
 
   private async probeSsti(
@@ -108,6 +195,7 @@ class TechPayloadProber {
           detail: `${p.description} — confirmed: ${sentExpr} evaluated to ${product}`,
           evidenceSnippet: body.slice(0, 300),
           confidence: 0.9,
+          technique: "ssti",
         });
       }
     } catch {
@@ -142,6 +230,8 @@ class TechPayloadProber {
           detail: `${p.description} — server response suggests the payload was actually processed (status ${resp.status})`,
           evidenceSnippet: body.slice(0, 300),
           confidence: 0.4,
+          technique: isContentTypeProbe ? "rce_content_type" : "rce_object_injection",
+          rawPayload: isContentTypeProbe ? undefined : p.payload,
         });
       }
     } catch {
@@ -167,6 +257,7 @@ class TechPayloadProber {
         detail: `Debug/admin route exposed unauthenticated: ${route}`,
         evidenceSnippet: body.slice(0, 300),
         confidence: 0.7,
+        technique: "debug_route",
       });
     } catch {
       // unreachable — non-critical

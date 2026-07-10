@@ -57,6 +57,7 @@ describe('techPayloadProber.probe', () => {
     expect(result.findings.length).toBe(1);
     expect(result.findings[0].vulnClass).toBe('ssti');
     expect(result.findings[0].confidence).toBe(0.9);
+    expect(result.findings[0].technique).toBe('ssti');
     // The sent URL must NOT contain the literal static "7*7" from the selector —
     // confirms a fresh randomized expression was actually generated and sent.
     const sentUrl = mockedGet.mock.calls[0][0] as string;
@@ -105,6 +106,8 @@ describe('techPayloadProber.probe', () => {
 
     expect(result.findings.length).toBe(1);
     expect(result.findings[0].confidence).toBe(0.4); // deliberately modest, not a hard confirm
+    expect(result.findings[0].technique).toBe('rce_object_injection');
+    expect(result.findings[0].rawPayload).toBe('O:8:"stdClass":0:{}');
   });
 
   it('does not flag a clean 200 with no evaluation/error signal', async () => {
@@ -116,5 +119,58 @@ describe('techPayloadProber.probe', () => {
 
     const result = await techPayloadProber.probe('http://localhost:5000/', [sstiPayload], [], {});
     expect(result.findings).toEqual([]);
+  });
+});
+
+describe('techPayloadProber.reprobeHypothesis', () => {
+  // This is what HunterEngine's PROBE phase calls instead of falling through
+  // to a generic RL-selected tool that has no idea how to resend an SSTI
+  // oracle or recheck a debug route — without it, real OBSERVE-phase evidence
+  // for ssti/exposed_admin/tech-rce hypotheses would be silently discarded,
+  // the same bug already fixed once for the deserialize-probe path.
+
+  it('replays an ssti finding by recovering the syntax from the endpoint URL', async () => {
+    mockedGet.mockImplementation((url: string) => {
+      const match = decodeURIComponent(url).match(/\$\{(\d+)\*(\d+)\}/);
+      const product = match ? String(Number(match[1]) * Number(match[2])) : '';
+      return Promise.resolve({ status: 200, data: `result: ${product}` });
+    });
+
+    const result = await techPayloadProber.reprobeHypothesis(
+      'ssti', 'http://localhost:5000/calc?q=%24%7B6880*8262%7D', {}
+    );
+
+    expect(result.found).toBe(true);
+    // Must have sent a FRESH random expression, not replayed the stale one verbatim.
+    const sentUrl = mockedGet.mock.calls[0][0] as string;
+    expect(sentUrl).not.toContain('6880*8262');
+  });
+
+  it('returns not-found when ssti syntax cannot be recovered from the endpoint', async () => {
+    const result = await techPayloadProber.reprobeHypothesis('ssti', 'http://localhost:5000/no-params', {});
+    expect(result.found).toBe(false);
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+
+  it('replays a debug_route finding with a plain re-GET', async () => {
+    mockedGet.mockResolvedValue({ status: 200, data: 'x'.repeat(50) });
+    const result = await techPayloadProber.reprobeHypothesis('debug_route', 'http://localhost:8080/actuator/heapdump', {});
+    expect(result.found).toBe(true);
+  });
+
+  it('replays rce_object_injection with the exact original payload', async () => {
+    mockedCsrf.mockResolvedValue({ status: 500, data: 'unserialize(): Error', headers: {}, csrfBypassUsed: false });
+    const result = await techPayloadProber.reprobeHypothesis(
+      'rce_object_injection', 'http://localhost:8000/api/data', {}, 'O:8:"stdClass":0:{}'
+    );
+    expect(result.found).toBe(true);
+    // csrfAwareRequest(url, method, body, headers, timeout) — body is arg index 2.
+    expect(mockedCsrf.mock.calls[0][2]).toBe('O:8:"stdClass":0:{}');
+  });
+
+  it('replays rce_content_type by resending the Java serialized content-type header', async () => {
+    mockedPost.mockResolvedValue({ status: 500, data: 'InvalidClassException' });
+    const result = await techPayloadProber.reprobeHypothesis('rce_content_type', 'http://localhost:8080/api', {});
+    expect(result.found).toBe(true);
   });
 });
