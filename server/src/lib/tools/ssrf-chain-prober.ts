@@ -36,6 +36,22 @@ const INTERNAL_PORTS = [
 
 const INTERNAL_HOSTS = ["127.0.0.1", "localhost", "10.0.0.1", "192.168.1.1", "172.17.0.1"];
 
+// Shared SSRF param-name heuristic — single source of truth (SolverPool.ts's
+// SSRFSolver imports this instead of keeping its own separate, drifting copy).
+// Beyond the classic redirect-shaped names (url/redirect/dest/...), real targets
+// also feed server-side fetches through "test this connection" / admin-tooling
+// fields that never look like a redirect: a headless-browser screenshot feature's
+// target URL, or a local-LLM config panel's host field (proven live against a
+// real target 2026-07-10 — an Ollama URL test field was a genuine SSRF sink).
+export const SSRF_PARAM_NAMES = [
+  "url", "uri", "redirect", "dest", "destination", "target", "src", "source",
+  "callback", "return", "next", "link", "page", "path", "file", "fetch",
+  "host", "hostname", "endpoint", "endpoint_url", "server_url", "base_url",
+  "api_url", "webhook", "webhook_url", "callback_url", "ollama_url", "ollama_host",
+  "llm_url", "screenshot_url", "avatar_url", "import_url", "feed_url", "proxy",
+  "proxy_url", "connection_string", "test_connection", "ping", "address",
+];
+
 class SSRFChainProber {
   async probe(
     ssrfVectorUrl: string,
@@ -194,10 +210,9 @@ class SSRFChainProber {
 
   // Detect SSRF parameter from URL — returns best guess param name
   detectSSRFParam(url: string): string {
-    const ssrfParams = ["url", "uri", "redirect", "dest", "destination", "target", "src", "source", "callback", "return", "next", "link", "page", "path", "file", "fetch"];
     try {
       const u = new URL(url);
-      for (const p of ssrfParams) {
+      for (const p of SSRF_PARAM_NAMES) {
         if (u.searchParams.has(p)) return p;
       }
     } catch { /* ignore */ }
