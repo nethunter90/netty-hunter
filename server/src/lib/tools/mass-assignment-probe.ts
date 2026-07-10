@@ -1,5 +1,6 @@
 import axios from "axios";
 import logger from "../../utils/logger";
+import { csrfAwareRequest } from "./csrf-aware-request";
 
 interface MassAssignmentVuln {
   endpoint: string;
@@ -104,17 +105,10 @@ class MassAssignmentProber {
 
     for (const method of methods) {
       try {
-        const response = await axios.request({
-          method,
-          url,
-          data: body,
-          headers: {
-            ...authHeaders,
-            "Content-Type": "application/json",
-          },
-          timeout: 7000,
-          validateStatus: () => true,
-        });
+        const response = await csrfAwareRequest(url, method, body, {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        }, 7000);
 
         const accepted = [200, 201, 204].includes(response.status);
         const reflected = containsMarker(response.data) ||
@@ -136,9 +130,10 @@ class MassAssignmentProber {
         );
         const reportedFields = matchedFields.length > 0 ? matchedFields : injectedKeys;
         const severity = classifyFields(reportedFields);
-        const detail = reflected
+        const csrfNote = response.csrfBypassUsed ? " (reachable via self-minted CSRF token — no real auth required)" : "";
+        const detail = (reflected
           ? `Injected privileged fields [${reportedFields.join(", ")}] were reflected in ${method} ${path} response`
-          : `Server accepted ${method} ${path} with privileged fields [${reportedFields.join(", ")}] (status ${response.status})`;
+          : `Server accepted ${method} ${path} with privileged fields [${reportedFields.join(", ")}] (status ${response.status})`) + csrfNote;
 
         logger.debug(
           `[MassAssignmentProber] Vuln at ${method} ${url} fields=${reportedFields.join(",")} accepted=${effectiveAccepted} reflected=${reflected}`
@@ -181,14 +176,10 @@ class MassAssignmentProber {
     const injectedKeys = Object.keys(fieldSet);
 
     try {
-      const response = await axios.post(url, body, {
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-        },
-        timeout: 7000,
-        validateStatus: () => true,
-      });
+      const response = await csrfAwareRequest(url, "POST", body, {
+        ...authHeaders,
+        "Content-Type": "application/json",
+      }, 7000);
 
       const accepted = [200, 201, 204].includes(response.status);
       const reflected = containsMarker(response.data) ||
@@ -206,9 +197,10 @@ class MassAssignmentProber {
       );
       const reportedFields = matchedFields.length > 0 ? matchedFields : injectedKeys;
       const severity = classifyFields(reportedFields);
-      const detail = reflected
+      const csrfNote = response.csrfBypassUsed ? " (reachable via self-minted CSRF token — no real auth required)" : "";
+      const detail = (reflected
         ? `Injected privileged fields [${reportedFields.join(", ")}] were reflected in POST ${path} registration response`
-        : `Server accepted POST ${path} registration with privileged fields [${reportedFields.join(", ")}] (status ${response.status})`;
+        : `Server accepted POST ${path} registration with privileged fields [${reportedFields.join(", ")}] (status ${response.status})`) + csrfNote;
 
       logger.debug(
         `[MassAssignmentProber] Vuln at POST ${url} fields=${reportedFields.join(",")} accepted=${accepted} reflected=${reflected}`

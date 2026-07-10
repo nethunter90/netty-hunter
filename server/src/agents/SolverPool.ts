@@ -19,6 +19,7 @@ import { BehavioralMimicry } from "../lib/stealth/behavioral-mimicry";
 import type { MimicrySession } from "../lib/stealth/behavioral-mimicry";
 import { dynamicRateLimiter, autoAdjuster } from "../lib/stealth";
 import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
+import { getCsrfHeaders } from "../lib/tools/csrf-aware-request";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -663,6 +664,7 @@ class CSRFSolver extends BaseSolver {
   async solve(task: SolverTask): Promise<SolverResult> {
     const start = Date.now();
     let found = false;
+    let csrfBypassed = false;
     const leaks: Record<string, unknown> = {};
 
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
@@ -677,16 +679,48 @@ class CSRFSolver extends BaseSolver {
       if (!hasToken && resp.status < 400 && noSameSite) {
         found = true;
         leaks[method] = { status: resp.status, missingCSRFToken: true, noSameSite };
+        continue;
+      }
+
+      // The naive cross-origin probe was rejected with a CSRF-shaped response —
+      // that alone isn't a finding, working protection is correct behavior. But a
+      // double-submit-cookie scheme with no server-side session tie can still be
+      // defeated by anyone able to complete a same-origin GET to mint a token —
+      // no login required. Try that before concluding the endpoint is protected.
+      if (hasToken && resp.status >= 400) {
+        try {
+          const extra = await getCsrfHeaders(new URL(task.endpoint).origin);
+          if (Object.keys(extra).length > 0) {
+            const retry = await this.httpProbe(task.endpoint, method, undefined, {
+              "Content-Type": "application/x-www-form-urlencoded",
+              ...extra,
+            }, "action=test&value=csrf_probe");
+            if (retry.status < 400) {
+              found = true;
+              csrfBypassed = true;
+              leaks[method] = {
+                status: retry.status,
+                csrfTokenSelfMinted: true,
+                note: "Double-submit cookie satisfied with a token fetched anonymously — no session/login required",
+              };
+            }
+          }
+        } catch {
+          // discovery failed — leave this method as protected
+        }
       }
     }
 
     return {
       taskId: task.id, solverId: `csrf-solver-${uuidv4().slice(0, 8)}`,
       endpoint: task.endpoint, vulnClass: "csrf", found,
-      confidence: found ? 0.75 : 0.1, evidence: leaks,
-      payload: "Cross-origin state-changing request without CSRF token",
+      confidence: found ? (csrfBypassed ? 0.9 : 0.75) : 0.1, evidence: leaks,
+      payload: csrfBypassed
+        ? "Self-minted CSRF token replayed on the state-changing request (double-submit cookie, no session tie)"
+        : "Cross-origin state-changing request without CSRF token",
       request: task.endpoint, response: JSON.stringify(leaks).slice(0, 500),
-      duration: Date.now() - start, toolsUsed: ["http_probe", "csrf_detection"],
+      duration: Date.now() - start,
+      toolsUsed: ["http_probe", "csrf_detection", ...(csrfBypassed ? ["csrf_token_bypass"] : [])],
     };
   }
 }

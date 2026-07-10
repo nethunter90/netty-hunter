@@ -1,5 +1,6 @@
 import axios, { AxiosRequestConfig } from "axios";
 import logger from "../../utils/logger";
+import { getCsrfHeaders } from "./csrf-aware-request";
 
 interface RaceResult {
   endpoint: string;
@@ -77,6 +78,20 @@ class RaceConditionDetector {
     concurrency: number = 15,
     authHeaders?: Record<string, string>
   ): Promise<RaceResult | null> {
+    // Warm the CSRF token cache BEFORE building the burst — discovering it
+    // inline per-request (as csrfAwareRequest does for single-shot probes) would
+    // stagger the requests' timing and defeat the point of a concurrent burst.
+    // A POST that's rejected purely for a missing CSRF token would otherwise
+    // never expose a real race window at all.
+    let csrfExtra: Record<string, string> = {};
+    if (method === "POST") {
+      try {
+        csrfExtra = await getCsrfHeaders(new URL(url).origin, authHeaders);
+      } catch {
+        // discovery failure — proceed without it, same as before this existed
+      }
+    }
+
     const requestConfig: AxiosRequestConfig = {
       method,
       url,
@@ -84,6 +99,7 @@ class RaceConditionDetector {
       validateStatus: () => true,
       headers: {
         ...(authHeaders ?? {}),
+        ...csrfExtra,
       },
     };
 

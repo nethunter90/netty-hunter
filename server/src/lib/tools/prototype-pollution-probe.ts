@@ -1,5 +1,6 @@
 import axios from "axios";
 import logger from "../../utils/logger";
+import { csrfAwareRequest } from "./csrf-aware-request";
 
 interface PollutionResult {
   url: string;
@@ -113,11 +114,7 @@ class PrototypePollutionProber {
 
       let response;
       if (method === "POST") {
-        response = await axios.post(url, body, {
-          headers,
-          timeout: 7000,
-          validateStatus: () => true,
-        });
+        response = await csrfAwareRequest(url, "POST", body, headers, 7000);
       } else {
         response = await axios.get(url, {
           headers,
@@ -138,9 +135,11 @@ class PrototypePollutionProber {
       }
 
       const severity: "high" | "medium" = reflected ? "high" : "medium";
-      const detail = reflected
+      const csrfNote = (response as { csrfBypassUsed?: boolean }).csrfBypassUsed
+        ? " (reachable via self-minted CSRF token — no real auth required)" : "";
+      const detail = (reflected
         ? `Prototype pollution marker reflected in response via ${vector}`
-        : `Server returned 500 after prototype pollution attempt via ${vector}`;
+        : `Server returned 500 after prototype pollution attempt via ${vector}`) + csrfNote;
 
       logger.debug(`[PrototypePollutionProber] Found vuln at ${url} vector=${vector} reflected=${reflected} serverError=${serverError}`);
 

@@ -1,5 +1,6 @@
 import axios from "axios";
 import logger from "../../utils/logger";
+import { csrfAwareRequest } from "./csrf-aware-request";
 
 interface BizLogicVuln {
   endpoint: string;
@@ -79,9 +80,7 @@ class BusinessLogicProber {
         notarealfield: true,
       };
       try {
-        const res = await axios.post(endpoint, controlPayload, {
-          timeout: 6000, validateStatus: () => true, headers,
-        });
+        const res = await csrfAwareRequest(endpoint, "POST", controlPayload, headers, 6000);
         if (res.status >= 200 && res.status < 300) acceptsEverything.add(endpoint);
       } catch { /* unreachable — real attack posts will also fail, no suppression needed */ }
     }));
@@ -98,9 +97,11 @@ class BusinessLogicProber {
       status: number,
       severity: BizLogicVuln["severity"],
       detail: string,
+      csrfBypassUsed?: boolean,
     ) => {
       const accepted = status >= 200 && status < 300 && !acceptsEverything.has(endpoint);
-      vulns.push({ endpoint, technique, payload, responseStatus: status, accepted, severity, detail });
+      const note = csrfBypassUsed ? " (reachable via self-minted CSRF token — no real auth required)" : "";
+      vulns.push({ endpoint, technique, payload, responseStatus: status, accepted, severity, detail: detail + note });
     };
 
     const attackTasks: Array<Promise<void>> = [];
@@ -111,11 +112,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { quantity: -1, amount: -1, qty: -1 };
           try {
-            const res = await axios.post(endpoint, payload, {
-              timeout: 6000,
-              validateStatus: () => true,
-              headers,
-            });
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -124,6 +121,7 @@ class BusinessLogicProber {
                 res.status,
                 "critical",
                 "Server accepted a negative quantity value which may result in a negative charge or credit to the attacker.",
+                res.csrfBypassUsed,
               );
             }
           } catch {
@@ -137,11 +135,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: 0, cost: 0, amount: 0, unit_price: 0 };
           try {
-            const res = await axios.post(endpoint, payload, {
-              timeout: 6000,
-              validateStatus: () => true,
-              headers,
-            });
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -150,6 +144,7 @@ class BusinessLogicProber {
                 res.status,
                 "critical",
                 "Server accepted a zero-price payload; items may be obtainable for free.",
+                res.csrfBypassUsed,
               );
             }
           } catch {
@@ -163,11 +158,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { quantity: 2147483647, qty: 9999999 };
           try {
-            const res = await axios.post(endpoint, payload, {
-              timeout: 6000,
-              validateStatus: () => true,
-              headers,
-            });
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -176,6 +167,7 @@ class BusinessLogicProber {
                 res.status,
                 "high",
                 "Server accepted an integer-overflow quantity value which may trigger wraparound pricing or stock depletion.",
+                res.csrfBypassUsed,
               );
             }
           } catch {
@@ -191,16 +183,8 @@ class BusinessLogicProber {
           const payload = { code: "TEST10", coupon: "TEST10" };
           try {
             const [res1, res2] = await Promise.all([
-              axios.post(couponEndpoint, payload, {
-                timeout: 6000,
-                validateStatus: () => true,
-                headers,
-              }),
-              axios.post(couponEndpoint, payload, {
-                timeout: 6000,
-                validateStatus: () => true,
-                headers,
-              }),
+              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000),
+              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000),
             ]);
             const bothAccepted = res1.status >= 200 && res1.status < 300 && res2.status >= 200 && res2.status < 300;
             if (bothAccepted) {
@@ -211,6 +195,7 @@ class BusinessLogicProber {
                 res2.status,
                 "high",
                 "The same coupon code was accepted twice in rapid succession; coupon codes may be reusable.",
+                res1.csrfBypassUsed || res2.csrfBypassUsed,
               );
             }
           } catch {
@@ -224,11 +209,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: -100, total: -100 };
           try {
-            const res = await axios.post(endpoint, payload, {
-              timeout: 6000,
-              validateStatus: () => true,
-              headers,
-            });
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -237,6 +218,7 @@ class BusinessLogicProber {
                 res.status,
                 "critical",
                 "Server accepted a negative price/total value; an attacker may be able to receive a refund or credit on purchase.",
+                res.csrfBypassUsed,
               );
             }
           } catch {
@@ -250,11 +232,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: 0.0, discount: 100, coupon_discount: 100 };
           try {
-            const res = await axios.post(endpoint, payload, {
-              timeout: 6000,
-              validateStatus: () => true,
-              headers,
-            });
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -263,6 +241,7 @@ class BusinessLogicProber {
                 res.status,
                 "critical",
                 "Server accepted an add-to-cart request with a 100% discount and zero price; items may be obtainable for free.",
+                res.csrfBypassUsed,
               );
             }
           } catch {
