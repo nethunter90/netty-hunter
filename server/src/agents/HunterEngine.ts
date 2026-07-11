@@ -646,8 +646,14 @@ function makeCustomParser(parserType: string): (output: string) => Record<string
   if (parserType === "plain") {
     return (out) => ({ output: out, found: out.trim().length > 0 });
   }
-  // lines (default)
-  return (out) => ({ findings: out.split("\n").filter(Boolean), found: true });
+  // lines (default) — found must reflect whether any line actually came back;
+  // it was previously hardcoded true regardless of output, so every catalog
+  // tool using this parser (feroxbuster, gospider, hakrawler, waybackurls,
+  // subfinder, amass, dnsx, ...) reported success even on a zero-result scan.
+  return (out) => {
+    const findings = out.split("\n").filter(Boolean);
+    return { findings, found: findings.length > 0, count: findings.length };
+  };
 }
 
 export class HunterEngine extends EventEmitter {

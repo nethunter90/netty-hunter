@@ -259,7 +259,12 @@ export const KALI_CATALOG: KaliToolEntry[] = [
   {
     name: "feroxbuster", displayName: "Feroxbuster", binary: "feroxbuster",
     category: "fuzzing",
-    commandTemplate: "feroxbuster --url {url} -q --no-progress",
+    // --no-progress isn't a real feroxbuster flag (confirmed via --help) — every
+    // invocation errored out before issuing a single HTTP request, so this tool
+    // never actually enumerated anything. --silent suppresses the banner/progress
+    // noise while still printing one discovered URL per line (what the "lines"
+    // parser expects), and -w matches the wordlist used elsewhere (gobuster/ffuf).
+    commandTemplate: "feroxbuster --url {url} -w /usr/share/wordlists/dirb/common.txt --silent -n",
     vulnClasses: ["exposed_endpoints", "hidden_endpoints"],
     rateLimit: 15, riskLevel: "low", stealthRating: 5, parserType: "lines",
     description: "Recursive content discovery tool written in Rust",
