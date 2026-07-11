@@ -31,8 +31,7 @@ const INJECTION_KEYWORDS: Array<{ keyword: string; weight: number }> = [
   { keyword: 'no limitations', weight: 75 },
   { keyword: 'break character', weight: 70 },
   { keyword: 'new persona', weight: 60 },
-  { keyword: 'roleplay as', weight: 50 },
-  { keyword: 'system:', weight: 40 }
+  { keyword: 'roleplay as', weight: 50 }
 ];
 
 const INJECTION_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
