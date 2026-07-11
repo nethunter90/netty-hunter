@@ -3290,7 +3290,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
           });
           const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
           const flags = body.match(FLAG_RE) ?? [];
-          const rceHit = /uid=\d+|root|executed|flag\{/i.test(body);
+          // Require the actual shape of `id` command output (uid=0(root) gid=0(root) ...),
+          // not bare substrings like "root"/"executed" — those match ordinary page content
+          // (e.g. React's `<div id="root">` on a SPA catch-all route returning index.html
+          // for the probed /deserialize path), which was firing found:true and a +0.3
+          // confidence boost on hunts against completely unrelated frontend apps.
+          const rceHit = /uid=\d+\([^)]*\)\s*gid=\d+\([^)]*\)/i.test(body);
           if (flags.length > 0 || rceHit) {
             return { found: true, output: body.slice(0, 600), endpoint, flagValues: flags, duration: Date.now() - start };
           }
