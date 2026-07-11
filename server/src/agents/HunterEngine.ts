@@ -555,20 +555,6 @@ export const TOOL_KNOWLEDGE: Record<string, {
     },
     rateLimit: 60,
   },
-  ssrfmap: {
-    description: "SSRF scanner and chaining exploiter",
-    vulnClasses: ["ssrf"],
-    command: (url) => ({
-      bin: "ssrfmap",
-      args: ["-u", url, "-p", "url", "--level", "2"],
-    }),
-    parser: (output) => {
-      const found = /SSRF|vulnerable|Request forgery|ssrf/i.test(output);
-      const param = output.match(/Vulnerable parameter: (.+)/i)?.[1];
-      return { found, param, rawOutput: output.slice(0, 500) };
-    },
-    rateLimit: 30,
-  },
   xsser: {
     description: "Automated XSS detection and exploitation framework",
     vulnClasses: ["xss"],
@@ -2974,7 +2960,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const vulnToolMap: Record<string, string> = {
       xss: "dalfox",
       sqli: "sqlmap",
-      ssrf: "ssrfmap",
+      // ssrfmap's real CLI requires -r (a raw captured HTTP request file) and -p
+      // <param name> — it has no -u/-H flags at all. The old command here passed
+      // -u/-p url/-H, none of which the binary recognizes, so it always errored
+      // immediately and printed its own usage banner (ASCII art containing the
+      // literal word "SSRFMap"). The parser's /ssrf/i regex then matched that
+      // banner text, so ssrfmap was a guaranteed false-positive generator for
+      // every SSRF hypothesis it was ever selected for. nuclei is tag-scoped to
+      // real "ssrf" templates and the OOB beacon probe (runOOBProbe) already
+      // gives a genuine, unforgeable confirmation path for SSRF.
+      ssrf: "nuclei",
       lfi: "nuclei",
       rce: "nuclei",
       ssti: "tplmap",
@@ -3031,7 +3026,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
   private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
     sqli:             ["sqlmap", "nuclei", "curl_probe"],
     xss:              ["dalfox", "xsstrike", "nuclei", "curl_probe"],
-    ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
+    ssrf:             ["nuclei", "curl_probe"],
     lfi:              ["nuclei", "curl_probe"],
     rce:              ["nuclei", "curl_probe"],
     cors:             ["corsy", "curl_probe", "nuclei"],
@@ -3066,7 +3061,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const TOOL_ROTATION: Record<string, string[]> = {
       sqli:             ["sqlmap", "nuclei", "curl_probe"],
       xss:              ["nuclei", "xsstrike", "curl_probe"],
-      ssrf:             ["ssrfmap", "nuclei", "curl_probe"],
+      ssrf:             ["nuclei", "curl_probe"],
       lfi:              ["nuclei", "curl_probe"],
       rce:              ["nuclei", "curl_probe"],
       cors:             ["corsy", "curl_probe", "nuclei"],
@@ -3127,10 +3122,6 @@ Return ONLY valid JSON array of hypothesis objects.`;
           break;
         case "xsser":
           args.push("--headers", `${key}: ${value}`);
-          break;
-        case "ssrfmap":
-          // -H passes a custom header; --uagent was wrong (ignored key/value entirely)
-          args.push("-H", `${key}: ${value}`);
           break;
         case "nosqlmap":
           if (key.toLowerCase() === "cookie") {
