@@ -207,8 +207,8 @@ export const NUCLEI_TAGS_BY_CLASS: Record<string, string> = {
   open_redirect: "redirect",
   exposed_panels: "panel,exposure",
   info_disclosure: "exposure",
-  information_disclosure: "exposure",
   auth_bypass: "default-login,auth-bypass",
+  broken_auth: "default-login,auth-bypass",
   idor: "idor",
   csrf: "csrf",
   misconfig: "misconfig",
@@ -321,7 +321,16 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
   nuclei: {
     description: "Fast vulnerability scanner with templated probes",
-    vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "idor", "exposed_panels", "misconfig"],
+    // Kept in sync with NUCLEI_TAGS_BY_CLASS below — that map is what actually scopes
+    // nuclei's templates per hypothesis at dispatch time (runTool), so this list must
+    // cover every class nuclei is genuinely tag-scoped for. A class missing here (while
+    // present in NUCLEI_TAGS_BY_CLASS) would have its real, content-based nuclei match
+    // wrongly discarded by the probe-success gate in probe() — nuclei parses actual
+    // template-match JSON (see parseNucleiOutput), unlike curl_probe's header-only
+    // heuristic, so its `found` flag is legitimate evidence for all of these.
+    vulnClasses: ["xss", "sqli", "rce", "ssrf", "lfi", "xxe", "cors", "open_redirect",
+                  "exposed_panels", "info_disclosure", "auth_bypass", "broken_auth",
+                  "idor", "csrf", "misconfig", "security_headers"],
     command: (url, opts) => ({
       bin: "nuclei",
       // -disable-update-check: nuclei's periodic template/binary update probe is a
@@ -417,7 +426,7 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
   gobuster: {
     description: "Directory/file brute-forcer",
-    vulnClasses: ["hidden_endpoints", "backup_files", "exposed_configs"],
+    vulnClasses: ["hidden_endpoints", "backup_files", "exposed_configs", "exposed_panels"],
     command: (url) => ({
       bin: "gobuster",
       args: ["dir", "-u", url, "-w", "/usr/share/wordlists/dirb/common.txt",
@@ -431,7 +440,7 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
   curl_probe: {
     description: "HTTP header and response analysis",
-    vulnClasses: ["security_headers", "cors", "csrf", "information_disclosure", "open_redirect"],
+    vulnClasses: ["security_headers", "cors", "csrf", "info_disclosure", "open_redirect"],
     command: (url) => ({
       bin: "curl",
       // GET (not HEAD): many real apps implement GET but not HEAD and let HEAD
@@ -2459,6 +2468,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
       }
       const oobHit = oob.hit;
 
+      // A tool's found/count/injectable/vulnerable flags are only meaningful evidence
+      // for the vuln classes it actually tests for. curl_probe, e.g., discards the
+      // response body (-o /dev/null) and derives `found`/`count` purely from missing
+      // security headers — signal that's real for security_headers/cors/csrf but
+      // meaningless for content-disclosure classes like lfi/sqli/xss. Feeding that
+      // unrelated "found" through as success inflated confidence on findings whose
+      // payload never actually worked (e.g. LFI probes rejected everywhere in
+      // verification with "Access denied" bodies still scored 0.9+ pre-verification
+      // because curl_probe's missing-header count happened to be nonzero). Gate on
+      // the tool's own declared vulnClasses so only on-topic evidence counts.
+      const toolSupportsClass = this.mergedTools[toolName]?.vulnClasses?.includes(hypothesis.vulnClass) ?? true;
       const result: ProbeResult = {
         hypothesisId: hypothesis.id,
         tool: toolName,
@@ -2468,7 +2488,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
           ? `OOB callback received — ${hypothesis.vulnClass} confirmed${oob.summary ? `\n${oob.summary}` : ""}`
           : String(probeResult.rawOutput || ""),
         parsed: probeResult,
-        success: Boolean(probeResult.found || probeResult.injectable || probeResult.count || probeResult.vulnerable || oobHit),
+        success: Boolean(oobHit || (toolSupportsClass && (probeResult.found || probeResult.injectable || probeResult.count || probeResult.vulnerable))),
         duration: Number(probeResult.duration || 0),
         rawHttpLog: oobHit && oob.summary ? oob.summary : undefined,
         oobBeaconId: oob.beaconId,
@@ -2960,7 +2980,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
       ssti: "tplmap",
       auth_bypass: "jwt_tool",
       http_smuggling: "smuggler",
-      idor: "curl_probe",
+      // curl_probe discards the response body (-o /dev/null) and only analyzes
+      // headers — it cannot see an IDOR's actual object-ownership leak, which
+      // lives in the body. nuclei is tag-scoped to "idor" templates and parses
+      // real match output (see NUCLEI_TAGS_BY_CLASS / parseNucleiOutput).
+      idor: "nuclei",
       misconfig: "nikto",
       hidden_endpoints: "ffuf",
       exposed_panels: "gobuster",
@@ -2975,7 +2999,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
       race_condition: "nuclei",
       prototype_pollution: "nuclei",
       cloud_storage_exposure: "nuclei",
-      broken_auth: "jwt_tool",
+      // jwt_tool only tests JWT-specific auth flaws; broken_auth hypotheses from
+      // websocket-probe.ts/js-spa-crawler.ts are general session/auth issues that
+      // may have nothing to do with JWTs, so jwt_tool's verdict is irrelevant
+      // evidence for them regardless of naming. nuclei is tag-scoped to
+      // "default-login,auth-bypass" templates (see NUCLEI_TAGS_BY_CLASS) instead.
+      broken_auth: "nuclei",
       websocket: "nuclei",
       host_header_injection: "curl_probe",
       crlf_injection: "curl_probe",
@@ -3008,7 +3037,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     cors:             ["corsy", "curl_probe", "nuclei"],
     nosqli:           ["nosqlmap", "nuclei"],
     csrf:             ["curl_probe", "nuclei"],
-    idor:             ["curl_probe", "nuclei", "arjun"],
+    idor:             ["nuclei", "arjun"],
     info_disclosure:  ["curl_probe", "nuclei"],
     auth_bypass:      ["jwt_tool", "nuclei", "curl_probe", "nomore403"],
     misconfig:        ["nikto", "nuclei"],
@@ -3043,7 +3072,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       cors:             ["corsy", "curl_probe", "nuclei"],
       nosqli:           ["nosqlmap", "nuclei"],
       csrf:             ["curl_probe", "nuclei"],
-      idor:             ["curl_probe", "nuclei", "arjun"],
+      idor:             ["nuclei", "arjun"],
       info_disclosure:  ["curl_probe", "nuclei"],
       auth_bypass:      ["nuclei", "curl_probe", "nomore403"],
       misconfig:        ["nikto", "nuclei"],
