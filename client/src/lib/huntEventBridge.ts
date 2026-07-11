@@ -63,11 +63,17 @@ export function attachHuntEvents(): () => void {
     push({ type: 'phase', ts: ts(), phase: 'observe', iteration: 0 });
   });
 
-  // Replayed when subscribing to an already-running hunt
+  // Replayed when subscribing to an already-running hunt (including reattaching
+  // to a hunt that was already in progress before a page reload).
   socket.on('hunt:state', (data: any) => {
     const state = data.state ?? data;
     if (state?.phase) {
       push({ type: 'phase', ts: ts(), phase: String(state.phase), iteration: Number(state.iteration ?? 0) });
+      huntStore.updateSessions(prev => prev.map(s =>
+        s.sessionUuid === String(state.sessionId || '')
+          ? { ...s, phase: String(state.phase), iteration: Number(state.iteration ?? 0), findings: Number(state.confirmedFindings?.length ?? s.findings) }
+          : s
+      ));
     }
   });
 

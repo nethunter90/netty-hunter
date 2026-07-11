@@ -52,15 +52,32 @@ export default function HuntConsole() {
     bountyAPI.getPrograms().then(r => setPrograms(r.data || []));
     bountyAPI.getHuntTemplates().then(r => setTemplates(r.data || []));
 
-    // B3: check for any hunt running from another panel so the launch button is
-    // correctly disabled and a banner is shown.
+    // B3: check for any hunt running from another panel/reload so the launch
+    // button is correctly disabled and the session is reattached.
     hunterAPI.getStatus().then((r: { data: { running: boolean; hunt: { id: string; kind: string; targetUrl: string } | null } }) => {
       if (r.data.running && r.data.hunt) {
+        const hunt = r.data.hunt;
         // If the running hunt is one we're already tracking (in the store), don't
-        // show the external banner for it.
-        const alreadyTracked = huntStore.activeSessions.some(s => s.sessionUuid === r.data.hunt!.id);
+        // re-adopt it.
+        const alreadyTracked = huntStore.activeSessions.some(s => s.sessionUuid === hunt.id);
         if (!alreadyTracked) {
-          huntStore.setExternalHunt(r.data.hunt);
+          if (hunt.kind === "hunt") {
+            // Reattach to an already-running hunt (started before a page reload,
+            // or from another tab) so the live feed and session list pick it back
+            // up instead of leaving it orphaned behind a passive banner.
+            huntStore.updateSessions(prev => [...prev, {
+              sessionUuid: hunt.id,
+              targetUrl: hunt.targetUrl,
+              status: "running",
+              phase: "observe",
+              iteration: 0,
+              findings: 0,
+            }]);
+            socket.emit("subscribe:hunt", { sessionUuid: hunt.id });
+          } else {
+            // Orchestration runs aren't tracked in this store — just surface the banner.
+            huntStore.setExternalHunt(hunt);
+          }
         }
       }
     }).catch(() => {});
