@@ -1,4 +1,6 @@
 import axios from "axios";
+import http, { IncomingMessage } from "http";
+import https from "https";
 import logger from "../../utils/logger";
 
 interface WSVuln {
@@ -11,7 +13,7 @@ interface WSVuln {
 interface WSProbeResult {
   endpointsFound: string[];
   vulns: WSVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: WSVuln }>;
 }
 
 const WS_PATHS = [
@@ -31,6 +33,58 @@ function toWsUrl(httpUrl: string): string {
 
 function toHttpUrl(wsUrl: string): string {
   return wsUrl.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+}
+
+interface WsCheckResult {
+  status: number | null;
+  body: string;
+}
+
+/**
+ * axios cannot observe a genuine "101 Switching Protocols" response — Node's
+ * HTTP client fires an 'upgrade' event instead of resolving the request
+ * normally for status 101, and axios has no listener for it, so the request
+ * just hangs until its own timeout and gets silently discarded in a catch
+ * block. That meant every technique below that depends on seeing a real 101
+ * (i.e. all of them, against any server that actually completes the
+ * handshake) could never fire against a genuine WebSocket endpoint —
+ * confirmed by testing axios against a real Node http "upgrade" response,
+ * which timed out every time rather than resolving with status 101. This
+ * uses the raw http/https module directly and listens for both "response"
+ * (a normal, non-upgrading reply — 404, 400, etc.) and "upgrade" (the actual
+ * 101 case) so a real handshake acceptance is observed instead of discarded.
+ */
+function checkWsUpgrade(url: string, headers: Record<string, string>, timeoutMs = 5000): Promise<WsCheckResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (result: WsCheckResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const lib = url.startsWith("https://") ? https : http;
+    let req: ReturnType<typeof http.request>;
+    try {
+      req = lib.request(url, { method: "GET", headers, timeout: timeoutMs }, (res: IncomingMessage) => {
+        let body = "";
+        res.on("data", (chunk) => { if (body.length < 65536) body += String(chunk); });
+        res.on("end", () => settle({ status: res.statusCode ?? null, body }));
+        res.on("error", () => settle({ status: res.statusCode ?? null, body }));
+      });
+    } catch {
+      settle({ status: null, body: "" });
+      return;
+    }
+
+    req.on("upgrade", (res: IncomingMessage, socket) => {
+      settle({ status: res.statusCode ?? 101, body: "" });
+      socket.destroy();
+    });
+    req.on("timeout", () => { req.destroy(); settle({ status: null, body: "" }); });
+    req.on("error", () => settle({ status: null, body: "" }));
+    req.end();
+  });
 }
 
 class WebSocketProber {
@@ -61,26 +115,18 @@ class WebSocketProber {
     await Promise.allSettled(
       WS_PATHS.map(async (path) => {
         const url = `${base}${path}`;
-        try {
-          const res = await axios.get(url, {
-            headers: {
-              ...(authHeaders || {}),
-              "Upgrade": "websocket",
-              "Connection": "Upgrade",
-              "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-              "Sec-WebSocket-Version": "13",
-            },
-            timeout: 5000,
-            validateStatus: () => true,
-          });
-          if (res.status !== 404) {
-            const wsUrl = toWsUrl(url);
-            if (!found.includes(wsUrl)) {
-              found.push(wsUrl);
-            }
+        const res = await checkWsUpgrade(url, {
+          ...(authHeaders || {}),
+          "Upgrade": "websocket",
+          "Connection": "Upgrade",
+          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version": "13",
+        });
+        if (res.status !== null && res.status !== 404) {
+          const wsUrl = toWsUrl(url);
+          if (!found.includes(wsUrl)) {
+            found.push(wsUrl);
           }
-        } catch (err) {
-          logger.debug("[WebSocketProber] Path probe error", { url, err: String(err) });
         }
       })
     );
@@ -93,18 +139,14 @@ class WebSocketProber {
     const httpUrl = toHttpUrl(wsUrl);
 
     // Test 1: Connect with a mismatched (evil) Origin header → if 101 accepted → no_origin_check
-    try {
-      const res = await axios.get(httpUrl, {
-        headers: {
-          ...(authHeaders || {}),
-          "Upgrade": "websocket",
-          "Connection": "Upgrade",
-          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-          "Sec-WebSocket-Version": "13",
-          "Origin": "https://evil.com",
-        },
-        timeout: 5000,
-        validateStatus: () => true,
+    {
+      const res = await checkWsUpgrade(httpUrl, {
+        ...(authHeaders || {}),
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "Origin": "https://evil.com",
       });
       if (res.status === 101) {
         vulns.push({
@@ -114,21 +156,15 @@ class WebSocketProber {
           detail: `WebSocket endpoint accepted connection from Origin: https://evil.com (HTTP 101). No origin validation is enforced.`,
         });
       }
-    } catch (err) {
-      logger.debug("[WebSocketProber] Origin check test error", { wsUrl, err: String(err) });
     }
 
     // Test 2: Connect with no auth headers → if 101 accepted → unauthenticated_access
-    try {
-      const res = await axios.get(httpUrl, {
-        headers: {
-          "Upgrade": "websocket",
-          "Connection": "Upgrade",
-          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-          "Sec-WebSocket-Version": "13",
-        },
-        timeout: 5000,
-        validateStatus: () => true,
+    {
+      const res = await checkWsUpgrade(httpUrl, {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
       });
       if (res.status === 101) {
         vulns.push({
@@ -138,29 +174,22 @@ class WebSocketProber {
           detail: `WebSocket endpoint accepted unauthenticated connection (HTTP 101) with no auth headers. Authentication is not enforced.`,
         });
       }
-    } catch (err) {
-      logger.debug("[WebSocketProber] Unauthenticated access test error", { wsUrl, err: String(err) });
     }
 
-    // Test 3: Send a reflection probe message → check if echoed back verbatim → reflection
-    // Since we cannot open a true WS frame without the ws package, we send an HTTP GET
-    // with a probe value in a header and check if it appears in the response body.
+    // Test 3: Send a reflection probe message → check if echoed back verbatim → reflection.
+    // A genuine upgrade (101) has no HTTP body to reflect into — this only fires
+    // against a target that responds without actually completing the handshake.
     const probeToken = `ws-reflect-probe-${Date.now()}`;
-    try {
-      const res = await axios.get(httpUrl, {
-        headers: {
-          ...(authHeaders || {}),
-          "Upgrade": "websocket",
-          "Connection": "Upgrade",
-          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-          "Sec-WebSocket-Version": "13",
-          "X-Probe": probeToken,
-        },
-        timeout: 5000,
-        validateStatus: () => true,
+    {
+      const res = await checkWsUpgrade(httpUrl, {
+        ...(authHeaders || {}),
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "X-Probe": probeToken,
       });
-      const body = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
-      if (body.includes(probeToken)) {
+      if (res.body.includes(probeToken)) {
         vulns.push({
           endpoint: wsUrl,
           issue: "reflection",
@@ -168,8 +197,6 @@ class WebSocketProber {
           detail: `WebSocket endpoint reflected the probe token "${probeToken}" verbatim in the HTTP response body. Possible reflection/XSS vector.`,
         });
       }
-    } catch (err) {
-      logger.debug("[WebSocketProber] Reflection probe test error", { wsUrl, err: String(err) });
     }
 
     return vulns;
@@ -198,6 +225,14 @@ class WebSocketProber {
       }
     }
 
+    // raw: the WSVuln itself — HunterEngine attaches this to the hypothesis's
+    // evidence so the PROBE phase can recognize it was already actively
+    // confirmed here (a real HTTP 101 handshake acceptance with a mismatched
+    // Origin / no auth headers, or a verbatim-reflected probe token) and skip
+    // re-dispatching it to a generic tool. csrf/broken_auth/xss all pass
+    // toolSupportsClass via nuclei/dalfox's declared vulnClasses, but none of
+    // those tools' actual templates test WebSocket handshake behavior — the
+    // gate passing is coincidental, not real coverage.
     for (const vuln of result.vulns) {
       if (vuln.issue === "no_origin_check") {
         result.hypotheses.push({
@@ -206,6 +241,7 @@ class WebSocketProber {
           confidence: 0.7,
           priority: 8,
           endpoint: vuln.endpoint,
+          raw: vuln,
         });
       } else if (vuln.issue === "unauthenticated_access") {
         result.hypotheses.push({
@@ -214,6 +250,7 @@ class WebSocketProber {
           confidence: 0.75,
           priority: 9,
           endpoint: vuln.endpoint,
+          raw: vuln,
         });
       } else if (vuln.issue === "reflection") {
         result.hypotheses.push({
@@ -222,6 +259,7 @@ class WebSocketProber {
           confidence: 0.65,
           priority: 7,
           endpoint: vuln.endpoint,
+          raw: vuln,
         });
       }
     }
