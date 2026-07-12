@@ -10,7 +10,7 @@ interface TwoFAVuln {
 
 interface TwoFAResult {
   vulns: TwoFAVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: TwoFAVuln }>;
 }
 
 const TWOFA_ENDPOINTS = [
@@ -63,18 +63,24 @@ function hasUserData(data: unknown): boolean {
 }
 
 function toHypothesis(
-  technique: string,
-  severity: "critical" | "high",
-  endpoint: string
-): { vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string } {
+  vuln: TwoFAVuln
+): { vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: TwoFAVuln } {
   return {
     vulnClass: "auth_bypass",
-    reasoning: `2FA bypass via ${technique} — authentication second factor can be circumvented`,
-    confidence: severity === "critical" ? 0.8 : 0.7,
-    priority: severity === "critical" ? 10 : 8,
+    reasoning: `2FA bypass via ${vuln.technique} — authentication second factor can be circumvented`,
+    confidence: vuln.severity === "critical" ? 0.8 : 0.7,
+    priority: vuln.severity === "critical" ? 10 : 8,
     // The specific endpoint this bypass was actually confirmed against —
     // previously discarded, forcing re-verification to guess at the root URL.
-    endpoint,
+    endpoint: vuln.endpoint,
+    // Full detection detail — HunterEngine attaches this to the hypothesis's
+    // evidence so the PROBE phase can recognize this hypothesis was already
+    // actively confirmed here (a real 2FA endpoint that accepted a null/empty/
+    // reused/backup code, or a protected resource reachable without
+    // completing 2FA) and skip re-dispatching it to nuclei's generic
+    // "default-login,auth-bypass" templates, which test for known CVEs and
+    // default credentials — not this specific 2FA-flow logic flaw.
+    raw: vuln,
   };
 }
 
@@ -120,7 +126,10 @@ class TwoFactorBypassProber {
         if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "null_code",
-            endpoint: ep,
+            // Full URL, not the bare path — HunterEngine's seed site uses this
+            // as the hypothesis's targetUrl, and a truthy relative path always
+            // won its `hyp.endpoint || this.state.targetUrl` fallback.
+            endpoint: url,
             severity: "critical",
             detail: `Endpoint ${ep} accepted null code/otp/token (status ${res.status})`,
           };
@@ -141,7 +150,7 @@ class TwoFactorBypassProber {
         if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "response_manipulation",
-            endpoint: ep,
+            endpoint: url,
             severity: "critical",
             detail: `Endpoint ${ep} accepted empty string code/otp (status ${res.status})`,
           };
@@ -159,7 +168,7 @@ class TwoFactorBypassProber {
           if (resGet.status === 200 && hasUserData(resGet.data)) {
             const vuln: TwoFAVuln = {
               technique: "step_skip",
-              endpoint: resource,
+              endpoint: `${baseUrl}${resource}`,
               severity: "critical",
               detail: `Protected resource ${resource} accessible without completing 2FA (status ${resGet.status})`,
             };
@@ -179,7 +188,7 @@ class TwoFactorBypassProber {
           if (resPost.status === 200 && hasUserData(resPost.data)) {
             const vuln: TwoFAVuln = {
               technique: "step_skip",
-              endpoint: resource,
+              endpoint: `${baseUrl}${resource}`,
               severity: "critical",
               detail: `Protected resource ${resource} accessible via POST without completing 2FA (status ${resPost.status})`,
             };
@@ -200,7 +209,7 @@ class TwoFactorBypassProber {
         if (isAccepted(res2.status, res2.data, res2.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "code_reuse",
-            endpoint: ep,
+            endpoint: url,
             severity: "high",
             detail: `Endpoint ${ep} accepted the same OTP code on second submission (status ${res2.status})`,
           };
@@ -219,7 +228,7 @@ class TwoFactorBypassProber {
           if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
             const vuln: TwoFAVuln = {
               technique: "backup_code_brute",
-              endpoint: ep,
+              endpoint: url,
               severity: "high",
               detail: `Endpoint ${ep} accepted backup code "${backup_code}" (status ${res.status})`,
             };
@@ -233,7 +242,7 @@ class TwoFactorBypassProber {
       }
     }
 
-    const hypotheses = vulns.map((v) => toHypothesis(v.technique, v.severity, v.endpoint));
+    const hypotheses = vulns.map((v) => toHypothesis(v));
 
     return { vulns, hypotheses };
   }

@@ -15,7 +15,7 @@ interface MassAssignmentVuln {
 interface MassAssignmentResult {
   endpointsTested: number;
   vulns: MassAssignmentVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: MassAssignmentVuln }>;
 }
 
 const MARKER = "netty_ma_test";
@@ -140,7 +140,12 @@ class MassAssignmentProber {
         );
 
         vulns.push({
-          endpoint: path,
+          // Full URL, not the bare path — HunterEngine's seed site uses this as
+          // the hypothesis's targetUrl (`hyp.endpoint || this.state.targetUrl`),
+          // and a truthy relative path like "/api/user" always won that fallback,
+          // silently producing a hypothesis whose targetUrl was a relative path
+          // rather than an absolute URL.
+          endpoint: url,
           method,
           fields: reportedFields,
           accepted: effectiveAccepted,
@@ -207,7 +212,9 @@ class MassAssignmentProber {
       );
 
       vulns.push({
-        endpoint: path,
+        // Full URL, not the bare path — see the matching comment in
+        // testUpdateEndpoint above.
+        endpoint: url,
         method: "POST",
         fields: reportedFields,
         accepted,
@@ -267,6 +274,14 @@ class MassAssignmentProber {
       confidence: v.reflected ? 0.75 : 0.6,
       priority: v.severity === "critical" ? 9 : v.severity === "high" ? 7 : 5,
       endpoint: v.endpoint,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here (a real PUT/PATCH/POST that accepted or
+      // reflected injected privileged fields) and skip re-dispatching it to
+      // nuclei's misconfig-tag fallback, which has no templates that test for
+      // field-level authorization on arbitrary app-specific update/register
+      // endpoints.
+      raw: v,
     }));
 
     const endpointsTested = UPDATE_ENDPOINTS.length + REGISTER_ENDPOINTS.length;
