@@ -17,7 +17,7 @@ interface CookieIssue {
 interface CookieCheckResult {
   cookiesFound: number;
   issues: CookieIssue[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: CookieIssue }>;
 }
 
 const SESSION_COOKIE_KEYWORDS = ["session", "token", "auth", "jwt", "sid", "csrf", "connect.sid"];
@@ -173,8 +173,8 @@ class CookieFlagChecker {
 
   private buildHypotheses(
     issues: CookieIssue[]
-  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> {
-    const hyps: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> = [];
+  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: CookieIssue }> {
+    const hyps: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: CookieIssue }> = [];
     const added = new Set<string>();
 
     for (const issue of issues) {
@@ -186,6 +186,11 @@ class CookieFlagChecker {
           confidence: 0.6,
           priority: 6,
           endpoint: issue.url,
+          // Attached so HunterEngine can recognize this was already confirmed by
+          // inspecting the real Set-Cookie header, rather than re-dispatching to
+          // dalfox/nuclei — an XSS scanner that tests for reflected/stored
+          // injection, not for a missing cookie flag it has no way to see.
+          raw: issue,
         });
       }
       if (issue.isSessionCookie && issue.missingFlags.includes("Secure") && !added.has("info_disclosure")) {
@@ -196,6 +201,7 @@ class CookieFlagChecker {
           confidence: 0.65,
           priority: 6,
           endpoint: issue.url,
+          raw: issue,
         });
       }
       if (issue.missingFlags.includes("SameSite") && !added.has("csrf")) {
@@ -206,6 +212,7 @@ class CookieFlagChecker {
           confidence: 0.55,
           priority: 5,
           endpoint: issue.url,
+          raw: issue,
         });
       }
     }

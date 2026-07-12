@@ -12,7 +12,7 @@ interface HostHeaderVuln {
 
 interface HostHeaderProbeResult {
   vulns: HostHeaderVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: HostHeaderVuln }>;
 }
 
 class HostHeaderProber {
@@ -206,6 +206,12 @@ class HostHeaderProber {
       confidence: vuln.severity === "high" ? 0.75 : 0.6,
       priority: vuln.severity === "high" ? 8 : 6,
       endpoint: vuln.url,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here (real Host/X-Forwarded-Host reflection or a
+      // measured routing-bypass response diff) and skip re-dispatching it to
+      // curl_probe, whose header-count heuristic tests something unrelated.
+      raw: vuln,
     }));
 
     return { vulns, hypotheses };

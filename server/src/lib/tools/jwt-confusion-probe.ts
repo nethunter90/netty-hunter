@@ -11,7 +11,7 @@ interface JWTVuln {
 interface JWTProbeResult {
   jwtFound: boolean;
   vulns: JWTVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; raw: JWTVuln }>;
 }
 
 const WEAK_SECRETS = ["secret", "password", "12345", "changeme", "jwt_secret", "supersecret"];
@@ -57,14 +57,21 @@ function hasUserData(data: unknown): boolean {
 }
 
 function toHypothesis(
-  technique: string,
-  severity: "critical" | "high"
-): { vulnClass: string; reasoning: string; confidence: number; priority: number } {
+  vuln: JWTVuln
+): { vulnClass: string; reasoning: string; confidence: number; priority: number; raw: JWTVuln } {
   return {
     vulnClass: "auth_bypass",
-    reasoning: `JWT vulnerability via ${technique} — authentication token integrity can be bypassed`,
-    confidence: severity === "critical" ? 0.85 : 0.7,
+    reasoning: `JWT vulnerability via ${vuln.technique} — authentication token integrity can be bypassed`,
+    confidence: vuln.severity === "critical" ? 0.85 : 0.7,
     priority: 10,
+    // Full detection detail — HunterEngine attaches this to the hypothesis's
+    // evidence so the PROBE phase can recognize this hypothesis was already
+    // actively confirmed here (a real crafted JWT — alg:none, RS256→HS256
+    // confusion, kid path injection, or a cracked weak secret — that the
+    // server accepted) and skip re-dispatching it to nuclei's generic
+    // "default-login,auth-bypass" templates, which have no way to replay a
+    // specific forged token.
+    raw: vuln,
   };
 }
 
@@ -258,7 +265,7 @@ class JWTConfusionProber {
       }
     }
 
-    const hypotheses = vulns.map((v) => toHypothesis(v.technique, v.severity));
+    const hypotheses = vulns.map((v) => toHypothesis(v));
 
     return { jwtFound: true, vulns, hypotheses };
   }

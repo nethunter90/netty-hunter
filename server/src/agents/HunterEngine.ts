@@ -218,6 +218,21 @@ export const NUCLEI_TAGS_BY_CLASS: Record<string, string> = {
 // ceiling. "misconfig" alone loads ~624 templates and completes in ~10-15s.
 const NUCLEI_TAGS_FALLBACK = "misconfig";
 
+// Evidence sources that already ARE a completed, real probe — each of these
+// OBSERVE-phase modules builds its hypotheses as a direct map() over its own
+// actively-confirmed vulns (see e.g. race-condition-detector.ts: `vulns.map(...)`),
+// not a speculative guess that still needs testing. Routing them through the
+// generic selectToolRL()/runTool() dispatch in probe() throws that evidence away:
+// the tool it lands on (nuclei/curl_probe) either doesn't declare the vuln class
+// at all (toolSupportsClass gates it to false — race_condition) or declares an
+// unrelated class that happens to string-match (cookie_flag_checker emits
+// xss/info_disclosure/csrf, so curl_probe/dalfox "pass" the gate but test
+// something the cookie-flag finding never claimed — a missing CSP header, not a
+// missing HttpOnly flag). See the SELF_CONFIRMED_SOURCES branch in probe().
+// All dedicated OBSERVE-phase probers with a self-confirming source are now
+// wired in here.
+const SELF_CONFIRMED_SOURCES = new Set(["race_condition_detector", "cookie_flag_checker", "host_header_probe", "oauth_probe", "mass_assignment_probe", "two_factor_bypass_probe", "jwt_confusion_probe", "prototype_pollution_probe", "cloud_bucket_probe", "websocket_probe", "open_redirect_chain_probe", "blind_xxe_probe", "crlf_probe"]);
+
 // ─── OOB-RCE injection vectors ────────────────────────────────────────────────
 // Real command injection usually EMBEDS a param inside a shell command, so the
 // payload needs a breakout prefix — not just a raw `curl <cb>`. We fan a bounded
@@ -1468,7 +1483,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "websocket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "websocket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1486,7 +1501,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "cloud_bucket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "cloud_bucket_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1509,7 +1524,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "prototype_pollution_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "prototype_pollution_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1527,7 +1542,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "race_condition_detector", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "race_condition_detector", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1542,7 +1557,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of hhResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "host_header_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "host_header_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (hhResult.vulns.length > 0) this.emit("hunt:host_header", { sessionId: this.state.sessionId, count: hhResult.vulns.length, techniques: hhResult.vulns.map(v => v.technique) });
         } catch (err) { logger.debug("[HunterEngine] Host header probe skipped", { err: String(err) }); }
@@ -1553,7 +1568,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders);
           for (const hyp of crlfResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "crlf_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "crlf_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (crlfResult.vulns.length > 0) this.emit("hunt:crlf", { sessionId: this.state.sessionId, count: crlfResult.vulns.length });
         } catch (err) { logger.debug("[HunterEngine] CRLF probe skipped", { err: String(err) }); }
@@ -1564,7 +1579,7 @@ export class HunterEngine extends EventEmitter {
         try {
           const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders);
           for (const hyp of cookieResult.hypotheses) {
-            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "cookie_flag_checker", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
+            this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "cookie_flag_checker", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
           if (cookieResult.issues.length > 0) this.emit("hunt:cookie_flags", { sessionId: this.state.sessionId, issues: cookieResult.issues.length, sessionCookies: cookieResult.issues.filter(i => i.isSessionCookie).length });
         } catch (err) { logger.debug("[HunterEngine] Cookie flag check skipped", { err: String(err) }); }
@@ -1718,7 +1733,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "oauth_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "oauth_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1736,7 +1751,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "mass_assignment_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "mass_assignment_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1772,7 +1787,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "two_factor_bypass_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "two_factor_bypass_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1794,7 +1809,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "jwt_confusion_probe", data: { detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "jwt_confusion_probe", data: { detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1812,7 +1827,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "open_redirect_chain_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "open_redirect_chain_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -1830,7 +1845,7 @@ export class HunterEngine extends EventEmitter {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
               reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
-              evidence: [{ id: uuidv4(), source: "blind_xxe_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              evidence: [{ id: uuidv4(), source: "blind_xxe_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
               status: "pending", createdAt: Date.now(),
             });
           }
@@ -2314,6 +2329,42 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const { allowed } = await this.scopeGuard.isInScope(hypothesis.targetUrl, this.state.programId);
       if (!allowed) {
         hypothesis.status = "deferred";
+        continue;
+      }
+
+      // Self-confirmed evidence — fires before ANY other dispatch, including
+      // LogicExploitAgent, for any hypothesis seeded by a dedicated prober
+      // whose hypotheses are already a 1:1 map over its own actively-confirmed
+      // vulns (see SELF_CONFIRMED_SOURCES comment below). This must run first:
+      // jwt_confusion_probe and two_factor_bypass_probe both tag their
+      // hypotheses vulnClass "auth_bypass", which the LogicExploitAgent branch
+      // below also claims — if that branch ran first (as it originally did,
+      // placed right before generic tool-select), it would silently steal
+      // these hypotheses, run its own JWT/2FA-unaware Playwright probing, find
+      // nothing, and mark them "inconclusive" — discarding real, already-
+      // gathered evidence. Confirmed happening in the field: both jwt_confusion
+      // hits landed on logic_exploit_agent (77s/93s Playwright runs) instead of
+      // the self-confirmed short-circuit before this was moved. No re-test is
+      // needed or possible via a generic tool; the evidence gathered at
+      // OBSERVE time IS the probe result — synthesize a ProbeResult from the
+      // attached evidence and let update() do confidence math / promotion.
+      const selfConfirmed = hypothesis.evidence.find(e => SELF_CONFIRMED_SOURCES.has(e.source));
+      if (selfConfirmed) {
+        const { detail } = selfConfirmed.data as { detail?: string };
+        const result: ProbeResult = {
+          hypothesisId: hypothesis.id,
+          tool: selfConfirmed.source,
+          command: `${selfConfirmed.source}:${hypothesis.targetUrl}`,
+          output: String(detail || hypothesis.reasoning),
+          parsed: { found: true, vulnerable: true, rawOutput: detail || hypothesis.reasoning },
+          success: true,
+          duration: 0,
+        };
+        this.state.probes.push(result);
+        this.rlWiring.onToolResult(selfConfirmed.source, hypothesis.vulnClass, true, hypothesis.confidence);
+        failurePrediction.recordOutcome(hypothesis.vulnClass, complexity, true);
+        this.emit("hunt:probe_result", { hypothesisId: hypothesis.id, result, proxyId: "direct" });
+        hypothesis.status = "probing"; // let update phase confirm it
         continue;
       }
 
@@ -3029,6 +3080,32 @@ Return ONLY valid JSON array of hypothesis objects.`;
   // actually finds the binary installed — so these entries are harmless no-ops on a
   // box that doesn't have them (runTool returns {error:"Unknown tool"}, scored as a
   // plain non-finding) and real added diversity on a box that does.
+  //
+  // A candidate is only safe to add here if the tool's own `vulnClasses` entry in
+  // TOOL_KNOWLEDGE/kali-catalog literally includes the vuln class — that list gates
+  // probe success (see `toolSupportsClass` in probe()), so a tool whose declared
+  // classes don't cover this entry can never register a real finding for it and is
+  // dead weight at best. It is NOT safe to add nuclei as a candidate for a class
+  // outside NUCLEI_TAGS_BY_CLASS: without real tag scoping it falls back to
+  // "-tags misconfig" (see runTool), and any genuine misconfig-template match would
+  // then get credited as evidence for an unrelated vuln class — the exact
+  // irrelevant-tool-signal bug already fixed once for curl_probe (see the
+  // toolSupportsClass comment in probe()). Several vuln classes below (e.g.
+  // business_logic, websocket, parameter_injection) default to nuclei or
+  // curl_probe in selectTool() but neither tool's declared vulnClasses covers
+  // them — those hypotheses can only ever be confirmed via a dedicated
+  // prober/LogicExploitAgent path or an OOB hit, never via the generic tool-
+  // select path, and were deliberately left out of TOOL_CANDIDATES here
+  // rather than paired with an unverifiable tool.
+  // race_condition, host_header_injection, oauth_misconfiguration,
+  // mass_assignment, prototype_pollution, and cloud_storage_exposure used to
+  // be in that same bucket but are now handled upstream: their evidence
+  // sources (race_condition_detector, host_header_probe, oauth_probe,
+  // mass_assignment_probe, prototype_pollution_probe, cloud_bucket_probe) are
+  // in SELF_CONFIRMED_SOURCES above probe()'s tool dispatch, so a hypothesis
+  // from any of them never reaches selectTool() at all — the entries below still
+  // exist purely as the retry-hint default for the rare case a hypothesis of
+  // that class arrives from some other source.
   private static readonly TOOL_CANDIDATES: Record<string, string[]> = {
     sqli:             ["sqlmap", "nuclei", "curl_probe"],
     xss:              ["dalfox", "xsstrike", "nuclei", "curl_probe"],
@@ -3048,6 +3125,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
     hidden_endpoints: ["ffuf", "gobuster", "feroxbuster", "wfuzz"],
     hidden_params:    ["ffuf", "arjun"],
     crlf_injection:   ["curl_probe", "crlfuzz"],
+    // Both gobuster and nuclei declare "exposed_panels" in their TOOL_KNOWLEDGE
+    // vulnClasses list (nuclei via real -tags "panel,exposure" scoping), so this
+    // is genuine diversity, not a gate-blocked no-op.
+    exposed_panels:   ["gobuster", "nuclei"],
+    // nuclei declares "broken_auth" and is tag-scoped for it
+    // ("default-login,auth-bypass" in NUCLEI_TAGS_BY_CLASS) — real evidence, not
+    // the misconfig fallback. jwt_tool is deliberately excluded: it only tests
+    // JWT-specific auth flaws, and broken_auth hypotheses from
+    // websocket-probe.ts/js-spa-crawler.ts are general session/auth issues that
+    // may have nothing to do with JWTs (see the selectTool() comment for
+    // broken_auth) — reusing it here would reintroduce that same irrelevant-signal
+    // bug for a different tool.
+    broken_auth:      ["nuclei", "curl_probe"],
   };
 
   /**
@@ -3063,30 +3153,17 @@ Return ONLY valid JSON array of hypothesis objects.`;
   }
 
   private getAlternateTool(hypothesis: Hypothesis): string {
-    // Rotation per vuln class — each entry is an ordered list of tool alternatives
-    const TOOL_ROTATION: Record<string, string[]> = {
-      sqli:             ["sqlmap", "nuclei", "curl_probe"],
-      xss:              ["nuclei", "xsstrike", "curl_probe"],
-      ssrf:             ["nuclei", "curl_probe"],
-      lfi:              ["nuclei", "curl_probe"],
-      rce:              ["nuclei", "curl_probe"],
-      cors:             ["corsy", "curl_probe", "nuclei"],
-      nosqli:           ["nosqlmap", "nuclei"],
-      csrf:             ["curl_probe", "nuclei"],
-      idor:             ["nuclei", "arjun"],
-      info_disclosure:  ["curl_probe", "nuclei"],
-      auth_bypass:      ["nuclei", "curl_probe", "nomore403"],
-      misconfig:        ["nikto", "nuclei"],
-      xxe:              ["nuclei", "curl_probe"],
-      security_headers: ["curl_probe", "nuclei"],
-      open_redirect:    ["nuclei", "curl_probe", "crlfuzz"],
-      hidden_endpoints: ["ffuf", "gobuster", "feroxbuster", "wfuzz"],
-      hidden_params:    ["ffuf", "arjun"],
-      crlf_injection:   ["curl_probe", "crlfuzz"],
-    };
-    const rotation = TOOL_ROTATION[hypothesis.vulnClass] || ["nuclei", "curl_probe"];
+    // Reuses TOOL_CANDIDATES (see comment above that table for what makes a
+    // candidate safe to add) instead of keeping a second, independently-maintained
+    // rotation list — the two had drifted out of sync before (auth_bypass's jwt_tool
+    // entry, for one) since nothing enforced they stay identical.
+    const rotation = HunterEngine.TOOL_CANDIDATES[hypothesis.vulnClass] || ["nuclei", "curl_probe"];
     const currentTool = this.selectTool(hypothesis.vulnClass);
     const currentIdx = rotation.indexOf(currentTool);
+    // currentTool may not appear in rotation (e.g. its class has no TOOL_CANDIDATES
+    // entry and falls back to ["nuclei","curl_probe"] here while selectTool()
+    // returns some other default) — indexOf returns -1, and (-1+1)%len === 0 lands
+    // on rotation[0], the safe starting point rather than an out-of-bounds/negative index.
     return rotation[(currentIdx + 1) % rotation.length];
   }
 

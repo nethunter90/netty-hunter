@@ -12,7 +12,7 @@ interface CRLFVuln {
 
 interface CRLFProbeResult {
   vulns: CRLFVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: CRLFVuln }>;
 }
 
 const CRLF_PAYLOADS = [
@@ -91,6 +91,15 @@ class CRLFProber {
         confidence: headerReflected ? 0.8 : 0.55,
         priority: 7,
         endpoint: vuln.url,
+        // Full detection detail — HunterEngine attaches this to the
+        // hypothesis's evidence so the PROBE phase can recognize this was
+        // already actively confirmed here (the injected header/marker
+        // genuinely reflected back) and skip re-dispatching it to curl_probe
+        // (whose declared vulnClasses don't even include crlf_injection — a
+        // structurally gate-blocked no-op) or crlfuzz (a generic-parser
+        // catalog tool that only sees "found = nonempty output," not this
+        // specific confirmed reflection).
+        raw: vuln,
       };
     });
 

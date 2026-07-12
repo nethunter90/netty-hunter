@@ -18,7 +18,7 @@ interface RaceResult {
 interface RaceProbeResult {
   endpointsTested: number;
   vulns: RaceResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: RaceResult }>;
 }
 
 const STATE_CHANGE_PATHS = [
@@ -197,6 +197,11 @@ class RaceConditionDetector {
       confidence: vuln.isDuplicate ? 0.8 : 0.55,
       priority: vuln.severity === "critical" ? 9 : 7,
       endpoint: vuln.endpoint,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here and skip re-dispatching it to a generic tool
+      // (nuclei/curl_probe) that has no way to test for a race condition.
+      raw: vuln,
     }));
 
     return {

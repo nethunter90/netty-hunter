@@ -15,7 +15,7 @@ interface PollutionResult {
 interface PollutionProbeResult {
   tested: number;
   vulns: PollutionResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: PollutionResult }>;
 }
 
 const MARKER = "__pp_netty__";
@@ -177,6 +177,13 @@ class PrototypePollutionProber {
       confidence: v.reflected ? 0.75 : 0.5,
       priority: 8,
       endpoint: v.url,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here (a real __proto__/constructor.prototype
+      // payload that got reflected or triggered a 500) and skip
+      // re-dispatching it to nuclei's misconfig-tag fallback, which has no
+      // templates that test for prototype pollution.
+      raw: v,
     }));
 
     return {

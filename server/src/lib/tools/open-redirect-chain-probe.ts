@@ -13,7 +13,7 @@ interface RedirectVuln {
 
 interface OpenRedirectResult {
   vulns: RedirectVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: RedirectVuln }>;
 }
 
 const REDIRECT_PARAMS = [
@@ -214,7 +214,7 @@ class OpenRedirectChainProber {
   private buildHypotheses(
     vulns: RedirectVuln[],
     hasOAuthEndpoints: boolean
-  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }> {
+  ): Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: RedirectVuln }> {
     if (vulns.length === 0) return [];
 
     const hypotheses: Array<{
@@ -223,12 +223,18 @@ class OpenRedirectChainProber {
       confidence: number;
       priority: number;
       endpoint: string;
+      raw: RedirectVuln;
     }> = [];
 
     // Base open_redirect hypothesis — these are aggregate hypotheses across
     // possibly several vulnerable params/URLs, so there's no single "the"
     // endpoint; the first matching vuln's URL is used as a representative,
     // already-confirmed-vulnerable anchor rather than the hunt's root URL.
+    // `raw` carries that same representative vuln — HunterEngine attaches it
+    // to the hypothesis's evidence so the PROBE phase can recognize this was
+    // already actively confirmed (a real 3xx redirect to evil.com/javascript:/
+    // data:) rather than re-dispatching to nuclei's generic "redirect" tag,
+    // which has no way to replay this exact param+payload combination.
     const paramSample = [...new Set(vulns.map(v => v.param))].slice(0, 3).join(", ");
     hypotheses.push({
       vulnClass: "open_redirect",
@@ -236,6 +242,7 @@ class OpenRedirectChainProber {
       confidence: 0.75,
       priority: 7,
       endpoint: vulns[0].url,
+      raw: vulns[0],
     });
 
     // OAuth misconfiguration chain
@@ -247,6 +254,7 @@ class OpenRedirectChainProber {
         confidence: 0.7,
         priority: 9,
         endpoint: chainableVulns[0].url,
+        raw: chainableVulns[0],
       });
     }
 
@@ -260,6 +268,7 @@ class OpenRedirectChainProber {
         confidence: 0.8,
         priority: 9,
         endpoint: xssVulns[0].url,
+        raw: xssVulns[0],
       });
     }
 

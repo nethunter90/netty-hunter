@@ -14,7 +14,7 @@ interface BucketResult {
 
 interface BucketProbeResult {
   buckets: BucketResult[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: BucketResult }>;
 }
 
 class CloudBucketProber {
@@ -209,6 +209,13 @@ class CloudBucketProber {
       confidence: 0.9,
       priority: 10,
       endpoint: bucket.bucketUrl,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here (a real 200 from the actual S3/GCS/Azure
+      // endpoint for a guessed bucket name) and skip re-dispatching it to
+      // nuclei's misconfig-tag fallback, which never even queries the actual
+      // cloud provider this hit came from.
+      raw: bucket,
     }));
 
     return { buckets, hypotheses };
