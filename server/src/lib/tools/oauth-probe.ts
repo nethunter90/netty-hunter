@@ -11,7 +11,7 @@ interface OAuthVuln {
 interface OAuthProbeResult {
   oauthEndpointsFound: string[];
   vulns: OAuthVuln[];
-  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string }>;
+  hypotheses: Array<{ vulnClass: string; reasoning: string; confidence: number; priority: number; endpoint: string; raw: OAuthVuln }>;
 }
 
 const axiosOpts = {
@@ -30,10 +30,25 @@ class OAuthProber {
     }
   }
 
-  private isOAuthIndicator(status: number, headers: Record<string, string | string[] | undefined>): boolean {
-    if (status === 200) return true;
+  private isOAuthIndicator(
+    status: number,
+    headers: Record<string, string | string[] | undefined>,
+    bodyLength: number,
+    baseline: { status: number; bodyLength: number }
+  ): boolean {
     const location = (headers["location"] as string | undefined) || "";
-    return /[?&](code|token|oauth)=/i.test(location) || /oauth/i.test(location);
+    if (/[?&](code|token|oauth)=/i.test(location) || /oauth/i.test(location)) return true;
+    if (status !== 200) return false;
+    // A bare 200 is not real signal on its own — many apps (especially SPAs with
+    // client-side routing) serve an identical 200 catch-all shell for literally
+    // any unmatched path. Juice Shop does exactly this: /oauth/authorize and a
+    // guaranteed-bogus path both return the same index.html with status 200,
+    // which used to make this function report every guessed OAuth path as
+    // "found" — false-positiving every downstream vuln test against a page that
+    // was never an OAuth endpoint. Only trust a 200 that's distinguishable from
+    // the baseline (different status, or a real body-length difference).
+    if (baseline.status === 200 && bodyLength === baseline.bodyLength) return false;
+    return true;
   }
 
   private async discoverEndpoints(
@@ -57,12 +72,22 @@ class OAuthProber {
     let tokenEndpoint: string | null = null;
     let responseTypesSupported: string[] = [];
 
+    let baseline = { status: 0, bodyLength: 0 };
+    try {
+      const baselineResp = await axios.get(`${base}/__nh_oauth_baseline_${Date.now()}__`, { ...axiosOpts, headers: authHeaders });
+      const baselineBody = typeof baselineResp.data === "string" ? baselineResp.data : JSON.stringify(baselineResp.data || "");
+      baseline = { status: baselineResp.status, bodyLength: baselineBody.length };
+    } catch (err) {
+      logger.debug(`[oauth-probe] Baseline request error: ${err}`);
+    }
+
     await Promise.allSettled(
       paths.map(async (path) => {
         const url = `${base}${path}`;
         try {
           const resp = await axios.get(url, { ...axiosOpts, headers: authHeaders });
-          if (this.isOAuthIndicator(resp.status, resp.headers as Record<string, string | string[] | undefined>)) {
+          const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data || "");
+          if (this.isOAuthIndicator(resp.status, resp.headers as Record<string, string | string[] | undefined>, body.length, baseline)) {
             found.push(url);
             logger.debug(`[oauth-probe] Found OAuth endpoint: ${url}`);
           }
@@ -278,6 +303,13 @@ class OAuthProber {
       confidence: v.severity === "high" ? 0.8 : 0.65,
       priority: v.severity === "high" ? 9 : 7,
       endpoint: v.endpoint,
+      // Full detection detail — HunterEngine attaches this to the hypothesis's
+      // evidence so the PROBE phase can recognize this hypothesis was already
+      // actively confirmed here (a real authorization-endpoint response — missing
+      // state, open redirect_uri, implicit flow accepted, etc.) and skip
+      // re-dispatching it to nuclei's misconfig-tag fallback, which has no
+      // templates that test OAuth flow semantics.
+      raw: v,
     }));
 
     return { oauthEndpointsFound, vulns, hypotheses };
