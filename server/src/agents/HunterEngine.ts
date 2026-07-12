@@ -590,6 +590,26 @@ const MAX_OBSERVATIONS = 500;
 const MAX_HYPOTHESES = 150;
 const MAX_PROBES = 1500;
 
+// Truncation priority for the MAX_HYPOTHESES cap below: "pending"/"probing"
+// hypotheses must survive over resolved ones (confirmed/deferred/rejected/
+// inconclusive) regardless of raw priority score — a low-priority hypothesis
+// that hasn't been tried yet is more valuable to keep than a high-priority one
+// that's already deferred/confirmed and will never be revisited (a confirmed
+// finding's outcome already lives in confirmedFindings/the DB independent of
+// this array). Without this, a hypothesis whose priority score was computed
+// BEFORE a vulnClassAllowlist deferred it (e.g. race_condition at priority
+// 9 × confidence 0.8 = 7.2) permanently outranks and evicts a lower-priority
+// ALLOWED hypothesis (e.g. crlf_injection at priority 7 × confidence
+// 0.55-0.8 = 3.85-5.6) on every truncation event, even though the deferred one
+// can never be probed again. Confirmed live: crlf_injection never got a
+// single hypothesis into the array despite an allowlist explicitly allowing
+// it, because higher-scored deferred hypotheses from disallowed classes kept
+// winning every truncation pass.
+export function truncationRank(h: { status: string; priority: number; confidence: number }): number {
+  const actionable = h.status === "pending" || h.status === "probing";
+  return (actionable ? 1_000_000 : 0) + h.priority * h.confidence;
+}
+
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
 // 5-minute TTL for custom tool cache (shared across all engine instances in a process)
 let customToolsCacheTs = 0;
@@ -1175,7 +1195,7 @@ export class HunterEngine extends EventEmitter {
             }));
             this.state.hypotheses.push(...pivotHypotheses);
             if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-              this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+              this.state.hypotheses.sort((a, b) => truncationRank(b) - truncationRank(a));
               this.state.hypotheses.splice(MAX_HYPOTHESES);
             }
             this.state.phase = 'probe';
@@ -1935,7 +1955,7 @@ export class HunterEngine extends EventEmitter {
       logger.info("[HunterEngine] GraphQL schema mapped", { endpoint: ep, typeCount: schema.typeCount });
 
       if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-        this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+        this.state.hypotheses.sort((a, b) => truncationRank(b) - truncationRank(a));
         this.state.hypotheses.splice(MAX_HYPOTHESES);
       }
     }
@@ -1997,7 +2017,7 @@ export class HunterEngine extends EventEmitter {
     }
 
     if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-      this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+      this.state.hypotheses.sort((a, b) => truncationRank(b) - truncationRank(a));
       this.state.hypotheses.splice(MAX_HYPOTHESES);
     }
   }
@@ -2218,7 +2238,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       newHypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
       this.state.hypotheses.push(...newHypotheses);
       if (this.state.hypotheses.length > MAX_HYPOTHESES) {
-        this.state.hypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
+        this.state.hypotheses.sort((a, b) => truncationRank(b) - truncationRank(a));
         this.state.hypotheses.splice(MAX_HYPOTHESES);
       }
 
