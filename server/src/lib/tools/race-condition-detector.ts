@@ -38,6 +38,37 @@ const STATE_CHANGE_PATHS = [
 ];
 
 class RaceConditionDetector {
+  // Per-target cache: STATE_CHANGE_PATHS is a blind list of guessed route
+  // names tried against every target. A SPA that serves its index.html
+  // shell for any path (client-side routing with a server-side catch-all)
+  // returns an identical 200 for a guessed "/purchase" and a nonexistent
+  // "/__whatever__" alike — 15 concurrent requests against a catch-all
+  // trivially "all succeed," which isDuplicate would misread as a real
+  // race condition on every single guessed path. Same baseline-diff fix
+  // already applied to oauth-probe.ts's false-positive bug: fetch one
+  // guaranteed-bogus path per target and compare status+bodyLength before
+  // trusting a guessed endpoint is a real, distinct route.
+  private baselineCache = new Map<string, { status: number; bodyLength: number }>();
+
+  private async getBaseline(baseUrl: string, authHeaders?: Record<string, string>): Promise<{ status: number; bodyLength: number } | null> {
+    if (this.baselineCache.has(baseUrl)) return this.baselineCache.get(baseUrl)!;
+    try {
+      const bogusPath = `/__nettyhunter_baseline_${Math.random().toString(36).slice(2)}__`;
+      const resp = await axios.get(`${baseUrl}${bogusPath}`, {
+        timeout: 8000,
+        validateStatus: () => true,
+        headers: authHeaders ?? {},
+      });
+      const body = resp.data;
+      const bodyStr = typeof body === "string" ? body : JSON.stringify(body ?? "");
+      const baseline = { status: resp.status, bodyLength: bodyStr.length };
+      this.baselineCache.set(baseUrl, baseline);
+      return baseline;
+    } catch {
+      return null;
+    }
+  }
+
   private detectStateEndpoints(
     targetUrl: string
   ): Array<{ url: string; method: "POST" | "GET" }> {
@@ -76,7 +107,8 @@ class RaceConditionDetector {
     url: string,
     method: "POST" | "GET",
     concurrency: number = 15,
-    authHeaders?: Record<string, string>
+    authHeaders?: Record<string, string>,
+    baseline?: { status: number; bodyLength: number } | null,
   ): Promise<RaceResult | null> {
     // Warm the CSRF token cache BEFORE building the burst — discovering it
     // inline per-request (as csrfAwareRequest does for single-shot probes) would
@@ -123,6 +155,13 @@ class RaceConditionDetector {
     }
 
     if (statuses.length === 0) {
+      return null;
+    }
+
+    // Indistinguishable from a bogus path this target never routes to
+    // (e.g. a SPA's catch-all shell) — "all 15 succeeded" is guaranteed
+    // here regardless of any real business logic, so it's not a signal.
+    if (baseline && statuses[0] === baseline.status && bodyLengths[0] === baseline.bodyLength) {
       return null;
     }
 
@@ -175,8 +214,16 @@ class RaceConditionDetector {
   ): Promise<RaceProbeResult> {
     const endpoints = this.detectStateEndpoints(targetUrl);
 
+    let baseUrl: string;
+    try {
+      baseUrl = new URL(targetUrl).origin;
+    } catch {
+      baseUrl = targetUrl;
+    }
+    const baseline = await this.getBaseline(baseUrl, authHeaders);
+
     const raceJobs = endpoints.map(({ url, method }) =>
-      this.raceEndpoint(url, method, 15, authHeaders).catch((err) => {
+      this.raceEndpoint(url, method, 15, authHeaders, baseline).catch((err) => {
         logger.warn(`RaceConditionDetector: error probing ${url}: ${err?.message}`);
         return null;
       })
