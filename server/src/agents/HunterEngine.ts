@@ -67,6 +67,7 @@ import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
 import { techPayloadProber } from "../lib/tools/tech-payload-prober";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
+import { deserializationProber } from "../lib/tools/deserialization-prober";
 import { postExploitAgent } from "./PostExploitAgent";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
@@ -231,7 +232,7 @@ const NUCLEI_TAGS_FALLBACK = "misconfig";
 // missing HttpOnly flag). See the SELF_CONFIRMED_SOURCES branch in probe().
 // All dedicated OBSERVE-phase probers with a self-confirming source are now
 // wired in here.
-const SELF_CONFIRMED_SOURCES = new Set(["race_condition_detector", "cookie_flag_checker", "host_header_probe", "oauth_probe", "mass_assignment_probe", "two_factor_bypass_probe", "jwt_confusion_probe", "prototype_pollution_probe", "cloud_bucket_probe", "websocket_probe", "open_redirect_chain_probe", "blind_xxe_probe", "crlf_probe"]);
+const SELF_CONFIRMED_SOURCES = new Set(["race_condition_detector", "cookie_flag_checker", "host_header_probe", "oauth_probe", "mass_assignment_probe", "two_factor_bypass_probe", "jwt_confusion_probe", "prototype_pollution_probe", "cloud_bucket_probe", "websocket_probe", "open_redirect_chain_probe", "blind_xxe_probe", "crlf_probe", "deserialization_prober"]);
 
 // ─── OOB-RCE injection vectors ────────────────────────────────────────────────
 // Real command injection usually EMBEDS a param inside a shell command, so the
@@ -1873,6 +1874,29 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:xxe_found", { sessionId: this.state.sessionId, count: xxeResult.vulns.length, oobConfirmed: xxeResult.vulns.some(v => v.oobReceived) });
           }
         } catch (err) { logger.debug("[HunterEngine] Blind XXE probe skipped", { err: String(err) }); }
+      })(),
+
+      // Java/PHP deserialization probe — OOB-confirmed via ysoserial (Java
+      // URLDNS gadget) and phpggc (Guzzle/Monolog gadget chains), with a
+      // fingerprint-only fallback for both when the OOB tools are unavailable
+      // or don't fire. probeDeserialize (fired later, per-hypothesis) only
+      // covers Node.js node-serialize gadgets — this is the only Java/PHP
+      // deserialization coverage in the codebase.
+      (async () => {
+        try {
+          const deserResult = await deserializationProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of deserResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [{ id: uuidv4(), source: "deserialization_prober", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (deserResult.vulns.length > 0) {
+            this.emit("hunt:deserialization_found", { sessionId: this.state.sessionId, count: deserResult.vulns.length, oobConfirmed: deserResult.vulns.some(v => v.oobReceived) });
+          }
+        } catch (err) { logger.debug("[HunterEngine] Deserialization probe skipped", { err: String(err) }); }
       })(),
 
       // ZAP passive scanner — spider the target and surface passive-scan findings

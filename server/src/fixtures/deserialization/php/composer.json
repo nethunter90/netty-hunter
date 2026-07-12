@@ -1,0 +1,14 @@
+{
+    "name": "netty-hunter/php-deser-fixture",
+    "description": "Deliberately vulnerable PHP deserialization fixture for testing deserialization-prober.ts. Pins known-vulnerable Guzzle/Monolog versions on purpose.",
+    "require": {
+        "guzzlehttp/guzzle": "6.3.2",
+        "guzzlehttp/psr7": "1.4.2",
+        "monolog/monolog": "1.27.1"
+    },
+    "policy": {
+        "advisories": {
+            "block": false
+        }
+    }
+}

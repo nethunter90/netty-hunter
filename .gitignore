@@ -27,3 +27,13 @@ server/nikto_*.json
 # Nested external repo (xbow benchmarks clone, has its own .git, ~2.3GB) —
 # never commit this into netty-hunter's own history
 server/workspace/xbow-repo/
+
+# ysoserial.jar (~57MB) — download via:
+# curl -L -o server/tools/ysoserial.jar https://github.com/frohoff/ysoserial/releases/download/v0.0.6/ysoserial-all.jar
+server/tools/*.jar
+
+# PHP fixture deps (composer install), regenerate via `composer install --no-blocking`
+server/src/fixtures/deserialization/php/vendor/
+
+# Compiled Java fixture, regenerate via `javac Fixture.java`
+server/src/fixtures/deserialization/java/*.class
