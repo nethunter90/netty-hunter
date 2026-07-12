@@ -30,7 +30,6 @@ export const HUNT_TOOLS: Array<{ name: string; binary: string; tier: "critical" 
   { name: "tplmap",    binary: "tplmap",    tier: "important" },
   { name: "jwt_tool",  binary: "jwt_tool",  tier: "optional"  },
   { name: "xsser",     binary: "xsser",     tier: "optional"  },
-  { name: "ssrfmap",   binary: "ssrfmap",   tier: "optional"  },
   { name: "nosqlmap",  binary: "nosqlmap",  tier: "optional"  },
   { name: "corsy",     binary: "corsy",     tier: "optional"  },
   { name: "smuggler",  binary: "smuggler",  tier: "optional"  },

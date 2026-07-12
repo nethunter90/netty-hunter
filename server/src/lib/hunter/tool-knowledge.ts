@@ -1,6 +1,6 @@
 /**
  * Tool Knowledge System
- * Structured profiles for 39 security tools and 10 chain pipelines.
+ * Structured profiles for 38 security tools and 10 chain pipelines.
  * Provides AI-injectable context blocks for intelligent tool selection.
  */
 
@@ -292,18 +292,15 @@ export const TOOL_PROFILES: ToolProfile[] = [
     requiredBinaries: ["python3"],
     tags: ["exploitation", "ssti", "rce"],
   },
-  {
-    name: "ssrfmap",
-    category: "exploitation",
-    description: "SSRF detection and exploitation tool",
-    capabilities: ["SSRF detection", "internal network probing", "cloud metadata access"],
-    vulnClasses: ["ssrf", "cloud_metadata"],
-    commandTemplate: "ssrfmap.py -r /tmp/request.txt -p url --level 3",
-    riskLevel: "high",
-    stealthRating: 5,
-    requiredBinaries: ["python3"],
-    tags: ["exploitation", "ssrf", "cloud"],
-  },
+  // ssrfmap was removed from this list — its real CLI needs -r <raw-request-
+  // file> -p <param> (a captured HTTP request with the injectable param
+  // marked), never a static "/tmp/request.txt" that nothing here ever
+  // writes, and "--level 3" isn't a real ssrfmap flag either (ssrfmap
+  // selects behavior via -m <module>, not a numeric level like sqlmap).
+  // See kali-catalog.ts's matching removal for the full rationale — nuclei's
+  // real tag-scoped SSRF templates plus the OOB beacon probe already give
+  // genuine confirmation, and this entry was only ever feeding inaccurate
+  // tool guidance into the AI prompt context, never actually executed.
   {
     name: "arjun",
     category: "exploitation",
@@ -606,8 +603,7 @@ export const TOOL_CHAIN_PIPELINES: ToolChainPipeline[] = [
     description: "Server-side request forgery discovery and impact assessment",
     phases: [
       { tool: "arjun", purpose: "Find URL/callback parameters" },
-      { tool: "ssrfmap", purpose: "SSRF exploitation and internal probing", dependsOn: ["arjun"] },
-      { tool: "nuclei", purpose: "Cloud metadata SSRF template checks" },
+      { tool: "nuclei", purpose: "SSRF and cloud metadata template checks", dependsOn: ["arjun"] },
     ],
     targetVulnClasses: ["ssrf", "cloud_metadata"],
     estimatedTime: "15-25 min",

@@ -318,7 +318,17 @@ export const KALI_CATALOG: KaliToolEntry[] = [
     description: "Wrapper around grep with Tomnomnom patterns for vulnerability-prone parameters",
   },
 
-  // ── EXPLOITATION (12) ────────────────────────────────────────────────────────
+  // ── EXPLOITATION (11) ────────────────────────────────────────────────────────
+  // ssrfmap was removed from this catalog — its real CLI needs -r <raw-request-
+  // file> -p <param>, a workflow this template system's {url}/{domain}
+  // placeholder substitution has no way to supply (it can't capture a raw HTTP
+  // request to a temp file). It was already unreachable for automatic
+  // selection (see selectTool()'s ssrf mapping in HunterEngine.ts, which uses
+  // nuclei — real tag-scoped templates plus the OOB beacon probe already give
+  // genuine SSRF confirmation), but the catalog entry itself still had the
+  // guaranteed-false-positive `-u {url}` invocation from before that fix,
+  // which fed inaccurate info into this tool's browse-UI listing and the AI
+  // prompt context in tool-knowledge.ts.
 
   {
     name: "sqlmap", displayName: "SQLMap", binary: "sqlmap",
@@ -383,14 +393,6 @@ export const KALI_CATALOG: KaliToolEntry[] = [
     vulnClasses: ["xss"],
     rateLimit: 20, riskLevel: "medium", stealthRating: 4, parserType: "lines",
     description: "Automated XSS detection, exploitation, and reporting framework",
-  },
-  {
-    name: "ssrfmap", displayName: "SSRFmap", binary: "ssrfmap",
-    category: "exploitation",
-    commandTemplate: "ssrfmap -u {url}",
-    vulnClasses: ["ssrf"],
-    rateLimit: 30, riskLevel: "high", stealthRating: 3, parserType: "lines",
-    description: "Server-Side Request Forgery scanner and chaining exploiter",
   },
   {
     name: "jwt_tool", displayName: "JWT Tool", binary: "jwt_tool",
