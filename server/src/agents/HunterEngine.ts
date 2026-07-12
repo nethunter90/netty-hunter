@@ -68,6 +68,7 @@ import { techPayloadProber } from "../lib/tools/tech-payload-prober";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { deserializationProber } from "../lib/tools/deserialization-prober";
+import { fileUploadWebshellProber } from "../lib/tools/file-upload-webshell-prober";
 import { postExploitAgent } from "./PostExploitAgent";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
@@ -232,7 +233,7 @@ const NUCLEI_TAGS_FALLBACK = "misconfig";
 // missing HttpOnly flag). See the SELF_CONFIRMED_SOURCES branch in probe().
 // All dedicated OBSERVE-phase probers with a self-confirming source are now
 // wired in here.
-const SELF_CONFIRMED_SOURCES = new Set(["race_condition_detector", "cookie_flag_checker", "host_header_probe", "oauth_probe", "mass_assignment_probe", "two_factor_bypass_probe", "jwt_confusion_probe", "prototype_pollution_probe", "cloud_bucket_probe", "websocket_probe", "open_redirect_chain_probe", "blind_xxe_probe", "crlf_probe", "deserialization_prober"]);
+const SELF_CONFIRMED_SOURCES = new Set(["race_condition_detector", "cookie_flag_checker", "host_header_probe", "oauth_probe", "mass_assignment_probe", "two_factor_bypass_probe", "jwt_confusion_probe", "prototype_pollution_probe", "cloud_bucket_probe", "websocket_probe", "open_redirect_chain_probe", "blind_xxe_probe", "crlf_probe", "deserialization_prober", "file_upload_webshell_prober"]);
 
 // ─── OOB-RCE injection vectors ────────────────────────────────────────────────
 // Real command injection usually EMBEDS a param inside a shell command, so the
@@ -1897,6 +1898,27 @@ export class HunterEngine extends EventEmitter {
             this.emit("hunt:deserialization_found", { sessionId: this.state.sessionId, count: deserResult.vulns.length, oobConfirmed: deserResult.vulns.some(v => v.oobReceived) });
           }
         } catch (err) { logger.debug("[HunterEngine] Deserialization probe skipped", { err: String(err) }); }
+      })(),
+
+      // File upload → webshell RCE probe — uploads real PHP/JSP/ASP webshells
+      // across extension-filter bypass variants, then confirms execution via
+      // an arithmetic canary (server-computed product in the response, not
+      // the literal source) rather than a substring/reflection heuristic.
+      (async () => {
+        try {
+          const uploadResult = await fileUploadWebshellProber.probe(this.state.targetUrl, this.authHeaders);
+          for (const hyp of uploadResult.hypotheses) {
+            this.state.hypotheses.push({
+              id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
+              reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority,
+              evidence: [{ id: uuidv4(), source: "file_upload_webshell_prober", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }],
+              status: "pending", createdAt: Date.now(),
+            });
+          }
+          if (uploadResult.vulns.length > 0) {
+            this.emit("hunt:file_upload_found", { sessionId: this.state.sessionId, count: uploadResult.vulns.length, rceConfirmed: uploadResult.vulns.some(v => v.technique === "webshell_rce_confirmed") });
+          }
+        } catch (err) { logger.debug("[HunterEngine] File upload webshell probe skipped", { err: String(err) }); }
       })(),
 
       // ZAP passive scanner — spider the target and surface passive-scan findings
