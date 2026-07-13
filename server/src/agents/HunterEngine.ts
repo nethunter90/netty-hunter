@@ -2749,8 +2749,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
           const confirmed = await this.buildConfirmedFinding(hypothesis, successful);
           this.state.confirmedFindings.push(confirmed);
           this.emit("hunt:finding_confirmed", { finding: confirmed });
+          const dbFindingId = await this.persistFinding(confirmed);
+          // dbId lets CampaignOrchestrator's Layer 5 verification gate retract
+          // this entry later via contextWriter.retractFinding() if its more
+          // rigorous 4-layer check overturns this fast-path confirmation.
           contextWriter.addFinding({
             id: confirmed.hypothesis.id,
+            dbId: dbFindingId,
             vulnClass: confirmed.hypothesis.vulnClass,
             severity: confirmed.severity,
             confidence: confirmed.hypothesis.confidence,
@@ -2765,7 +2770,6 @@ Return ONLY valid JSON array of hypothesis objects.`;
             endpoint: confirmed.hypothesis.targetUrl,
             confidence: confirmed.hypothesis.confidence,
           });
-          const dbFindingId = await this.persistFinding(confirmed);
 
           // Non-blocking: demonstrate impact scope for the report without
           // holding up the hunt loop. Failures are fully isolated.

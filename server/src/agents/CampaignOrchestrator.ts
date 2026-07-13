@@ -35,6 +35,7 @@ import { TargetSelectionIntelligence } from "../intelligence/TargetSelection";
 import { ROIModel } from "../intelligence/ROIModel";
 import { BackwardHuntEngine, type BackwardPlan } from "../intelligence/BackwardHunt";
 import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
+import { contextWriter } from "../lib/context-writer";
 import { coreGovernance } from "../governance";
 import { UnifiedReinforcementStore } from "../intelligence/ReinforcementStore";
 import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
@@ -1030,6 +1031,10 @@ export class CampaignOrchestrator extends EventEmitter {
             ];
           }
 
+          // Reconcile hunt-findings.json's provisional fast-path confidence
+          // with Layer 5's actual verified value.
+          contextWriter.updateFindingConfidence(dbFinding.id, verification.finalConfidence);
+
           // Update finding record. dedupHash is only persisted on a CONFIRMED
           // verdict — the column is unique, and now that Layer1Dedup only blocks
           // future attempts on a prior CONFIRMED match (not any prior verdict),
@@ -1132,6 +1137,11 @@ export class CampaignOrchestrator extends EventEmitter {
         } else {
           rejected.push({ finding: dbFinding, verification });
           this.emit("l5:rejected", { findingId: dbFinding.id, verdict: verification.finalVerdict });
+          // hunt-findings.json (context-writer) was populated by the engine's
+          // own fast-path confidence threshold, before this more rigorous
+          // 4-layer check ran — without this, a later rejection is invisible
+          // there and the finding stays listed as "confirmed" forever.
+          contextWriter.retractFinding(dbFinding.id);
           // Persist the rejection so the finding is never left as status:"new"/verificationStatus:"pending"
           // — without this update a rejected finding is indistinguishable from an unverified one.
           await db.update(findings).set({

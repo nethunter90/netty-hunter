@@ -49,6 +49,10 @@ export interface HuntLiveState {
 
 export interface FindingRecord {
   id: string;
+  // The `findings` table's integer PK, set once persistFinding() resolves.
+  // Lets a later Layer 5 verification verdict (keyed by that same DB id)
+  // find and retract this entry — see retractFinding().
+  dbId?: number;
   vulnClass: string;
   severity: string;
   confidence: number;
@@ -75,6 +79,29 @@ class ContextWriter {
   addFinding(finding: FindingRecord): void {
     this.findings.push(finding);
     this.scheduleFlush();
+  }
+
+  /**
+   * Layer 5's 4-layer verification runs *after* the engine's own fast-path
+   * confidence threshold already pushed a finding here — so a later
+   * "rejected"/"inconclusive" verdict was previously silent: the finding
+   * stayed visible in hunt-findings.json as "confirmed" forever, with no
+   * trace of the more rigorous pipeline overturning it. Called from
+   * CampaignOrchestrator's Layer 5 gate once verification completes.
+   */
+  retractFinding(dbId: number): void {
+    const before = this.findings.length;
+    this.findings = this.findings.filter((f) => f.dbId !== dbId);
+    if (this.findings.length !== before) this.scheduleFlush();
+  }
+
+  /** Reconcile confidence once Layer 5 confirms — the fast-path value was provisional. */
+  updateFindingConfidence(dbId: number, confidence: number): void {
+    const finding = this.findings.find((f) => f.dbId === dbId);
+    if (finding) {
+      finding.confidence = confidence;
+      this.scheduleFlush();
+    }
   }
 
   recordError(message: string): void {
