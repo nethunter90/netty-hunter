@@ -458,7 +458,18 @@ export const TOOL_KNOWLEDGE: Record<string, {
   },
   curl_probe: {
     description: "HTTP header and response analysis",
-    vulnClasses: ["security_headers", "cors", "csrf", "info_disclosure", "open_redirect"],
+    // csrf/info_disclosure/open_redirect were removed from this list: `found`
+    // below is purely a missing-security-header/CORS-wildcard count, which has
+    // no bearing on any of those three classes. Declaring them here let
+    // toolSupportsClass (probe()) treat that generic signal as confirming
+    // evidence for hypotheses it can't actually test — a target simply
+    // missing X-Frame-Options/CSP made curl_probe "confirm" csrf,
+    // info_disclosure, AND open_redirect hypotheses identically, all from the
+    // same header dump. Verified live: a real target missing 2 security
+    // headers had all three vuln classes falsely confirmed from that single
+    // signal. nuclei remains a real, tag-scoped detector for all three via
+    // TOOL_CANDIDATES, so this doesn't remove coverage — only the broken path.
+    vulnClasses: ["security_headers", "cors"],
     command: (url) => ({
       bin: "curl",
       // GET (not HEAD): many real apps implement GET but not HEAD and let HEAD
@@ -491,11 +502,44 @@ export const TOOL_KNOWLEDGE: Record<string, {
       args: ["-u", url, "--level", "2", "--os-cmd", "id"],
     }),
     parser: (output) => {
-      const found = /Template Injection|Tplmap identified|injection point/i.test(output);
+      // "Template Injection" alone matched tplmap's own banner — "Automatic
+      // Server-Side Template Injection Detection and Exploitation Tool" —
+      // which prints on every single run, vulnerable target or not. Verified
+      // against /opt/tplmap/core/checks.py: "Tplmap identified the following
+      // injection point:" only prints from _print_injection_summary(), which
+      // is only reachable when a real template engine was actually detected
+      // (the negative path logs "Tested parameters appear to be not
+      // injectable." and returns before ever reaching it) — that's the only
+      // genuine positive-result marker.
+      const found = /Tplmap identified|injection point/i.test(output);
       const engine = output.match(/Template engine: (\w+)/i)?.[1] ?? "unknown";
       return { found, engine, rawOutput: output.slice(0, 500) };
     },
     rateLimit: 30,
+  },
+  xsstrike: {
+    // Overrides the Kali-catalog entry (kali-catalog.ts declares parserType:
+    // "lines", HunterEngine's TOOL_KNOWLEDGE wins on name collision) — the
+    // "lines" parser treats any non-empty output line as a finding, which for
+    // xsstrike means its own banner/progress lines (version banner, "WAF
+    // Status: Offline", "Testing parameter: X") always produce found:true,
+    // even when the very next line is xsstrike's own negative verdict "No
+    // reflection found". Verified live: a real, non-reflecting endpoint
+    // still "confirmed" xss this way. xsstrike's actual positive markers
+    // (modes/scan.py): logger.good('Potentially vulnerable objects found')
+    // and logger.good('Payload: %s') — only printed once a payload actually
+    // round-tripped through a real reflection.
+    description: "Advanced XSS scanner with mutation engine",
+    vulnClasses: ["xss"],
+    command: (url) => ({
+      bin: "xsstrike",
+      args: ["-u", url, "--skip"],
+    }),
+    parser: (output) => {
+      const found = /Potentially vulnerable objects found|Payload:/i.test(output);
+      return { found, rawOutput: output.slice(0, 500) };
+    },
+    rateLimit: 20,
   },
   dalfox: {
     description: "Parameter analysis and XSS scanner",
