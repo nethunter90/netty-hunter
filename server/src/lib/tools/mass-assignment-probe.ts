@@ -73,6 +73,10 @@ function getNewFields(baseline: unknown, response: unknown): string[] {
   }
 }
 
+function bodyLength(data: unknown): number {
+  return (typeof data === "string" ? data : JSON.stringify(data ?? "")).length;
+}
+
 class MassAssignmentProber {
   private async getBaseline(
     url: string,
@@ -90,12 +94,50 @@ class MassAssignmentProber {
     }
   }
 
+  // A SPA served with a server-side catch-all (any unmatched path,
+  // including a guessed-but-nonexistent /api/user, falls through to the
+  // same index.html shell) makes "the request returned 200/201/204"
+  // meaningless on its own — that status is guaranteed for any path,
+  // real or not. This mirrors the exact fix already applied to
+  // race-condition-detector.ts: fetch one guaranteed-bogus path with the
+  // SAME HTTP method, and treat a guessed endpoint's response as "not a
+  // real, distinct route" if it's indistinguishable (status + body length)
+  // from that baseline, before trusting `accepted` at all.
+  private nonexistentBaselines = new Map<string, { status: number; bodyLength: number } | null>();
+
+  private async getNonexistentPathBaseline(
+    baseUrl: string,
+    method: "PUT" | "PATCH" | "POST",
+    authHeaders: Record<string, string>
+  ): Promise<{ status: number; bodyLength: number } | null> {
+    const key = `${method}:${baseUrl}`;
+    if (this.nonexistentBaselines.has(key)) return this.nonexistentBaselines.get(key)!;
+    try {
+      const bogusPath = `/__nettyhunter_baseline_${Math.random().toString(36).slice(2)}__`;
+      const response = await axios.request({
+        method,
+        url: `${baseUrl}${bogusPath}`,
+        data: { name: "test" },
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        timeout: 7000,
+        validateStatus: () => true,
+      });
+      const baseline = { status: response.status, bodyLength: bodyLength(response.data) };
+      this.nonexistentBaselines.set(key, baseline);
+      return baseline;
+    } catch {
+      this.nonexistentBaselines.set(key, null);
+      return null;
+    }
+  }
+
   private async testUpdateEndpoint(
     baseUrl: string,
     path: string,
     fieldSet: Record<string, unknown>,
     baseline: unknown,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    nonexistentBaselines: Partial<Record<"PUT" | "PATCH", { status: number; bodyLength: number } | null>>
   ): Promise<MassAssignmentVuln[]> {
     const url = `${baseUrl}${path}`;
     const methods = ["PUT", "PATCH"] as const;
@@ -109,6 +151,11 @@ class MassAssignmentProber {
           ...authHeaders,
           "Content-Type": "application/json",
         }, 7000);
+
+        const nonexistent = nonexistentBaselines[method];
+        if (nonexistent && response.status === nonexistent.status && bodyLength(response.data) === nonexistent.bodyLength) {
+          continue; // indistinguishable from a route that doesn't exist
+        }
 
         const accepted = [200, 201, 204].includes(response.status);
         const reflected = containsMarker(response.data) ||
@@ -167,7 +214,8 @@ class MassAssignmentProber {
     baseUrl: string,
     path: string,
     fieldSet: Record<string, unknown>,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    nonexistentBaseline: { status: number; bodyLength: number } | null
   ): Promise<MassAssignmentVuln[]> {
     const url = `${baseUrl}${path}`;
     const vulns: MassAssignmentVuln[] = [];
@@ -185,6 +233,10 @@ class MassAssignmentProber {
         ...authHeaders,
         "Content-Type": "application/json",
       }, 7000);
+
+      if (nonexistentBaseline && response.status === nonexistentBaseline.status && bodyLength(response.data) === nonexistentBaseline.bodyLength) {
+        return vulns; // indistinguishable from a route that doesn't exist
+      }
 
       const accepted = [200, 201, 204].includes(response.status);
       const reflected = containsMarker(response.data) ||
@@ -231,22 +283,30 @@ class MassAssignmentProber {
     return vulns;
   }
 
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<MassAssignmentResult> {
+  async probe(rawTargetUrl: string, authHeaders?: Record<string, string>): Promise<MassAssignmentResult> {
+    const targetUrl = rawTargetUrl.replace(/\/$/, "");
     const headers = authHeaders ?? {};
     const allVulns: MassAssignmentVuln[] = [];
+
+    const [putBaseline, patchBaseline, postBaseline] = await Promise.all([
+      this.getNonexistentPathBaseline(targetUrl, "PUT", headers),
+      this.getNonexistentPathBaseline(targetUrl, "PATCH", headers),
+      this.getNonexistentPathBaseline(targetUrl, "POST", headers),
+    ]);
+    const nonexistentBaselines = { PUT: putBaseline, PATCH: patchBaseline };
 
     // Test update endpoints (PUT/PATCH)
     const updateTasks = UPDATE_ENDPOINTS.flatMap((path) =>
       PRIV_FIELDS.map(async (fieldSet) => {
         const baseline = await this.getBaseline(`${targetUrl}${path}`, headers);
-        return this.testUpdateEndpoint(targetUrl, path, fieldSet, baseline, headers);
+        return this.testUpdateEndpoint(targetUrl, path, fieldSet, baseline, headers, nonexistentBaselines);
       })
     );
 
     // Test registration endpoints (POST)
     const registerTasks = REGISTER_ENDPOINTS.flatMap((path) =>
       PRIV_FIELDS.map((fieldSet) =>
-        this.testRegisterEndpoint(targetUrl, path, fieldSet, headers)
+        this.testRegisterEndpoint(targetUrl, path, fieldSet, headers, postBaseline)
       )
     );
 
