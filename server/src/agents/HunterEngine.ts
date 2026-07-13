@@ -613,6 +613,21 @@ export function truncationRank(h: { status: string; priority: number; confidence
   return (actionable ? 1_000_000 : 0) + h.priority * h.confidence;
 }
 
+// seedFocusHypotheses() seeds hypotheses with evidence:[] and a placeholder
+// reasoning string ("X is a priority for this hunt") — pure scheduling
+// metadata, not a description of anything found. If a probe later actually
+// succeeded, this replaces that placeholder before it's used as the confirmed
+// finding's description (both in hunt-findings.json and the persisted DB
+// row) — otherwise a real underlying finding gets reported with a
+// description that just says "this vuln class was a priority," forever.
+export function describeFromProbe(
+  hypothesis: { evidence: unknown[]; vulnClass: string; targetUrl: string; reasoning: string },
+  bestProbe: { tool: string; output: string },
+): string {
+  if (hypothesis.evidence.length > 0) return hypothesis.reasoning;
+  return `${hypothesis.vulnClass} confirmed via ${bestProbe.tool} at ${hypothesis.targetUrl}: ${bestProbe.output.slice(0, 300)}`;
+}
+
 // ─── Hunter Engine ────────────────────────────────────────────────────────────
 // 5-minute TTL for custom tool cache (shared across all engine instances in a process)
 let customToolsCacheTs = 0;
@@ -2733,6 +2748,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
         if (newConfidence > 0.7) {
           hypothesis.status = "confirmed";
+          hypothesis.reasoning = describeFromProbe(hypothesis, successful[0]);
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
           // Credit the chain synthesis if this hypothesis was born from one.
