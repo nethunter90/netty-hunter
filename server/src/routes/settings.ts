@@ -14,6 +14,7 @@ const ALLOWED_KEYS = RUNTIME_CONFIG_ALLOWED_KEYS;
 // and is masked so tokens never leave the server in plaintext.
 const NON_SECRET_KEYS = new Set([
   "OLLAMA_BASE_URL", "OLLAMA_DEFAULT_MODEL", "EMBED_MODEL", "OOB_HOST",
+  "CLAUDE_REASON_MODEL",
 ]);
 
 function maskSecret(value: string): string {

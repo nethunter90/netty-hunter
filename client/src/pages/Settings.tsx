@@ -27,6 +27,7 @@ const FIELDS: SettingField[] = [
   { key: "OOB_HOST",             label: "OOB Callback Host",       placeholder: "http://your-ip:3001",    secret: false, group: "Intelligence" },
   { key: "OPENAI_API_KEY",       label: "OpenAI API Key",          placeholder: "sk-…",                   secret: true,  group: "Intelligence" },
   { key: "ANTHROPIC_API_KEY",    label: "Anthropic API Key",       placeholder: "sk-ant-…",               secret: true,  group: "Intelligence" },
+  { key: "CLAUDE_REASON_MODEL",  label: "Claude Reasoning Model",  placeholder: "claude-sonnet-5 (default) — try claude-opus-4-8 to test a full hunt on Opus", secret: false, group: "Intelligence" },
 ];
 
 const GROUPS = [...new Set(FIELDS.map(f => f.group))];

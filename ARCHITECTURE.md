@@ -512,9 +512,17 @@ the latter belongs to the orphaned `lib/orchestration/` module described above a
 reachable from any live code path.
 
 ### ClaudeClient (`lib/claude-client.ts`)
-- `reason()`: `claude-sonnet-4-6`, per-hunt conversation thread (trimmed to 20 msgs), **90s
-  hard timeout** on `messages.create()`.
-- `oneShot()`: `claude-haiku-4-5`, stateless.
+- `reason()`: model comes from `getReasonModel()` — reads `CLAUDE_REASON_MODEL` from
+  `runtimeConfig` (Settings → "Claude Reasoning Model"), falling back to `claude-sonnet-5`.
+  Read fresh on every call, not cached at startup — switching it in Settings (e.g. to
+  `claude-opus-4-8` to test a full hunt on Opus) takes effect on the next call, no restart.
+  `LogicExploitAgent.ts`'s two direct SDK calls (cache pre-warm + the real tool-use loop)
+  import the same `getReasonModel()` so they never drift onto a different model than
+  whatever `reason()` is using — otherwise the pre-warmed prompt cache would be for the
+  wrong model. Per-hunt conversation thread (trimmed to 20 msgs), **90s hard timeout** on
+  `messages.create()`.
+- `oneShot()`: `claude-haiku-4-5`, stateless — not yet made configurable (only the
+  higher-stakes reasoning/verification tier was).
 - Per-hunt LLM call budget: `MAX_LLM_CALLS_PER_HUNT` (default 150, env-overridable),
   enforced via `tryConsumeBudget()` — every Claude caller (including LogicExploitAgent)
   funnels through this one counter. Exceeding throws `LLMBudgetExceededError`.

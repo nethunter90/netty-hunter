@@ -10,6 +10,19 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import logger from "../utils/logger";
+import { runtimeConfig } from "./runtime-config";
+
+// The model every hunt-reasoning call uses — this reason() method, and
+// LogicExploitAgent's direct SDK calls (its cache pre-warm + real tool-use
+// loop both must stay in sync with whatever this resolves to, or the
+// pre-warmed prompt cache is for a different model than the one actually
+// used). Runtime-configurable via Settings ("Claude Reasoning Model") so a
+// full hunt can be re-run on a different model (e.g. claude-opus-4-8) without
+// a code change or restart — read fresh on every call, not cached at startup.
+const DEFAULT_REASON_MODEL = "claude-sonnet-5";
+export function getReasonModel(): string {
+  return runtimeConfig.get("CLAUDE_REASON_MODEL") || DEFAULT_REASON_MODEL;
+}
 
 const MISSION_BRIEFING = `You are a tier-0 reasoning engine embedded in an autonomous bug bounty hunting platform (Netty Hunter / Sentinel Primordial).
 
@@ -159,7 +172,7 @@ export class ClaudeClient {
     await ClaudeClient.paceTokens(estimatedInputTokens);
 
     const response = await ClaudeClient.client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: getReasonModel(),
       max_tokens: 4096,
       thinking: { type: "adaptive" },
       system: MISSION_BRIEFING,
