@@ -3439,22 +3439,35 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const intel = wafObs.data as unknown as UnifiedIntelligence;
     if (!intel.vendor || intel.vendor === "unknown") return null;
 
-    // Prefer a technique OBSERVE already fired for real and confirmed worked
-    // against THIS target — stronger evidence than a blind vendor-generic
-    // recommendation, since it's already proven to bypass this specific WAF
-    // instance, not just "usually works against this vendor."
-    const proven = (intel.recommendedTechniques || [])
-      .filter(t => t.success && t.payload)
-      .sort((a, b) => a.blockRate - b.blockRate)[0];
-    if (proven) return { payload: proven.payload, vendor: intel.vendor, technique: proven.technique };
-
-    // No already-tested success on record — fall back to a fresh vendor-
-    // recommended variant, seeded from the same base payload family
-    // payloadMutator itself would use for this vulnClass (not a duplicated
-    // list), fed through EvasionLibrary's real vendor-technique mapping.
+    // Seed from the CORRECT base payload for the vulnClass actually being
+    // retried — never reuse a recommendedTechniques payload string verbatim.
+    // OBSERVE's WAF fingerprint probe always tests with a single hardcoded
+    // XSS payload ("<script>alert(1)</script>", see observe()'s waf_intel
+    // step), so every entry in recommendedTechniques is an XSS-shaped
+    // mutation. Returning one of those payloads directly for e.g. a sqli or
+    // lfi retry would inject an unrelated vulnerability's payload — not a
+    // wrong-flavor mutation, a different bug's payload entirely.
     const basePayload = payloadMutator.getBase(vulnClass)[0];
     if (!basePayload) return null;
     const evasion = new EvasionLibrary();
+
+    // The TECHNIQUE NAME does transfer across vulnClasses even though the
+    // PAYLOAD doesn't — "unicode_bypass"/"url_encoding" are generic string-
+    // obfuscation tricks, not XSS-specific. Prefer whichever technique
+    // OBSERVE already fired for real and confirmed worked against THIS
+    // target's WAF, applied fresh to the right base payload — stronger
+    // evidence than a blind vendor-generic recommendation, since it's
+    // already proven to bypass this specific WAF instance.
+    const proven = (intel.recommendedTechniques || [])
+      .filter(t => t.success)
+      .sort((a, b) => a.blockRate - b.blockRate)[0];
+    if (proven) {
+      const variant = evasion.generateVariants(basePayload, [proven.technique])[0];
+      if (variant) return { payload: variant.payload, vendor: intel.vendor, technique: variant.technique };
+    }
+
+    // No already-tested success on record — fall back to a fresh vendor-
+    // recommended variant instead.
     const variant = evasion.generateVariants(basePayload, evasion.recommendTechniques(intel.vendor))[0];
     return variant ? { payload: variant.payload, vendor: intel.vendor, technique: variant.technique } : null;
   }
