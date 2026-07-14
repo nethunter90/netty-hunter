@@ -64,7 +64,7 @@ import { businessLogicProber } from "../lib/tools/business-logic-probe";
 import { twoFactorBypassProber } from "../lib/tools/two-factor-bypass";
 import { jwtConfusionProber } from "../lib/tools/jwt-confusion-probe";
 import { techPayloadSelector } from "../lib/tools/tech-payload-selector";
-import { techPayloadProber } from "../lib/tools/tech-payload-prober";
+import { techPayloadProber, isDispatchedByTechPayloadProber } from "../lib/tools/tech-payload-prober";
 import { openRedirectChainProber } from "../lib/tools/open-redirect-chain-probe";
 import { blindXXEProber } from "../lib/tools/blind-xxe-probe";
 import { deserializationProber } from "../lib/tools/deserialization-prober";
@@ -1768,12 +1768,14 @@ export class HunterEngine extends EventEmitter {
               });
             }
 
-            // Remaining tech payloads (mass_assignment/lfi/info_disclosure/
-            // prototype_pollution) already have dedicated, more rigorous
-            // probers elsewhere in the hunt — still seed them as priority
-            // signal for those probers rather than testing them a second way
-            // here.
-            const remaining = profile.payloads.filter(p => p.vulnClass !== "ssti" && p.vulnClass !== "rce");
+            // Anything techPayloadProber didn't itself test (mass_assignment,
+            // prototype_pollution, GraphQL-shaped info_disclosure) already has
+            // a dedicated, more rigorous prober elsewhere in the hunt — still
+            // seed it as priority signal for that prober rather than testing
+            // it a second way here. Filtered off the SAME classification the
+            // prober uses internally, so this can't silently drift out of
+            // sync with what techPayloadProber.probe() actually dispatches.
+            const remaining = profile.payloads.filter(p => !isDispatchedByTechPayloadProber(p));
             for (const payload of remaining.slice(0, 5)) {
               this.state.hypotheses.push({
                 id: uuidv4(), vulnClass: payload.vulnClass,

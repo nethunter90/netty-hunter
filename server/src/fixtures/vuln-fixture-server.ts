@@ -228,6 +228,26 @@ app.post("/api/settings", (req, res) => {
   res.status(200).json({ applied: true, raw: JSON.stringify(req.body) });
 });
 
+// ── tech_payload_prober (lfi_traversal, Node/Express branch) ─────────────
+// Genuinely vulnerable path-traversal read via a "file" query param, no
+// sanitization — matches the Node/Express traversal payload tech-payload-
+// selector.ts builds ("../../../etc/passwd") for a target whatweb fingerprints
+// as Node/Express (this Express app sends X-Powered-By: Express by default).
+// Serves a synthetic passwd-shaped body so LFI_DISCLOSURE_SIGNATURE
+// (tech-payload-prober.ts) matches without touching the real host filesystem.
+// Note: tech-payload-selector.ts only builds an SQLi payload under its Django
+// branch, so a real hunt against this Express-fingerprinted fixture won't
+// exercise probeSqli — that path is covered by mocked unit tests instead
+// (tech-payload-prober.test.ts), same as this session's other new probers.
+app.get("/render", (req, res) => {
+  const file = String(req.query.file ?? "");
+  if (/etc[/\\]passwd/.test(file)) {
+    res.status(200).send("root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n");
+    return;
+  }
+  res.status(200).send(`<html><body>Rendered: ${file}</body></html>`);
+});
+
 // Malformed request bodies (e.g. from a prober that sends non-JSON with a
 // JSON content-type) must not crash the fixture — a real target wouldn't
 // die either, and a dead fixture silently reads as "target has no bugs".

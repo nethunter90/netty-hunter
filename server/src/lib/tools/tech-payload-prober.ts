@@ -20,7 +20,82 @@ import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 import type { TechPayload } from "./tech-payload-selector";
 
-export type TechProbeTechnique = "ssti" | "rce_content_type" | "rce_object_injection" | "debug_route";
+export type TechProbeTechnique =
+  | "ssti" | "rce_content_type" | "rce_object_injection" | "debug_route"
+  | "lfi_traversal" | "sqli_error_based";
+
+// ─── Coverage classification ────────────────────────────────────────────────
+// tech-payload-selector.ts can build a payload for any vulnClass; this prober
+// dispatches some directly, intentionally defers others to a MORE thorough
+// dedicated prober that already runs elsewhere in HunterEngine's OBSERVE-phase
+// fan-out, and must never let anything else fall through silently — that's
+// the exact bug this file exists to fix (payloads used to be built and
+// discarded before dispatch entirely). A vulnClass the selector adds in the
+// future that isn't in either set below is loud by construction: see the
+// coverage check at the end of probe().
+const DISPATCHED_CLASSES = new Set(["ssti", "rce", "sqli", "lfi"]);
+
+// vulnClass → why it is *intentionally* not tested here.
+const INTENTIONAL_SKIP_REASONS: Record<string, string> = {
+  mass_assignment: "covered by mass-assignment-probe.ts (broader endpoint/field coverage, baseline-diffed)",
+  prototype_pollution: "covered by prototype-pollution-probe.ts (broader vector coverage)",
+};
+
+/** True for any payload this prober actually tests — exported so HunterEngine's
+ *  OBSERVE-phase wiring can filter its "seed as priority signal for other
+ *  probers" fallback off the SAME classification instead of keeping an
+ *  independently-maintained vulnClass list that can silently drift out of sync. */
+export function isDispatchedByTechPayloadProber(p: TechPayload): boolean {
+  if (DISPATCHED_CLASSES.has(p.vulnClass)) return true;
+  // info_disclosure splits by shape: targetPath-bearing entries (Django
+  // settings endpoint, WordPress REST user enum) are a known-route GET,
+  // dispatched via probeKnownRoute below. GraphQL introspection entries carry
+  // no targetPath (they're POST query bodies) and are NOT dispatched here —
+  // graphqlProber (HunterEngine.probeGraphQL, run earlier in OBSERVE) already
+  // does real GraphQL endpoint detection + introspection, more thoroughly
+  // than resending a bare query string from this module would.
+  if (p.vulnClass === "info_disclosure" && p.targetPath) return true;
+  return false;
+}
+
+const LFI_PARAM_CANDIDATES = ["file", "path", "page", "template", "include", "doc", "filename", "document", "view", "dir"];
+const SQLI_PARAM_CANDIDATES = ["id", "user", "username", "search", "q", "query", "category", "product", "item"];
+
+// Same file-disclosure signature VerifierAgent's Layer2Reprobe trusts for LFI
+// confirmation — kept in sync by convention (each OBSERVE-phase prober owns
+// its own oracle, same as deserialization-prober.ts's JAVA/PHP_ERROR_SIGNATURE),
+// not by import, since this module has no other dependency on VerifierAgent.
+const LFI_DISCLOSURE_SIGNATURE =
+  /root:.*:0:0:|(?:daemon|bin|sys|nobody):[^:]*:\d+:\d+:|\[(?:fonts|extensions|mci extensions)\]|for 16-bit app support/i;
+
+// Same DB-driver error phrases VerifierAgent's Layer2Reprobe trusts for SQLi —
+// deliberately WITHOUT its "|| status < 400" fallback, which would make any
+// successful response count as confirming evidence (the exact SPA-catch-all
+// false-positive class already fixed for oauth-probe/mass-assignment-probe/
+// race-condition-detector). A self-confirmed OBSERVE-phase finding needs a
+// real, unforgeable signal — the error text itself, and a baseline diff.
+const SQLI_ERROR_SIGNATURE =
+  /you have an error in your sql syntax|mysql_error|sql syntax error|ora-\d+|sqlstate\[|unclosed quotation mark|psql:|sqlite error:|syntax error near|Warning.*mysql_/i;
+
+/** Builds candidate injection URLs: reuse the target's own query params when
+ *  it has any, else try a bounded list of common param names for this vuln
+ *  class. Mirrors probeSsti's "existing param, else one fallback" heuristic,
+ *  just widened to a short candidate list instead of a single guess. */
+function buildInjectionUrls(
+  targetUrl: string, value: string, fallbackParams: string[]
+): Array<{ url: string; param: string }> {
+  const out: Array<{ url: string; param: string }> = [];
+  try {
+    const existingParams = [...new URL(targetUrl).searchParams.keys()];
+    const params = existingParams.length > 0 ? existingParams : fallbackParams;
+    for (const key of params) {
+      const clone = new URL(targetUrl);
+      clone.searchParams.set(key, value);
+      out.push({ url: clone.toString(), param: key });
+    }
+  } catch { /* malformed URL — no candidates */ }
+  return out;
+}
 
 export interface TechProbeFinding {
   vulnClass: string;
@@ -79,11 +154,39 @@ class TechPayloadProber {
   ): Promise<TechProbeResult> {
     const findings: TechProbeFinding[] = [];
 
+    // info_disclosure entries with a targetPath are a known-route GET, the
+    // same shape as debugRoutes — see isDispatchedByTechPayloadProber() for
+    // why the GraphQL-shaped entries (no targetPath) are excluded here.
+    const infoDisclosureRoutes = payloads.filter(p => p.vulnClass === "info_disclosure" && p.targetPath);
+
     await Promise.allSettled([
       ...payloads.filter(p => p.vulnClass === "ssti").map(p => this.probeSsti(targetUrl, p, authHeaders, findings)),
       ...payloads.filter(p => p.vulnClass === "rce").map(p => this.probeRce(targetUrl, p, authHeaders, findings)),
-      ...debugRoutes.map(route => this.probeDebugRoute(targetUrl, route, authHeaders, findings)),
+      ...payloads.filter(p => p.vulnClass === "sqli").map(p => this.probeSqli(targetUrl, p, authHeaders, findings)),
+      ...payloads.filter(p => p.vulnClass === "lfi").map(p => this.probeLfi(targetUrl, p, authHeaders, findings)),
+      ...debugRoutes.map(route =>
+        this.probeKnownRoute(targetUrl, route, authHeaders, findings, "exposed_admin",
+          `Debug/admin route exposed unauthenticated: ${route}`, 0.7)),
+      ...infoDisclosureRoutes.map(p =>
+        this.probeKnownRoute(targetUrl, p.targetPath!, authHeaders, findings, "info_disclosure",
+          `${p.description} — route accessible unauthenticated`, 0.65)),
     ]);
+
+    // ── Loud coverage check ────────────────────────────────────────────────
+    // A vulnClass tech-payload-selector.ts builds that this prober neither
+    // dispatches nor explicitly marks as an intentional skip is a silent drop
+    // — the exact bug class this whole module exists to prevent. Surface it.
+    for (const p of payloads) {
+      if (isDispatchedByTechPayloadProber(p)) continue;
+      const skipReason = INTENTIONAL_SKIP_REASONS[p.vulnClass];
+      if (skipReason) {
+        logger.debug("[TechPayloadProber] intentional skip", { vulnClass: p.vulnClass, reason: skipReason });
+      } else {
+        logger.warn("[TechPayloadProber] tech-payload-selector built a payload for an undispatched vulnClass — accidental drop, not an intentional skip", {
+          vulnClass: p.vulnClass, description: p.description,
+        });
+      }
+    }
 
     const hypotheses = findings.map(f => ({
       vulnClass: f.vulnClass,
@@ -155,6 +258,22 @@ class TechPayloadProber {
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = resp.status === 500 || /exception|stack ?trace|deserializ|unserialize/i.test(body);
         return { found, evidence: body.slice(0, 300) };
+      }
+
+      if (technique === "lfi_traversal") {
+        // endpoint is already the exact confirmed URL (payload embedded) —
+        // just replay it and recheck the same disclosure signature.
+        const resp = await axios.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        const found = LFI_DISCLOSURE_SIGNATURE.test(body);
+        return { found, evidence: found ? body.slice(0, 300) : "No file-disclosure content on replay" };
+      }
+
+      if (technique === "sqli_error_based") {
+        const resp = await axios.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+        const found = SQLI_ERROR_SIGNATURE.test(body);
+        return { found, evidence: found ? body.slice(0, 300) : "No SQL error signature on replay" };
       }
 
       return { found: false, evidence: "Unknown technique" };
@@ -239,12 +358,16 @@ class TechPayloadProber {
     }
   }
 
-  private async probeDebugRoute(
-    targetUrl: string, route: string, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+  /** Handles both debugRoutes (tagged "exposed_admin") and info_disclosure
+   *  entries that carry a concrete targetPath — same shape, same oracle
+   *  (a genuine, non-trivial 200), different vulnClass/confidence/wording. */
+  private async probeKnownRoute(
+    targetUrl: string, route: string, authHeaders: Record<string, string>, findings: TechProbeFinding[],
+    vulnClass: string, detail: string, confidence: number,
   ): Promise<void> {
     try {
       const base = new URL(targetUrl).origin;
-      const url = `${base}${route}`;
+      const url = route.startsWith("http") ? route : `${base}${route}`;
       const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true, headers: authHeaders });
       if (resp.status !== 200) return;
 
@@ -252,15 +375,85 @@ class TechPayloadProber {
       if (body.length < 20) return; // empty/near-empty 200 — not a real exposure
 
       findings.push({
-        vulnClass: "exposed_admin",
+        vulnClass,
         endpoint: url,
-        detail: `Debug/admin route exposed unauthenticated: ${route}`,
+        detail,
         evidenceSnippet: body.slice(0, 300),
-        confidence: 0.7,
+        confidence,
         technique: "debug_route",
       });
     } catch {
       // unreachable — non-critical
+    }
+  }
+
+  private async probeLfi(
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+  ): Promise<void> {
+    const candidates = buildInjectionUrls(targetUrl, p.payload, LFI_PARAM_CANDIDATES);
+
+    for (const { url } of candidates) {
+      try {
+        const resp = await axios.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+
+        // Real file-disclosure content, never a bare status code or a
+        // "the payload string appears in the URL" heuristic.
+        if (LFI_DISCLOSURE_SIGNATURE.test(body)) {
+          findings.push({
+            vulnClass: "lfi",
+            endpoint: url,
+            detail: `${p.description} — confirmed: response contains real file-disclosure content`,
+            evidenceSnippet: body.slice(0, 300),
+            confidence: 0.85,
+            technique: "lfi_traversal",
+            rawPayload: p.payload,
+          });
+          return; // one confirmed hit is enough signal for this payload
+        }
+      } catch {
+        // unreachable — non-critical, try the next candidate param
+      }
+    }
+  }
+
+  private async probeSqli(
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+  ): Promise<void> {
+    const candidates = buildInjectionUrls(targetUrl, p.payload, SQLI_PARAM_CANDIDATES);
+
+    for (const { url, param } of candidates) {
+      try {
+        const baseline = new URL(url);
+        baseline.searchParams.set(param, "1");
+
+        const [injectedResp, baselineResp] = await Promise.all([
+          axios.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders }),
+          axios.get(baseline.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders }),
+        ]);
+        const injectedBody = typeof injectedResp.data === "string" ? injectedResp.data : JSON.stringify(injectedResp.data);
+        const baselineBody = typeof baselineResp.data === "string" ? baselineResp.data : JSON.stringify(baselineResp.data);
+
+        // Real DB-driver error signature on the injected request, and NOT
+        // already present on a clean baseline for the same param — the same
+        // baseline-diff discipline already applied to oauth-probe/mass-
+        // assignment-probe/race-condition-detector's SPA-catch-all fix, so a
+        // target whose error page always mentions "sql" can't false-positive.
+        if (SQLI_ERROR_SIGNATURE.test(injectedBody) && !SQLI_ERROR_SIGNATURE.test(baselineBody)) {
+          findings.push({
+            vulnClass: "sqli",
+            endpoint: url,
+            detail: `${p.description} — confirmed: injected param '${param}' triggered a real SQL error not present on a clean baseline`,
+            evidenceSnippet: injectedBody.slice(0, 300),
+            confidence: 0.85,
+            technique: "sqli_error_based",
+            rawPayload: p.payload,
+          });
+          return;
+        }
+      } catch {
+        // unreachable — non-critical, try the next candidate param
+      }
     }
   }
 }

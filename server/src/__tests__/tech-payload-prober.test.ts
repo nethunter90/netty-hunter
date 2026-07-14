@@ -27,6 +27,7 @@ import axios from 'axios';
 import { csrfAwareRequest } from '../lib/tools/csrf-aware-request';
 import { techPayloadProber } from '../lib/tools/tech-payload-prober';
 import type { TechPayload } from '../lib/tools/tech-payload-selector';
+import logger from '../utils/logger';
 
 const mockedGet = axios.get as unknown as ReturnType<typeof vi.fn>;
 const mockedPost = axios.post as unknown as ReturnType<typeof vi.fn>;
@@ -36,6 +37,9 @@ beforeEach(() => {
   mockedGet.mockReset();
   mockedPost.mockReset();
   mockedCsrf.mockReset();
+  vi.mocked(logger.warn).mockReset();
+  vi.mocked(logger.debug).mockReset();
+  vi.mocked(logger.info).mockReset();
 });
 
 describe('techPayloadProber.probe', () => {
@@ -120,6 +124,130 @@ describe('techPayloadProber.probe', () => {
     const result = await techPayloadProber.probe('http://localhost:5000/', [sstiPayload], [], {});
     expect(result.findings).toEqual([]);
   });
+
+  it('confirms LFI when the response contains real file-disclosure content', async () => {
+    const lfiPayload: TechPayload = {
+      vulnClass: 'lfi', payload: '../../etc/passwd', targetPath: '../../etc/passwd',
+      description: 'PHP path traversal to /etc/passwd', confidence: 0.65, priority: 8,
+    };
+    mockedGet.mockImplementation((url: string) => {
+      if (decodeURIComponent(url).includes('../../etc/passwd')) {
+        return Promise.resolve({ status: 200, data: 'root:x:0:0:root:/root:/bin/bash\n' });
+      }
+      return Promise.resolve({ status: 200, data: '<html>not found</html>' });
+    });
+
+    const result = await techPayloadProber.probe('http://localhost:8000/view?file=readme.txt', [lfiPayload], [], {});
+
+    expect(result.findings.length).toBe(1);
+    expect(result.findings[0].vulnClass).toBe('lfi');
+    expect(result.findings[0].technique).toBe('lfi_traversal');
+    expect(result.findings[0].confidence).toBe(0.85);
+    // Injected into the target's OWN existing query param ("file"), not a guess.
+    expect(result.findings[0].endpoint).toContain('file=');
+  });
+
+  it('does not confirm LFI on a plain 200 with no file-disclosure signature', async () => {
+    const lfiPayload: TechPayload = {
+      vulnClass: 'lfi', payload: '../../../etc/passwd', targetPath: '../../../etc/passwd',
+      description: 'Node/Express path traversal to /etc/passwd', confidence: 0.65, priority: 7,
+    };
+    mockedGet.mockResolvedValue({ status: 200, data: '<html>Rendered fine</html>' });
+
+    const result = await techPayloadProber.probe('http://localhost:3000/', [lfiPayload], [], {});
+    expect(result.findings).toEqual([]);
+  });
+
+  it('confirms SQLi via a real DB error triggered by the injected payload but absent on a clean baseline', async () => {
+    const sqliPayload: TechPayload = {
+      vulnClass: 'sqli', payload: "' OR 1=1--",
+      description: 'Django ORM SQL injection probe', confidence: 0.6, priority: 7,
+    };
+    mockedGet.mockImplementation((url: string) => {
+      const id = new URL(url).searchParams.get('id');
+      if (id === "' OR 1=1--") {
+        return Promise.resolve({ status: 500, data: 'You have an error in your SQL syntax near \'1\'' });
+      }
+      return Promise.resolve({ status: 200, data: '{"results":[]}' }); // baseline (?id=1) — clean
+    });
+
+    const result = await techPayloadProber.probe('http://localhost:8000/items?id=1', [sqliPayload], [], {});
+
+    expect(result.findings.length).toBe(1);
+    expect(result.findings[0].vulnClass).toBe('sqli');
+    expect(result.findings[0].technique).toBe('sqli_error_based');
+    expect(result.findings[0].confidence).toBe(0.85);
+  });
+
+  it('does not confirm SQLi when the error signature is also present on the clean baseline (SPA-catch-all-style false positive guard)', async () => {
+    const sqliPayload: TechPayload = {
+      vulnClass: 'sqli', payload: "' OR 1=1--",
+      description: 'Django ORM SQL injection probe', confidence: 0.6, priority: 7,
+    };
+    // A target whose generic error page always mentions "SQL syntax" —
+    // must not be mistaken for real injection just because the phrase appears.
+    mockedGet.mockResolvedValue({ status: 500, data: 'Internal error: SQL syntax error in handler' });
+
+    const result = await techPayloadProber.probe('http://localhost:8000/items?id=1', [sqliPayload], [], {});
+    expect(result.findings).toEqual([]);
+  });
+
+  it('confirms an info_disclosure route the same way as a debug route, tagged distinctly', async () => {
+    const infoPayload: TechPayload = {
+      vulnClass: 'info_disclosure', payload: '/api/settings/', targetPath: '/api/settings/',
+      description: 'Django settings endpoint probe', confidence: 0.55, priority: 6,
+    };
+    mockedGet.mockImplementation((url: string) => {
+      if (url.includes('/api/settings/')) return Promise.resolve({ status: 200, data: '{"SECRET_KEY":"x".repeat(40)}' });
+      return Promise.resolve({ status: 404, data: '' });
+    });
+
+    const result = await techPayloadProber.probe('http://localhost:8000/', [infoPayload], [], {});
+
+    expect(result.findings.length).toBe(1);
+    expect(result.findings[0].vulnClass).toBe('info_disclosure');
+    expect(result.findings[0].technique).toBe('debug_route');
+  });
+
+  it('does not dispatch a GraphQL-shaped info_disclosure payload (no targetPath) — left for graphqlProber', async () => {
+    const graphqlPayload: TechPayload = {
+      vulnClass: 'info_disclosure', payload: '{__schema{types{name}}}',
+      description: 'GraphQL introspection probe', confidence: 0.75, priority: 7,
+    };
+    const result = await techPayloadProber.probe('http://localhost:8000/graphql', [graphqlPayload], [], {});
+    expect(result.findings).toEqual([]);
+    expect(mockedGet).not.toHaveBeenCalled();
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
+  it('logs a loud warning for an undispatched, non-intentional-skip vulnClass instead of silently dropping it', async () => {
+    const mysteryPayload = {
+      vulnClass: 'some_new_class_selector_added_later', payload: 'x',
+      description: 'a payload this prober does not know about yet', confidence: 0.5, priority: 5,
+    } as TechPayload;
+
+    await techPayloadProber.probe('http://localhost:8000/', [mysteryPayload], [], {});
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('accidental drop'),
+      expect.objectContaining({ vulnClass: 'some_new_class_selector_added_later' })
+    );
+  });
+
+  it('logs only a debug note (not a warning) for a known intentional skip like mass_assignment', async () => {
+    const massAssignmentPayload: TechPayload = {
+      vulnClass: 'mass_assignment', payload: '{"user":{"role":"admin"}}',
+      description: 'Rails strong-parameters bypass', confidence: 0.7, priority: 8,
+    };
+
+    await techPayloadProber.probe('http://localhost:8000/', [massAssignmentPayload], [], {});
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.stringContaining('intentional skip'),
+      expect.objectContaining({ vulnClass: 'mass_assignment' })
+    );
+  });
 });
 
 describe('techPayloadProber.reprobeHypothesis', () => {
@@ -171,6 +299,30 @@ describe('techPayloadProber.reprobeHypothesis', () => {
   it('replays rce_content_type by resending the Java serialized content-type header', async () => {
     mockedPost.mockResolvedValue({ status: 500, data: 'InvalidClassException' });
     const result = await techPayloadProber.reprobeHypothesis('rce_content_type', 'http://localhost:8080/api', {});
+    expect(result.found).toBe(true);
+  });
+
+  it('replays an lfi_traversal finding with a plain re-GET of the confirmed URL', async () => {
+    mockedGet.mockResolvedValue({ status: 200, data: 'root:x:0:0:root:/root:/bin/bash\n' });
+    const result = await techPayloadProber.reprobeHypothesis(
+      'lfi_traversal', 'http://localhost:8000/view?file=..%2F..%2Fetc%2Fpasswd', {}
+    );
+    expect(result.found).toBe(true);
+  });
+
+  it('reports not-found on lfi_traversal replay when the signature no longer appears', async () => {
+    mockedGet.mockResolvedValue({ status: 200, data: 'no longer vulnerable' });
+    const result = await techPayloadProber.reprobeHypothesis(
+      'lfi_traversal', 'http://localhost:8000/view?file=..%2F..%2Fetc%2Fpasswd', {}
+    );
+    expect(result.found).toBe(false);
+  });
+
+  it('replays a sqli_error_based finding with a plain re-GET of the confirmed URL', async () => {
+    mockedGet.mockResolvedValue({ status: 500, data: "You have an error in your SQL syntax" });
+    const result = await techPayloadProber.reprobeHypothesis(
+      'sqli_error_based', "http://localhost:8000/items?id=%27+OR+1%3D1--", {}
+    );
     expect(result.found).toBe(true);
   });
 });
