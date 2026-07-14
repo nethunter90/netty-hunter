@@ -14,7 +14,7 @@ import { huntSessions, findings, exploitChains, customTools, campaigns } from ".
 import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
-import IntelligenceSynthesizer, { type UnifiedIntelligence } from "./WAFBypass";
+import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary } from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
@@ -37,6 +37,7 @@ import { interactshManager } from "../lib/oob/interactsh-manager";
 import { graphqlProber } from "../lib/tools/graphql-probe";
 import { ssrfChainProber } from "../lib/tools/ssrf-chain-prober";
 import { payloadMutator } from "../lib/tools/payload-mutator";
+import { classifyRetryFailure, type RetryFailureReason } from "../lib/tools/retry-failure-classifier";
 import { changeDetector } from "../lib/tools/change-detector";
 import { secretScanner } from "../lib/tools/secret-scanner";
 import { errorDisclosureProber } from "../lib/tools/error-disclosure-prober";
@@ -131,6 +132,12 @@ export interface Hypothesis {
   createdAt: number;
   retryCount?: number;
   toolHint?: string;
+  /** Set by update()'s gray-zone branch, consumed (and cleared) by probe()'s
+   *  retry branch — decides which retry knob turns: not_injectable sets
+   *  toolHint instead of this being consumed for a payload mutation; the
+   *  other three reasons leave toolHint unset and route the payload instead.
+   *  See retry-failure-classifier.ts. */
+  lastFailureReason?: RetryFailureReason;
   /** Which model generated this hypothesis — used to score model performance in RL store. */
   modelSource?: "claude" | "default";
   /** Finding IDs this hypothesis chains from (set by SynthesisAgent). */
@@ -2640,17 +2647,35 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const toolName = hypothesis.toolHint || await this.selectToolRL(hypothesis.vulnClass);
       delete hypothesis.toolHint;
 
-      // On gray-zone retries (retryCount > 0), inject WAF-bypass payload mutations
+      // On gray-zone retries (retryCount > 0), route the payload mutation off
+      // WHY the previous attempt failed (set by update()'s gray-zone branch)
+      // rather than always mutating on every retry regardless of cause.
+      // not_injectable already got a tool swap via toolHint above instead —
+      // skip payload mutation entirely for that reason so the two knobs never
+      // both turn on the same retry.
       let probeUrl = hypothesis.targetUrl;
-      if ((hypothesis.retryCount ?? 0) > 0) {
-        const mutations = payloadMutator.mutate(hypothesis.vulnClass);
-        if (mutations.length > 0) {
+      if ((hypothesis.retryCount ?? 0) > 0 && hypothesis.lastFailureReason !== "not_injectable") {
+        let picked: string | null = hypothesis.lastFailureReason === "waf_blocked"
+          ? this.pickWafEvasionPayload(hypothesis.vulnClass)
+          : null;
+        if (!picked) {
+          // reflected_not_executed / no_signal / waf_blocked-with-no-
+          // authorized-vendor-intel all degrade to this same generic path.
+          // The actual fix vs before: pick a REAL mutation — mutate()'s
+          // first entry is always {technique:"baseline"}, i.e. the
+          // unmutated payload, so the old mutations[0] pick was a no-op
+          // dressed up as a WAF-bypass attempt.
+          const mutations = payloadMutator.mutate(hypothesis.vulnClass).filter(m => m.technique !== "baseline");
+          picked = mutations[0]?.variant ?? null;
+        }
+        if (picked) {
           const params = payloadMutator.findInjectableParams(hypothesis.targetUrl);
-          if (params.length > 0 && mutations[0]) {
-            probeUrl = payloadMutator.injectPayload(hypothesis.targetUrl, params[0], mutations[0].variant);
+          if (params.length > 0) {
+            probeUrl = payloadMutator.injectPayload(hypothesis.targetUrl, params[0], picked);
           }
         }
       }
+      delete hypothesis.lastFailureReason;
 
       const probeResult = await this.runTool(toolName, probeUrl, hypothesis);
 
@@ -2951,16 +2976,33 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
         } else {
-          // Gray zone (0.2–0.7): re-queue with a different tool, up to 2 retries
+          // Gray zone (0.2–0.7): re-queue, up to 2 retries. WHICH knob turns
+          // (tool vs payload) is decided by classifying why the last attempt
+          // failed, instead of both firing unconditionally on every retry —
+          // a wrong-payload signal no longer wastes the one retry swapping to
+          // an unrelated tool, and vice versa.
           hypothesis.retryCount = (hypothesis.retryCount || 0) + 1;
           if (hypothesis.retryCount < 2) {
             hypothesis.status = "pending";
-            hypothesis.toolHint = this.getAlternateTool(hypothesis);
+            const lastProbe = successful[successful.length - 1];
+            const reason = classifyRetryFailure(lastProbe?.payload ?? "", lastProbe?.output ?? "");
+            hypothesis.lastFailureReason = reason;
+            if (reason === "not_injectable") {
+              // Endpoint-local: a different payload dialect won't help a
+              // dead param/endpoint — swap the tool/injection point instead.
+              // Already hard-capped to exactly this one swap by retryCount<2
+              // above, so this can't cycle tools against the budget.
+              hypothesis.toolHint = this.getAlternateTool(hypothesis);
+            }
+            // Else (waf_blocked/reflected_not_executed/no_signal): leave
+            // toolHint unset — probe()'s retry branch mutates the payload
+            // on the SAME tool instead, routed by this same reason.
             logger.info("Hypothesis re-queued from gray zone", {
               id: hypothesis.id,
               vulnClass: hypothesis.vulnClass,
               confidence: newConfidence,
               retry: hypothesis.retryCount,
+              reason,
               nextTool: hypothesis.toolHint,
             });
           } else {
@@ -3321,6 +3363,49 @@ Return ONLY valid JSON array of hypothesis objects.`;
     // returns some other default) — indexOf returns -1, and (-1+1)%len === 0 lands
     // on rotation[0], the safe starting point rather than an out-of-bounds/negative index.
     return rotation[(currentIdx + 1) % rotation.length];
+  }
+
+  // Vendor-specific WAF evasion (EvasionLibrary/WAFDetector, WAFBypass.ts) is
+  // an authorized capability gated by wafBypassEnabled + programs.wafBypassPolicy
+  // — that gate is enforced once, in OBSERVE's waf_intel step (see observe()).
+  // This retry path must NOT re-derive its own authorization: it only reads
+  // the already-gated waf_intel observation. If that observation isn't there
+  // (wafBypassEnabled was off, or policy disallowed it and OBSERVE degraded
+  // to detectionConfidence:0 with no vendor), there is no authorized vendor
+  // intel to use — return null and let the caller fall through to the
+  // generic (ungated) mutation path. One honest branch, not two.
+  //
+  // Phase 3 (not yet wired): a successful retry via this path should record
+  // the winning technique keyed by (vendor, vulnClass, technique) — NOT by
+  // app stack. WAF-evasion effectiveness transfers by WHICH WAF VENDOR is in
+  // front of the target, not by what the origin app is written in; keying it
+  // by stack would silently misattribute a Cloudflare bypass to "works for
+  // PHP" when the PHP app just happened to sit behind Cloudflare that day.
+  private pickWafEvasionPayload(vulnClass: string): string | null {
+    if (!this.state.wafBypassEnabled) return null;
+    const wafObs = this.state.observations.find(o => o.source === "waf_intel");
+    if (!wafObs) return null;
+    const intel = wafObs.data as unknown as UnifiedIntelligence;
+    if (!intel.vendor || intel.vendor === "unknown") return null;
+
+    // Prefer a technique OBSERVE already fired for real and confirmed worked
+    // against THIS target — stronger evidence than a blind vendor-generic
+    // recommendation, since it's already proven to bypass this specific WAF
+    // instance, not just "usually works against this vendor."
+    const proven = (intel.recommendedTechniques || [])
+      .filter(t => t.success && t.payload)
+      .sort((a, b) => a.blockRate - b.blockRate)[0];
+    if (proven) return proven.payload;
+
+    // No already-tested success on record — fall back to a fresh vendor-
+    // recommended variant, seeded from the same base payload family
+    // payloadMutator itself would use for this vulnClass (not a duplicated
+    // list), fed through EvasionLibrary's real vendor-technique mapping.
+    const basePayload = payloadMutator.getBase(vulnClass)[0];
+    if (!basePayload) return null;
+    const evasion = new EvasionLibrary();
+    const variants = evasion.generateVariants(basePayload, evasion.recommendTechniques(intel.vendor));
+    return variants[0]?.payload ?? null;
   }
 
   private buildAuthArgs(toolName: string, headers: Record<string, string>): string[] {

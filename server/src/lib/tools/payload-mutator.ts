@@ -70,7 +70,10 @@ class PayloadMutator {
     }).slice(0, 20);
   }
 
-  private getBase(vulnClass: string, beaconUrl?: string): string[] {
+  /** Exposed (was private) so callers that need a representative seed payload
+   *  for this vulnClass — without wanting this class's own generic mutation
+   *  set — can reuse the same base list instead of duplicating one. */
+  getBase(vulnClass: string, beaconUrl?: string): string[] {
     switch (vulnClass) {
       case "xss": return beaconUrl
         ? [...this.xssBase, `<img src="${beaconUrl}">`, `<script src="${beaconUrl}"></script>`]
