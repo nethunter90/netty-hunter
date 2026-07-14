@@ -138,6 +138,14 @@ export interface Hypothesis {
    *  other three reasons leave toolHint unset and route the payload instead.
    *  See retry-failure-classifier.ts. */
   lastFailureReason?: RetryFailureReason;
+  /** Set by probe()'s retry branch when a waf_blocked/reflected_not_executed
+   *  mutation was applied with a confidently-attributable axis (a real vendor,
+   *  or a detected app stack) — consumed by update()'s confirmed/rejected
+   *  branches to record the outcome via rlWiring.onRetryTechniqueOutcome(),
+   *  then cleared either way. Left unset for not_injectable/no_signal, and
+   *  for a degraded waf_blocked retry with no authorized vendor — neither has
+   *  a confident axis to attribute a win or loss to. */
+  retryTechnique?: { reason: "waf_blocked" | "reflected_not_executed"; axisKey: string; technique: string };
   /** Which model generated this hypothesis — used to score model performance in RL store. */
   modelSource?: "claude" | "default";
   /** Finding IDs this hypothesis chains from (set by SynthesisAgent). */
@@ -2655,9 +2663,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // both turn on the same retry.
       let probeUrl = hypothesis.targetUrl;
       if ((hypothesis.retryCount ?? 0) > 0 && hypothesis.lastFailureReason !== "not_injectable") {
-        let picked: string | null = hypothesis.lastFailureReason === "waf_blocked"
-          ? this.pickWafEvasionPayload(hypothesis.vulnClass)
-          : null;
+        const reason = hypothesis.lastFailureReason;
+        let picked: string | null = null;
+
+        if (reason === "waf_blocked") {
+          const waf = this.pickWafEvasionPayload(hypothesis.vulnClass);
+          if (waf) {
+            picked = waf.payload;
+            // Confidently attributable — record once the outcome is known
+            // (update()'s confirmed/rejected branches), keyed by VENDOR.
+            hypothesis.retryTechnique = { reason: "waf_blocked", axisKey: waf.vendor, technique: waf.technique };
+          }
+        }
         if (!picked) {
           // reflected_not_executed / no_signal / waf_blocked-with-no-
           // authorized-vendor-intel all degrade to this same generic path.
@@ -2666,7 +2683,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
           // unmutated payload, so the old mutations[0] pick was a no-op
           // dressed up as a WAF-bypass attempt.
           const mutations = payloadMutator.mutate(hypothesis.vulnClass).filter(m => m.technique !== "baseline");
-          picked = mutations[0]?.variant ?? null;
+          const chosen = mutations[0];
+          picked = chosen?.variant ?? null;
+          // Only reflected_not_executed with a detected stack is confidently
+          // attributable to "this encoding fixed a parser-level issue" — the
+          // degraded waf_blocked case has no vendor (that's why it degraded),
+          // and no_signal never had a confident cause to attribute in the
+          // first place. Both are retried anyway (best-effort) but not recorded.
+          if (chosen && reason === "reflected_not_executed") {
+            const stack = this.getDetectedStackKey();
+            if (stack) {
+              hypothesis.retryTechnique = { reason: "reflected_not_executed", axisKey: stack, technique: chosen.technique };
+            }
+          }
         }
         if (picked) {
           const params = payloadMutator.findInjectableParams(hypothesis.targetUrl);
@@ -2822,6 +2851,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
           hypothesis.reasoning = describeFromProbe(hypothesis, successful[0]);
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
+          if (hypothesis.retryTechnique) {
+            const rt = hypothesis.retryTechnique;
+            this.rlWiring.onRetryTechniqueOutcome(rt.reason, rt.axisKey, hypothesis.vulnClass, rt.technique, true);
+          }
           // Credit the chain synthesis if this hypothesis was born from one.
           // Without this, the RL only sees the closing tool and never learns that
           // the synthesis pass that found the opening was the load-bearing step.
@@ -2975,6 +3008,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
           hypothesis.status = "rejected";
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
+          if (hypothesis.retryTechnique) {
+            const rt = hypothesis.retryTechnique;
+            this.rlWiring.onRetryTechniqueOutcome(rt.reason, rt.axisKey, hypothesis.vulnClass, rt.technique, false);
+          }
         } else {
           // Gray zone (0.2–0.7): re-queue, up to 2 retries. WHICH knob turns
           // (tool vs payload) is decided by classifying why the last attempt
@@ -2987,6 +3024,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
             const lastProbe = successful[successful.length - 1];
             const reason = classifyRetryFailure(lastProbe?.payload ?? "", lastProbe?.output ?? "");
             hypothesis.lastFailureReason = reason;
+            // Clear any retryTechnique from a PRIOR retry cycle — this
+            // cycle's classification may differ (e.g. this time landed on
+            // not_injectable, which never sets retryTechnique in probe()),
+            // and a stale value here would misattribute whatever outcome
+            // follows to the wrong technique.
+            delete hypothesis.retryTechnique;
             if (reason === "not_injectable") {
               // Endpoint-local: a different payload dialect won't help a
               // dead param/endpoint — swap the tool/injection point instead.
@@ -3007,6 +3050,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
             });
           } else {
             hypothesis.status = "inconclusive"; // exhausted retries
+            // Retries ran out without a decisive confirm/reject — an
+            // ambiguous outcome, never recorded as a win or a loss.
+            delete hypothesis.retryTechnique;
           }
         }
       } else {
@@ -3016,6 +3062,10 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
           // Record miss in ROI model so success rates decay appropriately
           this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
+          if (hypothesis.retryTechnique) {
+            const rt = hypothesis.retryTechnique;
+            this.rlWiring.onRetryTechniqueOutcome(rt.reason, rt.axisKey, hypothesis.vulnClass, rt.technique, false);
+          }
         } else {
           hypothesis.status = "pending";
         }
@@ -3375,13 +3425,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
   // intel to use — return null and let the caller fall through to the
   // generic (ungated) mutation path. One honest branch, not two.
   //
-  // Phase 3 (not yet wired): a successful retry via this path should record
-  // the winning technique keyed by (vendor, vulnClass, technique) — NOT by
-  // app stack. WAF-evasion effectiveness transfers by WHICH WAF VENDOR is in
-  // front of the target, not by what the origin app is written in; keying it
-  // by stack would silently misattribute a Cloudflare bypass to "works for
-  // PHP" when the PHP app just happened to sit behind Cloudflare that day.
-  private pickWafEvasionPayload(vulnClass: string): string | null {
+  // The winning technique here is recorded keyed by (vendor, vulnClass,
+  // technique) — NOT by app stack. WAF-evasion effectiveness transfers by
+  // WHICH WAF VENDOR is in front of the target, not by what the origin app
+  // is written in; keying it by stack would silently misattribute a
+  // Cloudflare bypass to "works for PHP" when the PHP app just happened to
+  // sit behind Cloudflare that day. See the caller (probe()'s retry branch)
+  // for where that record actually happens, once the retry's outcome is known.
+  private pickWafEvasionPayload(vulnClass: string): { payload: string; vendor: string; technique: string } | null {
     if (!this.state.wafBypassEnabled) return null;
     const wafObs = this.state.observations.find(o => o.source === "waf_intel");
     if (!wafObs) return null;
@@ -3395,7 +3446,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const proven = (intel.recommendedTechniques || [])
       .filter(t => t.success && t.payload)
       .sort((a, b) => a.blockRate - b.blockRate)[0];
-    if (proven) return proven.payload;
+    if (proven) return { payload: proven.payload, vendor: intel.vendor, technique: proven.technique };
 
     // No already-tested success on record — fall back to a fresh vendor-
     // recommended variant, seeded from the same base payload family
@@ -3404,8 +3455,27 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const basePayload = payloadMutator.getBase(vulnClass)[0];
     if (!basePayload) return null;
     const evasion = new EvasionLibrary();
-    const variants = evasion.generateVariants(basePayload, evasion.recommendTechniques(intel.vendor));
-    return variants[0]?.payload ?? null;
+    const variant = evasion.generateVariants(basePayload, evasion.recommendTechniques(intel.vendor))[0];
+    return variant ? { payload: variant.payload, vendor: intel.vendor, technique: variant.technique } : null;
+  }
+
+  // The app-stack analog of the vendor detection above — same whatweb
+  // observation techPayloadSelector already reads, just reduced to a single
+  // stable, order-independent key so "Express, Node" and "Node, Express"
+  // don't split into two separate learning cells for the same stack.
+  // Returns null when nothing was fingerprinted, so callers can skip
+  // recording rather than writing a meaningless "unknown" axis value.
+  private getDetectedStackKey(): string | null {
+    const techObs = this.state.observations.find(o => o.source === "whatweb");
+    const rawTechs = (techObs?.data as { technologies?: unknown } | undefined)?.technologies;
+    const techs: string[] = [];
+    if (Array.isArray(rawTechs)) {
+      for (const entry of rawTechs) {
+        if (typeof entry === "object" && entry !== null) techs.push(...Object.keys(entry as Record<string, unknown>));
+      }
+    }
+    if (techs.length === 0) return null;
+    return [...new Set(techs.map(t => t.toLowerCase()))].sort().join("+");
   }
 
   private buildAuthArgs(toolName: string, headers: Record<string, string>): string[] {

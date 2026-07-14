@@ -18,7 +18,9 @@ export type RLDomain =
   | "program_type"
   | "confidence_calibration"
   | "exploration"
-  | "model_selection";
+  | "model_selection"
+  | "waf_evasion_technique"
+  | "payload_mutation_technique";
 
 export interface RLEntry {
   domain: RLDomain;
@@ -180,6 +182,55 @@ export class UnifiedReinforcementStore {
       if (rate > bestRate) { bestRate = rate; best = model; }
     }
     return best;
+  }
+
+  // ── Domain 7: WAF Evasion Technique ───────────────────────────────────────
+  // Keyed by WAF VENDOR, not app stack — evasion effectiveness transfers by
+  // which WAF is in front of the target (what beats Cloudflare beats
+  // Cloudflare regardless of the origin's language), never by the origin
+  // app's own stack. Keep this axis separate from Domain 8 below; merging
+  // them would misattribute a vendor-specific bypass to the wrong cause.
+  async recordWafEvasionOutcome(vendor: string, vulnClass: string, technique: string, success: boolean): Promise<void> {
+    const key = `${vendor}:${vulnClass}:${technique}`;
+    await this.upsert("waf_evasion_technique", key, { vendor, vulnClass, technique }, success);
+  }
+
+  /** Null when there's insufficient data (< 3 samples) to prefer a learned
+   *  technique over the fingerprint-informed default — same cold-start-safe
+   *  discipline as getBetterModel(). Not yet called anywhere (the read/warm-
+   *  start path is intentionally deferred — see retry-failure-classifier.ts). */
+  async getBestWafEvasionTechnique(vendor: string, vulnClass: string): Promise<string | null> {
+    const MIN_SAMPLES = 3;
+    const prefix = `${vendor}:${vulnClass}:`;
+    const entries = await db.select().from(reinforcementTable)
+      .where(eq(reinforcementTable.domain, "waf_evasion_technique"));
+    const best = entries
+      .filter(e => e.key.startsWith(prefix) && (e.totalCount || 0) >= MIN_SAMPLES)
+      .map(e => ({ technique: e.key.slice(prefix.length), rate: (e.successCount || 0) / Math.max(e.totalCount || 1, 1) }))
+      .sort((a, b) => b.rate - a.rate)[0];
+    return best?.technique ?? null;
+  }
+
+  // ── Domain 8: Payload Mutation Technique ──────────────────────────────────
+  // Keyed by APP STACK, not WAF vendor — the winning encoding/breakout syntax
+  // tracks the target's own parser, not whatever sits in front of it.
+  async recordPayloadMutationOutcome(stack: string, vulnClass: string, technique: string, success: boolean): Promise<void> {
+    const key = `${stack}:${vulnClass}:${technique}`;
+    await this.upsert("payload_mutation_technique", key, { stack, vulnClass, technique }, success);
+  }
+
+  /** Same cold-start/min-sample discipline as getBestWafEvasionTechnique().
+   *  Not yet called anywhere — read/warm-start path intentionally deferred. */
+  async getBestPayloadMutationTechnique(stack: string, vulnClass: string): Promise<string | null> {
+    const MIN_SAMPLES = 3;
+    const prefix = `${stack}:${vulnClass}:`;
+    const entries = await db.select().from(reinforcementTable)
+      .where(eq(reinforcementTable.domain, "payload_mutation_technique"));
+    const best = entries
+      .filter(e => e.key.startsWith(prefix) && (e.totalCount || 0) >= MIN_SAMPLES)
+      .map(e => ({ technique: e.key.slice(prefix.length), rate: (e.successCount || 0) / Math.max(e.totalCount || 1, 1) }))
+      .sort((a, b) => b.rate - a.rate)[0];
+    return best?.technique ?? null;
   }
 
   // ── Temporal Decay ────────────────────────────────────────────────────────

@@ -41,6 +41,30 @@ export class ReinforcementWiring {
     logger.debug('[RL] Model outcome recorded', { model, vulnClass, confirmed });
   }
 
+  /**
+   * Records which reason-routed retry technique won or lost once a
+   * hypothesis reaches a definitive confirmed/rejected verdict — the
+   * write-path half of the gray-zone retry classifier (see
+   * retry-failure-classifier.ts and HunterEngine's probe()/update()).
+   * axisKey is the WAF vendor for "waf_blocked", the app stack for
+   * "reflected_not_executed" — callers must never mix the two up, since the
+   * two domains below are kept separate for exactly that reason.
+   */
+  onRetryTechniqueOutcome(
+    reason: 'waf_blocked' | 'reflected_not_executed',
+    axisKey: string,
+    vulnClass: string,
+    technique: string,
+    success: boolean,
+  ): void {
+    if (reason === 'waf_blocked') {
+      this.rl.recordWafEvasionOutcome(axisKey, vulnClass, technique, success).catch(() => {});
+    } else {
+      this.rl.recordPayloadMutationOutcome(axisKey, vulnClass, technique, success).catch(() => {});
+    }
+    logger.debug('[RL] Retry technique outcome recorded', { reason, axisKey, vulnClass, technique, success });
+  }
+
   getFrameworkPriorities(framework: string): Promise<string[]> {
     return this.rl.getVulnsForFramework(framework).then(vulns => vulns.map(v => v.vulnClass));
   }
