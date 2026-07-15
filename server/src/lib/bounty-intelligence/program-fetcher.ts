@@ -38,6 +38,27 @@ export interface ProgramRules {
   rules: string[];
   exclusions: string[];
   lastUpdated: number;
+  /** Real program-state fields, only ever populated from an authenticated
+   *  fetch — never fabricated. Absent (not false) means "we don't know",
+   *  distinct from a confirmed VDP-only program. */
+  submissionState?: string;
+  offersBounties?: boolean;
+}
+
+/**
+ * Shape stored into the DB-backed programs table's `metadata` jsonb column
+ * (previously declared but never actually used anywhere) — preserves the
+ * per-asset richness (asset type, severity ceiling, bounty eligibility) that
+ * a bare `scope: string[]` column structurally can't hold, without touching
+ * that column's shape at all (ScopeGuard's enforcement path reads `scope`/
+ * `outOfScope` as flat string arrays and must never be given anything else).
+ */
+export interface ProgramMetadata {
+  scopeAssets?: { inScope: ScopeAsset[]; outOfScope: ScopeAsset[] };
+  submissionState?: string;
+  offersBounties?: boolean;
+  policyDescription?: string;
+  lastSyncedAt?: string;
 }
 
 export interface ProgramDocumentation {
@@ -684,16 +705,31 @@ export class ProgramFetcher extends EventEmitter {
               lastUpdated: Date.now(),
             };
 
+            // Best-effort real bounty range — HackerOne's exact attribute
+            // naming isn't pinned down against live API docs here, so this
+            // tries the plausible key spellings and stays undefined (never a
+            // guessed number) if none are present. Distinct from the fallback
+            // path below, which still needs a synthetic placeholder since it
+            // has no real data at all to work with.
+            const lowerBounty = Number(attrs.average_bounty_lower_amount ?? attrs.bounty_lower_amount);
+            const upperBounty = Number(attrs.average_bounty_upper_amount ?? attrs.bounty_upper_amount);
+
             const rules: ProgramRules = {
               disclosure: attrs.policy || 'coordinated',
               safeHarbor: attrs.safe_harbor_enabled ?? true,
-              maxBounty: undefined,
-              minBounty: undefined,
+              maxBounty: Number.isFinite(upperBounty) ? upperBounty : undefined,
+              minBounty: Number.isFinite(lowerBounty) ? lowerBounty : undefined,
               responseTime: attrs.response_efficiency_percentage
                 ? `${attrs.response_efficiency_percentage}% within SLA`
-                : '5 business days',
-              rules: this.generateFallbackRules(domain, 'hackerone').rules,
-              exclusions: this.generateFallbackRules(domain, 'hackerone').exclusions,
+                : undefined,
+              // No fabricated boilerplate here anymore — a program we have
+              // real authenticated access to but no genuine structured rules
+              // list for should read as "we don't have this," not a made-up
+              // generic policy that isn't actually this program's rules.
+              rules: [],
+              exclusions: [],
+              submissionState: attrs.submission_state || attrs.state || undefined,
+              offersBounties: typeof attrs.offers_bounties === 'boolean' ? attrs.offers_bounties : undefined,
               lastUpdated: Date.now(),
             };
 

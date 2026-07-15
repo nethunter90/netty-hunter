@@ -20,7 +20,7 @@ import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
 import { nvdClient, cvssToSeverity } from "../lib/intelligence/nvd-client";
 import { submissionQueue } from "../lib/intelligence/submission-queue";
-import { ProgramFetcher } from "../lib/bounty-intelligence/program-fetcher";
+import { ProgramFetcher, type ProgramMetadata } from "../lib/bounty-intelligence/program-fetcher";
 import { runtimeConfig } from "../lib/runtime-config";
 
 const router = Router();
@@ -161,6 +161,19 @@ router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => 
         url: `https://hackerone.com/${prog.handle}`, handle: prog.handle,
         enabled: true, addedAt: Date.now(),
       });
+      const metadata: ProgramMetadata = {
+        scopeAssets: { inScope: fetched.scope.inScope, outOfScope: fetched.scope.outOfScope },
+        submissionState: fetched.rules.submissionState,
+        offersBounties: fetched.rules.offersBounties,
+        policyDescription: fetched.description,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      // avgPayout: a real midpoint when both bounds are known, whichever
+      // single bound is available otherwise, honest 0 (not a guess) when
+      // neither came back from the authenticated fetch.
+      const avgPayout = fetched.rules.maxBounty !== undefined && fetched.rules.minBounty !== undefined
+        ? (fetched.rules.maxBounty + fetched.rules.minBounty) / 2
+        : fetched.rules.maxBounty ?? fetched.rules.minBounty ?? 0;
       await db.insert(programs).values({
         name: prog.name,
         platform: "hackerone",
@@ -168,10 +181,14 @@ router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => 
         scope: fetched.scope.inScope.map(a => a.identifier).filter(Boolean),
         outOfScope: fetched.scope.outOfScope.map(a => a.identifier).filter(Boolean),
         maxPayout: fetched.rules.maxBounty ?? 0,
-        avgPayout: 0,
+        avgPayout,
+        // No real numeric hours estimate available from the authenticated
+        // fetch (response_efficiency_percentage is a %, not an hours figure)
+        // — an honest default, not a computed-looking placeholder.
         responseTime: 72,
         tags: [],
         wafBypassPolicy: "unspecified",
+        metadata,
       });
       return prog.handle;
     }));

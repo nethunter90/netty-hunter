@@ -43,6 +43,19 @@ interface Submission {
   error?: string;
 }
 
+// Matches server/src/intelligence/TargetSelection.ts's ProgramScore
+interface ProgramScore {
+  programId: number;
+  name: string;
+  platform: string;
+  roiScore: number;
+  avgPayout: number;
+  responseTime: number;
+  competitionLevel: 'low' | 'medium' | 'high';
+  rank: number;
+  notes: string[];
+}
+
 interface SyncResult {
   total: number;
   added: string[];
@@ -82,6 +95,8 @@ export function HackerOneDashboard() {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [programs, setPrograms] = useState<Program[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [rankings, setRankings] = useState<ProgramScore[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -101,7 +116,19 @@ export function HackerOneDashboard() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadRankings = useCallback(async () => {
+    setRankingLoading(true);
+    try {
+      const res = await bountyAPI.rankPrograms();
+      setRankings((res.data as ProgramScore[]).filter(s => isHackerOne(s.platform)));
+    } catch {
+      toast.error('Failed to load recommendations');
+    } finally {
+      setRankingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); loadRankings(); }, [load, loadRankings]);
 
   const connected = settings['HACKERONE_ENABLED'] !== 'false';
   // Non-secret settings are returned verbatim, secrets masked to "****1234"
@@ -202,6 +229,52 @@ export function HackerOneDashboard() {
           </div>
         </div>
       </Card>
+
+      {/* Recommended — ranked by real scope/rules/payout data where available,
+          never excluding a program just because it can't yield an RCE chain;
+          asset testability is one weighted factor among several, not a gate. */}
+      <div>
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+          Recommended for your next hunt
+        </div>
+        {rankingLoading ? (
+          <Card className="p-4 text-sm text-gray-500">Scoring programs…</Card>
+        ) : rankings.length === 0 ? (
+          <Card className="p-4 text-sm text-gray-500">No HackerOne programs to rank yet.</Card>
+        ) : (
+          <div className="space-y-2">
+            {rankings.slice(0, 5).map(s => (
+              <Card key={s.programId} className="p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-gray-500">#{s.rank}</span>
+                    <span className="text-sm font-semibold text-gray-200">{s.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Badge className={
+                      s.competitionLevel === 'low' ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                        : s.competitionLevel === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                        : 'bg-red-500/20 text-red-400 border-red-500/30'
+                    }>
+                      {s.competitionLevel} competition
+                    </Badge>
+                    <span className="text-xs font-mono text-gray-400">score {s.roiScore.toFixed(2)}</span>
+                  </div>
+                </div>
+                {s.notes.length > 0 && (
+                  <ul className="mt-2 space-y-0.5">
+                    {s.notes.map((n, i) => (
+                      <li key={i} className="text-xs text-gray-500 flex items-start gap-1.5">
+                        <span className="text-gray-600">·</span> {n}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Pending review queue */}
       {pendingReview.length > 0 && (
