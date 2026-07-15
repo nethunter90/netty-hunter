@@ -308,6 +308,47 @@ export class VendorEvasionProfiles {
   }
 }
 
+// ── Shared authorization gate ────────────────────────────────────────────────
+// Fail-closed scope + program-policy check, no HTTP traffic to the target
+// itself. Exported so ANY caller that wants to use WAF-evasion techniques
+// (EvasionLibrary specifically) goes through this exact check, rather than
+// calling EvasionLibrary as a "peer" that bypasses it — EvasionLibrary is a
+// component this gate protects, not a standalone utility. A second,
+// independently-written copy of an authorization check is how an auth gate
+// drifts and eventually fails open; there is exactly one copy of this logic.
+//
+// Deliberately does NOT re-run fingerprint()/generateVariants() — those are
+// the expensive part (a live HTTP fingerprint call, then up to 5 real bypass-
+// probe requests). A caller that already has a vendor from an earlier
+// synthesize() call in the same hunt (e.g. a later gray-zone retry re-using
+// OBSERVE-time detection) can re-verify authorization freshly and cheaply
+// through this function without re-paying for detection every time.
+export async function checkWafBypassAuthorization(
+  url: string, programId?: number
+): Promise<{ allowed: boolean; reason?: string }> {
+  if (programId === undefined) return { allowed: true };
+
+  const scopeGuard = ScopeGuard.getInstance();
+  const { allowed, reason } = await scopeGuard.isInScope(url, programId);
+  if (!allowed) {
+    logger.warn('WAFBypass authorization blocked by scope guard', { url, programId, reason });
+    return { allowed: false, reason: `Out of scope: ${reason}` };
+  }
+
+  // A program whose rules explicitly disallow WAF evasion is blocked
+  // regardless of the per-hunt toggle — the user's opt-in for THIS hunt
+  // cannot override an explicit prohibition from the program itself.
+  // Silent/unspecified and explicitly-allowed programs both proceed.
+  const [program] = await db.select({ wafBypassPolicy: programs.wafBypassPolicy })
+    .from(programs).where(eq(programs.id, programId)).limit(1);
+  if (program?.wafBypassPolicy === 'disallowed') {
+    logger.warn('WAFBypass authorization blocked — program policy disallows WAF evasion', { url, programId });
+    return { allowed: false, reason: 'WAF bypass disallowed by program policy' };
+  }
+
+  return { allowed: true };
+}
+
 // ── Module 7: Intelligence Synthesizer ───────────────────────────────────────
 export class IntelligenceSynthesizer {
   private detector = new WAFDetector();
@@ -320,27 +361,8 @@ export class IntelligenceSynthesizer {
   async synthesize(url: string, payload: string, sessionId = 'default', programId?: number): Promise<UnifiedIntelligence> {
     const domain = new URL(url).hostname;
 
-    // Scope gate: fail-closed before any HTTP traffic is sent
-    if (programId !== undefined) {
-      const scopeGuard = ScopeGuard.getInstance();
-      const { allowed, reason } = await scopeGuard.isInScope(url, programId);
-      if (!allowed) {
-        logger.warn('WAFBypass synthesize blocked by scope guard', { url, programId, reason });
-        throw new Error(`Out of scope: ${reason}`);
-      }
-
-      // Program policy gate: a program whose rules explicitly disallow WAF
-      // evasion is blocked regardless of the per-hunt toggle — the user's
-      // opt-in for THIS hunt cannot override an explicit prohibition from the
-      // program itself. Silent/unspecified and explicitly-allowed programs
-      // both proceed (the per-hunt toggle already gated getting this far).
-      const [program] = await db.select({ wafBypassPolicy: programs.wafBypassPolicy })
-        .from(programs).where(eq(programs.id, programId)).limit(1);
-      if (program?.wafBypassPolicy === 'disallowed') {
-        logger.warn('WAFBypass synthesize blocked — program policy disallows WAF evasion', { url, programId });
-        throw new Error('WAF bypass disallowed by program policy');
-      }
-    }
+    const auth = await checkWafBypassAuthorization(url, programId);
+    if (!auth.allowed) throw new Error(auth.reason);
 
     const { waf } = await this.fingerprinter.fingerprint(url);
     const recommendedTechs = this.library.recommendTechniques(waf.vendor);

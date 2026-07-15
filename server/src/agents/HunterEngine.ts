@@ -14,7 +14,7 @@ import { huntSessions, findings, exploitChains, customTools, campaigns } from ".
 import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
-import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary } from "./WAFBypass";
+import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary, checkWafBypassAuthorization } from "./WAFBypass";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
@@ -2667,7 +2667,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         let picked: string | null = null;
 
         if (reason === "waf_blocked") {
-          const waf = this.pickWafEvasionPayload(hypothesis.vulnClass);
+          const waf = await this.pickWafEvasionPayload(hypothesis.vulnClass, hypothesis.targetUrl);
           if (waf) {
             picked = waf.payload;
             // Confidently attributable — record once the outcome is known
@@ -3432,12 +3432,27 @@ Return ONLY valid JSON array of hypothesis objects.`;
   // Cloudflare bypass to "works for PHP" when the PHP app just happened to
   // sit behind Cloudflare that day. See the caller (probe()'s retry branch)
   // for where that record actually happens, once the retry's outcome is known.
-  private pickWafEvasionPayload(vulnClass: string): { payload: string; vendor: string; technique: string } | null {
+  private async pickWafEvasionPayload(
+    vulnClass: string, targetUrl: string
+  ): Promise<{ payload: string; vendor: string; technique: string } | null> {
     if (!this.state.wafBypassEnabled) return null;
     const wafObs = this.state.observations.find(o => o.source === "waf_intel");
     if (!wafObs) return null;
     const intel = wafObs.data as unknown as UnifiedIntelligence;
     if (!intel.vendor || intel.vendor === "unknown") return null;
+
+    // Re-verify authorization FRESH, through the exact same gate
+    // WAFBypass.ts's synthesize() itself uses — not a re-implementation of
+    // it. wafBypassEnabled above is only the per-hunt opt-in; it says
+    // nothing about the program's own wafBypassPolicy, which is checked
+    // here. A hunt can run for hours between OBSERVE's detection (which
+    // produced the vendor/technique data below) and a much later gray-zone
+    // retry — trusting that snapshot for something this consequential,
+    // rather than re-checking, would let a policy change mid-hunt go
+    // unnoticed. This does NOT re-run detection (cheap: no HTTP to the
+    // target), just the authorization check.
+    const auth = await checkWafBypassAuthorization(targetUrl, this.state.programId);
+    if (!auth.allowed) return null;
 
     // Seed from the CORRECT base payload for the vulnClass actually being
     // retried — never reuse a recommendedTechniques payload string verbatim.

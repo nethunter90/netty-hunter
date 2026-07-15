@@ -728,9 +728,11 @@ Fail-closed.**
 ```
 ScopeGuard.isInScope(url, programId)
     extractHostname(url) — port-free via URL API
-    Path-level matching: host+path scope patterns restrict to that subtree, boundary-safe
-        (a pattern for /api/AddressBook does NOT match /api/Addresss) — this closed a real
-        gap where only hostname-level matching existed
+    Path-level matching: host+path scope patterns restrict to that subtree, boundary-safe —
+        a scope pattern for /api/Address does NOT admit /api/AddressBook (pathMatches()
+        requires an exact match or the prefix followed by a literal "/", not a naive
+        .startsWith() on the raw string) — this closed a real gap where only
+        hostname-level matching existed
     Check hostname (+path) against outOfScope[] → REJECT if match (out-of-scope takes
         precedence over any in-scope match)
     Check hostname (+path) against inScope[] → REJECT if no match
