@@ -30,7 +30,7 @@ const EVENT_NAMES = [
   'hunt:complete', 'hunt:aborted', 'hunt:error', 'solver:started', 'solver:complete', 'solver:finding',
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
-  'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_submitted',
+  'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
   'hunt:secrets_found', 'hunt:ws_vulns', 'hunt:bucket_exposed',
   'hunt:proto_pollution', 'hunt:race_condition',
   'hunt:tech_payloads', 'hunt:params_discovered', 'hunt:oauth_vulns',
@@ -259,13 +259,12 @@ export function attachHuntEvents(): () => void {
     });
   });
 
-  socket.on('l5:report_submitted', (data: any) => {
+  socket.on('l5:report_queued', (data: any) => {
     push({
-      type: 'report_submitted',
+      type: 'report_queued',
       ts: ts(),
       platform: String(data.platform || ''),
-      reportId: data.reportId ? String(data.reportId) : undefined,
-      reportUrl: data.reportUrl ? String(data.reportUrl) : undefined,
+      submissionId: String(data.submissionId || ''),
     });
   });
 

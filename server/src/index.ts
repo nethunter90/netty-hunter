@@ -345,7 +345,7 @@ io.on("connection", (socket) => {
       "l4:hunt_started", "l4:phase", "l4:observations", "l4:hypotheses",
       "l4:probing", "l4:probe_result", "l4:finding_raw", "l4:strategy_update",
       "l4:solver_finding", "l4:error",
-      "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate", "l5:report_submitted", "l5:report_submit_failed",
+      "l5:verifying", "l5:verified", "l5:rejected", "l5:public_duplicate", "l5:report_queued",
       "l6:report_generated", "l6:autonomy_updated",
       "orchestration:targets_expanded", "orchestration:takeover_found",
       "hunt:cve_seeded", "hunt:graphql_schema", "hunt:oob_hit",

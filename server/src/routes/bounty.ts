@@ -18,6 +18,7 @@ import { HuntStrategyBuilder } from "./huntStrategy";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
 import { nvdClient, cvssToSeverity } from "../lib/intelligence/nvd-client";
+import { submissionQueue } from "../lib/intelligence/submission-queue";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -599,7 +600,7 @@ router.patch("/programs/:id/scope", async (req: Request, res: Response) => {
 
 // ── Submissions ───────────────────────────────────────────────────────────────
 router.get("/submissions", async (_req: Request, res: Response) => {
-  return res.json(await wsReadAll("submissions"));
+  return res.json({ success: true, submissions: await wsReadAll("submissions") });
 });
 
 router.post("/submissions", async (req: Request, res: Response) => {
@@ -607,20 +608,46 @@ router.post("/submissions", async (req: Request, res: Response) => {
   const id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const entry = { id, findingId, platform, title, severity, status: status || "draft", createdAt: new Date().toISOString() };
   await wsWrite("submissions", id, entry);
-  return res.status(201).json(entry);
+  return res.status(201).json({ success: true, submission: entry });
 });
 
-router.patch("/submissions/:id", async (req: Request, res: Response) => {
+async function updateSubmissionHandler(req: Request, res: Response) {
   const existing = await wsFind("submissions", req.params.id);
-  if (!existing) return res.status(404).json({ error: "Not found" });
+  if (!existing) return res.status(404).json({ success: false, error: "Not found" });
   const updated = { ...existing, ...req.body, id: req.params.id };
   await wsWrite("submissions", req.params.id, updated);
-  return res.json(updated);
+  return res.json({ success: true, submission: updated });
+}
+router.patch("/submissions/:id", updateSubmissionHandler);
+router.put("/submissions/:id", updateSubmissionHandler);
+
+// Human review gate — this is the ONLY code path that actually sends a
+// queued report to a live bug bounty platform. Findings verified during a
+// hunt land here as status "pending_review" (see submission-queue.ts) and
+// stay inert until an operator calls this endpoint.
+router.post("/submissions/:id/approve", async (req: Request, res: Response) => {
+  try {
+    const outcome = await submissionQueue.approveAndSubmit(req.params.id);
+    if (!outcome) return res.status(404).json({ success: false, error: "Not found or not pending review" });
+    return res.json({ success: outcome.result.success, submission: outcome.entry, result: outcome.result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post("/submissions/:id/reject", async (req: Request, res: Response) => {
+  try {
+    const entry = await submissionQueue.reject(req.params.id);
+    if (!entry) return res.status(404).json({ success: false, error: "Not found or not pending review" });
+    return res.json({ success: true, submission: entry });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.delete("/submissions/:id", async (req: Request, res: Response) => {
   await wsDelete("submissions", req.params.id);
-  return res.json({ ok: true });
+  return res.json({ success: true });
 });
 
 // ── Task Planning ─────────────────────────────────────────────────────────────

@@ -49,7 +49,7 @@ import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
 import { pendingEscalation } from "../lib/verification/verify-finding";
 import { nvdClient } from "../lib/intelligence/nvd-client";
-import { reportSubmitter } from "../lib/intelligence/report-submitter";
+import { submissionQueue } from "../lib/intelligence/submission-queue";
 import { subdomainTakeoverChecker } from "../lib/tools/subdomain-takeover";
 import { notificationService } from "../lib/services/notification-service";
 
@@ -1081,11 +1081,14 @@ export class CampaignOrchestrator extends EventEmitter {
 
           this.emit("l5:verified", { findingId: dbFinding.id, verdict: verification.finalVerdict });
 
-          // Platform report submission — fire-and-forget, non-blocking
+          // Platform report submission requires a human review-and-send step —
+          // a verified finding is queued as a draft, never sent to the live
+          // platform automatically. See submission-queue.ts / POST
+          // /api/bounty/submissions/:id/approve.
           if (prog?.platform && prog?.programHandle) {
             const platform = prog.platform as "hackerone" | "bugcrowd" | "intigriti" | "yeswehack";
             if (["hackerone", "bugcrowd", "intigriti", "yeswehack"].includes(platform)) {
-              reportSubmitter.submit({
+              submissionQueue.queueForReview({
                 title: `[${(dbFinding.severity ?? "medium").toUpperCase()}] ${dbFinding.vulnType} in ${params.targetUrl}`,
                 vulnType: dbFinding.vulnType,
                 severity: (dbFinding.severity ?? "medium") as "critical" | "high" | "medium" | "low" | "informational",
@@ -1102,27 +1105,13 @@ export class CampaignOrchestrator extends EventEmitter {
                 exploitPayload: dbFinding.exploitPayload ?? undefined,
                 programHandle: prog.programHandle,
                 platform,
-              }).then(result => {
-                if (result.success) {
-                  this.emit("l5:report_submitted", {
-                    findingId: dbFinding.id,
-                    platform,
-                    reportId: result.reportId,
-                    reportUrl: result.reportUrl,
-                  });
-                  db.update(findings).set({
-                    reportDraft: result.reportUrl ? `Submitted: ${result.reportUrl}` : `Report ID: ${result.reportId}`,
-                    submittedAt: new Date(),
-                  }).where(eq(findings.id, dbFinding.id)).catch(() => {});
-                } else if (!result.draftOnly) {
-                  // Surface submission failure to the operator instead of only logging —
-                  // a 401/403 from the platform should be visible, not silent.
-                  logger.warn("[CampaignOrchestrator] Report submission failed", { platform, findingId: dbFinding.id, error: result.error });
-                  this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: result.error });
-                }
+              }, dbFinding.id).then(entry => {
+                this.emit("l5:report_queued", { findingId: dbFinding.id, platform, submissionId: entry.id });
+                db.update(findings).set({
+                  reportDraft: `Pending human review: ${entry.id}`,
+                }).where(eq(findings.id, dbFinding.id)).catch(() => {});
               }).catch((err) => {
-                logger.error("[CampaignOrchestrator] Report submission threw", { platform, findingId: dbFinding.id, err: String(err) });
-                this.emit("l5:report_submit_failed", { findingId: dbFinding.id, platform, error: String(err) });
+                logger.error("[CampaignOrchestrator] Failed to queue report for review", { platform, findingId: dbFinding.id, err: String(err) });
               });
             }
           }

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Trash2, Edit3, X, Send, DollarSign, FileText, TrendingUp, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Trash2, Edit3, X, Send, DollarSign, FileText, TrendingUp, CheckCircle, Clock, ShieldAlert, ThumbsUp, ThumbsDown } from 'lucide-react';
 
 interface Submission {
   id: string;
@@ -21,11 +21,18 @@ interface Submission {
   description: string;
   resolution?: string;
   createdAt: string;
+  // Present on entries queued by an automated hunt for human review
+  // (see server/src/lib/intelligence/submission-queue.ts).
+  targetUrl?: string;
+  programHandle?: string;
+  reportUrl?: string;
+  reportId?: string;
+  error?: string;
 }
 
 const PLATFORMS = ['HackerOne', 'Bugcrowd', 'Intigriti', 'YesWeHack', 'Other'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-const STATUSES = ['draft', 'submitted', 'triaged', 'accepted', 'resolved', 'duplicate', 'informative'];
+const STATUSES = ['draft', 'pending_review', 'submitted', 'triaged', 'accepted', 'resolved', 'duplicate', 'informative', 'rejected', 'failed'];
 
 function getPlatformColor(platform: string): string {
   switch (platform.toLowerCase()) {
@@ -51,12 +58,15 @@ function getSeverityColor(severity: string): string {
 function getStatusColor(status: string): string {
   switch (status) {
     case 'draft': return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    case 'pending_review': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
     case 'submitted': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
     case 'triaged': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
     case 'accepted': return 'bg-green-500/20 text-green-400 border-green-500/30';
     case 'resolved': return 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30';
     case 'duplicate': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
     case 'informative': return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    case 'rejected': return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    case 'failed': return 'bg-red-500/20 text-red-400 border-red-500/30';
     default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
   }
 }
@@ -153,6 +163,33 @@ export function Submissions() {
       }
     } catch (error) {
       console.error('Failed to update submission:', error);
+    }
+  };
+
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
+  const approveSubmission = async (id: string) => {
+    try {
+      const response = await csrfFetch(`/api/bounty/submissions/${id}/approve`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        fetchSubmissions();
+      } else {
+        console.error('Submission failed:', data.result?.error || data.error);
+        fetchSubmissions();
+      }
+    } catch (error) {
+      console.error('Failed to approve submission:', error);
+    }
+  };
+
+  const rejectSubmission = async (id: string) => {
+    try {
+      const response = await csrfFetch(`/api/bounty/submissions/${id}/reject`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success) fetchSubmissions();
+    } catch (error) {
+      console.error('Failed to reject submission:', error);
     }
   };
 
@@ -375,11 +412,33 @@ export function Submissions() {
                     </div>
                   ) : (
                     <div>
+                      {sub.status === 'pending_review' && (
+                        <div className="flex items-center gap-2 mb-2 text-amber-400 text-xs">
+                          <ShieldAlert className="w-4 h-4" />
+                          <span>Queued by an automated hunt — nothing has been sent. Review before approving.</span>
+                        </div>
+                      )}
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <h4 className="font-semibold text-gray-200 mb-1">{sub.title}</h4>
                           {sub.description && (
-                            <p className="text-xs text-gray-400 mb-2 line-clamp-2">{sub.description}</p>
+                            <p className={`text-xs text-gray-400 mb-2 ${sub.status === 'pending_review' ? 'whitespace-pre-wrap' : 'line-clamp-2'}`}>
+                              {sub.description}
+                            </p>
+                          )}
+                          {sub.status === 'pending_review' && (sub.targetUrl || sub.programHandle) && (
+                            <div className="text-xs text-gray-500 mb-2 space-y-0.5">
+                              {sub.targetUrl && <div>Target: <span className="text-gray-400">{sub.targetUrl}</span></div>}
+                              {sub.programHandle && <div>Program: <span className="text-gray-400">{sub.programHandle}</span></div>}
+                            </div>
+                          )}
+                          {sub.status === 'failed' && sub.error && (
+                            <div className="text-xs text-red-400 mb-2">Submission failed: {sub.error}</div>
+                          )}
+                          {sub.status === 'submitted' && sub.reportUrl && (
+                            <a href={sub.reportUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-400 mb-2 block hover:underline">
+                              {sub.reportUrl}
+                            </a>
                           )}
                           <div className="flex items-center gap-2 flex-wrap">
                             <Badge className={getPlatformColor(sub.platform)}>{sub.platform}</Badge>
@@ -401,6 +460,53 @@ export function Submissions() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1 ml-3">
+                          {sub.status === 'pending_review' && (
+                            reviewingId === sub.id ? (
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => { approveSubmission(sub.id); setReviewingId(null); }}
+                                  className="text-green-400 hover:text-green-300 h-8 px-2 text-xs"
+                                  data-testid={`button-confirm-approve-${sub.id}`}
+                                >
+                                  Confirm send to {sub.platform}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setReviewingId(null)}
+                                  className="text-gray-400 hover:text-gray-200 h-8 w-8 p-0"
+                                  data-testid={`button-cancel-approve-${sub.id}`}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setReviewingId(sub.id)}
+                                  title="Approve and send to platform"
+                                  className="text-green-400 hover:text-green-300 h-8 w-8 p-0"
+                                  data-testid={`button-approve-${sub.id}`}
+                                >
+                                  <ThumbsUp className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => rejectSubmission(sub.id)}
+                                  title="Reject — never send"
+                                  className="text-gray-400 hover:text-red-400 h-8 w-8 p-0"
+                                  data-testid={`button-reject-${sub.id}`}
+                                >
+                                  <ThumbsDown className="w-4 h-4" />
+                                </Button>
+                              </>
+                            )
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"

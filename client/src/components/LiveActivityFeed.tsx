@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Eye, Brain, Target, RefreshCw, Zap, AlertTriangle, CheckCircle2,
-  XCircle, ChevronRight, ChevronDown, Layers, Shield, Server, Globe, Code, Wifi,
+  XCircle, ChevronRight, ChevronDown, Layers, Shield, Server, Globe, Code, Wifi, Clock,
 } from "lucide-react";
 import { ProxyRouteChip } from "./hunt/ProxyRouteChip";
 
@@ -29,6 +29,7 @@ export type ActivityEvent =
   | { type: "graphql_schema"; ts: string; endpoint: string; typeCount: number; injectableCount: number }
   | { type: "ssrf_pivot"; ts: string; reachable: string[]; cloudMeta: boolean; newHypotheses: number }
   | { type: "report_submitted"; ts: string; platform: string; reportId?: string; reportUrl?: string }
+  | { type: "report_queued"; ts: string; platform: string; submissionId: string }
   | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number }
   | { type: "secrets_found"; ts: string; count: number; types: string[] }
   | { type: "takeover_found"; ts: string; targets: Array<{ subdomain: string; service: string; confidence: number }> }
@@ -613,6 +614,25 @@ function ReportSubmittedRow({ ev }: { ev: ActivityEvent & { type: "report_submit
   );
 }
 
+function ReportQueuedRow({ ev }: { ev: ActivityEvent & { type: "report_queued" } }) {
+  return (
+    <div className="border border-hack-yellow/40 bg-hack-yellow/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <Clock className="w-3.5 h-3.5 text-hack-yellow flex-shrink-0" />
+        <span className="text-hack-yellow font-bold">Report queued for review</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-yellow/30 text-hack-yellow bg-hack-yellow/10 font-mono uppercase">
+          {ev.platform}
+        </span>
+        <span className="text-[9px] text-hack-dim font-mono">#{ev.submissionId}</span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="text-[9px] text-hack-dim mt-0.5 ml-5 font-mono">
+        Approve in Submissions before it's sent to the platform.
+      </div>
+    </div>
+  );
+}
+
 function ChangesDetectedRow({ ev }: { ev: ActivityEvent & { type: "changes_detected" } }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -1121,6 +1141,8 @@ export function LiveActivityFeed({
               return <SSRFPivotRow key={key} ev={ev} />;
             case "report_submitted":
               return <ReportSubmittedRow key={key} ev={ev} />;
+            case "report_queued":
+              return <ReportQueuedRow key={key} ev={ev} />;
             case "changes_detected":
               return <ChangesDetectedRow key={key} ev={ev} />;
             case "secrets_found":
