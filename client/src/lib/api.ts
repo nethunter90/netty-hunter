@@ -45,6 +45,7 @@ export const bountyAPI = {
   getProgram: (id: number) => api.get(`/bounty/programs/${id}`),
   updateProgram: (id: number, data: Record<string, unknown>) => api.patch(`/bounty/programs/${id}`, data),
   deleteProgram: (id: number) => api.delete(`/bounty/programs/${id}`),
+  syncHackerOne: () => api.post("/bounty/programs/sync-hackerone"),
   rankPrograms: () => api.get("/bounty/rank-programs"),
   getRecentChanges: (limit = 50) => api.get("/bounty-intelligence/programs/changes/recent", { params: { limit } }),
   recommendTarget: (exclude?: number[]) => api.get("/bounty/recommend-target", { params: exclude ? { exclude: exclude.join(",") } : undefined }),

@@ -1,4 +1,5 @@
 export type BountyView =
+  | 'hackerone'
   | 'backward-hunt'
   | 'tool-readiness'
   | 'browser'

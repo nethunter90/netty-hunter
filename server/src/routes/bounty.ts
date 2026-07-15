@@ -20,6 +20,8 @@ import { ScopeGuard } from "../middleware/scopeGuard";
 import logger from "../utils/logger";
 import { nvdClient, cvssToSeverity } from "../lib/intelligence/nvd-client";
 import { submissionQueue } from "../lib/intelligence/submission-queue";
+import { ProgramFetcher } from "../lib/bounty-intelligence/program-fetcher";
+import { runtimeConfig } from "../lib/runtime-config";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
@@ -127,6 +129,63 @@ router.post("/programs", async (req: Request, res: Response) => {
 
   const [program] = await db.insert(programs).values(parsed.data).returning();
   return res.status(201).json(program);
+});
+
+// Auto-discover every program the authenticated HackerOne account has access
+// to and insert any not already tracked directly into the real programs
+// table — the one ScopeGuard and hunts actually read from (not the separate
+// file-based ProgramFetcher store bounty-intelligence.ts's routes use, which
+// has no connection to the DB at all). Requires HACKERONE_USERNAME/TOKEN to
+// be set and the platform not to be disconnected; returns an empty result
+// rather than an error when either is missing, matching listAccessiblePrograms()'s
+// own fail-open-to-empty behavior.
+router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => {
+  try {
+    if (!runtimeConfig.isPlatformEnabled("hackerone")) {
+      return res.json({ total: 0, added: [], alreadyTracked: 0, failed: [], disabled: true });
+    }
+    const fetcher = new ProgramFetcher();
+    const accessible = await fetcher.listAccessiblePrograms();
+    if (accessible.length === 0) {
+      return res.json({ total: 0, added: [], alreadyTracked: 0, failed: [] });
+    }
+
+    const existingRows = await db.select({ programHandle: programs.programHandle })
+      .from(programs).where(eq(programs.platform, "hackerone"));
+    const existingHandles = new Set(existingRows.map(r => r.programHandle).filter((h): h is string => !!h));
+
+    const newPrograms = accessible.filter(p => !existingHandles.has(p.handle));
+    const results = await Promise.allSettled(newPrograms.map(async (prog) => {
+      const fetched = await fetcher.fetchHackerOne({
+        id: prog.handle, name: prog.name, platform: "hackerone",
+        url: `https://hackerone.com/${prog.handle}`, handle: prog.handle,
+        enabled: true, addedAt: Date.now(),
+      });
+      await db.insert(programs).values({
+        name: prog.name,
+        platform: "hackerone",
+        programHandle: prog.handle,
+        scope: fetched.scope.inScope.map(a => a.identifier).filter(Boolean),
+        outOfScope: fetched.scope.outOfScope.map(a => a.identifier).filter(Boolean),
+        maxPayout: fetched.rules.maxBounty ?? 0,
+        avgPayout: 0,
+        responseTime: 72,
+        tags: [],
+        wafBypassPolicy: "unspecified",
+      });
+      return prog.handle;
+    }));
+
+    const added = results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map(r => r.value);
+    const failed = newPrograms
+      .map((p, i) => ({ handle: p.handle, result: results[i] }))
+      .filter(x => x.result.status === "rejected")
+      .map(x => x.handle);
+
+    return res.json({ total: accessible.length, added, alreadyTracked: accessible.length - newPrograms.length, failed });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // NOTE: must be registered before "/programs/:id" so the literal path wins (ScopeManager.tsx).

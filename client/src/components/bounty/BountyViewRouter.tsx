@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { HackerOneDashboard } from './HackerOneDashboard';
 import { BackwardHunt } from './BackwardHunt';
 import { ToolReadiness } from './ToolReadiness';
 import { BrowserView } from './BrowserView';
@@ -79,6 +80,8 @@ interface BountyViewRouterProps {
 
 function BountyViewContent({ view }: BountyViewRouterProps) {
   switch (view) {
+    case 'hackerone':
+      return <HackerOneDashboard />;
     case 'backward-hunt':
       return <BackwardHunt />;
     case 'tool-readiness':

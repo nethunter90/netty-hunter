@@ -3,6 +3,7 @@ import { BountyViewRouter } from '../components/bounty/BountyViewRouter';
 import type { BountyView } from '../components/sidebar/BountyNavigation';
 
 const BOUNTY_VIEWS: { id: BountyView; label: string }[] = [
+  { id: 'hackerone', label: 'HackerOne' },
   { id: 'bounty-intelligence', label: 'Intelligence' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'submissions', label: 'Submissions' },

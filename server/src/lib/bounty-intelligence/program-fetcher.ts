@@ -633,7 +633,11 @@ export class ProgramFetcher extends EventEmitter {
     return programs;
   }
 
-  private async fetchHackerOne(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  /** Exposed (was private) so callers that need a real authenticated scope
+   *  fetch without going through this class's own file-based program store
+   *  (e.g. syncing straight into the DB-backed programs table) can reuse the
+   *  same authenticated-first, fallback-to-public logic instead of duplicating it. */
+  async fetchHackerOne(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
     const auth = this.h1AuthHeader();
