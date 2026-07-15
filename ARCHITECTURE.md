@@ -339,9 +339,13 @@ Layer 6 — l6_harvest
 
 Each layer emits `orchestration:layer_start/layer_complete/layer_error`. Also emits
 `l4:*` (re-broadcast hunt events), `l5:verifying/verified/rejected/public_duplicate/
-report_submitted/report_submit_failed`, `l6:report_generated/autonomy_updated/
-chains_extracted`, and publishes to a shared `eventBus` (`vulnerability_found`,
-`finding_verified`, `finding_rejected`). Note: `routes/orchestration.ts`'s Socket.IO
+report_queued`, `l6:report_generated/autonomy_updated/chains_extracted`, and publishes
+to a shared `eventBus` (`vulnerability_found`, `finding_verified`, `finding_rejected`).
+A verified finding is queued for human review (`submission-queue.ts`), never submitted
+automatically — `l5:report_submitted`/`l5:report_submit_failed` are emitted later, from
+`POST /api/bounty/submissions/:id/approve` (a plain `io.emit()` in `routes/bounty.ts`,
+not part of this orchestrator-instance event list), once an operator actually approves.
+Note: `routes/orchestration.ts`'s Socket.IO
 re-broadcast only forwards a subset of these — some `l5`/`l6`/`orchestration:*` events
 are internal-only unless that route is extended.
 
@@ -774,8 +778,9 @@ orchestration:started / layer_start / layer_complete / layer_error / audit / com
      aborted / targets_expanded / takeover_found / created / error
 l4:hunt_started / phase / observations / hypotheses / probing / probe_result /
      finding_raw / strategy_update / solver_finding / error       (orchestrator re-broadcast)
-l5:verifying / verified / rejected / public_duplicate / report_submitted /
-     report_submit_failed
+l5:verifying / verified / rejected / public_duplicate / report_queued
+     (report_submitted / report_submit_failed fire later, from the human-approval
+      REST route, not from the orchestrator instance — see the L5 section above)
 l6:report_generated / autonomy_updated / chains_extracted
 layer:status               { layer, phase, startedAt, completedAt }
 egress:route_changed       { route, target }

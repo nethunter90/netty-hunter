@@ -31,6 +31,7 @@ const EVENT_NAMES = [
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
   'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
+  'l5:report_submitted', 'l5:report_submit_failed',
   'hunt:secrets_found', 'hunt:ws_vulns', 'hunt:bucket_exposed',
   'hunt:proto_pollution', 'hunt:race_condition',
   'hunt:tech_payloads', 'hunt:params_discovered', 'hunt:oauth_vulns',
@@ -265,6 +266,29 @@ export function attachHuntEvents(): () => void {
       ts: ts(),
       platform: String(data.platform || ''),
       submissionId: String(data.submissionId || ''),
+    });
+  });
+
+  // Fired from the /approve REST route once a human review-approves a queued
+  // draft — this is the only remaining signal that a report actually reached
+  // the platform (or failed to); without it the feed goes silent forever
+  // after "queued for review".
+  socket.on('l5:report_submitted', (data: any) => {
+    push({
+      type: 'report_submitted',
+      ts: ts(),
+      platform: String(data.platform || ''),
+      reportId: data.reportId ? String(data.reportId) : undefined,
+      reportUrl: data.reportUrl ? String(data.reportUrl) : undefined,
+    });
+  });
+
+  socket.on('l5:report_submit_failed', (data: any) => {
+    push({
+      type: 'report_submit_failed',
+      ts: ts(),
+      platform: String(data.platform || ''),
+      error: data.error ? String(data.error) : undefined,
     });
   });
 

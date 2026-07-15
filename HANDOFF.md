@@ -213,7 +213,9 @@ and writes an audit entry. Between L1 and L2 it also does subdomain expansion
 `maxRequests` outside `[10, 50000]`.
 
 **Events:** `orchestration:*` lifecycle; `l4:*` (re-emitted hunt events, prefixed);
-`l5:verifying/public_duplicate/verified/rejected/report_submitted`; `l6:report_generated/...`.
+`l5:verifying/public_duplicate/verified/rejected/report_queued`; `l6:report_generated/...`.
+(A verified finding is queued for human review, not auto-submitted — see ARCHITECTURE.md's
+L5 section. `report_submitted`/`report_submit_failed` fire later, from the approve route.)
 Shared bus: `eventBus.publish('vulnerability_found' | 'finding_verified' | 'finding_rejected', ...)`.
 
 **Export:** the class only (`export default CampaignOrchestrator`) — **no module singleton.**

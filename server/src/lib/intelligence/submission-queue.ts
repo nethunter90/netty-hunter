@@ -15,6 +15,9 @@ import fs from "fs/promises";
 import path from "path";
 import logger from "../../utils/logger";
 import { reportSubmitter, type SubmissionPayload, type SubmissionResult } from "./report-submitter";
+import { db } from "../../db";
+import { findings } from "../../db/schema";
+import { eq } from "drizzle-orm";
 
 const STORE_DIR = path.join(process.cwd(), "workspace", "submissions");
 
@@ -92,6 +95,19 @@ class SubmissionQueue {
       entry.error = result.error;
     }
     await this.save(entry);
+    // The queue file is the source of truth for the review workflow itself,
+    // but the findings row is what /api/findings, exports, and dashboards
+    // read — without this it stays frozen at "Pending human review: <id>"
+    // forever, even after the report actually went out (or failed).
+    await this.syncFindingRow(entry.findingId, {
+      reportDraft: result.success
+        ? (result.reportUrl ? `Submitted: ${result.reportUrl}` : `Report ID: ${result.reportId}`)
+        : `Submission failed: ${result.error}`,
+      // Conditionally spread rather than passing submittedAt: undefined — an
+      // explicit undefined risks Drizzle writing NULL over a previously-set
+      // column instead of leaving it untouched.
+      ...(result.success ? { submittedAt: new Date() } : {}),
+    });
     return { entry, result };
   }
 
@@ -102,7 +118,22 @@ class SubmissionQueue {
     entry.status = "rejected";
     entry.reviewedAt = new Date().toISOString();
     await this.save(entry);
+    await this.syncFindingRow(entry.findingId, { reportDraft: "Rejected — not submitted" });
     return entry;
+  }
+
+  private async syncFindingRow(
+    findingId: number | undefined,
+    fields: { reportDraft: string; submittedAt?: Date },
+  ): Promise<void> {
+    if (findingId === undefined) return;
+    try {
+      await db.update(findings)
+        .set({ ...fields, updatedAt: new Date() })
+        .where(eq(findings.id, findingId));
+    } catch (err) {
+      logger.warn("[SubmissionQueue] Failed to sync outcome to findings row", { findingId, err: String(err) });
+    }
   }
 }
 

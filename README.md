@@ -369,7 +369,9 @@ Real-time typed event stream with distinct visual treatment per event type — r
 | `targets_expanded` | Blue globe, collapsible subdomain list |
 | `graphql_schema` | Purple code icon, type count + injectable count |
 | `ssrf_pivot` | Red target, cloud metadata badge, reachable endpoints |
-| `report_submitted` | Green checkmark, platform chip, report ID |
+| `report_queued` | Yellow clock, "queued for review" — nothing sent yet |
+| `report_submitted` | Green checkmark, platform chip, report ID (fires on human approval) |
+| `report_submit_failed` | Red X, platform chip, error message |
 | `changes_detected` | Yellow refresh, new/changed endpoint counts |
 | `secrets_found` | Red pulsing alert, type chips |
 | `takeover_found` | Orange globe, subdomain → service list |

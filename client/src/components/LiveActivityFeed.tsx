@@ -30,6 +30,7 @@ export type ActivityEvent =
   | { type: "ssrf_pivot"; ts: string; reachable: string[]; cloudMeta: boolean; newHypotheses: number }
   | { type: "report_submitted"; ts: string; platform: string; reportId?: string; reportUrl?: string }
   | { type: "report_queued"; ts: string; platform: string; submissionId: string }
+  | { type: "report_submit_failed"; ts: string; platform: string; error?: string }
   | { type: "changes_detected"; ts: string; newEndpoints: string[]; changed: number }
   | { type: "secrets_found"; ts: string; count: number; types: string[] }
   | { type: "takeover_found"; ts: string; targets: Array<{ subdomain: string; service: string; confidence: number }> }
@@ -614,6 +615,24 @@ function ReportSubmittedRow({ ev }: { ev: ActivityEvent & { type: "report_submit
   );
 }
 
+function ReportSubmitFailedRow({ ev }: { ev: ActivityEvent & { type: "report_submit_failed" } }) {
+  return (
+    <div className="border border-hack-red/40 bg-hack-red/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono flex-wrap">
+        <XCircle className="w-3.5 h-3.5 text-hack-red flex-shrink-0" />
+        <span className="text-hack-red font-bold">Report submission failed</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded border border-hack-red/30 text-hack-red bg-hack-red/10 font-mono uppercase">
+          {ev.platform}
+        </span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      {ev.error && (
+        <div className="text-[9px] text-hack-red/80 mt-0.5 ml-5 font-mono truncate">{ev.error}</div>
+      )}
+    </div>
+  );
+}
+
 function ReportQueuedRow({ ev }: { ev: ActivityEvent & { type: "report_queued" } }) {
   return (
     <div className="border border-hack-yellow/40 bg-hack-yellow/5 rounded p-2 my-1">
@@ -1141,6 +1160,8 @@ export function LiveActivityFeed({
               return <SSRFPivotRow key={key} ev={ev} />;
             case "report_submitted":
               return <ReportSubmittedRow key={key} ev={ev} />;
+            case "report_submit_failed":
+              return <ReportSubmitFailedRow key={key} ev={ev} />;
             case "report_queued":
               return <ReportQueuedRow key={key} ev={ev} />;
             case "changes_detected":

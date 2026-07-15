@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { Server as SocketServer } from "socket.io";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
@@ -629,6 +630,21 @@ router.post("/submissions/:id/approve", async (req: Request, res: Response) => {
   try {
     const outcome = await submissionQueue.approveAndSubmit(req.params.id);
     if (!outcome) return res.status(404).json({ success: false, error: "Not found or not pending review" });
+
+    // The queue emits nothing itself (it's a plain data-layer module with no
+    // socket access) — this is the only point where an operator watching the
+    // live feed learns the approval actually went through, instead of the
+    // feed going silent forever after "queued for review".
+    const io = req.app.get("io") as SocketServer | undefined;
+    if (io) {
+      const base = { findingId: outcome.entry.findingId, platform: outcome.entry.platform, submissionId: outcome.entry.id };
+      if (outcome.result.success) {
+        io.emit("l5:report_submitted", { ...base, reportId: outcome.result.reportId, reportUrl: outcome.result.reportUrl });
+      } else {
+        io.emit("l5:report_submit_failed", { ...base, error: outcome.result.error });
+      }
+    }
+
     return res.json({ success: outcome.result.success, submission: outcome.entry, result: outcome.result });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
