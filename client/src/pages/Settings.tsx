@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2, Cpu, RefreshCw, CheckCircle, Trash2 } from "lucide-react";
+import { Settings as SettingsIcon, Save, Eye, EyeOff, CheckCircle2, Cpu, RefreshCw, CheckCircle, Trash2, Power } from "lucide-react";
 import api from "../lib/api";
 import toast from "react-hot-toast";
 
@@ -31,6 +31,22 @@ const FIELDS: SettingField[] = [
 ];
 
 const GROUPS = [...new Set(FIELDS.map(f => f.group))];
+
+interface PlatformToggle {
+  key: string;
+  label: string;
+}
+
+// One toggle per hacker platform — flipping it off disconnects that platform
+// (no outbound scope-fetch or report-submission calls) without touching the
+// stored credential.
+const PLATFORM_TOGGLES: PlatformToggle[] = [
+  { key: "HACKERONE_ENABLED", label: "HackerOne" },
+  { key: "BUGCROWD_ENABLED",  label: "Bugcrowd" },
+  { key: "INTIGRITI_ENABLED", label: "Intigriti" },
+  { key: "YESWEHACK_ENABLED", label: "YesWeHack" },
+  { key: "SYNACK_ENABLED",    label: "Synack" },
+];
 
 interface LocalRuntime {
   name: string;
@@ -90,6 +106,19 @@ export default function SettingsPage() {
       toast.error("Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const isPlatformEnabled = (key: string) => values[key] !== "false";
+
+  const handleTogglePlatform = async (toggle: PlatformToggle) => {
+    const next = isPlatformEnabled(toggle.key) ? "false" : "true";
+    try {
+      await api.post("/settings", { [toggle.key]: next });
+      setValues(v => ({ ...v, [toggle.key]: next }));
+      toast.success(`${toggle.label} ${next === "true" ? "connected" : "disconnected"}`);
+    } catch {
+      toast.error(`Failed to toggle ${toggle.label}`);
     }
   };
 
@@ -155,6 +184,38 @@ export default function SettingsPage() {
         {GROUPS.map(group => (
           <div key={group}>
             <div className="text-[10px] font-mono text-hack-dim uppercase tracking-widest mb-3">{group}</div>
+
+            {group === "Platforms" && (
+              <div className="hack-panel p-3 mb-3 space-y-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <Power className="w-3.5 h-3.5 text-hack-accent" />
+                  <span className="text-xs font-mono text-hack-text">Platform Connections</span>
+                </div>
+                <div className="text-[10px] font-mono text-hack-dim mb-1">
+                  Disconnecting a platform stops all scope fetches and report submissions to it — credentials stay saved.
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {PLATFORM_TOGGLES.map(toggle => {
+                    const enabled = isPlatformEnabled(toggle.key);
+                    return (
+                      <button
+                        key={toggle.key}
+                        onClick={() => handleTogglePlatform(toggle)}
+                        className={`flex items-center justify-between px-2 py-1.5 rounded border text-[10px] font-mono transition-all ${
+                          enabled
+                            ? "border-hack-accent/50 text-hack-accent bg-hack-accent/5"
+                            : "border-hack-red/40 text-hack-red bg-hack-red/5"
+                        }`}
+                      >
+                        <span>{toggle.label}</span>
+                        <span>{enabled ? "CONNECTED" : "DISCONNECTED"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-3">
               {FIELDS.filter(f => f.group === group).map(field => (
                 <div key={field.key} className="hack-panel p-3">

@@ -44,6 +44,11 @@ const SEVERITY_TO_BUGCROWD_PRIORITY: Record<string, number> = {
 
 class ReportSubmitter {
   async submit(payload: SubmissionPayload): Promise<SubmissionResult> {
+    if (!runtimeConfig.isPlatformEnabled(payload.platform)) {
+      logger.warn("[ReportSubmitter] Platform disconnected — submission skipped", { platform: payload.platform });
+      return { success: false, platform: payload.platform, draftOnly: true, error: `${payload.platform} is disconnected` };
+    }
+
     switch (payload.platform) {
       case "hackerone":  return this.submitHackerOne(payload);
       case "bugcrowd":   return this.submitBugcrowd(payload);

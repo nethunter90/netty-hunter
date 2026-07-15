@@ -220,6 +220,40 @@ router.post("/programs/add", async (req: Request, res: Response) => {
   }
 });
 
+// Auto-discover programs the authenticated HackerOne account has access to
+// and add any not already tracked locally. No-op if HackerOne is disconnected
+// or no credentials are configured.
+router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => {
+  try {
+    const fetcher = service.programFetcher as any;
+    if (typeof fetcher.listAccessiblePrograms !== "function") {
+      return res.status(501).json({ error: "listAccessiblePrograms not available" });
+    }
+    const accessible: Array<{ handle: string; name: string }> = await fetcher.listAccessiblePrograms();
+    const existingHandles = new Set(
+      service.programFetcher.listPrograms()
+        .filter(p => p.platform === "hackerone")
+        .map(p => p.handle)
+    );
+
+    const added: string[] = [];
+    for (const program of accessible) {
+      if (existingHandles.has(program.handle)) continue;
+      await service.programFetcher.addProgram({
+        name: program.name,
+        platform: "hackerone",
+        url: `https://hackerone.com/${program.handle}`,
+        handle: program.handle,
+      });
+      added.push(program.handle);
+    }
+
+    res.json({ total: accessible.length, added });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/programs/fetch-all", async (_req: Request, res: Response) => {
   try {
     if (typeof (service.programFetcher as any).fetchAll === "function") {

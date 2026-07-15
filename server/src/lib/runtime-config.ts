@@ -21,7 +21,22 @@ export const RUNTIME_CONFIG_ALLOWED_KEYS = new Set([
   "NVD_API_KEY", "OOB_HOST", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
   "OLLAMA_BASE_URL", "OLLAMA_DEFAULT_MODEL", "EMBED_MODEL",
   "CLAUDE_REASON_MODEL",
+  // Per-platform connection toggles — "false" disconnects the platform (no
+  // outbound API calls for scope fetching or report submission) without
+  // requiring the credential itself to be deleted.
+  "HACKERONE_ENABLED", "BUGCROWD_ENABLED", "INTIGRITI_ENABLED",
+  "YESWEHACK_ENABLED", "SYNACK_ENABLED",
 ]);
+
+export type BountyPlatform = "hackerone" | "bugcrowd" | "intigriti" | "yeswehack" | "synack";
+
+const PLATFORM_ENABLED_KEY: Record<BountyPlatform, string> = {
+  hackerone: "HACKERONE_ENABLED",
+  bugcrowd: "BUGCROWD_ENABLED",
+  intigriti: "INTIGRITI_ENABLED",
+  yeswehack: "YESWEHACK_ENABLED",
+  synack: "SYNACK_ENABLED",
+};
 
 class RuntimeConfig {
   private readonly store = new Map<string, string>();
@@ -57,6 +72,11 @@ class RuntimeConfig {
     for (const { key, value } of entries) {
       if (value != null) this.set(key, String(value));
     }
+  }
+
+  /** True unless the operator has explicitly toggled the platform off. */
+  isPlatformEnabled(platform: BountyPlatform): boolean {
+    return this.get(PLATFORM_ENABLED_KEY[platform]) !== "false";
   }
 }
 

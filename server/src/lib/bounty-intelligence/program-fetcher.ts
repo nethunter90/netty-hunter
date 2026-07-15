@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs/promises';
 import path from 'path';
+import { runtimeConfig } from '../runtime-config';
 
 // === Interfaces ===
 
@@ -205,6 +206,12 @@ export class ProgramFetcher extends EventEmitter {
       return { success: false, changes: [], documentation: null };
     }
 
+    if (config.platform !== 'custom' && !runtimeConfig.isPlatformEnabled(config.platform)) {
+      const existing = this.documentation.get(programId);
+      this.emit('program:error', { programId: config.id, name: config.name, error: `${config.platform} is disconnected` });
+      return { success: false, changes: [], documentation: existing || null };
+    }
+
     try {
       let fetched: { scope: ProgramScope; rules: ProgramRules; description: string };
 
@@ -283,7 +290,9 @@ export class ProgramFetcher extends EventEmitter {
   }
 
   async fetchAllPrograms(): Promise<{ total: number; succeeded: number; failed: number; changesDetected: number; results: Array<{ programId: string; success: boolean; changes: number }> }> {
-    const enabled = Array.from(this.programs.values()).filter(p => p.enabled);
+    const enabled = Array.from(this.programs.values())
+      .filter(p => p.enabled)
+      .filter(p => p.platform === 'custom' || runtimeConfig.isPlatformEnabled(p.platform));
     this.emit('autofetch:start', { count: enabled.length });
 
     const results: Array<{ programId: string; success: boolean; changes: number }> = [];
@@ -590,9 +599,107 @@ export class ProgramFetcher extends EventEmitter {
     };
   }
 
+  private h1AuthHeader(): string | null {
+    const username = runtimeConfig.get('HACKERONE_USERNAME');
+    const token = runtimeConfig.get('HACKERONE_TOKEN');
+    if (!username || !token) return null;
+    return 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
+  }
+
+  /** Enumerate the programs the authenticated hacker account actually has access to. */
+  async listAccessiblePrograms(): Promise<Array<{ handle: string; name: string }>> {
+    if (!runtimeConfig.isPlatformEnabled('hackerone')) return [];
+    const auth = this.h1AuthHeader();
+    if (!auth) return [];
+
+    const programs: Array<{ handle: string; name: string }> = [];
+    let url: string | null = 'https://api.hackerone.com/v1/hackers/programs';
+
+    while (url) {
+      const response: Response = await fetch(url, {
+        headers: { 'Accept': 'application/json', 'Authorization': auth },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) break;
+
+      const data = await response.json() as any;
+      for (const item of data.data || []) {
+        const handle = item.attributes?.handle;
+        if (handle) programs.push({ handle, name: item.attributes?.name || handle });
+      }
+      url = data.links?.next || null;
+    }
+
+    return programs;
+  }
+
   private async fetchHackerOne(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
+    const auth = this.h1AuthHeader();
+
+    // Prefer the authenticated hacker-resources API — it returns structured
+    // scope for private/invite-only programs, which the public JSON endpoint
+    // below cannot see.
+    if (auth) {
+      try {
+        const response = await fetch(`https://api.hackerone.com/v1/hackers/programs/${handle}`, {
+          headers: { 'Accept': 'application/json', 'Authorization': auth },
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (response.ok) {
+          const data = await response.json() as any;
+          const attrs = data.data?.attributes || {};
+
+          const inScope: ScopeAsset[] = [];
+          const outOfScope: ScopeAsset[] = [];
+
+          if (data.data?.relationships?.structured_scopes?.data) {
+            for (const scope of data.data.relationships.structured_scopes.data) {
+              const sAttrs = scope.attributes || {};
+              const asset: ScopeAsset = {
+                type: this.mapHackerOneAssetType(sAttrs.asset_type),
+                identifier: sAttrs.asset_identifier || '',
+                maxSeverity: sAttrs.max_severity || undefined,
+                eligible: sAttrs.eligible_for_bounty ?? true,
+                instruction: sAttrs.instruction || undefined,
+              };
+              if (sAttrs.eligible_for_submission !== false) {
+                inScope.push(asset);
+              } else {
+                outOfScope.push(asset);
+              }
+            }
+          }
+
+          if (inScope.length > 0 || outOfScope.length > 0) {
+            const programScope: ProgramScope = {
+              inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
+              outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
+              lastUpdated: Date.now(),
+            };
+
+            const rules: ProgramRules = {
+              disclosure: attrs.policy || 'coordinated',
+              safeHarbor: attrs.safe_harbor_enabled ?? true,
+              maxBounty: undefined,
+              minBounty: undefined,
+              responseTime: attrs.response_efficiency_percentage
+                ? `${attrs.response_efficiency_percentage}% within SLA`
+                : '5 business days',
+              rules: this.generateFallbackRules(domain, 'hackerone').rules,
+              exclusions: this.generateFallbackRules(domain, 'hackerone').exclusions,
+              lastUpdated: Date.now(),
+            };
+
+            const description = attrs.about || attrs.description || `HackerOne program for ${config.name}`;
+
+            return { scope: programScope, rules, description };
+          }
+        }
+      } catch {}
+    }
 
     try {
       const response = await fetch(`https://hackerone.com/api/v1/hackers/programs/${handle}`, {
