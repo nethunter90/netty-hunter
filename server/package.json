@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "golden:compare": "tsx golden-run/compare.ts",
-    "reset:learning": "tsx scripts/reset-learning.ts"
+    "reset:learning": "tsx scripts/reset-learning.ts",
+    "cleanup:fake-hackerone": "tsx scripts/cleanup-fake-hackerone-programs.ts"
   },
   "dependencies": {
     "axios": "^1.6.2",

@@ -161,6 +161,13 @@ router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => 
         url: `https://hackerone.com/${prog.handle}`, handle: prog.handle,
         enabled: true, addedAt: Date.now(),
       });
+      // Never insert a program whose scope/rules came from the synthetic
+      // fallback template — that's how 591 programs ended up with identical
+      // numbers before. Skip it instead; the caller can retry sync later
+      // once the underlying fetch (auth/handle/rate-limit) is fixed.
+      if (!fetched.realDataFound) {
+        return { handle: prog.handle, status: "skipped" as const };
+      }
       const metadata: ProgramMetadata = {
         scopeAssets: { inScope: fetched.scope.inScope, outOfScope: fetched.scope.outOfScope },
         submissionState: fetched.rules.submissionState,
@@ -190,16 +197,31 @@ router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => 
         wafBypassPolicy: "unspecified",
         metadata,
       });
-      return prog.handle;
+      return { handle: prog.handle, status: "added" as const };
     }));
 
-    const added = results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled").map(r => r.value);
-    const failed = newPrograms
-      .map((p, i) => ({ handle: p.handle, result: results[i] }))
+    const settled = results
+      .map((r, i) => ({ handle: newPrograms[i].handle, result: r }));
+    const added = settled
+      .filter(x => x.result.status === "fulfilled" && (x.result as PromiseFulfilledResult<{ handle: string; status: string }>).value.status === "added")
+      .map(x => x.handle);
+    const skippedNoRealScope = settled
+      .filter(x => x.result.status === "fulfilled" && (x.result as PromiseFulfilledResult<{ handle: string; status: string }>).value.status === "skipped")
+      .map(x => x.handle);
+    const failed = settled
       .filter(x => x.result.status === "rejected")
       .map(x => x.handle);
 
-    return res.json({ total: accessible.length, added, alreadyTracked: accessible.length - newPrograms.length, failed });
+    return res.json({
+      total: accessible.length,
+      added,
+      alreadyTracked: accessible.length - newPrograms.length,
+      // Fetched OK but only synthetic fallback data was available (auth
+      // missing/failed, handle mismatch, or HackerOne returned no structured
+      // scope) — nothing fake was inserted for these; re-run sync later.
+      skippedNoRealScope,
+      failed,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

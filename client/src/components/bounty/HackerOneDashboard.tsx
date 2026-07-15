@@ -60,6 +60,7 @@ interface SyncResult {
   total: number;
   added: string[];
   alreadyTracked: number;
+  skippedNoRealScope: string[];
   failed: string[];
   disabled?: boolean;
 }
@@ -148,6 +149,9 @@ export function HackerOneDashboard() {
         toast('No accessible programs found — check your HackerOne credentials', { icon: 'ℹ️' });
       } else {
         toast.success(`Up to date — ${result.alreadyTracked} program(s) already tracked`);
+      }
+      if (result.skippedNoRealScope?.length > 0) {
+        toast(`Skipped ${result.skippedNoRealScope.length} program(s) — no real scope data returned by HackerOne (check credentials, try again later)`, { icon: '⚠️' });
       }
       if (result.failed.length > 0) {
         toast.error(`Failed to fetch scope for: ${result.failed.join(', ')}`);

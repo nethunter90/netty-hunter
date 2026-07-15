@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs/promises';
 import path from 'path';
 import { runtimeConfig } from '../runtime-config';
+import logger from '../../utils/logger';
 
 // === Interfaces ===
 
@@ -657,8 +658,20 @@ export class ProgramFetcher extends EventEmitter {
   /** Exposed (was private) so callers that need a real authenticated scope
    *  fetch without going through this class's own file-based program store
    *  (e.g. syncing straight into the DB-backed programs table) can reuse the
-   *  same authenticated-first, fallback-to-public logic instead of duplicating it. */
-  async fetchHackerOne(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+   *  same authenticated-first, fallback-to-public logic instead of duplicating it.
+   *
+   *  `realDataFound` is the load-bearing part of this contract: every failure
+   *  mode (non-2xx, thrown error, or a 2xx with an empty structured_scopes
+   *  relationship) used to be swallowed silently and fall through to
+   *  generateFallbackScope()/generateFallbackRules() — a FIXED, identical
+   *  synthetic template (same asset count, same $10k bounty) regardless of
+   *  which program it was "for". Found live: syncing an account's accessible
+   *  programs produced hundreds of rows that were all identical except the
+   *  name, because every single fetch attempt was failing for reasons that
+   *  were never logged. Callers MUST check this flag before trusting scope/
+   *  rules as real — see sync-hackerone in routes/bounty.ts, which now skips
+   *  inserting a program rather than storing fabricated data as if real. */
+  async fetchHackerOne(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
     const auth = this.h1AuthHeader();
@@ -700,17 +713,15 @@ export class ProgramFetcher extends EventEmitter {
 
           if (inScope.length > 0 || outOfScope.length > 0) {
             const programScope: ProgramScope = {
-              inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-              outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
+              inScope,
+              outOfScope,
               lastUpdated: Date.now(),
             };
 
             // Best-effort real bounty range — HackerOne's exact attribute
             // naming isn't pinned down against live API docs here, so this
             // tries the plausible key spellings and stays undefined (never a
-            // guessed number) if none are present. Distinct from the fallback
-            // path below, which still needs a synthetic placeholder since it
-            // has no real data at all to work with.
+            // guessed number) if none are present.
             const lowerBounty = Number(attrs.average_bounty_lower_amount ?? attrs.bounty_lower_amount);
             const upperBounty = Number(attrs.average_bounty_upper_amount ?? attrs.bounty_upper_amount);
 
@@ -735,10 +746,15 @@ export class ProgramFetcher extends EventEmitter {
 
             const description = attrs.about || attrs.description || `HackerOne program for ${config.name}`;
 
-            return { scope: programScope, rules, description };
+            return { scope: programScope, rules, description, realDataFound: true };
           }
+          logger.warn('[ProgramFetcher] HackerOne authenticated fetch OK but structured_scopes was empty', { handle });
+        } else {
+          logger.warn('[ProgramFetcher] HackerOne authenticated fetch failed', { handle, status: response.status });
         }
-      } catch {}
+      } catch (err) {
+        logger.warn('[ProgramFetcher] HackerOne authenticated fetch threw', { handle, err: String(err) });
+      }
     }
 
     try {
@@ -771,36 +787,48 @@ export class ProgramFetcher extends EventEmitter {
           }
         }
 
-        const programScope: ProgramScope = {
-          inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-          outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
-          lastUpdated: Date.now(),
-        };
+        if (inScope.length > 0 || outOfScope.length > 0) {
+          const programScope: ProgramScope = {
+            inScope,
+            outOfScope,
+            lastUpdated: Date.now(),
+          };
 
-        const bountyTable = data.relationships?.bounty_table?.data?.attributes || {};
-        const rules: ProgramRules = {
-          disclosure: data.attributes?.policy || 'coordinated',
-          safeHarbor: data.attributes?.safe_harbor_enabled ?? true,
-          maxBounty: bountyTable.max_bounty || undefined,
-          minBounty: bountyTable.min_bounty || undefined,
-          responseTime: data.attributes?.response_efficiency_percentage
-            ? `${data.attributes.response_efficiency_percentage}% within SLA`
-            : '5 business days',
-          rules: this.generateFallbackRules(domain, 'hackerone').rules,
-          exclusions: this.generateFallbackRules(domain, 'hackerone').exclusions,
-          lastUpdated: Date.now(),
-        };
+          const bountyTable = data.relationships?.bounty_table?.data?.attributes || {};
+          const rules: ProgramRules = {
+            disclosure: data.attributes?.policy || 'coordinated',
+            safeHarbor: data.attributes?.safe_harbor_enabled ?? true,
+            maxBounty: bountyTable.max_bounty || undefined,
+            minBounty: bountyTable.min_bounty || undefined,
+            responseTime: data.attributes?.response_efficiency_percentage
+              ? `${data.attributes.response_efficiency_percentage}% within SLA`
+              : undefined,
+            // Same discipline as the authenticated branch above — no
+            // fabricated rules/exclusions text for a program we don't
+            // actually have a genuine structured list for.
+            rules: [],
+            exclusions: [],
+            lastUpdated: Date.now(),
+          };
 
-        const description = data.attributes?.about || data.attributes?.description || `HackerOne program for ${config.name}`;
+          const description = data.attributes?.about || data.attributes?.description || `HackerOne program for ${config.name}`;
 
-        return { scope: programScope, rules, description };
+          return { scope: programScope, rules, description, realDataFound: true };
+        }
+        logger.warn('[ProgramFetcher] HackerOne public fetch OK but structured_scopes was empty', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] HackerOne public fetch failed', { handle, status: response.status });
       }
-    } catch {}
+    } catch (err) {
+      logger.warn('[ProgramFetcher] HackerOne public fetch threw', { handle, err: String(err) });
+    }
 
+    logger.warn('[ProgramFetcher] No real scope data found for HackerOne program — falling back to synthetic placeholder', { handle });
     return {
       scope: this.generateFallbackScope(domain),
       rules: this.generateFallbackRules(domain, 'hackerone'),
       description: `HackerOne bug bounty program for ${config.name}. Targets include ${domain} and related assets.`,
+      realDataFound: false,
     };
   }
 
