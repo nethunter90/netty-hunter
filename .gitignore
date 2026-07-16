@@ -25,6 +25,9 @@ server/workspace/target-crashes.jsonl
 server/nikto_*.json
 server/workspace/audit/
 server/workspace/bounty-intelligence/known-findings.json
+server/workspace/bounty-intelligence/synergy/executions/
+server/workspace/bounty-intelligence/synergy/playbooks/
+server/workspace/bounty-intelligence/synergy/synergy-scores.json
 
 # Nested external repo (xbow benchmarks clone, has its own .git, ~2.3GB) —
 # never commit this into netty-hunter's own history
