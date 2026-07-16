@@ -28,6 +28,7 @@
  *   npm run cleanup:fake-hackerone            (dry run — lists matches only)
  *   npm run cleanup:fake-hackerone -- --confirm   (deletes the safe matches)
  */
+import "dotenv/config";
 import { pool } from "../src/db";
 
 const CONFIRM = process.argv.slice(2).includes("--confirm");

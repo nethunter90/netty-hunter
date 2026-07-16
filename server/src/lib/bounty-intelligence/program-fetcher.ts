@@ -623,7 +623,7 @@ export class ProgramFetcher extends EventEmitter {
 
   private h1AuthHeader(): string | null {
     const username = runtimeConfig.get('HACKERONE_USERNAME');
-    const token = runtimeConfig.get('HACKERONE_TOKEN');
+    const token = runtimeConfig.get('HACKERONE_TOKEN') || process.env.HACKERONE_API_TOKEN;
     if (!username || !token) return null;
     return 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
   }
@@ -681,20 +681,27 @@ export class ProgramFetcher extends EventEmitter {
     // below cannot see.
     if (auth) {
       try {
-        const response = await fetch(`https://api.hackerone.com/v1/hackers/programs/${handle}`, {
+        const response = await fetch(`https://api.hackerone.com/v1/hackers/programs/${handle}?include=structured_scopes`, {
           headers: { 'Accept': 'application/json', 'Authorization': auth },
           signal: AbortSignal.timeout(15000),
         });
 
         if (response.ok) {
           const data = await response.json() as any;
-          const attrs = data.data?.attributes || {};
+          // This single-resource endpoint returns the program directly at the
+          // top level ({id, type, attributes, relationships}) — unlike the
+          // list endpoint above it, which wraps entries in `data: [...]`.
+          // Reading `data.data?.attributes` here always came back undefined,
+          // so structured_scopes looked empty for every single program even
+          // though the API was returning real scope data (see
+          // fetchHackerOne's doc comment for how this was found).
+          const attrs = data.attributes || {};
 
           const inScope: ScopeAsset[] = [];
           const outOfScope: ScopeAsset[] = [];
 
-          if (data.data?.relationships?.structured_scopes?.data) {
-            for (const scope of data.data.relationships.structured_scopes.data) {
+          if (data.relationships?.structured_scopes?.data) {
+            for (const scope of data.relationships.structured_scopes.data) {
               const sAttrs = scope.attributes || {};
               const asset: ScopeAsset = {
                 type: this.mapHackerOneAssetType(sAttrs.asset_type),
