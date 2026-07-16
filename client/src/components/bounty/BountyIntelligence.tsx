@@ -28,7 +28,7 @@ interface AgentStatus {
 }
 
 interface ScopeResult {
-  targets?: { name: string; priority: string }[];
+  targets?: { url: string; priority: string }[];
   attackSurface?: Record<string, number>;
   subdomains?: string[];
   recommendations?: string[];
@@ -887,7 +887,7 @@ export function BountyIntelligence() {
                       <div className="space-y-2">
                         {scopeResult.targets.map((t, i) => (
                           <div key={i} className="flex items-center justify-between bg-[#1e1e1e] border border-[#3d3d3d] rounded px-3 py-2" data-testid={`card-target-${i}`}>
-                            <span className="text-xs text-gray-300">{t.name}</span>
+                            <span className="text-xs text-gray-300">{t.url}</span>
                             <Badge className={cn('text-[10px]', getPriorityColor(t.priority))}>{t.priority}</Badge>
                           </div>
                         ))}

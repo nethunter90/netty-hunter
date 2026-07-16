@@ -366,10 +366,27 @@ export class BountyIntelligenceService extends EventEmitter {
     const domain = target.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
 
     const storedPrograms = this.programFetcher.listPrograms();
-    const matchedProgram = storedPrograms.find(p => {
-      const progDomain = p.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-      return domain.includes(progDomain) || progDomain.includes(domain) || p.handle === domain;
-    });
+    // Rank instead of taking the first array match — multiple programs can
+    // share the same bare domain (e.g. hackerone.com/example vs
+    // hackerone.com/security both resolve to "hackerone.com"), and picking
+    // whichever was added to the store first previously meant a placeholder
+    // demo program could win over the real one. Prefer, in order: an exact
+    // handle match, an exact domain match, then among any remaining substring
+    // matches the one fetched most recently (a live/maintained program is a
+    // better bet than a stale one when the domain alone can't disambiguate).
+    const candidates = storedPrograms
+      .map(p => {
+        const progDomain = p.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        let rank = -1;
+        if (p.handle === domain) rank = 3;
+        else if (progDomain === domain) rank = 2;
+        else if (domain.includes(progDomain) || progDomain.includes(domain)) rank = 1;
+        return { p, rank, lastFetched: this.programFetcher.getProgram(p.id)?.lastFetched ?? 0 };
+      })
+      .filter(c => c.rank >= 0)
+      .sort((a, b) => b.rank - a.rank || b.lastFetched - a.lastFetched);
+
+    const matchedProgram = candidates[0]?.p;
 
     if (matchedProgram) {
       const doc = this.programFetcher.getProgram(matchedProgram.id);
