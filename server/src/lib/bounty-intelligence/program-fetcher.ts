@@ -73,6 +73,11 @@ export interface ProgramDocumentation {
   lastFetched: number;
   fetchHistory: FetchRecord[];
   changes: ChangeRecord[];
+  /** False when scope/rules above are the synthetic fallback template
+   *  (or a stale real doc kept because the latest fetch only produced
+   *  fallback data) rather than genuinely fetched per-program data.
+   *  Consumers (e.g. analyzeScope()) should treat false as low-confidence. */
+  realDataFound: boolean;
 }
 
 export interface FetchRecord {
@@ -80,6 +85,7 @@ export interface FetchRecord {
   success: boolean;
   error?: string;
   changesDetected: boolean;
+  realDataFound: boolean;
 }
 
 export interface ChangeRecord {
@@ -235,7 +241,7 @@ export class ProgramFetcher extends EventEmitter {
     }
 
     try {
-      let fetched: { scope: ProgramScope; rules: ProgramRules; description: string };
+      let fetched: { scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean };
 
       switch (config.platform) {
         case 'hackerone':
@@ -259,6 +265,27 @@ export class ProgramFetcher extends EventEmitter {
       }
 
       const existing = this.documentation.get(programId);
+
+      // Never let a fetch that only produced the synthetic fallback clobber
+      // previously-obtained real scope — mirrors the DB-side sync-hackerone
+      // fix (skip fake data rather than store it as real). Record the
+      // attempt in fetchHistory as degraded and keep serving the last real doc.
+      if (!fetched.realDataFound && existing?.realDataFound) {
+        logger.warn('[ProgramFetcher] Fetch returned only fallback data — keeping previous real scope', { programId, name: config.name, platform: config.platform });
+        const fetchRecord: FetchRecord = {
+          timestamp: Date.now(),
+          success: false,
+          error: 'Fetch returned only synthetic fallback data; kept previous real scope',
+          changesDetected: false,
+          realDataFound: false,
+        };
+        existing.fetchHistory = [...existing.fetchHistory, fetchRecord].slice(-100);
+        this.documentation.set(programId, existing);
+        await this.saveProgramDoc(programId);
+        this.emit('program:error', { programId: config.id, name: config.name, error: 'No real scope data found — kept previous data' });
+        return { success: false, changes: [], documentation: existing };
+      }
+
       const changes = existing ? this.detectChanges(existing, fetched) : [];
       const now = Date.now();
 
@@ -266,6 +293,7 @@ export class ProgramFetcher extends EventEmitter {
         timestamp: now,
         success: true,
         changesDetected: changes.length > 0,
+        realDataFound: fetched.realDataFound,
       };
 
       const doc: ProgramDocumentation = {
@@ -279,12 +307,13 @@ export class ProgramFetcher extends EventEmitter {
         lastFetched: now,
         fetchHistory: [...(existing?.fetchHistory || []), fetchRecord].slice(-100),
         changes: [...(existing?.changes || []), ...changes].slice(-500),
+        realDataFound: fetched.realDataFound,
       };
 
       this.documentation.set(programId, doc);
       await this.saveProgramDoc(programId);
 
-      this.emit('program:fetched', { programId: config.id, name: config.name, success: true });
+      this.emit('program:fetched', { programId: config.id, name: config.name, success: true, realDataFound: fetched.realDataFound });
 
       if (changes.length > 0) {
         this.emit('program:changed', { programId: config.id, name: config.name, changes });
@@ -298,6 +327,7 @@ export class ProgramFetcher extends EventEmitter {
         success: false,
         error: err.message || String(err),
         changesDetected: false,
+        realDataFound: false,
       };
 
       if (existing) {
@@ -621,6 +651,14 @@ export class ProgramFetcher extends EventEmitter {
     };
   }
 
+  /** Number(v) collapses to NaN for undefined/null/'' , so `Number.isFinite`
+   *  (not `|| undefined`) is required to tell a genuine 0 (e.g. a real $0
+   *  VDP-only bounty cap) apart from "the API didn't give us this field". */
+  private numOrUndef(v: unknown): number | undefined {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   private h1AuthHeader(): string | null {
     const username = runtimeConfig.get('HACKERONE_USERNAME');
     const token = runtimeConfig.get('HACKERONE_TOKEN') || process.env.HACKERONE_API_TOKEN;
@@ -703,9 +741,14 @@ export class ProgramFetcher extends EventEmitter {
           if (data.relationships?.structured_scopes?.data) {
             for (const scope of data.relationships.structured_scopes.data) {
               const sAttrs = scope.attributes || {};
+              // Skip entries with no identifier entirely — pushing an empty
+              // string let realDataFound:true be returned for a program
+              // whose "scope" was actually unusable once bounty.ts's own
+              // `.filter(Boolean)` on identifiers stripped these out again.
+              if (!sAttrs.asset_identifier) continue;
               const asset: ScopeAsset = {
                 type: this.mapHackerOneAssetType(sAttrs.asset_type),
-                identifier: sAttrs.asset_identifier || '',
+                identifier: sAttrs.asset_identifier,
                 maxSeverity: sAttrs.max_severity || undefined,
                 eligible: sAttrs.eligible_for_bounty ?? true,
                 instruction: sAttrs.instruction || undefined,
@@ -779,9 +822,10 @@ export class ProgramFetcher extends EventEmitter {
         if (data.relationships?.structured_scopes?.data) {
           for (const scope of data.relationships.structured_scopes.data) {
             const attrs = scope.attributes || {};
+            if (!attrs.asset_identifier) continue;
             const asset: ScopeAsset = {
               type: this.mapHackerOneAssetType(attrs.asset_type),
-              identifier: attrs.asset_identifier || '',
+              identifier: attrs.asset_identifier,
               maxSeverity: attrs.max_severity || undefined,
               eligible: attrs.eligible_for_bounty ?? true,
               instruction: attrs.instruction || undefined,
@@ -805,8 +849,11 @@ export class ProgramFetcher extends EventEmitter {
           const rules: ProgramRules = {
             disclosure: data.attributes?.policy || 'coordinated',
             safeHarbor: data.attributes?.safe_harbor_enabled ?? true,
-            maxBounty: bountyTable.max_bounty || undefined,
-            minBounty: bountyTable.min_bounty || undefined,
+            // Number.isFinite (via numOrUndef), not `||` — a genuine $0 bounty
+            // (VDP-only program) must not collapse to "no data", matching the
+            // fix applied to the authenticated branch above.
+            maxBounty: this.numOrUndef(bountyTable.max_bounty),
+            minBounty: this.numOrUndef(bountyTable.min_bounty),
             responseTime: data.attributes?.response_efficiency_percentage
               ? `${data.attributes.response_efficiency_percentage}% within SLA`
               : undefined,
@@ -839,7 +886,7 @@ export class ProgramFetcher extends EventEmitter {
     };
   }
 
-  private async fetchBugcrowd(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  private async fetchBugcrowd(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
 
@@ -859,9 +906,11 @@ export class ProgramFetcher extends EventEmitter {
           for (const group of data.target_groups) {
             if (group.targets) {
               for (const target of group.targets) {
+                const identifier = target.name || target.uri || '';
+                if (!identifier) continue;
                 const asset: ScopeAsset = {
                   type: this.mapBugcrowdAssetType(target.category),
-                  identifier: target.name || target.uri || '',
+                  identifier,
                   maxSeverity: target.max_severity || undefined,
                   eligible: true,
                   instruction: target.description || undefined,
@@ -876,37 +925,42 @@ export class ProgramFetcher extends EventEmitter {
           }
         }
 
-        const programScope: ProgramScope = {
-          inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-          outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
-          lastUpdated: Date.now(),
-        };
+        if (inScope.length > 0 || outOfScope.length > 0) {
+          const programScope: ProgramScope = { inScope, outOfScope, lastUpdated: Date.now() };
 
-        const rules: ProgramRules = {
-          disclosure: data.disclosure_policy || 'coordinated',
-          safeHarbor: data.safe_harbor ?? true,
-          maxBounty: data.max_payout || undefined,
-          minBounty: data.min_payout || undefined,
-          responseTime: data.response_time || '5 business days',
-          rules: this.generateFallbackRules(domain, 'bugcrowd').rules,
-          exclusions: this.generateFallbackRules(domain, 'bugcrowd').exclusions,
-          lastUpdated: Date.now(),
-        };
+          const rules: ProgramRules = {
+            disclosure: data.disclosure_policy || 'coordinated',
+            safeHarbor: data.safe_harbor ?? true,
+            maxBounty: this.numOrUndef(data.max_payout),
+            minBounty: this.numOrUndef(data.min_payout),
+            responseTime: data.response_time || undefined,
+            rules: [],
+            exclusions: [],
+            lastUpdated: Date.now(),
+          };
 
-        const description = data.description || data.brief_url || `Bugcrowd program for ${config.name}`;
+          const description = data.description || data.brief_url || `Bugcrowd program for ${config.name}`;
 
-        return { scope: programScope, rules, description };
+          return { scope: programScope, rules, description, realDataFound: true };
+        }
+        logger.warn('[ProgramFetcher] Bugcrowd fetch OK but no scope targets found', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] Bugcrowd fetch failed', { handle, status: response.status });
       }
-    } catch {}
+    } catch (err) {
+      logger.warn('[ProgramFetcher] Bugcrowd fetch threw', { handle, err: String(err) });
+    }
 
+    logger.warn('[ProgramFetcher] No real scope data found for Bugcrowd program — falling back to synthetic placeholder', { handle });
     return {
       scope: this.generateFallbackScope(domain),
       rules: this.generateFallbackRules(domain, 'bugcrowd'),
       description: `Bugcrowd bug bounty program for ${config.name}. Targets include ${domain} and related assets.`,
+      realDataFound: false,
     };
   }
 
-  private async fetchIntigriti(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  private async fetchIntigriti(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
 
@@ -924,9 +978,11 @@ export class ProgramFetcher extends EventEmitter {
 
         if (data.domains) {
           for (const d of data.domains) {
+            const identifier = d.endpoint || d.domain || '';
+            if (!identifier) continue;
             const asset: ScopeAsset = {
               type: this.mapIntigritiAssetType(d.type),
-              identifier: d.endpoint || d.domain || '',
+              identifier,
               maxSeverity: d.severity || undefined,
               eligible: d.bounty_eligible ?? true,
               instruction: d.description || undefined,
@@ -939,37 +995,42 @@ export class ProgramFetcher extends EventEmitter {
           }
         }
 
-        const programScope: ProgramScope = {
-          inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-          outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
-          lastUpdated: Date.now(),
-        };
+        if (inScope.length > 0 || outOfScope.length > 0) {
+          const programScope: ProgramScope = { inScope, outOfScope, lastUpdated: Date.now() };
 
-        const rules: ProgramRules = {
-          disclosure: data.disclosure_type || 'coordinated',
-          safeHarbor: data.safe_harbor ?? true,
-          maxBounty: data.max_bounty || undefined,
-          minBounty: data.min_bounty || undefined,
-          responseTime: data.sla || '5 business days',
-          rules: this.generateFallbackRules(domain, 'intigriti').rules,
-          exclusions: this.generateFallbackRules(domain, 'intigriti').exclusions,
-          lastUpdated: Date.now(),
-        };
+          const rules: ProgramRules = {
+            disclosure: data.disclosure_type || 'coordinated',
+            safeHarbor: data.safe_harbor ?? true,
+            maxBounty: this.numOrUndef(data.max_bounty),
+            minBounty: this.numOrUndef(data.min_bounty),
+            responseTime: data.sla || undefined,
+            rules: [],
+            exclusions: [],
+            lastUpdated: Date.now(),
+          };
 
-        const description = data.description || `Intigriti program for ${config.name}`;
+          const description = data.description || `Intigriti program for ${config.name}`;
 
-        return { scope: programScope, rules, description };
+          return { scope: programScope, rules, description, realDataFound: true };
+        }
+        logger.warn('[ProgramFetcher] Intigriti fetch OK but no scope domains found', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] Intigriti fetch failed', { handle, status: response.status });
       }
-    } catch {}
+    } catch (err) {
+      logger.warn('[ProgramFetcher] Intigriti fetch threw', { handle, err: String(err) });
+    }
 
+    logger.warn('[ProgramFetcher] No real scope data found for Intigriti program — falling back to synthetic placeholder', { handle });
     return {
       scope: this.generateFallbackScope(domain),
       rules: this.generateFallbackRules(domain, 'intigriti'),
       description: `Intigriti bug bounty program for ${config.name}. Targets include ${domain} and related assets.`,
+      realDataFound: false,
     };
   }
 
-  private async fetchSynack(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  private async fetchSynack(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
 
@@ -997,9 +1058,11 @@ export class ProgramFetcher extends EventEmitter {
         const assetList = Array.isArray(assets) ? assets : [];
 
         for (const asset of assetList) {
+          const identifier = asset.location || asset.value || asset.name || '';
+          if (!identifier) continue;
           const scopeAsset: ScopeAsset = {
             type: this.mapSynackAssetType(asset.assetType || asset.type || ''),
-            identifier: asset.location || asset.value || asset.name || '',
+            identifier,
             maxSeverity: asset.maxSeverity || undefined,
             eligible: true,
             instruction: asset.notes || undefined,
@@ -1013,47 +1076,53 @@ export class ProgramFetcher extends EventEmitter {
           }
         }
 
-        const programScope: ProgramScope = {
-          inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-          outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
-          lastUpdated: Date.now(),
-        };
+        if (inScope.length > 0 || outOfScope.length > 0) {
+          const programScope: ProgramScope = { inScope, outOfScope, lastUpdated: Date.now() };
 
-        const targetResponse = await fetch(`https://platform.synack.com/api/targets/${handle}`, {
-          headers: {
-            'Authorization': `Bearer ${synackToken}`,
-            'Accept': 'application/json',
-          },
-          signal: AbortSignal.timeout(10000),
-        }).catch(() => null);
+          const targetResponse = await fetch(`https://platform.synack.com/api/targets/${handle}`, {
+            headers: {
+              'Authorization': `Bearer ${synackToken}`,
+              'Accept': 'application/json',
+            },
+            signal: AbortSignal.timeout(10000),
+          }).catch(() => null);
 
-        let targetData: any = {};
-        if (targetResponse?.ok) {
-          targetData = await targetResponse.json().catch(() => ({}));
+          let targetData: any = {};
+          if (targetResponse?.ok) {
+            targetData = await targetResponse.json().catch(() => ({}));
+          }
+
+          const rules: ProgramRules = {
+            disclosure: 'coordinated',
+            safeHarbor: true,
+            maxBounty: this.numOrUndef(targetData.maxPayout ?? targetData.bounty_max),
+            minBounty: this.numOrUndef(targetData.minPayout ?? targetData.bounty_min),
+            responseTime: undefined,
+            // Real, program-independent facts about how Synack testing works
+            // (not fabricated per-program policy text) — every Synack
+            // engagement genuinely requires LaunchPoint VPN and Red Team terms.
+            rules: [
+              'Synack Red Team rules apply',
+              'All testing must be conducted through Synack LaunchPoint VPN',
+              'Do not test outside of designated target scope',
+            ],
+            exclusions: [],
+            lastUpdated: Date.now(),
+          };
+
+          const description = targetData.description || targetData.about || `Synack program for ${config.name}`;
+
+          return { scope: programScope, rules, description, realDataFound: true };
         }
-
-        const rules: ProgramRules = {
-          disclosure: 'coordinated',
-          safeHarbor: true,
-          maxBounty: targetData.maxPayout || targetData.bounty_max || undefined,
-          minBounty: targetData.minPayout || targetData.bounty_min || undefined,
-          responseTime: '5 business days',
-          rules: [
-            ...this.generateFallbackRules(domain, 'synack').rules,
-            'Synack Red Team rules apply',
-            'All testing must be conducted through Synack LaunchPoint VPN',
-            'Do not test outside of designated target scope',
-          ],
-          exclusions: this.generateFallbackRules(domain, 'synack').exclusions,
-          lastUpdated: Date.now(),
-        };
-
-        const description = targetData.description || targetData.about || `Synack program for ${config.name}`;
-
-        return { scope: programScope, rules, description };
+        logger.warn('[ProgramFetcher] Synack fetch OK but no scope assets found', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] Synack fetch failed', { handle, status: response.status });
       }
-    } catch {}
+    } catch (err) {
+      logger.warn('[ProgramFetcher] Synack fetch threw', { handle, err: String(err) });
+    }
 
+    logger.warn('[ProgramFetcher] No real scope data found for Synack program — falling back to synthetic placeholder', { handle });
     return {
       scope: this.generateFallbackScope(domain),
       rules: {
@@ -1065,10 +1134,11 @@ export class ProgramFetcher extends EventEmitter {
         ],
       },
       description: `Synack bug bounty program for ${config.name}. Targets include ${domain} and related assets. Note: Synack requires LaunchPoint VPN for testing.`,
+      realDataFound: false,
     };
   }
 
-  private async fetchYesWeHack(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  private async fetchYesWeHack(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const handle = config.handle || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const domain = this.extractDomain(config.url);
 
@@ -1092,9 +1162,11 @@ export class ProgramFetcher extends EventEmitter {
 
         const scopes = data.scopes || data.scope || [];
         for (const s of (Array.isArray(scopes) ? scopes : [])) {
+          const identifier = s.scope || s.asset || s.target || '';
+          if (!identifier) continue;
           const asset: ScopeAsset = {
             type: this.mapYesWeHackAssetType(s.scope_type || s.asset_type || s.type || ''),
-            identifier: s.scope || s.asset || s.target || '',
+            identifier,
             maxSeverity: s.max_severity || undefined,
             eligible: s.bounty_eligible ?? true,
             instruction: s.instruction || s.description || undefined,
@@ -1108,9 +1180,11 @@ export class ProgramFetcher extends EventEmitter {
 
         if (data.domains) {
           for (const d of (Array.isArray(data.domains) ? data.domains : [])) {
+            const identifier = d.domain || d.endpoint || d.value || '';
+            if (!identifier) continue;
             const asset: ScopeAsset = {
               type: this.mapYesWeHackAssetType(d.type || 'domain'),
-              identifier: d.domain || d.endpoint || d.value || '',
+              identifier,
               maxSeverity: d.severity || undefined,
               eligible: d.bounty_eligible ?? true,
               instruction: d.description || undefined,
@@ -1123,32 +1197,27 @@ export class ProgramFetcher extends EventEmitter {
           }
         }
 
-        const programScope: ProgramScope = {
-          inScope: inScope.length > 0 ? inScope : this.generateFallbackScope(domain).inScope,
-          outOfScope: outOfScope.length > 0 ? outOfScope : this.generateFallbackScope(domain).outOfScope,
-          lastUpdated: Date.now(),
-        };
+        if (inScope.length > 0 || outOfScope.length > 0) {
+          const programScope: ProgramScope = { inScope, outOfScope, lastUpdated: Date.now() };
 
-        const rules: ProgramRules = {
-          disclosure: data.disclosure_policy || data.disclosure || 'coordinated',
-          safeHarbor: data.safe_harbor ?? true,
-          maxBounty: data.max_bounty || data.reward_max || undefined,
-          minBounty: data.min_bounty || data.reward_min || undefined,
-          responseTime: data.response_time || data.sla || '5 business days',
-          rules: [
-            ...this.generateFallbackRules(domain, 'yeswehack').rules,
-            ...(data.rules ? (Array.isArray(data.rules) ? data.rules : [data.rules]) : []),
-          ],
-          exclusions: [
-            ...this.generateFallbackRules(domain, 'yeswehack').exclusions,
-            ...(data.out_of_scope_rules ? (Array.isArray(data.out_of_scope_rules) ? data.out_of_scope_rules : [data.out_of_scope_rules]) : []),
-          ],
-          lastUpdated: Date.now(),
-        };
+          const rules: ProgramRules = {
+            disclosure: data.disclosure_policy || data.disclosure || 'coordinated',
+            safeHarbor: data.safe_harbor ?? true,
+            maxBounty: this.numOrUndef(data.max_bounty ?? data.reward_max),
+            minBounty: this.numOrUndef(data.min_bounty ?? data.reward_min),
+            responseTime: data.response_time || data.sla || undefined,
+            rules: data.rules ? (Array.isArray(data.rules) ? data.rules : [data.rules]) : [],
+            exclusions: data.out_of_scope_rules ? (Array.isArray(data.out_of_scope_rules) ? data.out_of_scope_rules : [data.out_of_scope_rules]) : [],
+            lastUpdated: Date.now(),
+          };
 
-        const description = data.description || data.title || `YesWeHack program for ${config.name}`;
+          const description = data.description || data.title || `YesWeHack program for ${config.name}`;
 
-        return { scope: programScope, rules, description };
+          return { scope: programScope, rules, description, realDataFound: true };
+        }
+        logger.warn('[ProgramFetcher] YesWeHack authenticated fetch OK but no scope found', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] YesWeHack authenticated fetch failed', { handle, status: response.status });
       }
 
       const publicResponse = await fetch(`https://yeswehack.com/programs/${handle}`, {
@@ -1174,27 +1243,34 @@ export class ProgramFetcher extends EventEmitter {
         }
 
         if (extractedScopes.length > 0) {
+          // Best-effort HTML scrape — inScope is genuinely scraped, but we
+          // have no real signal on out-of-scope from this page, so it stays
+          // empty ("we don't know") rather than the synthetic placeholder.
           return {
-            scope: {
-              inScope: extractedScopes,
-              outOfScope: this.generateFallbackScope(domain).outOfScope,
-              lastUpdated: Date.now(),
-            },
-            rules: this.generateFallbackRules(domain, 'yeswehack'),
+            scope: { inScope: extractedScopes, outOfScope: [], lastUpdated: Date.now() },
+            rules: { disclosure: 'coordinated', safeHarbor: true, rules: [], exclusions: [], lastUpdated: Date.now() },
             description: titleMatch ? titleMatch[1].trim() : `YesWeHack program for ${config.name}`,
+            realDataFound: true,
           };
         }
+        logger.warn('[ProgramFetcher] YesWeHack public page had no extractable scope', { handle });
+      } else {
+        logger.warn('[ProgramFetcher] YesWeHack public fetch failed', { handle, status: publicResponse.status });
       }
-    } catch {}
+    } catch (err) {
+      logger.warn('[ProgramFetcher] YesWeHack fetch threw', { handle, err: String(err) });
+    }
 
+    logger.warn('[ProgramFetcher] No real scope data found for YesWeHack program — falling back to synthetic placeholder', { handle });
     return {
       scope: this.generateFallbackScope(domain),
       rules: this.generateFallbackRules(domain, 'yeswehack'),
       description: `YesWeHack bug bounty program for ${config.name}. Targets include ${domain} and related assets.`,
+      realDataFound: false,
     };
   }
 
-  private async fetchCustom(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string }> {
+  private async fetchCustom(config: ProgramConfig): Promise<{ scope: ProgramScope; rules: ProgramRules; description: string; realDataFound: boolean }> {
     const domain = this.extractDomain(config.url);
     const inScope: ScopeAsset[] = [
       { type: 'url', identifier: config.url, maxSeverity: 'critical', eligible: true },
@@ -1259,6 +1335,10 @@ export class ProgramFetcher extends EventEmitter {
       },
       rules: this.generateFallbackRules(domain, 'custom'),
       description: `Custom bug bounty program for ${config.name} targeting ${domain}.`,
+      // A custom program has no external source of truth to fall back FROM —
+      // this URL/robots.txt/sitemap.xml scrape IS the real data for it, not a
+      // synthetic placeholder standing in for a failed authoritative fetch.
+      realDataFound: true,
     };
   }
 

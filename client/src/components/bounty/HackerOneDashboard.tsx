@@ -141,17 +141,25 @@ export function HackerOneDashboard() {
     try {
       const res = await bountyAPI.syncHackerOne();
       const result = res.data as SyncResult;
+      const skipped = result.skippedNoRealScope?.length ?? 0;
+      let skipToastShown = false;
       if (result.disabled) {
         toast.error('HackerOne is disconnected — reconnect it in Settings first');
       } else if (result.added.length > 0) {
         toast.success(`Synced ${result.added.length} new program(s) from your HackerOne account`);
       } else if (result.total === 0) {
         toast('No accessible programs found — check your HackerOne credentials', { icon: 'ℹ️' });
+      } else if (skipped > 0 && result.alreadyTracked === 0) {
+        // Nothing added AND nothing was already tracked — every newly-
+        // discovered program was skipped for lacking real scope. Calling
+        // this "up to date" would be misleading, since nothing synced.
+        toast.error(`Sync found ${skipped} new program(s) but none had real scope data — check your HackerOne credentials`);
+        skipToastShown = true;
       } else {
         toast.success(`Up to date — ${result.alreadyTracked} program(s) already tracked`);
       }
-      if (result.skippedNoRealScope?.length > 0) {
-        toast(`Skipped ${result.skippedNoRealScope.length} program(s) — no real scope data returned by HackerOne (check credentials, try again later)`, { icon: '⚠️' });
+      if (skipped > 0 && !skipToastShown) {
+        toast(`Skipped ${skipped} program(s) — no real scope data returned by HackerOne (check credentials, try again later)`, { icon: '⚠️' });
       }
       if (result.failed.length > 0) {
         toast.error(`Failed to fetch scope for: ${result.failed.join(', ')}`);

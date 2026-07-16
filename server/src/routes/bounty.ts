@@ -142,12 +142,12 @@ router.post("/programs", async (req: Request, res: Response) => {
 router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => {
   try {
     if (!runtimeConfig.isPlatformEnabled("hackerone")) {
-      return res.json({ total: 0, added: [], alreadyTracked: 0, failed: [], disabled: true });
+      return res.json({ total: 0, added: [], alreadyTracked: 0, skippedNoRealScope: [], failed: [], disabled: true });
     }
     const fetcher = new ProgramFetcher();
     const accessible = await fetcher.listAccessiblePrograms();
     if (accessible.length === 0) {
-      return res.json({ total: 0, added: [], alreadyTracked: 0, failed: [] });
+      return res.json({ total: 0, added: [], alreadyTracked: 0, skippedNoRealScope: [], failed: [] });
     }
 
     const existingRows = await db.select({ programHandle: programs.programHandle })
@@ -200,17 +200,16 @@ router.post("/programs/sync-hackerone", async (_req: Request, res: Response) => 
       return { handle: prog.handle, status: "added" as const };
     }));
 
-    const settled = results
-      .map((r, i) => ({ handle: newPrograms[i].handle, result: r }));
-    const added = settled
-      .filter(x => x.result.status === "fulfilled" && (x.result as PromiseFulfilledResult<{ handle: string; status: string }>).value.status === "added")
-      .map(x => x.handle);
-    const skippedNoRealScope = settled
-      .filter(x => x.result.status === "fulfilled" && (x.result as PromiseFulfilledResult<{ handle: string; status: string }>).value.status === "skipped")
-      .map(x => x.handle);
-    const failed = settled
-      .filter(x => x.result.status === "rejected")
-      .map(x => x.handle);
+    const isFulfilled = <T>(r: PromiseSettledResult<T>): r is PromiseFulfilledResult<T> => r.status === "fulfilled";
+
+    const added: string[] = [];
+    const skippedNoRealScope: string[] = [];
+    const failed: string[] = [];
+    results.forEach((r, i) => {
+      const handle = newPrograms[i].handle;
+      if (!isFulfilled(r)) { failed.push(handle); return; }
+      (r.value.status === "added" ? added : skippedNoRealScope).push(handle);
+    });
 
     return res.json({
       total: accessible.length,

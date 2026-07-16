@@ -390,7 +390,11 @@ export class BountyIntelligenceService extends EventEmitter {
 
     if (matchedProgram) {
       const doc = this.programFetcher.getProgram(matchedProgram.id);
-      if (doc && doc.scope) {
+      // realDataFound gates this — a fetch that only produced the synthetic
+      // fallback template must not be treated as an authoritative, high-
+      // confidence scope for target selection; fall through to the generic
+      // subdomain-guessing heuristic below instead, same as "no stored program".
+      if (doc && doc.scope && doc.realDataFound) {
         const storedTargets: Target[] = doc.scope.inScope.map((asset, idx) => ({
           url: asset.identifier.startsWith('http') ? asset.identifier : `https://${asset.identifier}`,
           type: this.mapAssetType(asset.type),
