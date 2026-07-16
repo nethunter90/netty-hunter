@@ -230,12 +230,20 @@ export const KALI_CATALOG: KaliToolEntry[] = [
     description: "Fast SSL/TLS configuration analyzer",
   },
   {
-    name: "zaproxy", displayName: "ZAP Baseline", binary: "zap-baseline.py",
+    // zap-baseline.py is the deprecated Docker-only wrapper script and isn't
+    // part of Kali's zaproxy package at all (which only ships the zaproxy/
+    // owasp-zap GUI launchers) — so this entry never resolved on a real Kali
+    // install. `zaproxy -cmd -quickurl {url}` uses ZAP's own current
+    // Automation Framework quick-scan mode (spider + active scan) and, with
+    // no -quickout given, prints the full XML report straight to stdout —
+    // no separate report file to read back, so it fits execFile's
+    // stdout-only model like nmap/skipfish's "plain" entries below.
+    name: "zaproxy", displayName: "ZAP Quick Scan", binary: "zaproxy",
     category: "scanning",
-    commandTemplate: "zap-baseline.py -t {url}",
+    commandTemplate: "zaproxy -cmd -quickurl {url}",
     vulnClasses: ["xss", "sqli", "misconfig", "info_disclosure", "cors"],
-    rateLimit: 120, riskLevel: "medium", stealthRating: 4, parserType: "lines",
-    description: "OWASP ZAP automated baseline vulnerability scan",
+    rateLimit: 120, riskLevel: "medium", stealthRating: 4, parserType: "plain",
+    description: "OWASP ZAP automated quick scan (spider + active scan) via the Automation Framework",
   },
 
   // ── FUZZING (9) ──────────────────────────────────────────────────────────────
