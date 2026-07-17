@@ -50,7 +50,18 @@ const PROFILES: Record<Complexity, Omit<EffortProfile, "complexity" | "focusVuln
 // auth-bypass middleware. No tier may ever exclude these three high-severity
 // classes, regardless of what the string/crawl signal says — classifiers fail
 // silently, so this is an unconditional floor, not a tunable default.
-const HIGH_SEVERITY_FLOOR = ["rce", "auth_bypass", "idor"];
+//
+// handoff (2026-07-17, logic-lab hunt): business_logic/race_condition were
+// absent from every tier but "expert" — a tier a bare launch URL almost never
+// reaches. A 10-bug e-commerce business-logic lab (client-trusted price,
+// coupon stacking, checkout-step bypass, stock/gift-card races, mass
+// assignment, predictable reset tokens) scored "trivial" from the URL alone
+// and produced zero real findings even though LogicExploitAgent — which has
+// the exact right tools (intercept_request, fire_race_condition,
+// dual_context_idor) — ran twice against it. It was simply never told to.
+// Same unconditional-floor reasoning applies: these are silently-missed,
+// high-value classes, not ones a classifier should get to opt out of.
+const HIGH_SEVERITY_FLOOR = ["rce", "auth_bypass", "idor", "business_logic", "race_condition"];
 
 function withFloor(classes: string[]): string[] {
   return Array.from(new Set([...classes, ...HIGH_SEVERITY_FLOOR]));
@@ -88,7 +99,17 @@ class EffortScaler {
    *   downgrade it, from whatever the pre-crawl provisional call produced.
    */
   analyze(targetUrl: string, goal: string, discoveredEndpoints?: string[]): EffortProfile {
-    const combined = `${targetUrl} ${goal}`.toLowerCase();
+    // Discovered endpoint paths are folded into the SAME string the general
+    // COMPLEXITY_PATTERNS run against (not just the narrower ENDPOINT_SIGNAL_
+    // PATTERNS below) — a crawl that turns up /api/checkout/confirm or
+    // /api/wallet/redeem-giftcard must trip the "financial" factor exactly
+    // like a launch goal that says "checkout" would. Without this, an app
+    // whose e-commerce/financial nature only shows up post-crawl (the launch
+    // URL alone gives zero signal) never escalates past "trivial".
+    const endpointBlob = discoveredEndpoints && discoveredEndpoints.length > 0
+      ? " " + discoveredEndpoints.join(" ")
+      : "";
+    const combined = `${targetUrl} ${goal}${endpointBlob}`.toLowerCase();
     const factors: ComplexityFactor[] = [];
 
     let totalWeight = 1.0;

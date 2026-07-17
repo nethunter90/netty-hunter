@@ -2611,9 +2611,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
         }
       }
 
-      // LogicExploitAgent — Claude-directed Playwright for stateful/chained probes
+      // LogicExploitAgent — Claude-directed Playwright for stateful/chained probes.
+      // race_condition added alongside business_logic: it's the same agent's
+      // fire_race_condition tool, just a distinct vulnClass in the taxonomy —
+      // without this it fell through to the generic single-request tool path,
+      // which structurally cannot fire the concurrent burst a race needs.
       if (
-        ["business_logic", "idor", "auth_bypass"].includes(hypothesis.vulnClass) &&
+        ["business_logic", "race_condition", "idor", "auth_bypass"].includes(hypothesis.vulnClass) &&
         ClaudeClient.isAvailable()
       ) {
         try {
