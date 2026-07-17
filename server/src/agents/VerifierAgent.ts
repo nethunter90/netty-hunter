@@ -41,7 +41,7 @@ const EXEC_PARAM_NAMES = ["command", "cmd", "input", "shell", "exec", "run"];
 export interface VerificationResult {
   findingId: string;
   layer1_dedup: { isDuplicate: boolean; existingHash?: string };
-  layer2_reprobe: { confirmed: boolean; statusCode: number; responseSnippet: string };
+  layer2_reprobe: { confirmed: boolean; statusCode: number; responseSnippet: string; nonceEchoConfirmed?: boolean };
   layer3_playwright: { confirmed: boolean; screenshot?: string; consoleAlerts: string[]; networkRequests: string[] };
   layer4_ai: { confirmed: boolean; reasoning: string; confidenceAdjustment: number; errored?: boolean };
   finalVerdict: "confirmed" | "rejected" | "inconclusive" | "deduplicated";
@@ -173,7 +173,7 @@ class Layer1Dedup {
 
 // ─── Layer 2: Dynamic Re-probe ────────────────────────────────────────────────
 export class Layer2Reprobe {
-  async reprobe(result: SolverResult): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
+  async reprobe(result: SolverResult): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string; nonceEchoConfirmed?: boolean }> {
     // result.request is sometimes a campaign/finding ID (numeric string) rather than
     // a URL — e.g. for LogicExploitAgent-confirmed findings. Fall back to result.endpoint
     // so L2 still reaches the target instead of bailing immediately.
@@ -197,7 +197,8 @@ export class Layer2Reprobe {
     // command was actually executed (not merely reflected — the exact-match +
     // anti-reflection guard in reprobeRceNonceEcho rules that out).
     if (result.vulnClass === "rce") {
-      return await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders);
+      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders);
+      return rceProof.confirmed ? { ...rceProof, nonceEchoConfirmed: true } : rceProof;
     }
 
     // A `hidden_endpoints` finding whose path looks like a command-execution
@@ -210,7 +211,7 @@ export class Layer2Reprobe {
     // populated).
     if ((result.vulnClass as string) === "hidden_endpoints" && EXEC_LIKE_PATH.test(reprobeUrl)) {
       const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders, EXEC_PARAM_NAMES);
-      if (rceProof.confirmed) return rceProof;
+      if (rceProof.confirmed) return { ...rceProof, nonceEchoConfirmed: true };
       // No nonce echo observed — fall through to the generic check below so an
       // exec-like path that isn't actually a command sink (e.g. a 404) still
       // gets a normal verdict instead of being stuck on the RCE-only result.
@@ -821,7 +822,7 @@ export class VerifierAgent {
 
   private computeVerdict(
     result: SolverResult,
-    l2: { confirmed: boolean },
+    l2: { confirmed: boolean; nonceEchoConfirmed?: boolean },
     l3: { confirmed: boolean },
     l4: { confirmed: boolean; confidenceAdjustment: number },
     browserVerifiable: boolean,
@@ -835,7 +836,15 @@ export class VerifierAgent {
     let finalVerdict: "confirmed" | "rejected" | "inconclusive";
     let finalConfidence = result.confidence + l4.confidenceAdjustment;
 
-    if (browserVerifiable) {
+    if (l2.nonceEchoConfirmed) {
+      // Self-verifying RCE proof (fresh per-call random nonce, anti-reflection
+      // guarded) — the same trust tier as an OOB beacon hit. L3 cannot replay a
+      // raw query-param command injection through a browser navigation, and an
+      // L4 dissent is just the model failing to recognize proof it wasn't shown
+      // context for — neither gets a veto over hard evidence the command ran.
+      finalVerdict = "confirmed";
+      finalConfidence = Math.min(0.98, finalConfidence + 0.15);
+    } else if (browserVerifiable) {
       // Mandatory browser gate (governance contract — preserved and made STRICTER):
       // a browser-verifiable finding MUST be proven by a real L3 execution oracle.
       // No L2-reflection substitute, no rubber-stamp. When Playwright is offline
