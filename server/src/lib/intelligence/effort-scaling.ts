@@ -61,7 +61,16 @@ const PROFILES: Record<Complexity, Omit<EffortProfile, "complexity" | "focusVuln
 // dual_context_idor) — ran twice against it. It was simply never told to.
 // Same unconditional-floor reasoning applies: these are silently-missed,
 // high-value classes, not ones a classifier should get to opt out of.
-const HIGH_SEVERITY_FLOOR = ["rce", "auth_bypass", "idor", "business_logic", "race_condition"];
+//
+// handoff (2026-07-17, logic-lab LFI-chain addition): hidden_endpoints was
+// STILL absent from every non-expert tier even after the fix above — a bug
+// living at an SPA-unlinked path (/api/support/attachment, only guessable via
+// ffuf/gobuster) got zero directory-brute-force attempts across an entire
+// 10-iteration hunt because hidden_endpoints was never seeded, so the
+// endpoint was never even discovered, let alone tested. Same reasoning:
+// discovery-tier classes can't be opt-out either, or a target's genuinely
+// hidden surface silently never gets looked at.
+const HIGH_SEVERITY_FLOOR = ["rce", "auth_bypass", "idor", "business_logic", "race_condition", "hidden_endpoints"];
 
 function withFloor(classes: string[]): string[] {
   return Array.from(new Set([...classes, ...HIGH_SEVERITY_FLOOR]));
