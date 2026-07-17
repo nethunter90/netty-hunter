@@ -2,7 +2,7 @@ import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Target, Terminal, ShieldAlert,
-  Brain, FileText, LogOut, User, Shield, Layers, Crosshair,
+  Brain, FileText, LogOut, User, Layers, Crosshair,
   DollarSign, Swords, Settings, Wrench, TerminalSquare
 } from "lucide-react";
 import { authAPI } from "../../lib/api";
@@ -55,7 +55,11 @@ export default function ActivityBar({ activeView, onViewChange, user, onLogout }
     <div className="w-12 bg-hack-surface border-r border-hack-border flex flex-col items-center py-2 flex-shrink-0">
       {/* Logo */}
       <div className="mb-4 p-1">
-        <Shield className="w-7 h-7 text-hack-accent glow-green" strokeWidth={1.5} />
+        <img
+          src="/assets/netty-hunter-emblem.png"
+          alt="Netty Hunter"
+          className="w-7 h-7 rounded-full object-cover glow-green"
+        />
       </div>
 
       {/* Nav items */}
