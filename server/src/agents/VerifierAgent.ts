@@ -24,6 +24,20 @@ import { SimHashDedup } from "../lib/intelligence/simhash";
 import { adaptPayload, isKnownAdaptationRule } from "../lib/verification/payload-adaptation";
 import { PostExploitAgent } from "./PostExploitAgent";
 
+// Path/name signal that an unclassified "hidden_endpoints" finding is actually
+// a command-execution sink misfiled by discovery (see reprobe()'s hidden_endpoints
+// branch below) — the hunt that exposed this gap correctly hypothesized "rce" for
+// http://localhost:5000/api/terminal/execute at 0.82 confidence via chain synthesis,
+// but that hypothesis never finished probing before the iteration cap, and the
+// original hidden_endpoints finding for the same URL fell through to the generic
+// `status<400 && found` reprobe — which bare-GETs the endpoint with no injected
+// command, guaranteeing "400 Command required" and a false-negative reject.
+const EXEC_LIKE_PATH = /\b(execute|terminal|shell|command|cmd|run|exec)\b/i;
+// Common command-parameter names to try when an exec-like endpoint's discovery
+// URL carries none of its own (the sink takes its input from a query/body key
+// wfuzz never populated) — used to seed the nonce-echo RCE oracle below.
+const EXEC_PARAM_NAMES = ["command", "cmd", "input", "shell", "exec", "run"];
+
 export interface VerificationResult {
   findingId: string;
   layer1_dedup: { isDuplicate: boolean; existingHash?: string };
@@ -186,6 +200,22 @@ export class Layer2Reprobe {
       return await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders);
     }
 
+    // A `hidden_endpoints` finding whose path looks like a command-execution
+    // sink (…/execute, /terminal, /shell, …) must not fall through to the
+    // generic `status<400 && found` check below — that bare-GETs the endpoint
+    // with no injected command and guarantees a false-negative reject. Force
+    // the same nonce-echo RCE oracle used for `rce` findings, guessing common
+    // command-parameter names since the discovery URL itself usually carries
+    // none (the sink takes its input from a query/body key wfuzz never
+    // populated).
+    if ((result.vulnClass as string) === "hidden_endpoints" && EXEC_LIKE_PATH.test(reprobeUrl)) {
+      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders, EXEC_PARAM_NAMES);
+      if (rceProof.confirmed) return rceProof;
+      // No nonce echo observed — fall through to the generic check below so an
+      // exec-like path that isn't actually a command sink (e.g. a 404) still
+      // gets a normal verdict instead of being stuck on the RCE-only result.
+    }
+
     try {
       const { default: axios } = await import("axios");
       const resp = await axios.get(reprobeUrl, {
@@ -251,6 +281,7 @@ export class Layer2Reprobe {
   private async reprobeRceNonceEcho(
     reprobeUrl: string,
     authHeaders?: Record<string, string>,
+    guessParams: string[] = [],
   ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     let url: URL;
     try {
@@ -260,7 +291,8 @@ export class Layer2Reprobe {
     }
 
     const params = Array.from(url.searchParams.keys());
-    if (params.length === 0) {
+    const candidateParams = params.length > 0 ? params : guessParams;
+    if (candidateParams.length === 0) {
       return { confirmed: false, statusCode: 0, responseSnippet: "No injectable parameter for nonce-echo probe" };
     }
 
@@ -270,7 +302,7 @@ export class Layer2Reprobe {
 
     const { default: axios } = await import("axios");
     for (const variant of variants) {
-      for (const param of params) {
+      for (const param of candidateParams) {
         const probeUrl = new URL(url.toString());
         probeUrl.searchParams.set(param, variant);
         try {
