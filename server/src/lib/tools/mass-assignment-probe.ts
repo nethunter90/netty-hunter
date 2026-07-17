@@ -283,6 +283,42 @@ class MassAssignmentProber {
     return vulns;
   }
 
+  /**
+   * Re-test a specific already-discovered mass-assignment finding for the
+   * verifier's Layer 2 reprobe. A bare GET (the generic reprobe fallback)
+   * proves nothing about a POST/PUT/PATCH-body vulnerability — this replays
+   * the SAME method + field-injection this finding was originally raised
+   * from, reusing the exact accept/reflect logic probe() uses, rather than
+   * re-implementing it. `fields` is matched against PRIV_FIELDS to recover
+   * the full injected value set (the finding only carries field NAMES, not
+   * the values that were actually sent).
+   */
+  async reprobe(
+    endpoint: string,
+    method: string,
+    fields: string[],
+    authHeaders: Record<string, string> = {}
+  ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
+    const fieldSet = PRIV_FIELDS.find(set =>
+      fields.every(f => f in set)
+    ) ?? Object.fromEntries(fields.map(f => [f, CRITICAL_FIELDS.has(f) ? true : 99999]));
+
+    const isRegisterStyle = /register|signup|\/users\/?$/i.test(endpoint) || method.toUpperCase() === "POST";
+    const vulns = isRegisterStyle
+      ? await this.testRegisterEndpoint("", endpoint, fieldSet, authHeaders, null)
+      : await this.testUpdateEndpoint("", endpoint, fieldSet, null, authHeaders, {});
+
+    if (vulns.length === 0) {
+      return { confirmed: false, statusCode: 0, responseSnippet: "Replay found no accepted/reflected privileged field" };
+    }
+    const hit = vulns[0];
+    return {
+      confirmed: hit.accepted || hit.reflected,
+      statusCode: hit.accepted ? 200 : 0,
+      responseSnippet: hit.detail,
+    };
+  }
+
   async probe(rawTargetUrl: string, authHeaders?: Record<string, string>): Promise<MassAssignmentResult> {
     const targetUrl = rawTargetUrl.replace(/\/$/, "");
     const headers = authHeaders ?? {};

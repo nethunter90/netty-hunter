@@ -23,6 +23,24 @@ import type { SolverResult } from "./SolverPool";
 import { SimHashDedup } from "../lib/intelligence/simhash";
 import { adaptPayload, isKnownAdaptationRule } from "../lib/verification/payload-adaptation";
 import { PostExploitAgent } from "./PostExploitAgent";
+import { massAssignmentProber } from "../lib/tools/mass-assignment-probe";
+
+// Parses the method + injected field names back out of a mass_assignment
+// finding's evidence text (both templates mass-assignment-probe.ts produces:
+// "...reflected in POST /api/register response" and "Server accepted PUT
+// /api/user with privileged fields [x, y] (status 200)") — the stored
+// evidence only carries field NAMES, not the values that were actually sent,
+// so Layer2Reprobe.reprobeMassAssignment() re-derives the value set from
+// PRIV_FIELDS via massAssignmentProber.reprobe().
+function parseMassAssignmentEvidence(text: string): { method: string; fields: string[] } | null {
+  const methodMatch = text.match(/\b(?:reflected in|accepted)\s+(GET|POST|PUT|PATCH|DELETE)\b/i);
+  const fieldsMatch = text.match(/privileged fields \[([^\]]+)\]/i);
+  if (!methodMatch || !fieldsMatch) return null;
+  return {
+    method: methodMatch[1].toUpperCase(),
+    fields: fieldsMatch[1].split(",").map(f => f.trim()).filter(Boolean),
+  };
+}
 
 // Path/name signal that an unclassified "hidden_endpoints" finding is actually
 // a command-execution sink misfiled by discovery (see reprobe()'s hidden_endpoints
@@ -215,6 +233,23 @@ export class Layer2Reprobe {
       // No nonce echo observed — fall through to the generic check below so an
       // exec-like path that isn't actually a command sink (e.g. a 404) still
       // gets a normal verdict instead of being stuck on the RCE-only result.
+    }
+
+    // Same bare-GET blind spot as hidden_endpoints/exec-like paths above, but
+    // for POST/PUT/PATCH-body findings: the generic status<400&&found fallback
+    // below can never see a mass-assignment vuln (it lives entirely in what
+    // fields a write request's BODY causes the server to accept/reflect).
+    // Replay the actual method + injected fields this finding was raised from
+    // instead of guaranteeing a false-negative bare GET.
+    if ((result.vulnClass as string) === "mass_assignment") {
+      const parsed = parseMassAssignmentEvidence(
+        String((result.evidence as { output?: unknown })?.output ?? result.response ?? "")
+      );
+      if (parsed) {
+        return await massAssignmentProber.reprobe(reprobeUrl, parsed.method, parsed.fields, result.authHeaders);
+      }
+      // Evidence didn't parse (unexpected format) — fall through to the
+      // generic bare-GET check rather than silently no-op'ing the reprobe.
     }
 
     try {
