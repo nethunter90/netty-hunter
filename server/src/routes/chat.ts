@@ -123,15 +123,19 @@ router.post("/", async (req: Request, res: Response) => {
     }
   }
 
-  // Fallback: Ollama
+  // Retry: ModelRouter.chat() (also Claude Haiku under the hood — there is no
+  // Ollama tier anymore) in case the primary call above hit a transient error
+  // even though Claude was reported available.
   try {
     const prompt = [SYSTEM_PROMPT, historyText, `User: ${message.trim()}`, `Assistant:`]
       .filter(Boolean).join("\n\n");
     const capped = prompt.length > 8000 ? prompt.slice(-8000) : prompt;
     const raw = await modelRouter.chat(capped);
     const { display, executed } = await withExecution(raw);
-    const models = await modelRouter.getModels();
-    return res.json({ response: display, model: models[0] ?? "claude", executed });
+    // Same Haiku tier as the primary path above — modelRouter.getModels()
+    // returns a static capability list, not the model actually used, so
+    // report the real one instead of mislabeling this as "claude-sonnet".
+    return res.json({ response: display, model: "claude-haiku-4-5", executed });
   } catch (err) {
     const msg = String(err);
     logger.warn("[Chat] model error", { err: msg });
