@@ -54,11 +54,15 @@ export default function ActivityBar({ activeView, onViewChange, user, onLogout }
   return (
     <div className="w-12 bg-hack-surface border-r border-hack-border flex flex-col items-center py-2 flex-shrink-0">
       {/* Logo */}
-      <div className="mb-4 p-1">
-        <img
-          src="/assets/netty-hunter-emblem.png"
-          alt="Netty Hunter"
-          className="w-7 h-7 rounded-full object-cover glow-green"
+      <div className="mb-4">
+        <video
+          src="/dragon.mp4"
+          poster="/dragon-poster.jpg"
+          className="w-9 h-9 rounded-md glow-green object-cover"
+          autoPlay
+          loop
+          muted
+          playsInline
         />
       </div>
 
