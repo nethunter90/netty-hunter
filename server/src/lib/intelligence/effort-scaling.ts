@@ -115,15 +115,27 @@ class EffortScaler {
     // like a launch goal that says "checkout" would. Without this, an app
     // whose e-commerce/financial nature only shows up post-crawl (the launch
     // URL alone gives zero signal) never escalates past "trivial".
+    const baseText = `${targetUrl} ${goal}`.toLowerCase();
     const endpointBlob = discoveredEndpoints && discoveredEndpoints.length > 0
-      ? " " + discoveredEndpoints.join(" ")
+      ? " " + discoveredEndpoints.join(" ").toLowerCase()
       : "";
-    const combined = `${targetUrl} ${goal}${endpointBlob}`.toLowerCase();
+    const combined = baseText + endpointBlob;
     const factors: ComplexityFactor[] = [];
+
+    // The generic `api_surface` pattern (/api|graphql|rest/) matches virtually
+    // every discovered endpoint path — they're nearly all under /api/… — so
+    // folding endpoints into it would make benign routes like /api/health or
+    // /api/version spuriously escalate the tier. Match that one factor against
+    // the launch string ONLY. Every other pattern is specific enough that a
+    // real signal in a discovered path (/api/checkout/confirm →
+    // financial, /api/admin → privileged_area) still escalates, while noise
+    // (health/version) does not.
+    const LAUNCH_STRING_ONLY_FACTORS = new Set(["api_surface"]);
 
     let totalWeight = 1.0;
     for (const { pattern, factor, weight } of COMPLEXITY_PATTERNS) {
-      const matched = pattern.test(combined);
+      const text = LAUNCH_STRING_ONLY_FACTORS.has(factor) ? baseText : combined;
+      const matched = pattern.test(text);
       factors.push({ name: factor, weight, matched });
       if (matched) totalWeight *= weight;
     }
