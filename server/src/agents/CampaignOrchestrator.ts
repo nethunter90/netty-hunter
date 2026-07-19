@@ -38,6 +38,7 @@ import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program"
 import { contextWriter } from "../lib/context-writer";
 import { coreGovernance } from "../governance";
 import { UnifiedReinforcementStore } from "../intelligence/ReinforcementStore";
+import { deriveAutonomyHuntMetrics } from "../intelligence/hunt-metrics";
 import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
 import { DraftReportGenerator } from "../intelligence/ReportGenerator";
 import { NucleiTemplateGenerator } from "../intelligence/NucleiGenerator";
@@ -1333,31 +1334,14 @@ export class CampaignOrchestrator extends EventEmitter {
     // 6c. Update autonomy maturity tracker
     let autonomyScore = 0;
     try {
-      // Derive real tool-usage metrics from finding evidence instead of hardcoding.
-      // Each finding's evidence array carries the probes that produced it, each
-      // tagged with the tool name. Tools that appear in a VERIFIED finding are
-      // "correct"; the union across verified+rejected is the full selected set.
-      const extractTools = (f?: typeof findings.$inferSelect): string[] => {
-        const ev = (f?.evidence as Array<Record<string, unknown>>) || [];
-        return ev.map(e => (e?.tool as string) || "").filter(Boolean);
-      };
-      const correctTools = new Set<string>();
-      verifiedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => correctTools.add(t)));
-      const selectedTools = new Set<string>(correctTools);
-      rejectedFindings.forEach(({ finding }) => extractTools(finding).forEach(t => selectedTools.add(t)));
-
-      const totalProcessed = (verifData.totalProcessed as number) || 0;
-      const huntMetrics = {
-        hypothesesGenerated: Math.max(totalProcessed, this.state.findingsCount),
-        hypothesesCorrect: this.state.verifiedCount,
-        toolsSelected: Math.max(selectedTools.size, 1),
-        toolsCorrect: correctTools.size,
-        outOfScopeAttempts: 0,
-        falsePositives: Math.max(0, totalProcessed - this.state.verifiedCount),
-        confirmedFindings: this.state.verifiedCount,
-        chainDepth: this.state.verifiedCount > 0 ? 1 : 0,
-        reportQualityScore: reports.length > 0 ? 0.8 : 0,
-      };
+      // Shared with the console-hunt auto-verify path (routes/hunt.ts) so both
+      // pipelines score a hunt off the same derivation from finding rows —
+      // see intelligence/hunt-metrics.ts for why this isn't computed ad hoc
+      // per call site.
+      const allFindingRows = [...verifiedFindings, ...rejectedFindings]
+        .map(f => f.finding)
+        .filter((f): f is typeof findings.$inferSelect => !!f);
+      const huntMetrics = deriveAutonomyHuntMetrics(allFindingRows, reports.length);
 
       const maturityReport = await this.autonomyTracker.recordHuntOutcome(huntMetrics);
       autonomyScore = maturityReport.compositeScore;

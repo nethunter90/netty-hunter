@@ -16,6 +16,8 @@ import { activeHunts } from "../lib/state/active-hunts";
 import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { strategyWeightLearner } from "../lib/learning/strategy-weight-learner";
 import { verifyAndPersistFinding, verifyPendingForSession } from "../lib/verification/verify-finding";
+import { AutonomyMaturityTracker } from "../intelligence/AutonomyTracker";
+import { deriveAutonomyHuntMetrics } from "../intelligence/hunt-metrics";
 import { HUNT_TOOLS } from "../lib/hunter/binary-check";
 import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
 import logger from "../utils/logger";
@@ -23,6 +25,27 @@ import logger from "../utils/logger";
 const router = Router();
 const verifierAgent = new VerifierAgent();
 const backwardHunt = new BackwardHuntEngine();
+
+/**
+ * Console-launched hunts (both forward and backward mode below) never pass
+ * through CampaignOrchestrator's Layer 6, so without this, autonomy_metrics
+ * is only ever updated by orchestration-mode runs — the far less common
+ * path. Shares deriveAutonomyHuntMetrics with CampaignOrchestrator so both
+ * pipelines score a hunt the same way (see intelligence/hunt-metrics.ts).
+ * Best-effort: never let a recording failure affect the hunt-complete flow.
+ */
+async function recordAutonomyOutcome(sessionUuid: string): Promise<void> {
+  try {
+    const [session] = await db.select({ id: huntSessions.id })
+      .from(huntSessions).where(eq(huntSessions.sessionUuid, sessionUuid)).limit(1);
+    if (!session) return;
+    const rows = await db.select().from(findings).where(eq(findings.huntSessionId, session.id));
+    const metrics = deriveAutonomyHuntMetrics(rows, 0);
+    await AutonomyMaturityTracker.getInstance().recordHuntOutcome(metrics);
+  } catch (err) {
+    logger.warn("Autonomy outcome recording failed (non-critical)", { sessionUuid, err: String(err) });
+  }
+}
 
 // Initialize Playwright verifier
 verifierAgent.initialize().catch(err => logger.warn("Verifier init failed", { err }));
@@ -181,6 +204,7 @@ router.post("/start", async (req: Request, res: Response) => {
             const { verified, confirmed } = await verifyPendingForSession(verifierAgent, sessionUuid, targetUrl);
             io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
             logger.info("Auto-verification complete", { sessionUuid, verified, confirmed });
+            await recordAutonomyOutcome(sessionUuid);
           } catch (err) {
             logger.warn("Auto-verification pass failed", { sessionUuid, err: String(err) });
           }
@@ -242,6 +266,7 @@ router.post("/start", async (req: Request, res: Response) => {
           const { verified, confirmed } = await verifyPendingForSession(verifierAgent, sessionUuid, targetUrl);
           io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
           logger.info("Auto-verification complete", { sessionUuid, verified, confirmed });
+          await recordAutonomyOutcome(sessionUuid);
         } catch (err) {
           logger.warn("Auto-verification pass failed", { sessionUuid, err: String(err) });
         }
