@@ -91,6 +91,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] } as unknown as VerificationResult["layer3_playwright"],
       layer4_ai: { confirmed: true, reasoning: "Command execution proven via nonce echo.", confidenceAdjustment: 0.2 } as unknown as VerificationResult["layer4_ai"],
       finalVerdict: "confirmed",
+      rejectedByLayer: null,
       finalConfidence: 0.95,
       dedupHash: "test-hash",
     };
@@ -134,6 +135,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] } as unknown as VerificationResult["layer3_playwright"],
       layer4_ai: { confirmed: true, reasoning: "Command execution proven.", confidenceAdjustment: 0.2 } as unknown as VerificationResult["layer4_ai"],
       finalVerdict: "confirmed",
+      rejectedByLayer: null,
       finalConfidence: 0.95,
       dedupHash: "test-hash-2",
     };
@@ -168,6 +170,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] } as unknown as VerificationResult["layer3_playwright"],
       layer4_ai: { confirmed: false, reasoning: "No execution evidence.", confidenceAdjustment: -0.3 } as unknown as VerificationResult["layer4_ai"],
       finalVerdict: "rejected",
+      rejectedByLayer: "l2_reprobe",
       finalConfidence: 0.1,
       dedupHash: "test-hash-3",
     };

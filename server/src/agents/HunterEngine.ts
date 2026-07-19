@@ -2688,6 +2688,15 @@ Return ONLY valid JSON array of hypothesis objects.`;
           // dressed up as a WAF-bypass attempt.
           const mutations = payloadMutator.mutate(hypothesis.vulnClass).filter(m => m.technique !== "baseline");
           const chosen = mutations[0];
+          // Loud regression guard for the original bug: its entire signature was
+          // silence (mutations[0] quietly WAS the baseline). Don't just rely on
+          // the filter above never breaking — assert it here so a regression
+          // fires during a real hunt, not only in a test that happens to cover it.
+          if (chosen && chosen.technique === "baseline") {
+            logger.error("Gray-zone retry selected the unmutated baseline payload — mutate() filter regression", {
+              hypothesisId: hypothesis.id, vulnClass: hypothesis.vulnClass,
+            });
+          }
           picked = chosen?.variant ?? null;
           // Only reflected_not_executed with a detected stack is confidently
           // attributable to "this encoding fixed a parser-level issue" — the
@@ -2846,7 +2855,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const successful = relatedProbes.filter(p => p.success);
 
       if (successful.length > 0) {
-        // AI-assisted confidence update
+        // Weighted blend of prior confidence and probe success rate (no model call)
         const newConfidence = await this.updateConfidence(hypothesis, successful);
         hypothesis.confidence = newConfidence;
 

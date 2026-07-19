@@ -8,6 +8,7 @@ import { db } from "../db";
 import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
 import { eq, desc, like, or, inArray } from "drizzle-orm";
 import { KALI_CATALOG, KaliCategory } from "../lib/hunter/kali-catalog";
+import { isCrossCampaignEligible } from "../lib/hunter/custom-target-program";
 import { z } from "zod";
 import TargetSelectionIntelligence from "../intelligence/TargetSelection";
 import ROIModel from "../intelligence/ROIModel";
@@ -1629,7 +1630,7 @@ router.get("/platform/status", async (_req: Request, res: Response) => {
       };
     });
 
-    const localPrograms = rows.filter(r => r.platform === "local" || r.platform === "custom" || r.platform === "other");
+    const localPrograms = rows.filter(r => !isCrossCampaignEligible(r));
     const categories = [
       {
         name: "Bug Bounty Platforms",

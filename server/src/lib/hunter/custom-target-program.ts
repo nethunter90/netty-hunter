@@ -51,3 +51,17 @@ export async function resolveCustomTargetProgram(targetUrl: string, customScope?
   }).returning();
   return created.id;
 }
+
+/**
+ * Whether a program's data (findings, tool-selection outcomes) should count
+ * toward cross-campaign priors — recommendation floors, RL reinforcement, or
+ * anything else that aggregates across hunts. Practice/lab targets (this
+ * module's synthetic "local" programs, plus "custom"/"other") overrepresent
+ * priors relative to real programs if left in: same eligibility question for
+ * every consumer, so it lives here once rather than being re-inlined at each
+ * call site (was previously duplicated ad hoc, e.g. bounty.ts's
+ * platform-based filter).
+ */
+export function isCrossCampaignEligible(program: { platform: string }): boolean {
+  return !["local", "custom", "other"].includes(program.platform);
+}

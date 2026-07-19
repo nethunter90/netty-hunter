@@ -7,6 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { classifyRetryFailure } from '../lib/tools/retry-failure-classifier';
+import { payloadMutator } from '../lib/tools/payload-mutator';
 
 describe('classifyRetryFailure', () => {
   it('classifies a WAF block page as waf_blocked', () => {
@@ -40,5 +41,31 @@ describe('classifyRetryFailure', () => {
 
   it('does not false-positive reflected_not_executed when no payload was recorded', () => {
     expect(classifyRetryFailure('', 'Some unrelated but reasonably long response body here')).toBe('no_signal');
+  });
+});
+
+// ─── Gray-zone mutation selection (HunterEngine's generic-path pick) ─────────
+// The original bug: mutate()'s first entry is always {technique:"baseline"}
+// (the unmutated payload), so an unfiltered mutations[0] pick was a silent
+// no-op dressed up as a WAF-bypass/encoding retry — it never actually changed
+// anything. HunterEngine now filters `.filter(m => m.technique !== "baseline")`
+// before picking; this reproduces that exact selection logic per vuln class and
+// asserts the chosen mutation is never the baseline.
+describe('gray-zone mutation selection never picks baseline', () => {
+  const VULN_CLASSES = ['xss', 'sqli', 'ssrf', 'lfi', 'rce', 'ssti', 'xxe'];
+
+  it('filtered mutations[0] differs from the unmutated baseline payload, for every vuln class with mutations', () => {
+    for (const vulnClass of VULN_CLASSES) {
+      const all = payloadMutator.mutate(vulnClass);
+      if (all.length === 0) continue; // unsupported class — nothing to assert
+      expect(all[0].technique, vulnClass).toBe('baseline'); // sanity: confirms this test exercises the real risk
+
+      const mutations = all.filter(m => m.technique !== 'baseline');
+      const chosen = mutations[0];
+      if (!chosen) continue; // some classes may have no non-baseline variant
+
+      expect(chosen.technique, vulnClass).not.toBe('baseline');
+      expect(chosen.variant, vulnClass).not.toBe(all[0].variant);
+    }
   });
 });

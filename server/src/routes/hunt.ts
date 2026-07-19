@@ -437,6 +437,7 @@ router.post("/findings/:id/nuclei-template", async (req: Request, res: Response)
     layer3_playwright: { confirmed: true, consoleAlerts: [], networkRequests: [] },
     layer4_ai: { confirmed: true, reasoning: "", confidenceAdjustment: 0 },
     finalVerdict: "confirmed" as const,
+    rejectedByLayer: null,
     finalConfidence: finding.confidence,
     dedupHash: finding.dedupHash || "",
   };

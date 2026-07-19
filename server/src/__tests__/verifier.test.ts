@@ -524,6 +524,136 @@ describe('VerifierAgent', () => {
     });
   });
 
+  // ─── rejectedByLayer invariant ─────────────────────────────────────────────
+  // rejectedByLayer must be null iff finalVerdict === 'confirmed', and non-null
+  // must name a real rejecting mechanism. This is ground truth set at the point
+  // computeVerdict() decides — never reconstructed later by diffing .confirmed
+  // flags, which would be an inference, not a fact.
+  describe('rejectedByLayer invariant', () => {
+    async function runVerify(result: SolverResult, {
+      l1 = { isDuplicate: false },
+      l2 = l2Confirmed,
+      l3 = l3Confirmed,
+      l4 = l4Confirmed,
+    }: { l1?: any; l2?: any; l3?: any; l4?: any } = {}) {
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue(l1);
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('aabbcc');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      vi.spyOn((a as any).layer2, 'reprobe').mockResolvedValue(l2);
+      vi.spyOn((a as any).layer3, 'replay').mockResolvedValue(l3);
+      vi.spyOn((a as any).layer4, 'confirm').mockResolvedValue(l4);
+      return a.verify(result);
+    }
+
+    const VALID_LAYERS = new Set([
+      'nonce_echo', 'l3_playwright', 'oob', 'stateful_oracle', 'l2_reprobe', 'l4_ai',
+    ]);
+
+    it('holds across representative computeVerdict paths: null iff confirmed, non-null names a real layer', async () => {
+      const cases: Array<{ label: string; result: SolverResult; l2?: any; l3?: any; l4?: any }> = [
+        { label: 'HTTP-observable confirmed', result: makeSolverResult({ vulnClass: 'cors', confidence: 0.6 }) },
+        { label: 'HTTP-observable rejected', result: makeSolverResult({ vulnClass: 'cors' }), l2: l2Rejected, l3: l3Rejected, l4: l4Rejected },
+        { label: 'HTTP-observable inconclusive (l2 only)', result: makeSolverResult({ vulnClass: 'cors' }), l3: l3Rejected, l4: l4Rejected },
+        { label: 'HTTP-observable inconclusive (l4 only)', result: makeSolverResult({ vulnClass: 'cors' }), l2: l2Rejected, l3: l3Rejected },
+        { label: 'browser-gated confirmed (xss, l3 confirms)', result: makeSolverResult({ vulnClass: 'xss', confidence: 0.5 }) },
+        { label: 'browser-gated inconclusive (xss, l3 rejects, l4 confirms)', result: makeSolverResult({ vulnClass: 'xss', confidence: 0.5 }), l3: l3Rejected },
+        { label: 'browser-gated rejected (xss, l3+l4 reject)', result: makeSolverResult({ vulnClass: 'xss', confidence: 0.5 }), l3: l3Rejected, l4: l4Rejected },
+        { label: 'stateful oracle confirmed', result: makeSolverResult({ vulnClass: 'business_logic', toolsUsed: ['logic_exploit_agent'] }) },
+        { label: 'stateful oracle inconclusive', result: makeSolverResult({ vulnClass: 'business_logic', toolsUsed: ['logic_exploit_agent'] }), l4: l4Rejected },
+      ];
+
+      for (const c of cases) {
+        const vr = await runVerify(c.result, { l2: c.l2, l3: c.l3, l4: c.l4 });
+        if (vr.finalVerdict === 'confirmed') {
+          expect(vr.rejectedByLayer, c.label).toBeNull();
+        } else {
+          expect(vr.rejectedByLayer, c.label).not.toBeNull();
+          expect(VALID_LAYERS.has(vr.rejectedByLayer as string), c.label).toBe(true);
+        }
+      }
+    });
+
+    it('L1 duplicate → rejectedByLayer is null (no oracle voted, L1 short-circuited)', async () => {
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue({ isDuplicate: true, existingHash: 'abc' });
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('abc');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      const vr = await a.verify(makeSolverResult());
+      expect(vr.finalVerdict).toBe('deduplicated');
+      expect(vr.rejectedByLayer).toBeNull();
+    });
+
+    it('adaptation-retry override (the clean case): flip to confirmed clears rejectedByLayer to null', async () => {
+      const lfiResult = makeSolverResult({
+        vulnClass: 'lfi',
+        endpoint: 'http://target.com/api/files/list?path=../../../../../../etc/passwd',
+        request: 'http://target.com/api/files/list?path=../../../../../../etc/passwd',
+        payload: '../../../../../../etc/passwd',
+        confidence: 0.5,
+      });
+      const capabilityRealL4 = {
+        confirmed: false, reasoning: 'ENOENT proves traversal reached scandir; wrong shape',
+        confidenceAdjustment: 0, capabilityConfirmed: true, adaptationRule: 'target_directory_not_file',
+      };
+      const retryL4Confirmed = { confirmed: true, reasoning: 'directory listing succeeded', confidenceAdjustment: 0.1 };
+
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue({ isDuplicate: false });
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('adapthash-override');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      const l2Spy = vi.spyOn((a as any).layer2, 'reprobe');
+      l2Spy.mockResolvedValueOnce(l2Rejected).mockResolvedValueOnce(l2Confirmed);
+      vi.spyOn((a as any).layer3, 'replay').mockResolvedValue(l3Rejected);
+      const l4Spy = vi.spyOn((a as any).layer4, 'confirm');
+      l4Spy.mockResolvedValueOnce(capabilityRealL4).mockResolvedValueOnce(retryL4Confirmed);
+
+      // Sanity: the original (pre-retry) pass alone would have been rejected,
+      // with rejectedByLayer naming the HTTP-observable authority (l2_reprobe) —
+      // confirming there IS a real non-null value in play before the override,
+      // so the subsequent null-clear is a genuine flip, not a no-op.
+      const preRetryVerdict = (a as any).computeVerdict(
+        lfiResult, l2Rejected, l3Rejected, capabilityRealL4, false, false,
+      );
+      expect(preRetryVerdict.finalVerdict).toBe('rejected');
+      expect(preRetryVerdict.rejectedByLayer).toBe('l2_reprobe');
+
+      const vr = await a.verify(lfiResult);
+      expect(vr.finalVerdict).toBe('confirmed');
+      expect(vr.rejectedByLayer).toBeNull();
+    });
+
+    it('l4.errored softening (the subtle case): actively sets rejectedByLayer to l4_ai, never leaves the pre-override value stale', async () => {
+      // Pin the EXACT value, not just non-null — a stale value carried over from
+      // the pre-override "rejected" verdict would also pass a bare non-null check.
+      // The dead L4 backstop is the actual reason this is now inconclusive, so
+      // the field must be actively overwritten to name it, not left untouched.
+      const result = makeSolverResult({ vulnClass: 'cors', confidence: 0.5 });
+      const erroredL4 = { confirmed: false, reasoning: 'model unavailable', confidenceAdjustment: 0, errored: true };
+
+      const a = new VerifierAgent();
+      vi.spyOn((a as any).layer1, 'check').mockResolvedValue({ isDuplicate: false });
+      vi.spyOn((a as any).layer1, 'computeHash').mockReturnValue('erroredhash');
+      vi.spyOn((a as any).layer1, 'computeSimHash').mockReturnValue(0n);
+      vi.spyOn((a as any).layer2, 'reprobe').mockResolvedValue(l2Rejected);
+      vi.spyOn((a as any).layer3, 'replay').mockResolvedValue(l3Rejected);
+      vi.spyOn((a as any).layer4, 'confirm').mockResolvedValue(erroredL4);
+
+      // Sanity: without the l4.errored override, this HTTP-observable path (l2
+      // rejects, l4 rejects) would compute rejectedByLayer = 'l2_reprobe' — the
+      // stale value the softening override must NOT leave behind.
+      const preOverrideVerdict = (a as any).computeVerdict(
+        result, l2Rejected, l3Rejected, erroredL4, false, false,
+      );
+      expect(preOverrideVerdict.finalVerdict).toBe('rejected');
+      expect(preOverrideVerdict.rejectedByLayer).toBe('l2_reprobe');
+
+      const vr = await a.verify(result);
+      expect(vr.finalVerdict).toBe('inconclusive');
+      expect(vr.rejectedByLayer).toBe('l4_ai');
+    });
+  });
+
   // ─── Payload-adaptation retry ──────────────────────────────────────────────
   // L4 can signal "capability real, proof payload mechanically wrong" — gated,
   // capped to exactly one retry, and must NEVER fire on a plain rejection.

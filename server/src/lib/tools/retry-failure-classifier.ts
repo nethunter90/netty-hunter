@@ -22,6 +22,10 @@
  *     Never written to cross-hunt learning — see HunterEngine's retry branch.
  */
 
+// Pre-verdict taxonomy only (why a probe attempt didn't get a signal, before
+// any verification layer runs) — deliberately separate from any post-verdict
+// rejection taxonomy (e.g. VerifierAgent's rejectedByLayer / a future
+// verification_rejection RL domain). Don't merge them just because they rhyme.
 export type RetryFailureReason =
   | "waf_blocked"
   | "reflected_not_executed"

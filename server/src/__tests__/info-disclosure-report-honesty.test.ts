@@ -75,6 +75,7 @@ describe("Info-disclosure report honesty (Task 3)", () => {
       layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] } as unknown as VerificationResult["layer3_playwright"],
       layer4_ai: { confirmed: true, reasoning: "Unauthenticated endpoint returns environment data.", confidenceAdjustment: 0.2 } as unknown as VerificationResult["layer4_ai"],
       finalVerdict: "confirmed",
+      rejectedByLayer: null,
       finalConfidence: 0.95,
       dedupHash: "test-hash-env",
     };
@@ -129,6 +130,7 @@ describe("Info-disclosure report honesty (Task 3)", () => {
       layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] } as unknown as VerificationResult["layer3_playwright"],
       layer4_ai: { confirmed: true, reasoning: "Env data returned unauthenticated.", confidenceAdjustment: 0.2 } as unknown as VerificationResult["layer4_ai"],
       finalVerdict: "confirmed",
+      rejectedByLayer: null,
       finalConfidence: 0.95,
       dedupHash: "test-hash-env-2",
     };

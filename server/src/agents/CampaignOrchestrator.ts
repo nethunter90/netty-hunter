@@ -1229,6 +1229,7 @@ export class CampaignOrchestrator extends EventEmitter {
           layer4_ai: (verification.layer4_ai as { confirmed: boolean; reasoning: string; confidenceAdjustment: number })
             ?? { confirmed: false, reasoning: "", confidenceAdjustment: 0 },
           finalVerdict: (verification.finalVerdict as "confirmed") || "confirmed",
+          rejectedByLayer: null,
           finalConfidence: (verification.finalConfidence as number | undefined) ?? finding.confidence,
           dedupHash: finding.dedupHash || "",
         };

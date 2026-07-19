@@ -87,6 +87,14 @@ export interface VerificationResult {
   layer3_playwright: { confirmed: boolean; screenshot?: string; consoleAlerts: string[]; networkRequests: string[] };
   layer4_ai: { confirmed: boolean; reasoning: string; confidenceAdjustment: number; errored?: boolean };
   finalVerdict: "confirmed" | "rejected" | "inconclusive" | "deduplicated";
+  /**
+   * Ground truth for which oracle/mechanism actually produced a non-confirmed
+   * verdict. Invariant: null iff finalVerdict === "confirmed"; non-null names
+   * the real rejecting/dissenting mechanism. Set at the point computeVerdict()
+   * decides the verdict — never reconstructed after the fact by diffing layer
+   * .confirmed flags, which is an inference, not a fact.
+   */
+  rejectedByLayer: "nonce_echo" | "l3_playwright" | "oob" | "stateful_oracle" | "l2_reprobe" | "l4_ai" | null;
   finalConfidence: number;
   dedupHash: string;
   /**
@@ -817,6 +825,8 @@ export class VerifierAgent {
         layer3_playwright: { confirmed: false, consoleAlerts: [], networkRequests: [] },
         layer4_ai: { confirmed: false, reasoning: "Duplicate finding", confidenceAdjustment: -1 },
         finalVerdict: "deduplicated",
+        // Not a rejection by any oracle — L1 short-circuited before any layer voted.
+        rejectedByLayer: null,
         finalConfidence: 0,
         dedupHash,
       };
@@ -861,7 +871,7 @@ export class VerifierAgent {
     logger.info("VerifierAgent: L4 AI confirmation", { confirmed: l4.confirmed, visionUsed: l4.visionUsed });
 
     // ── Final verdict: per-class oracle authority ────────────────────────────
-    let { finalVerdict, finalConfidence } = this.computeVerdict(
+    let { finalVerdict, finalConfidence, rejectedByLayer } = this.computeVerdict(
       result, l2, l3, l4, browserVerifiable, statefulOracle
     );
 
@@ -901,6 +911,7 @@ export class VerifierAgent {
           // real evidence instead of the original failed payload.
           finalVerdict = "confirmed";
           finalConfidence = retryVerdict.finalConfidence;
+          rejectedByLayer = null;
           adaptation = {
             rule: adapted.rule, adaptedUrl: adapted.adaptedUrl, adaptedPayload: adapted.adaptedPayload,
             statusCode: retryL2.statusCode, responseSnippet: retryL2.responseSnippet, screenshot: retryL3.screenshot,
@@ -921,6 +932,11 @@ export class VerifierAgent {
     if (l4.errored && finalVerdict === "rejected") {
       finalVerdict = "inconclusive";
       finalConfidence = result.confidence + l4.confidenceAdjustment;
+      // Actively set — do not leave whatever value the pre-override "rejected"
+      // verdict left sitting here. The dead L4 backstop is the actual reason this
+      // is now inconclusive, so it must be named, not inherited from the original
+      // (possibly L2/stateful/etc.) rejection reason.
+      rejectedByLayer = "l4_ai";
     }
 
     logger.info("VerifierAgent: Verification complete", { findingId, finalVerdict, finalConfidence });
@@ -936,6 +952,7 @@ export class VerifierAgent {
       layer3_playwright: l3,
       layer4_ai: l4,
       finalVerdict,
+      rejectedByLayer,
       finalConfidence: Math.max(0, Math.min(1, finalConfidence)),
       dedupHash,
       ...(adaptation ? { adaptation } : {}),
@@ -961,7 +978,7 @@ export class VerifierAgent {
     l4: { confirmed: boolean; confidenceAdjustment: number },
     browserVerifiable: boolean,
     statefulOracle: boolean,
-  ): { finalVerdict: "confirmed" | "rejected" | "inconclusive"; finalConfidence: number } {
+  ): { finalVerdict: "confirmed" | "rejected" | "inconclusive"; finalConfidence: number; rejectedByLayer: VerificationResult["rejectedByLayer"] } {
     // Fixes the structural bug where confirmation hard-required L2 and the reject
     // branch fired on (!L2 && !L3) while ignoring L4 — so a correct L4 "confirmed"
     // was discarded whenever the HTTP/browser oracles were unreachable or simply
@@ -969,6 +986,7 @@ export class VerifierAgent {
     // real test, and a positive proof is never vetoed by an oracle that is n/a.
     let finalVerdict: "confirmed" | "rejected" | "inconclusive";
     let finalConfidence = result.confidence + l4.confidenceAdjustment;
+    let rejectedByLayer: VerificationResult["rejectedByLayer"] = null;
 
     if (l2.nonceEchoConfirmed) {
       // Self-verifying RCE proof (fresh per-call random nonce, anti-reflection
@@ -988,6 +1006,7 @@ export class VerifierAgent {
           endpoint: result.endpoint, vulnClass: result.vulnClass,
         });
         finalVerdict = l4.confirmed ? "inconclusive" : "rejected";
+        rejectedByLayer = "l3_playwright";
         if (finalVerdict === "rejected") finalConfidence = Math.max(0, finalConfidence - 0.3);
       } else if (l3.confirmed) {
         finalVerdict = "confirmed";
@@ -996,9 +1015,11 @@ export class VerifierAgent {
         // Model believes it but execution was not proven in the browser —
         // needs a human look, never a silent rejection.
         finalVerdict = "inconclusive";
+        rejectedByLayer = "l3_playwright";
       } else {
         finalVerdict = "rejected";
         finalConfidence = Math.max(0, finalConfidence - 0.3);
+        rejectedByLayer = "l3_playwright";
       }
     } else if (result.oobConfirmed && OOB_ORACLE_CLASSES.has(result.vulnClass)) {
       // OOB oracle: a beacon that actually fired is definitional, non-destructive
@@ -1025,6 +1046,7 @@ export class VerifierAgent {
         // L4 dissent or error on a finding a stateful oracle already proved → needs
         // a human, never an auto-reject driven by an inapplicable stateless reprobe.
         finalVerdict = "inconclusive";
+        rejectedByLayer = "stateful_oracle";
       }
     } else {
       // HTTP-observable class: L2 (live reprobe) is authoritative, L4 corroborates,
@@ -1034,13 +1056,18 @@ export class VerifierAgent {
         finalConfidence = Math.min(0.95, finalConfidence + 0.05);
       } else if (l2.confirmed || l4.confirmed) {
         // One authoritative signal, the other silent or dissenting → needs review.
+        // Name whichever oracle did NOT confirm — that is the actual dissent.
         finalVerdict = "inconclusive";
+        rejectedByLayer = !l2.confirmed ? "l2_reprobe" : "l4_ai";
       } else {
         finalVerdict = "rejected";
         finalConfidence = Math.max(0, finalConfidence - 0.3);
+        // L2 is the authoritative oracle for this class (see comment above) — it is
+        // the one that failed to confirm, L4 merely corroborates.
+        rejectedByLayer = "l2_reprobe";
       }
     }
-    return { finalVerdict, finalConfidence };
+    return { finalVerdict, finalConfidence, rejectedByLayer };
   }
 
   async close(): Promise<void> {
