@@ -27,7 +27,7 @@ import {
 import { eq, desc, sql } from "drizzle-orm";
 import logger from "../utils/logger";
 
-import { ScopeGuard } from "../middleware/scopeGuard";
+import { ScopeGuard, isLocalHostname } from "../middleware/scopeGuard";
 import { HunterEngine } from "./HunterEngine";
 import { SolverPool } from "./SolverPool";
 import { VerifierAgent } from "./VerifierAgent";
@@ -437,13 +437,25 @@ export class CampaignOrchestrator extends EventEmitter {
     const discovered: string[] = [targetUrl];
     try {
       const apex = new URL(targetUrl).hostname.replace(/^www\./, "");
-      const { stdout } = await execFileAsync("subfinder", ["-d", apex, "-silent"], { timeout: 30_000 });
-      const subdomains = stdout.trim().split("\n").filter(Boolean);
-      for (const sub of subdomains) {
-        const url = `https://${sub}`;
-        if (this.isInScope(url, scope)) discovered.push(url);
+      // subfinder queries live external passive-DNS/certificate-transparency
+      // sources for real public domains. Running it against a loopback/lab
+      // hostname (e.g. "localhost") returns meaningless external noise — real-
+      // looking hostnames some data source associated with that literal string
+      // — which then trivially passes the wildcard "*.localhost" scope pattern
+      // below (pure suffix match) and burns hunt budget sub-hunting fabricated
+      // targets. Skip enumeration entirely for local hosts: there is nothing
+      // real to find, and scope can't meaningfully filter noise this shaped.
+      if (isLocalHostname(apex)) {
+        logger.debug("[Orchestrator] Skipping subdomain expansion for local/lab hostname", { apex });
+      } else {
+        const { stdout } = await execFileAsync("subfinder", ["-d", apex, "-silent"], { timeout: 30_000 });
+        const subdomains = stdout.trim().split("\n").filter(Boolean);
+        for (const sub of subdomains) {
+          const url = `https://${sub}`;
+          if (this.isInScope(url, scope)) discovered.push(url);
+        }
+        logger.info("[Orchestrator] Subdomain expansion complete", { apex, found: subdomains.length, inScope: discovered.length - 1 });
       }
-      logger.info("[Orchestrator] Subdomain expansion complete", { apex, found: subdomains.length, inScope: discovered.length - 1 });
     } catch (err) {
       logger.debug("[Orchestrator] Subdomain expansion failed (non-critical)", { err: String(err) });
     }
