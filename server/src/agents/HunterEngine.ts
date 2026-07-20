@@ -77,6 +77,7 @@ import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 import { ClaudeClient } from "../lib/claude-client";
 import { synthesisAgent } from "./SynthesisAgent";
 import { logicExploitAgent } from "./LogicExploitAgent";
+import { normalizeVulnClass, CANONICAL_VULN_CLASSES } from "../lib/vuln-taxonomy";
 
 const execFileAsync = promisify(execFile);
 
@@ -768,6 +769,11 @@ function makeCustomParser(parserType: string): (output: string) => Record<string
   };
 }
 
+// Marks an auth pre-flight failure that must abort startHunt() rather than
+// fall through to the generic "continuing unauthenticated" catch below it —
+// see the two throw sites inside startHunt()'s auth-config block.
+class LocalAuthConfigError extends Error {}
+
 export class HunterEngine extends EventEmitter {
   private state!: HuntState;
   private wafSynthesizer = new IntelligenceSynthesizer();
@@ -989,6 +995,31 @@ export class HunterEngine extends EventEmitter {
         .from(programs).where(eq(programs.id, params.programId)).limit(1);
       if (prog?.authConfig) {
         this.authConfig = prog.authConfig as AuthConfig;
+
+        // A stale authConfig pointing at a different host/port than the target
+        // being hunted (e.g. a "Custom: localhost" program record left over from
+        // a previous target) reliably produces the same silent failure as a bad
+        // password: login() swallows the error and the hunt runs its entire
+        // budget unauthenticated, only discoverable after the fact via log
+        // forensics. On local/lab targets there's no legitimate reason for the
+        // login host to differ from the target host (unlike real bug-bounty
+        // programs, which can genuinely have auth on a separate subdomain), so
+        // fail fast here instead of burning the whole run to find out.
+        const targetHost = (() => { try { return new URL(params.targetUrl).host; } catch { return ""; } })();
+        const loginHost = (() => {
+          try { return this.authConfig?.loginUrl ? new URL(this.authConfig.loginUrl).host : ""; }
+          catch { return ""; }
+        })();
+        const isLocalHost = (h: string) => /^(localhost|127\.|::1)(:|$)/.test(h);
+        if (loginHost && targetHost && loginHost !== targetHost && isLocalHost(targetHost)) {
+          const msg = `authConfig.loginUrl host (${loginHost}) does not match target host (${targetHost}) for a local/lab target. `
+            + `This is almost always a stale program record — fix programs.auth_config for programId ${params.programId} before hunting.`;
+          logger.error("[HunterEngine] AUTH CONFIG HOST MISMATCH — aborting before probing", {
+            programId: params.programId, loginHost, targetHost, loginUrl: this.authConfig.loginUrl,
+          });
+          throw new LocalAuthConfigError(msg);
+        }
+
         const session = await sessionManager.login(params.programId, this.authConfig);
         this.authHeaders = session.headers;
         // login() NEVER throws — it returns an empty session when the target login
@@ -1000,6 +1031,7 @@ export class HunterEngine extends EventEmitter {
         if (hasAuthMaterial) {
           logger.info("[HunterEngine] Authenticated session established", { programId: params.programId });
         } else {
+          const reason = "Login reached no session (check loginUrl reachability + credentials). Auth-gated vuln classes will not be tested.";
           logger.error("[HunterEngine] AUTH CONFIGURED BUT LOGIN PRODUCED NO SESSION — hunting UNAUTHENTICATED", {
             programId: params.programId,
             loginUrl: this.authConfig.loginUrl,
@@ -1009,11 +1041,18 @@ export class HunterEngine extends EventEmitter {
             sessionId: this.state?.sessionId ?? "",
             programId: params.programId,
             loginUrl: this.authConfig.loginUrl,
-            reason: "Login reached no session (check loginUrl reachability + credentials). Auth-gated vuln classes will not be tested.",
+            reason,
           });
+          // Same reasoning as the host-mismatch check above: on a local/lab
+          // target, auth being configured but never establishing a session is
+          // never intentional, so don't waste the run finding that out later.
+          if (isLocalHost(targetHost)) {
+            throw new LocalAuthConfigError(`Auth configured for local target but login produced no session — ${reason}`);
+          }
         }
       }
     } catch (err) {
+      if (err instanceof LocalAuthConfigError) throw err;
       logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });
     }
 
@@ -2314,7 +2353,9 @@ ${toolKnowledge.getSummaryBlock()}
 ${domainKnowledge ? `\nRelevant domain knowledge and past examples:\n${domainKnowledge}\n` : ''}${rlPriorityHint ? `\nCross-hunt intelligence: ${rlPriorityHint}\n` : ''}${methodologyHints ? `\nAttack methodology for observed candidates:\n${methodologyHints}` : ''}${this.reconContext ? `\n\nPre-hunt OSINT recon (use this to make targetUrl fields specific — probe discovered subdomains and historical paths):\n${this.reconContext.summary}\n` : ''}
 Generate 3-5 specific vulnerability hypotheses based on the observations.
 Each hypothesis must have:
-- vulnClass: (xss/sqli/ssrf/idor/lfi/rce/auth_bypass/info_disclosure/misconfig/open_redirect/cors/csrf/xxe)
+- vulnClass: MUST be exactly one of: ${CANONICAL_VULN_CLASSES.join("/")} — pick the
+  single closest match. Do not invent a new label or describe an outcome/impact
+  (e.g. "account takeover") as if it were a vulnClass.
 - targetUrl: specific URL or endpoint to test
 - reasoning: why you believe this vulnerability exists
 - confidence: 0.0-1.0 based on evidence strength
@@ -2367,18 +2408,36 @@ Return ONLY valid JSON array of hypothesis objects.`;
       const rawSlice = response.match(/\[[\s\S]+\]/)?.[0]?.slice(0, 65536) || "[]";
       const parsed = JSON.parse(rawSlice);
 
-      const newHypotheses: Hypothesis[] = parsed.map((h: Record<string, unknown>) => ({
-        id: uuidv4(),
-        vulnClass: h.vulnClass as string || "unknown",
-        targetUrl: h.targetUrl as string || this.state.targetUrl,
-        reasoning: h.reasoning as string || "",
-        confidence: Math.min(1, Math.max(0, Number(h.confidence) || 0.5)),
-        priority: Math.min(10, Math.max(1, Number(h.priority) || 5)),
-        evidence: this.state.observations.filter(o => o.anomalyScore > 0.3),
-        status: "pending" as const,
-        createdAt: Date.now(),
-        modelSource: this.modelRouter.lastProvider,
-      }));
+      // normalizeVulnClass() is the single taxonomy chokepoint (see
+      // lib/vuln-taxonomy.ts) — a class the model invents that isn't in the
+      // canonical list (or a known alias of one) is discarded here, loudly,
+      // rather than silently entering the pipeline as "unknown" and dying
+      // unnoticed several boundaries downstream. This is exactly the failure
+      // mode that let a chain-synthesis "authentication_bypass" hypothesis
+      // fall through the LogicExploitAgent routing gate with zero signal.
+      const newHypotheses: Hypothesis[] = parsed
+        .map((h: Record<string, unknown>) => {
+          const vulnClass = normalizeVulnClass(h.vulnClass as string);
+          if (!vulnClass) {
+            logger.warn("[HunterEngine] Discarding hypothesis — unrecognized vulnClass", {
+              raw: h.vulnClass, targetUrl: h.targetUrl,
+            });
+            return null;
+          }
+          return {
+            id: uuidv4(),
+            vulnClass,
+            targetUrl: h.targetUrl as string || this.state.targetUrl,
+            reasoning: h.reasoning as string || "",
+            confidence: Math.min(1, Math.max(0, Number(h.confidence) || 0.5)),
+            priority: Math.min(10, Math.max(1, Number(h.priority) || 5)),
+            evidence: this.state.observations.filter(o => o.anomalyScore > 0.3),
+            status: "pending" as const,
+            createdAt: Date.now(),
+            modelSource: this.modelRouter.lastProvider,
+          };
+        })
+        .filter((h: Hypothesis | null): h is Hypothesis => h !== null);
 
       // Sort by priority * confidence
       newHypotheses.sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence));
@@ -3989,10 +4048,14 @@ Answer in JSON only:
     "steps": ["finding A → finding B"],
     "combined_impact": "what attacker achieves",
     "severity": "critical|high|medium",
-    "next_hypothesis": { "vulnClass": "string", "targetUrl": "string", "reasoning": "string" } | null
+    "next_hypothesis": { "vulnClass": "MUST be exactly one of: ${CANONICAL_VULN_CLASSES.join("|")}", "targetUrl": "string", "reasoning": "string" } | null
   }],
   "key_insight": "one-sentence most important cross-finding relationship"
 }
+
+next_hypothesis.vulnClass is not free text — pick the single closest match from the
+list above. Do not invent a new label or describe an outcome/impact (e.g. "account
+takeover", "lateral movement") as if it were a vulnClass.
 
 Only include chains that genuinely increase severity beyond individual findings.`;
 
@@ -4024,15 +4087,20 @@ Only include chains that genuinely increase severity beyond individual findings.
       for (const chain of parsed.chains) {
         if (chain.next_hypothesis && (chain.severity === "critical" || chain.severity === "high")) {
           const nh = chain.next_hypothesis;
-          if (!this.state.hypotheses.some(h => h.vulnClass === nh.vulnClass && h.targetUrl === nh.targetUrl)) {
+          const vulnClass = normalizeVulnClass(nh.vulnClass);
+          if (!vulnClass) {
+            logger.warn("[HunterEngine] Chain synthesis — discarding next_hypothesis with unrecognized vulnClass", {
+              raw: nh.vulnClass, chain: chain.name, targetUrl: nh.targetUrl,
+            });
+          } else if (!this.state.hypotheses.some(h => h.vulnClass === vulnClass && h.targetUrl === nh.targetUrl)) {
             this.state.hypotheses.push({
-              id: uuidv4(), vulnClass: nh.vulnClass, targetUrl: nh.targetUrl,
+              id: uuidv4(), vulnClass, targetUrl: nh.targetUrl,
               reasoning: `[Chain synthesis] ${chain.name}: ${nh.reasoning}`,
               confidence: 0.72, priority: 9,
               evidence: [], status: "pending", createdAt: Date.now(),
               chainedFrom: findings.map(f => f.hypothesis.id),
             });
-            logger.info("[HunterEngine] Synthesis seeded hypothesis", { vulnClass: nh.vulnClass, chain: chain.name });
+            logger.info("[HunterEngine] Synthesis seeded hypothesis", { vulnClass, chain: chain.name });
           }
           break;
         }
