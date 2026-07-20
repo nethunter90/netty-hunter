@@ -14,7 +14,7 @@
  * error.message returned to the client across ~6 routes, leaking internal
  * filesystem paths.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { secretScanner } from "./secret-scanner";
 import { payloadMutator } from "./payload-mutator";
@@ -58,7 +58,7 @@ function scanForDisclosure(body: string): string[] {
 }
 
 class ErrorDisclosureProber {
-  async probe(targetUrl: string, authHeaders: Record<string, string> = {}): Promise<ErrorDisclosureResult> {
+  async probe(targetUrl: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<ErrorDisclosureResult> {
     const findings: DisclosureFinding[] = [];
     let attempted = 0;
 
@@ -91,14 +91,14 @@ class ErrorDisclosureProber {
     for (const attempt of attempts) {
       attempted++;
       try {
-        const resp = await axios.request({
+        const resp = await scopedHttp.request({
           url: attempt.url,
           method: attempt.method,
           data: attempt.body,
           headers: { ...authHeaders, "Content-Type": "application/json" },
           timeout: 6000,
           validateStatus: () => true,
-        });
+        }, programId);
 
         // Deliberately does NOT require status >= 400 — some apps return 200
         // with the error embedded in the JSON body instead of a real error

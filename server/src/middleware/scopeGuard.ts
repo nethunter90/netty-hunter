@@ -6,6 +6,22 @@
  * DNS protection: follows the full CNAME chain and checks every A record
  * on the terminal hostname so DNS rebinding and shared-infra pivots are
  * both caught before Layer 2 fires any payload.
+ *
+ * programId policy (three-way, see classifyProgramPolicy):
+ *   - "real"    (programId > 0)  — full protection: private/loopback IP
+ *                                  resolution is blocked (rebinding/SSRF),
+ *                                  and IP/CIDR exclusions are enforced with
+ *                                  a fail-closed DNS-failure posture.
+ *   - "lab"     (programId === -1) — the explicit local-lab sentinel. Scope
+ *                                  + exclusions (including IP/CIDR excludes)
+ *                                  are enforced exactly as for "real"; ONLY
+ *                                  the private/loopback-IP block is relaxed,
+ *                                  because every current hunt target lives
+ *                                  on loopback/RFC-1918 by design.
+ *   - "invalid" (missing/0/other) — fail closed before any DB/DNS work. A
+ *                                  real hunt launched without a valid
+ *                                  programId must never silently run
+ *                                  unguarded, and must never be treated as lab.
  */
 import dns from "dns";
 import { Request, Response, NextFunction } from "express";
@@ -27,6 +43,45 @@ function isPrivateIP(ip: string): boolean {
   if (ip === "::1" || ip === "0:0:0:0:0:0:0:1") return true;
   if (/^(fc|fd)/i.test(ip)) return true; // IPv6 ULA
   return false;
+}
+
+/** Three-way programId policy — see module docstring for the semantics of each. */
+export type ScopePolicy = "real" | "lab" | "invalid";
+
+export function classifyProgramPolicy(programId: number | null | undefined): ScopePolicy {
+  if (programId === -1) return "lab";
+  if (typeof programId === "number" && Number.isFinite(programId) && programId > 0) return "real";
+  return "invalid";
+}
+
+/** IPv4-only CIDR/exact-IP matcher for user-declared IP/CIDR exclusions —
+ *  distinct from the automatic RFC-1918 rebinding block above, which fires
+ *  regardless of what the scope explicitly lists. */
+function ipv4ToInt(ip: string): number | null {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+}
+
+/** True if `pattern` is shaped like an IPv4 address or CIDR block (as opposed
+ *  to a hostname pattern). IPv6 IP/CIDR exclusions are not recognized here —
+ *  a documented gap (matches the existing IPv4-only rebinding check), not a
+ *  silent bypass: such a pattern simply falls through to hostMatches() and
+ *  never matches as a hostname either, so it's inert rather than dangerous. */
+export function isIpOrCidrPattern(pattern: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(pattern.trim());
+}
+
+export function ipMatchesPattern(ip: string, pattern: string): boolean {
+  const [base, bits] = pattern.trim().split("/");
+  const ipInt = ipv4ToInt(ip);
+  const baseInt = ipv4ToInt(base);
+  if (ipInt === null || baseInt === null) return false;
+  if (bits === undefined) return ipInt === baseInt;
+  const prefix = Number(bits);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipInt & mask) === (baseInt & mask);
 }
 
 // Definitive multi-tenant SaaS platforms — payloads here hit shared infrastructure.
@@ -207,7 +262,7 @@ export class ScopeGuard {
   }
 
   /** Public entry point — tallies the decision then returns the unchanged verdict. */
-  async isInScope(url: string, programId: number): Promise<{
+  async isInScope(url: string, programId: number | null | undefined): Promise<{
     allowed: boolean;
     reason: string;
     sharedInfraWarning?: string;
@@ -218,14 +273,22 @@ export class ScopeGuard {
     return result;
   }
 
-  // Enforcement logic — unchanged. isInScope() wraps this to add telemetry.
-  private async evaluateScope(url: string, programId: number): Promise<{
+  // Enforcement logic — isInScope() wraps this to add telemetry.
+  private async evaluateScope(url: string, programId: number | null | undefined): Promise<{
     allowed: boolean;
     reason: string;
     sharedInfraWarning?: string;
   }> {
+    // Fat-finger guard: classify BEFORE any DB/DNS work. A missing/zero/other
+    // programId is never treated as lab-mode — it fails closed immediately.
+    const policy = classifyProgramPolicy(programId);
+    if (policy === "invalid") {
+      logger.warn("ScopeGuard: invalid programId — failing closed", { url, programId });
+      return { allowed: false, reason: `Invalid programId (${String(programId)}) — failing closed` };
+    }
+
     try {
-      const scope = await this.getScope(programId);
+      const scope = await this.getScope(programId as number);
       const hostname = this.extractHostname(url);
       let pathname = "/";
       try { pathname = new URL(url).pathname || "/"; } catch { /* non-URL input → root */ }
@@ -265,22 +328,56 @@ export class ScopeGuard {
         return { allowed: false, reason: `CNAME chain resolves to shared-tenant platform: ${terminal}` };
       }
 
-      // Check ALL resolved A records on the terminal for private IPs.
-      // Skip for intentionally-local targets: scope "*" (local lab) OR an entry
-      // hostname that is itself a loopback/private literal (e.g. localhost:5000).
-      // Rebinding protection only applies when a PUBLIC host resolves to private.
-      const isLocalLabScope = scope.inScope.includes("*") || isLocalHostname(hostname);
-      if (!isLocalLabScope) {
-        try {
-          const ips = await dns.promises.resolve4(terminal);
-          for (const ip of ips) {
+      // Resolve the terminal's A records once — feeds both the rebinding block
+      // (policy-gated below) and the IP/CIDR exclusion check (always active).
+      const ipCidrExclusions = scope.outOfScope.filter(isIpOrCidrPattern);
+      let resolvedIps: string[] | null = null;
+      let resolveFailed = false;
+      try {
+        resolvedIps = await dns.promises.resolve4(terminal);
+      } catch {
+        resolveFailed = true;
+      }
+
+      // IP/CIDR exclusions — enforced identically for "real" and "lab" (these are
+      // explicit user-declared excludes, not the automatic private-range block).
+      if (ipCidrExclusions.length > 0) {
+        if (resolvedIps) {
+          for (const ip of resolvedIps) {
+            for (const pattern of ipCidrExclusions) {
+              if (ipMatchesPattern(ip, pattern)) {
+                logger.warn("ScopeGuard: resolved IP matches IP/CIDR exclusion", { terminal, ip, pattern });
+                return { allowed: false, reason: `Resolved IP ${ip} matches out-of-scope pattern: ${pattern}` };
+              }
+            }
+          }
+        } else if (policy === "real") {
+          // Can't verify where a "real" program's host resolves — don't send.
+          logger.warn("ScopeGuard: DNS resolution failed for IP/CIDR exclusion check — failing closed (real program)", { terminal });
+          return { allowed: false, reason: `Could not resolve ${terminal} to verify IP/CIDR exclusions — failing closed` };
+        }
+        // policy === "lab" + resolve failure: non-fatal, mirrors the rebinding
+        // soft-fail below — lab targets (localhost) always resolve in practice.
+      }
+
+      // Automatic private/loopback-IP rebinding block — policy-gated.
+      // "real": always active. "lab": relaxed, since every current hunt target
+      // lives on loopback/RFC-1918 by design (see module docstring).
+      const skipRebindingBlock = policy === "lab" || isLocalHostname(hostname);
+      if (!skipRebindingBlock) {
+        if (resolvedIps) {
+          for (const ip of resolvedIps) {
             if (isPrivateIP(ip)) {
               logger.warn("ScopeGuard: DNS rebinding blocked", { terminal, ip });
               return { allowed: false, reason: `DNS rebinding protection: ${terminal} resolved to private IP ${ip}` };
             }
           }
-        } catch {
-          // Resolution failure is non-fatal — hostname may lack A records (IPv6-only, etc.)
+        } else if (resolveFailed) {
+          // Resolution failure is non-fatal for the rebinding check specifically —
+          // hostname may lack A records (IPv6-only, etc.). Documented, deliberate
+          // exception to the outer fail-closed guarantee; narrower than it looks
+          // because the IP/CIDR check above already fails closed for "real" when
+          // exclusions are declared. Left as-is per amendment 3.
           logger.debug("ScopeGuard: resolve4 failed for terminal (non-fatal)", { terminal });
         }
       }
@@ -325,7 +422,9 @@ export class ScopeGuard {
   }
 }
 
-// Express middleware factory
+// Express middleware factory — NOT currently wired to any route (verified: no
+// caller anywhere imports scopeGuardMiddleware). Left as dead code, out of scope
+// for the transport-layer chokepoint handoff since it's not on the egress path.
 export function scopeGuardMiddleware(programIdExtractor: (req: Request) => number | null) {
   const guard = ScopeGuard.getInstance();
 

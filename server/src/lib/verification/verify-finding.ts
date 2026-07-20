@@ -110,6 +110,7 @@ export async function verifyAndPersistFinding(
     // proof — the verifier uses this to confirm rce/ssrf/xxe/blind classes without
     // a stateless L2 reprobe (which can't replay an already-fired callback) vetoing.
     oobConfirmed: finding.oobHitReceived === true,
+    programId: finding.programId ?? undefined,
   };
 
   // Pass the finding's own stored dedupHash so Layer 1 doesn't reject it as a

@@ -3,10 +3,9 @@
  * Pre-hunt protocol to establish a normal-traffic baseline in the defender's model
  * before beginning adversarial probes. Fires benign requests at human-like intervals.
  */
-import axios from 'axios';
+import { scopedHttp, OutOfScopeError } from '../net/scoped-http';
 import { WarmupPlan, temporalDecay } from '../hunter/temporal-decay';
 import { BehavioralMimicry } from './behavioral-mimicry';
-import { ScopeGuard } from '../../middleware/scopeGuard';
 import logger from '../../utils/logger';
 
 export interface WarmupResult {
@@ -34,7 +33,6 @@ export class SessionWarmup {
     const { dryRun = false, programId } = options;
     const start = Date.now();
     const session = this.mimicry.buildSession(plan.domain);
-    const scopeGuard = ScopeGuard.getInstance();
     let fired = 0;
 
     if (dryRun) {
@@ -51,27 +49,26 @@ export class SessionWarmup {
       const path = plan.paths[i % plan.paths.length];
       const url = `https://${plan.domain}${path}`;
 
-      // Scope gate: skip any URL that is out-of-scope for the program
-      if (programId !== undefined) {
-        const { allowed, reason } = await scopeGuard.isInScope(url, programId);
-        if (!allowed) {
-          logger.warn('[SessionWarmup] skipping out-of-scope warmup URL', { url, reason });
-          continue;
-        }
-      }
       const referrer = session.referrerChain[Math.min(i, session.referrerChain.length - 1)];
       const headers = this.mimicry.buildHeaders(session, referrer);
 
+      // Scope check happens inside scopedHttp — this is the ONLY scope guard
+      // for warmup traffic now; the bespoke inline ScopeGuard call that used
+      // to live here has been folded into the shared client.
       try {
-        await axios.get(url, {
+        await scopedHttp.get(url, {
           timeout: 6000,
           validateStatus: () => true,
           headers,
-        });
+        }, programId);
         fired++;
         logger.debug('[SessionWarmup] benign request fired', { url, fired });
       } catch (err) {
-        logger.debug('[SessionWarmup] request failed (non-fatal)', { url, err: String(err) });
+        if (err instanceof OutOfScopeError) {
+          logger.warn('[SessionWarmup] skipping out-of-scope warmup URL', { url, reason: err.reason });
+        } else {
+          logger.debug('[SessionWarmup] request failed (non-fatal)', { url, err: String(err) });
+        }
       }
 
       // Inter-request delay from timing pattern

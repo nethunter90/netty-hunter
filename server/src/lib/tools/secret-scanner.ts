@@ -2,7 +2,7 @@
  * Secret scanner — scans HTTP response bodies for leaked credentials,
  * API keys, tokens, and cloud credentials embedded in HTML/JS/JSON.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 export interface SecretMatch {
@@ -68,13 +68,13 @@ const SCAN_PATHS = [
 ];
 
 class SecretScanner {
-  async scan(baseUrl: string, authHeaders: Record<string, string> = {}): Promise<SecretScanResult> {
+  async scan(baseUrl: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<SecretScanResult> {
     const base = this.extractBase(baseUrl);
     const matches: SecretMatch[] = [];
     let urlsScanned = 0;
 
     const results = await Promise.allSettled(
-      SCAN_PATHS.map(path => this.fetchAndScan(`${base}${path}`, authHeaders))
+      SCAN_PATHS.map(path => this.fetchAndScan(`${base}${path}`, authHeaders, programId))
     );
 
     for (const result of results) {
@@ -114,15 +114,15 @@ class SecretScanner {
     return { matches: unique, urlsScanned, hypotheses };
   }
 
-  private async fetchAndScan(url: string, headers: Record<string, string>): Promise<SecretMatch[] | null> {
+  private async fetchAndScan(url: string, headers: Record<string, string>, programId?: number): Promise<SecretMatch[] | null> {
     try {
-      const resp = await axios.get(url, {
+      const resp = await scopedHttp.get(url, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)", ...headers },
         timeout: 5000,
         validateStatus: s => s < 500,
         responseType: "text",
         maxRedirects: 2,
-      });
+      }, programId);
 
       if (resp.status !== 200) return null;
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);

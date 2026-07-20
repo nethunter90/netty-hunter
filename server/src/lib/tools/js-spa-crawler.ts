@@ -9,7 +9,8 @@
  * and returned alongside endpoints so the model can reason about them
  * without ever seeing a pixel.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
+import { installScopeRoute } from "../net/scoped-browser-route";
 import logger from "../../utils/logger";
 // Type-only import — erased at compile time, so this doesn't force a runtime
 // dependency on playwright for callers using the regex-fallback path (the
@@ -621,7 +622,8 @@ const SCRIPT_FETCH_RESERVE_MS = 12_000;
 
 async function playwrightCrawl(
   targetUrl: string,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  programId?: number
 ): Promise<{ endpoints: DiscoveredEndpoint[]; jsFilesScanned: number; visualTags: string[]; routes: string[] }> {
   const crawlDeadline = Date.now() + CRAWL_HARD_TIMEOUT_MS;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -637,6 +639,8 @@ async function playwrightCrawl(
     try {
       const context = await browser.newContext({ extraHTTPHeaders: authHeaders });
       const page = await context.newPage();
+      // Browser-native egress chokepoint — installed before any navigation.
+      await installScopeRoute(page, programId);
       await page.setExtraHTTPHeaders(authHeaders);
 
       // ── Inject visual observer before any page script runs ──────────────
@@ -762,10 +766,10 @@ async function playwrightCrawl(
           const resolved = resolveScriptUrl(src, targetUrl);
           if (!resolved) return;
           try {
-            const resp = await axios.get(resolved, {
+            const resp = await scopedHttp.get(resolved, {
               headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)", ...authHeaders },
               timeout: 8000, validateStatus: s => s < 400, responseType: "text", maxRedirects: 2,
-            });
+            }, programId);
             if (typeof resp.data === "string" && resp.data.length < 5_000_000) {
               jsFilesScanned++;
               endpoints.push(...jsPathsToEndpoints(extractPathsFromJs(resp.data), targetUrl));
@@ -806,7 +810,8 @@ async function playwrightCrawl(
 
 async function regexFallbackCrawl(
   targetUrl: string,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  programId?: number
 ): Promise<{ endpoints: DiscoveredEndpoint[]; jsFilesScanned: number; visualTags: string[]; routes: string[] }> {
   const endpoints: DiscoveredEndpoint[] = [];
   let jsFilesScanned = 0;
@@ -814,10 +819,10 @@ async function regexFallbackCrawl(
 
   let html = "";
   try {
-    const resp = await axios.get(targetUrl, {
+    const resp = await scopedHttp.get(targetUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)", ...authHeaders },
       timeout: 10000, validateStatus: s => s < 500, responseType: "text", maxRedirects: 3,
-    });
+    }, programId);
     html = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
   } catch (fetchErr) {
     logger.debug("[JSSPACrawler] Fallback: failed to fetch target page", { err: String(fetchErr) });
@@ -839,10 +844,10 @@ async function regexFallbackCrawl(
     const resolved = resolveScriptUrl(src, targetUrl);
     if (!resolved) return;
     try {
-      const resp = await axios.get(resolved, {
+      const resp = await scopedHttp.get(resolved, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)", ...authHeaders },
         timeout: 8000, validateStatus: s => s < 400, responseType: "text", maxRedirects: 2,
-      });
+      }, programId);
       if (typeof resp.data === "string" && resp.data.length < 5_000_000) {
         jsFilesScanned++;
         endpoints.push(...jsPathsToEndpoints(extractPathsFromJs(resp.data), targetUrl));
@@ -870,15 +875,16 @@ export interface DeepCrawlResult extends SPACrawlResult {
 
 async function crawlSinglePage(
   url: string,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  programId?: number
 ): Promise<{ endpoints: DiscoveredEndpoint[]; jsFilesScanned: number; visualTags: string[]; routes: string[] }> {
   let playwrightAvailable = false;
   try { require.resolve("playwright"); playwrightAvailable = true; } catch { /* */ }
 
   if (playwrightAvailable) {
-    try { return await playwrightCrawl(url, authHeaders); } catch { /* fall through */ }
+    try { return await playwrightCrawl(url, authHeaders, programId); } catch { /* fall through */ }
   }
-  return regexFallbackCrawl(url, authHeaders);
+  return regexFallbackCrawl(url, authHeaders, programId);
 }
 
 function normalizeForDedup(urlStr: string): string {
@@ -891,11 +897,12 @@ function isSameOriginNav(href: string, origin: string): boolean {
 
 export async function deepCrawl(
   targetUrl: string,
-  options: { maxDepth?: number; maxPages?: number; authHeaders?: Record<string, string> } = {}
+  options: { maxDepth?: number; maxPages?: number; authHeaders?: Record<string, string>; programId?: number } = {}
 ): Promise<DeepCrawlResult> {
   const maxDepth = options.maxDepth ?? 2;
   const maxPages = options.maxPages ?? 20;
   const authHeaders = options.authHeaders ?? {};
+  const programId = options.programId;
 
   let origin: string;
   try { origin = new URL(targetUrl).origin; }
@@ -921,7 +928,7 @@ export async function deepCrawl(
     logger.debug("[DeepCrawl] Crawling page", { url, depth });
 
     try {
-      const result = await crawlSinglePage(url, authHeaders);
+      const result = await crawlSinglePage(url, authHeaders, programId);
       allEndpoints.push(...result.endpoints);
       totalJsScanned += result.jsFilesScanned;
       allVisualTags.push(...result.visualTags);

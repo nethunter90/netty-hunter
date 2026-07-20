@@ -4,7 +4,7 @@
  * ultimate target is an unclaimed service (GitHub Pages, Heroku, S3, etc.).
  */
 import dns from "dns/promises";
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 export interface TakeoverResult {
@@ -38,9 +38,9 @@ const TAKEOVER_FINGERPRINTS: Array<{ service: string; patterns: RegExp[]; cnameS
 ];
 
 class SubdomainTakeoverChecker {
-  async checkSubdomains(subdomains: string[]): Promise<TakeoverResult[]> {
+  async checkSubdomains(subdomains: string[], programId?: number): Promise<TakeoverResult[]> {
     const results = await Promise.allSettled(
-      subdomains.map(sub => this.checkOne(sub))
+      subdomains.map(sub => this.checkOne(sub, programId))
     );
 
     const vulnerable: TakeoverResult[] = [];
@@ -58,7 +58,7 @@ class SubdomainTakeoverChecker {
     return vulnerable;
   }
 
-  async checkOne(subdomain: string): Promise<TakeoverResult | null> {
+  async checkOne(subdomain: string, programId?: number): Promise<TakeoverResult | null> {
     try {
       // Resolve CNAME chain
       const cname = await this.resolveCNAME(subdomain);
@@ -71,8 +71,8 @@ class SubdomainTakeoverChecker {
       if (!fp) return null;
 
       // Fetch the subdomain and check response body
-      const body = await this.fetchBody(`https://${subdomain}`).catch(() =>
-        this.fetchBody(`http://${subdomain}`)
+      const body = await this.fetchBody(`https://${subdomain}`, programId).catch(() =>
+        this.fetchBody(`http://${subdomain}`, programId)
       ).catch(() => null);
       if (!body) return null;
 
@@ -106,14 +106,14 @@ class SubdomainTakeoverChecker {
     }
   }
 
-  private async fetchBody(url: string): Promise<string> {
-    const resp = await axios.get(url, {
+  private async fetchBody(url: string, programId?: number): Promise<string> {
+    const resp = await scopedHttp.get(url, {
       timeout: 6000,
       validateStatus: () => true,
       maxRedirects: 3,
       responseType: "text",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)" },
-    });
+    }, programId);
     return typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
   }
 }

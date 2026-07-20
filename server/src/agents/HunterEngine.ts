@@ -7,7 +7,7 @@
 import { EventEmitter } from "events";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import axios from "axios";
+import { scopedHttp } from "../lib/net/scoped-http";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db";
 import { huntSessions, findings, exploitChains, customTools, campaigns } from "../db/schema";
@@ -1097,7 +1097,7 @@ export class HunterEngine extends EventEmitter {
 
     // Phase 0: passive OSINT recon — runs concurrently with first observe()
     // Resolves before hypothesize() is called so the model reasons over real attack surface.
-    this.reconPromise = new ReconRunner(params.targetUrl, sessionUuid, (e, d) => this.emit(e, d))
+    this.reconPromise = new ReconRunner(params.targetUrl, sessionUuid, (e, d) => this.emit(e, d), params.programId)
       .run()
       .then(ctx => { this.reconContext = ctx; return ctx; })
       .catch(err => {
@@ -1489,7 +1489,7 @@ export class HunterEngine extends EventEmitter {
       // Secret scanning — look for leaked credentials in response bodies
       (async () => {
         try {
-          const secretResult = await secretScanner.scan(this.state.targetUrl, this.authHeaders);
+          const secretResult = await secretScanner.scan(this.state.targetUrl, this.authHeaders, this.state.programId);
           if (secretResult.matches.length > 0) {
             for (const hyp of secretResult.hypotheses) {
               this.state.hypotheses.push({
@@ -1522,7 +1522,7 @@ export class HunterEngine extends EventEmitter {
       // error.message back to the client on failure is invisible to that scan.
       (async () => {
         try {
-          const disclosureResult = await errorDisclosureProber.probe(this.state.targetUrl, this.authHeaders);
+          const disclosureResult = await errorDisclosureProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of disclosureResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1546,7 +1546,7 @@ export class HunterEngine extends EventEmitter {
       // Diff-based change detection — compare endpoint responses against last baseline
       (async () => {
         try {
-          const changeReport = await changeDetector.detect(this.state.targetUrl, this.authHeaders);
+          const changeReport = await changeDetector.detect(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of changeReport.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(),
@@ -1575,7 +1575,7 @@ export class HunterEngine extends EventEmitter {
       // WebSocket security probing
       (async () => {
         try {
-          const wsResult = await webSocketProber.probe(this.state.targetUrl, this.authHeaders);
+          const wsResult = await webSocketProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of wsResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1593,7 +1593,7 @@ export class HunterEngine extends EventEmitter {
       // Cloud bucket exposure probing
       (async () => {
         try {
-          const bucketResult = await cloudBucketProber.probe(this.state.targetUrl);
+          const bucketResult = await cloudBucketProber.probe(this.state.targetUrl, this.state.programId);
           for (const hyp of bucketResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1616,7 +1616,7 @@ export class HunterEngine extends EventEmitter {
       // Prototype pollution probing
       (async () => {
         try {
-          const ppResult = await prototypePollutionProber.probe(this.state.targetUrl, this.authHeaders);
+          const ppResult = await prototypePollutionProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of ppResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1634,7 +1634,7 @@ export class HunterEngine extends EventEmitter {
       // Race condition probing
       (async () => {
         try {
-          const raceResult = await raceConditionDetector.probe(this.state.targetUrl, this.authHeaders);
+          const raceResult = await raceConditionDetector.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of raceResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1652,7 +1652,7 @@ export class HunterEngine extends EventEmitter {
       // Host header injection probing
       (async () => {
         try {
-          const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders);
+          const hhResult = await hostHeaderProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of hhResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "host_header_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
@@ -1663,7 +1663,7 @@ export class HunterEngine extends EventEmitter {
       // CRLF injection probing
       (async () => {
         try {
-          const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders);
+          const crlfResult = await crlfProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of crlfResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "crlf_probe", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
@@ -1674,7 +1674,7 @@ export class HunterEngine extends EventEmitter {
       // Cookie security flag checking
       (async () => {
         try {
-          const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders);
+          const cookieResult = await cookieFlagChecker.check(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of cookieResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "cookie_flag_checker", data: { endpoint: hyp.endpoint, detail: hyp.reasoning, raw: hyp.raw }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
@@ -1685,7 +1685,7 @@ export class HunterEngine extends EventEmitter {
       // JS/SPA crawling — extract hidden API endpoints + visual event tags
       (async () => {
         try {
-          const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders });
+          const crawlResult = await deepCrawl(this.state.targetUrl, { maxDepth: 2, maxPages: 20, authHeaders: this.authHeaders, programId: this.state.programId });
           for (const hyp of crawlResult.hypotheses) {
             this.state.hypotheses.push({ id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl, reasoning: hyp.reasoning, confidence: hyp.confidence, priority: hyp.priority, evidence: [{ id: uuidv4(), source: "deep_crawl", data: { endpoint: hyp.targetUrl, detail: hyp.reasoning }, tags: [hyp.vulnClass], anomalyScore: hyp.confidence, timestamp: Date.now() }], status: "pending", createdAt: Date.now() });
           }
@@ -1763,7 +1763,7 @@ export class HunterEngine extends EventEmitter {
             // to real hypotheses, same pattern as every other OBSERVE-phase
             // prober fixed this session.
             const probed = await techPayloadProber.probe(
-              this.state.targetUrl, profile.payloads, profile.debugRoutes, this.authHeaders
+              this.state.targetUrl, profile.payloads, profile.debugRoutes, this.authHeaders, this.state.programId
             );
             for (const hyp of probed.hypotheses) {
               this.state.hypotheses.push({
@@ -1809,7 +1809,7 @@ export class HunterEngine extends EventEmitter {
       // Parameter discovery — find injectable params via batch fuzzing
       (async () => {
         try {
-          const paramResult = await parameterDiscovery.discover(this.state.targetUrl, this.authHeaders);
+          const paramResult = await parameterDiscovery.discover(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of paramResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.targetUrl || this.state.targetUrl,
@@ -1827,7 +1827,7 @@ export class HunterEngine extends EventEmitter {
       // OAuth probe — detect OAuth/OIDC flows and test for misconfigurations
       (async () => {
         try {
-          const oauthResult = await oauthProber.probe(this.state.targetUrl, this.authHeaders);
+          const oauthResult = await oauthProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of oauthResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1845,7 +1845,7 @@ export class HunterEngine extends EventEmitter {
       // Mass assignment probe — test for privileged field injection on update/register endpoints
       (async () => {
         try {
-          const maResult = await massAssignmentProber.probe(this.state.targetUrl, this.authHeaders);
+          const maResult = await massAssignmentProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of maResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1863,7 +1863,7 @@ export class HunterEngine extends EventEmitter {
       // Business logic probe — test cart, coupon, pricing flows for logic flaws
       (async () => {
         try {
-          const bizResult = await businessLogicProber.probe(this.state.targetUrl, this.authHeaders);
+          const bizResult = await businessLogicProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of bizResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1881,7 +1881,7 @@ export class HunterEngine extends EventEmitter {
       // 2FA bypass probe — test for OTP skip, null code, step skip attacks
       (async () => {
         try {
-          const tfaResult = await twoFactorBypassProber.probe(this.state.targetUrl, this.authHeaders);
+          const tfaResult = await twoFactorBypassProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of tfaResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1899,7 +1899,7 @@ export class HunterEngine extends EventEmitter {
       // JWT confusion probe — alg:none, weak secrets, kid injection
       (async () => {
         try {
-          const jwtResult = await jwtConfusionProber.probe(this.state.targetUrl, this.authHeaders);
+          const jwtResult = await jwtConfusionProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of jwtResult.hypotheses) {
             // No per-vuln endpoint here — JWT confusion is a token-validation-
             // mechanism flaw, not tied to one specific URL, so the root target
@@ -1921,7 +1921,7 @@ export class HunterEngine extends EventEmitter {
       // Open redirect chain probe — detect open redirects and chain to OAuth/XSS
       (async () => {
         try {
-          const orResult = await openRedirectChainProber.probe(this.state.targetUrl, this.authHeaders);
+          const orResult = await openRedirectChainProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of orResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1939,7 +1939,7 @@ export class HunterEngine extends EventEmitter {
       // Blind XXE probe — OOB-based XML external entity detection
       (async () => {
         try {
-          const xxeResult = await blindXXEProber.probe(this.state.targetUrl, this.authHeaders);
+          const xxeResult = await blindXXEProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of xxeResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1962,7 +1962,7 @@ export class HunterEngine extends EventEmitter {
       // deserialization coverage in the codebase.
       (async () => {
         try {
-          const deserResult = await deserializationProber.probe(this.state.targetUrl, this.authHeaders);
+          const deserResult = await deserializationProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of deserResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -1983,7 +1983,7 @@ export class HunterEngine extends EventEmitter {
       // the literal source) rather than a substring/reflection heuristic.
       (async () => {
         try {
-          const uploadResult = await fileUploadWebshellProber.probe(this.state.targetUrl, this.authHeaders);
+          const uploadResult = await fileUploadWebshellProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of uploadResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -2006,7 +2006,7 @@ export class HunterEngine extends EventEmitter {
       // "rce" tag) is signature-only CVE matching, not live exploitation.
       (async () => {
         try {
-          const cmdResult = await blindCommandInjectionProber.probe(this.state.targetUrl, this.authHeaders);
+          const cmdResult = await blindCommandInjectionProber.probe(this.state.targetUrl, this.authHeaders, this.state.programId);
           for (const hyp of cmdResult.hypotheses) {
             this.state.hypotheses.push({
               id: uuidv4(), vulnClass: hyp.vulnClass, targetUrl: hyp.endpoint || this.state.targetUrl,
@@ -2070,11 +2070,11 @@ export class HunterEngine extends EventEmitter {
   }
 
   private async probeGraphQL(): Promise<void> {
-    const endpoints = await graphqlProber.detectEndpoints(this.state.targetUrl, this.authHeaders);
+    const endpoints = await graphqlProber.detectEndpoints(this.state.targetUrl, this.authHeaders, this.state.programId);
     if (!endpoints.length) return;
 
     for (const ep of endpoints) {
-      const schema = await graphqlProber.introspect(ep, this.authHeaders);
+      const schema = await graphqlProber.introspect(ep, this.authHeaders, this.state.programId);
       if (!schema) continue;
 
       const seeds = graphqlProber.toHypothesisSeeds(schema);
@@ -2548,7 +2548,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         if (technique) {
           const reprobe = await techPayloadProber.reprobeHypothesis(
             technique as Parameters<typeof techPayloadProber.reprobeHypothesis>[0],
-            hypothesis.targetUrl, this.authHeaders, rawPayload
+            hypothesis.targetUrl, this.authHeaders, rawPayload, this.state.programId
           );
           this.state.budget.requestsMade++;
           if (reprobe.found) {
@@ -2626,6 +2626,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             this.state.sessionId,
             this.authHeaders,
             Object.keys(this.secondaryAuthHeaders).length > 0 ? this.secondaryAuthHeaders : undefined,
+            this.state.programId,
           );
           const result: ProbeResult = {
             hypothesisId: hypothesis.id,
@@ -2776,7 +2777,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         let canaryHostname = '';
         try {
           canaryHostname = new URL(hypothesis.targetUrl).hostname;
-          const resp = await axios.head(hypothesis.targetUrl, { timeout: 3000, validateStatus: () => true });
+          const resp = await scopedHttp.request({ url: hypothesis.targetUrl, method: "HEAD", timeout: 3000, validateStatus: () => true }, this.state.programId);
           if (resp.status === 403) {
             dynamicRateLimiter.recordResponse(canaryHostname, '/', 403, resp.headers as Record<string, string>);
             const signal = dynamicRateLimiter.getDetectionSignal(canaryHostname);
@@ -3607,8 +3608,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         const attempts = buildRceOobAttempts(targetUrl, callbackUrl);
         await Promise.allSettled(attempts.map(a =>
           a.method === "POST"
-            ? axios.post(a.url, a.body ?? {}, reqOpts)
-            : axios.get(a.url, reqOpts)
+            ? scopedHttp.post(a.url, a.body ?? {}, reqOpts, this.state.programId)
+            : scopedHttp.get(a.url, reqOpts, this.state.programId)
         ));
       } else {
         // Single-request OOB payload for ssrf/xss/xxe/sqli.
@@ -3621,6 +3622,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
             return u.toString();
           }
           if (vulnClass === "xss") {
+            // scope-egress-ignore: this fetch(...) is XSS PAYLOAD CONTENT injected into the target page, not a call this process makes
             u.searchParams.set("q", `<img src="${callbackUrl}" onerror="fetch('${callbackUrl}')">`);
             return u.toString();
           }
@@ -3632,7 +3634,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
           u.searchParams.set("id", `1 AND LOAD_FILE('${callbackUrl}')-- -`);
           return u.toString();
         })();
-        await axios.get(probeUrl, reqOpts).catch(() => {});
+        await scopedHttp.get(probeUrl, reqOpts, this.state.programId).catch(() => {});
       }
 
       // Interactsh gets more time since DNS propagation can add a few seconds
@@ -3709,11 +3711,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
     for (const endpoint of [...new Set(endpoints)]) {
       for (const payload of payloads) {
         try {
-          const resp = await axios.post(endpoint, payload, {
+          const resp = await scopedHttp.post(endpoint, payload, {
             headers: { "Content-Type": "application/json", ...this.authHeaders },
             timeout: 8000,
             validateStatus: () => true,
-          });
+          }, this.state.programId);
           const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
           const flags = body.match(FLAG_RE) ?? [];
           // Require the actual shape of `id` command output (uid=0(root) gid=0(root) ...),

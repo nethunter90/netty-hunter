@@ -9,7 +9,7 @@ import PQueue from "p-queue";
 import { v4 as uuidv4 } from "uuid";
 import { exec, execFile } from "child_process";
 import { promisify } from "util";
-import axios from "axios";
+import { scopedHttp } from "../lib/net/scoped-http";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
@@ -99,6 +99,10 @@ export interface SolverResult {
    * whether the vulnerability is real.
    */
   authHeaders?: Record<string, string>;
+  /** Program this finding belongs to — threaded through to VerifierAgent's
+   *  L2 reprobe so replayed requests go through the same scope chokepoint
+   *  as the original probe, not unguarded. */
+  programId?: number;
 }
 
 // ─── Per-domain behavioral mimicry sessions ──────────────────────────────────
@@ -152,7 +156,8 @@ abstract class BaseSolver {
     method: string = "GET",
     params?: Record<string, string>,
     headers?: Record<string, string>,
-    body?: string
+    body?: string,
+    programId?: number
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
     let hostname = '';
     try { hostname = new URL(url).hostname; } catch { /* malformed URL */ }
@@ -163,7 +168,7 @@ abstract class BaseSolver {
     }
 
     try {
-      const resp = await getDomainQueue(url).add(() => axios({
+      const resp = await getDomainQueue(url).add(() => scopedHttp.request({
         method,
         url,
         params,
@@ -172,7 +177,7 @@ abstract class BaseSolver {
         timeout: 10000,
         validateStatus: () => true,
         maxRedirects: 3,
-      }));
+      }, programId));
       const result = {
         status: resp!.status,
         headers: resp!.headers as Record<string, string>,
@@ -228,7 +233,7 @@ class XSSSolver extends BaseSolver {
     for (const payload of this.payloads) {
       const encoded = encodeURIComponent(payload);
       const probeUrl = `${task.endpoint}?q=${encoded}&search=${encoded}&s=${encoded}`;
-      const resp = await this.httpProbe(probeUrl);
+      const resp = await this.httpProbe(probeUrl, undefined, undefined, undefined, undefined, task.programId);
       lastReq = probeUrl;
       lastResp = resp.body;
 
@@ -314,7 +319,7 @@ class SQLiSolver extends BaseSolver {
     for (const probe of this.probes) {
       const probeUrl = `${task.endpoint}?id=${encodeURIComponent(probe.payload)}`;
       const t0 = Date.now();
-      const resp = await this.httpProbe(probeUrl);
+      const resp = await this.httpProbe(probeUrl, undefined, undefined, undefined, undefined, task.programId);
       const elapsed = Date.now() - t0;
       lastResp = resp;
 
@@ -386,7 +391,7 @@ export class SSRFSolver extends BaseSolver {
     for (const payload of this.ssrfPayloads) {
       for (const param of SSRF_PARAM_NAMES) {
         const probeUrl = `${task.endpoint}?${param}=${encodeURIComponent(payload)}`;
-        const resp = await this.httpProbe(probeUrl);
+        const resp = await this.httpProbe(probeUrl, undefined, undefined, undefined, undefined, task.programId);
         if (SSRFSolver.detects(resp.body)) {
           found = true;
           bestPayload = payload;
@@ -407,11 +412,7 @@ export class SSRFSolver extends BaseSolver {
       for (const param of SSRF_PARAM_NAMES) {
         let hit = false;
         for (const payload of this.ssrfPostPayloads) {
-          const resp = await this.httpProbe(
-            task.endpoint, "POST", undefined,
-            { "Content-Type": "application/json" },
-            JSON.stringify({ [param]: payload })
-          );
+          const resp = await this.httpProbe(task.endpoint, "POST", undefined, { "Content-Type": "application/json" }, JSON.stringify({ [param]: payload }), task.programId);
           if (SSRFSolver.detects(resp.body)) {
             found = true; viaPostBody = true;
             bestPayload = payload; bestResp = resp.body;
@@ -468,11 +469,11 @@ class IDORSolver extends BaseSolver {
     }
 
     // Test sequential ID manipulation
-    const originalResp = await this.httpProbe(task.endpoint);
+    const originalResp = await this.httpProbe(task.endpoint, undefined, undefined, undefined, undefined, task.programId);
     for (let i = 1; i <= 5; i++) {
       const modifiedUrl = task.endpoint.replace(/\/\d+/, `/${i}`);
       if (modifiedUrl === task.endpoint) continue;
-      const resp = await this.httpProbe(modifiedUrl);
+      const resp = await this.httpProbe(modifiedUrl, undefined, undefined, undefined, undefined, task.programId);
 
       if (resp.status === 200 && resp.body.length > 100) {
         // Check if data belongs to different user
@@ -525,10 +526,7 @@ class OpenRedirectSolver extends BaseSolver {
 
     for (const payload of this.payloads) {
       for (const param of params) {
-        const resp = await this.httpProbe(
-          `${task.endpoint}?${param}=${encodeURIComponent(payload)}`,
-          "GET", undefined, undefined, undefined
-        );
+        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(payload)}`, "GET", undefined, undefined, undefined, task.programId);
 
         const locationHeader = resp.headers["location"] || "";
         if (locationHeader.includes("evil.com") || locationHeader.startsWith("//evil")) {
@@ -575,7 +573,7 @@ class LFISolver extends BaseSolver {
 
     for (const payload of this.payloads) {
       for (const param of params) {
-        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(payload)}`);
+        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(payload)}`, undefined, undefined, undefined, undefined, task.programId);
         if (resp.body.match(/root:.*:0:0:/) || resp.body.includes("bin/bash")) {
           found = true; bestPayload = payload; bestResp = resp.body.slice(0, 300); break;
         }
@@ -605,7 +603,7 @@ class RFISolver extends BaseSolver {
     const params = ["file", "page", "include", "url", "path", "template"];
 
     for (const param of params) {
-      const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(rfiPayload)}`);
+      const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(rfiPayload)}`, undefined, undefined, undefined, undefined, task.programId);
       // resp.status === 0 means OUR OWN request failed (ECONNREFUSED/DNS/timeout —
       // see BaseSolver.httpProbe's catch) and says nothing about the target ever
       // touching evil.com. Treating it as an RFI signal fabricated a positive
@@ -645,7 +643,7 @@ class XXESolver extends BaseSolver {
       const resp = await this.httpProbe(task.endpoint, "POST", undefined, {
         "Content-Type": "application/xml",
         "Accept": "application/xml, text/xml, */*",
-      }, payload);
+      }, payload, task.programId);
       if (resp.body.match(/root:.*:0:0:/) || resp.body.includes("ami-id") || resp.body.includes("hostname")) {
         found = true; bestPayload = payload; bestResp = resp.body.slice(0, 500); break;
       }
@@ -674,7 +672,7 @@ class CORSSolver extends BaseSolver {
     let evidence = "";
 
     for (const origin of this.testOrigins) {
-      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Origin": origin });
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Origin": origin }, undefined, task.programId);
       const acao = resp.headers["access-control-allow-origin"] || "";
       const acac = resp.headers["access-control-allow-credentials"] || "";
       if (acao === origin || (acao === origin && acac === "true")) {
@@ -705,7 +703,7 @@ class CSRFSolver extends BaseSolver {
       const resp = await this.httpProbe(task.endpoint, method, undefined, {
         "Content-Type": "application/x-www-form-urlencoded",
         "Referer": "https://evil.com",
-      }, "action=test&value=csrf_probe");
+      }, "action=test&value=csrf_probe", task.programId);
 
       const hasToken = resp.body.toLowerCase().includes("csrf") || resp.body.includes("_token");
       const noSameSite = !(resp.headers["set-cookie"] || "").toLowerCase().includes("samesite");
@@ -728,7 +726,7 @@ class CSRFSolver extends BaseSolver {
             const retry = await this.httpProbe(task.endpoint, method, undefined, {
               "Content-Type": "application/x-www-form-urlencoded",
               ...extra,
-            }, "action=test&value=csrf_probe");
+            }, "action=test&value=csrf_probe", task.programId);
             if (retry.status < 400) {
               found = true;
               csrfBypassed = true;
@@ -775,11 +773,11 @@ export class AuthBypassSolver extends BaseSolver {
     let evidence = "";
     let noopAuthMiddleware = false;
 
-    const baseline = await this.httpProbe(task.endpoint);
+    const baseline = await this.httpProbe(task.endpoint, undefined, undefined, undefined, undefined, task.programId);
     const baseStatus = baseline.status;
 
     for (const headers of this.bypassHeaders) {
-      const resp = await this.httpProbe(task.endpoint, "GET", undefined, headers);
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, headers, undefined, task.programId);
       if ((baseStatus === 401 || baseStatus === 403) && resp.status === 200) {
         found = true; bypassHeader = headers;
         evidence = `Bypass via ${JSON.stringify(headers)}: ${baseStatus}→${resp.status}`;
@@ -789,7 +787,7 @@ export class AuthBypassSolver extends BaseSolver {
 
     if (!found) {
       const noneJwt = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0.";
-      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Authorization": `Bearer ${noneJwt}` });
+      const resp = await this.httpProbe(task.endpoint, "GET", undefined, { "Authorization": `Bearer ${noneJwt}` }, undefined, task.programId);
       if (resp.status === 200 && baseStatus !== 200) {
         found = true; evidence = "JWT 'none' algorithm accepted";
       }
@@ -813,7 +811,7 @@ export class AuthBypassSolver extends BaseSolver {
       const garbage = await this.httpProbe(task.endpoint, "GET", undefined, {
         "Authorization": "Bearer not-a-real-token-zzz",
         "Cookie": "session=not-a-real-session-zzz",
-      });
+      }, undefined, task.programId);
       found = true;
       noopAuthMiddleware = garbage.status === 200 && garbage.body.length === baseline.body.length;
       evidence = noopAuthMiddleware
@@ -847,7 +845,7 @@ class MisconfigSolver extends BaseSolver {
     const base = (() => { try { return new URL(task.endpoint).origin; } catch { return task.endpoint; } })();
 
     for (const path of this.sensitiveFiles) {
-      const resp = await this.httpProbe(`${base}${path}`);
+      const resp = await this.httpProbe(`${base}${path}`, undefined, undefined, undefined, undefined, task.programId);
       if (resp.status === 200 && resp.body.length > 50) {
         const isSensitive = resp.body.includes("DB_") || resp.body.includes("password") ||
           resp.body.includes("[core]") || resp.body.includes("<?php") ||
@@ -922,7 +920,7 @@ export class RCESolver extends BaseSolver {
     cmdLoop:
     for (const probe of RCESolver.CMD_ORACLES) {
       for (const param of params) {
-        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`);
+        const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`, undefined, undefined, undefined, undefined, task.programId);
         if (probe.pattern.test(resp.body)) {
           found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500);
           proof = "command execution confirmed via `id` output (uid/gid returned)";
@@ -936,7 +934,7 @@ export class RCESolver extends BaseSolver {
       evalLoop:
       for (const probe of evalProbes) {
         for (const param of params) {
-          const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`);
+          const resp = await this.httpProbe(`${task.endpoint}?${param}=${encodeURIComponent(probe.payload)}`, undefined, undefined, undefined, undefined, task.programId);
           if (RCESolver.confirmsEvaluation(resp.body, probe.sentExpr, probe.product)) {
             found = true; bestPayload = probe.payload; bestResp = resp.body.slice(0, 500);
             proof = `server-side template evaluation confirmed (${probe.sentExpr} evaluated to ${probe.product})`;
@@ -961,7 +959,7 @@ class InfoDisclosureSolver extends BaseSolver {
   async solve(task: SolverTask): Promise<SolverResult> {
     const start = Date.now();
     const leaks: string[] = [];
-    const resp = await this.httpProbe(task.endpoint);
+    const resp = await this.httpProbe(task.endpoint, undefined, undefined, undefined, undefined, task.programId);
     const body = resp.body;
 
     if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(body)) leaks.push("email addresses");

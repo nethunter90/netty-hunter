@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 export const GRAPHQL_PATHS = [
@@ -41,17 +41,17 @@ function extractTypeName(typeObj: unknown): string {
 }
 
 class GraphQLProber {
-  async detectEndpoints(baseUrl: string, authHeaders: Record<string, string> = {}): Promise<string[]> {
+  async detectEndpoints(baseUrl: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<string[]> {
     const base = baseUrl.replace(/\/$/, "");
     const detected: string[] = [];
     await Promise.allSettled(
       GRAPHQL_PATHS.map(async (path) => {
         try {
-          const res = await axios.post(`${base}${path}`, SIMPLE_QUERY, {
+          const res = await scopedHttp.post(`${base}${path}`, SIMPLE_QUERY, {
             headers: { "Content-Type": "application/json", ...authHeaders },
             timeout: 8000,
             validateStatus: () => true,
-          });
+          }, programId);
           if (res.status < 500) {
             const body = res.data as Record<string, unknown>;
             if (body?.data !== undefined || body?.errors !== undefined) {
@@ -64,13 +64,13 @@ class GraphQLProber {
     return detected;
   }
 
-  async introspect(endpoint: string, authHeaders: Record<string, string> = {}): Promise<ParsedSchema | null> {
+  async introspect(endpoint: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<ParsedSchema | null> {
     try {
-      const res = await axios.post(endpoint, INTROSPECTION_QUERY, {
+      const res = await scopedHttp.post(endpoint, INTROSPECTION_QUERY, {
         headers: { "Content-Type": "application/json", ...authHeaders },
         timeout: 15000,
         validateStatus: () => true,
-      });
+      }, programId);
       if (res.status >= 400) return null;
       const body = res.data as Record<string, unknown>;
       const schema = (body?.data as Record<string, unknown>)?.__schema as Record<string, unknown> | undefined;
@@ -82,16 +82,16 @@ class GraphQLProber {
     }
   }
 
-  async testBatch(endpoint: string, authHeaders: Record<string, string> = {}): Promise<boolean> {
+  async testBatch(endpoint: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<boolean> {
     try {
       const batchPayload = JSON.stringify(
         Array.from({ length: 10 }, () => ({ query: "{ __typename }" }))
       );
-      const res = await axios.post(endpoint, batchPayload, {
+      const res = await scopedHttp.post(endpoint, batchPayload, {
         headers: { "Content-Type": "application/json", ...authHeaders },
         timeout: 10000,
         validateStatus: () => true,
-      });
+      }, programId);
       return Array.isArray(res.data) && res.data.length > 1;
     } catch {
       return false;

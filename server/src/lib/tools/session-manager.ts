@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 export interface AuthConfig {
@@ -46,10 +46,10 @@ class SessionManager {
       if (!config.loginUrl) throw new Error("loginUrl required for form/bearer auth");
 
       if (authType === "bearer") {
-        const res = await axios.post(config.loginUrl, {
+        const res = await scopedHttp.post(config.loginUrl, {
           [config.usernameField || "username"]: config.username,
           [config.passwordField || "password"]: config.password,
-        }, { timeout: 15000, validateStatus: () => true });
+        }, { timeout: 15000, validateStatus: () => true }, programId);
         const token = (res.data as Record<string, unknown>)?.token
           || (res.data as Record<string, unknown>)?.access_token
           || (res.data as Record<string, unknown>)?.accessToken;
@@ -68,12 +68,12 @@ class SessionManager {
       const params = new URLSearchParams();
       params.append(config.usernameField || "username", config.username || "");
       params.append(config.passwordField || "password", config.password || "");
-      const res = await axios.post(config.loginUrl, params.toString(), {
+      const res = await scopedHttp.post(config.loginUrl, params.toString(), {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         maxRedirects: 5,
         timeout: 15000,
         validateStatus: () => true,
-      });
+      }, programId);
       const setCookie = res.headers["set-cookie"];
       const cookies = Array.isArray(setCookie) ? setCookie.map(c => c.split(";")[0]).join("; ") : "";
       const session: AuthSession = {

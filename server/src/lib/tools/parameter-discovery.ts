@@ -2,7 +2,7 @@
  * Arjun-style hidden HTTP parameter fuzzer.
  * Sends batches of parameters and detects which ones influence the server response.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface DiscoveredParam {
@@ -95,6 +95,7 @@ class ParameterDiscovery {
   async discover(
     targetUrl: string,
     authHeaders?: Record<string, string>,
+    programId?: number,
   ): Promise<ParamDiscoveryResult> {
     const headers: Record<string, string> = {
       "User-Agent": "netty-hunter/1.0",
@@ -106,11 +107,11 @@ class ParameterDiscovery {
     let baseLength = 0;
     let baseSnippet = "";
     try {
-      const baseRes = await axios.get(targetUrl, {
+      const baseRes = await scopedHttp.get(targetUrl, {
         headers,
         timeout: REQUEST_TIMEOUT,
         validateStatus: () => true,
-      });
+      }, programId);
       baseStatus = baseRes.status;
       const baseBody: string =
         typeof baseRes.data === "string"
@@ -152,19 +153,19 @@ class ParameterDiscovery {
 
           if (method === "GET") {
             const url = buildGetUrl(targetUrl, half);
-            const res = await axios.get(url, {
+            const res = await scopedHttp.get(url, {
               headers,
               timeout: REQUEST_TIMEOUT,
               validateStatus: () => true,
-            });
+            }, programId);
             status = res.status;
             body = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
           } else {
-            const res = await axios.post(targetUrl, buildPostBody(half), {
+            const res = await scopedHttp.post(targetUrl, buildPostBody(half), {
               headers: { ...headers, "Content-Type": "application/json" },
               timeout: REQUEST_TIMEOUT,
               validateStatus: () => true,
-            });
+            }, programId);
             status = res.status;
             body = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
           }
@@ -193,11 +194,11 @@ class ParameterDiscovery {
     const getTasks = batches.map((batch) => async () => {
       const url = buildGetUrl(targetUrl, batch);
       try {
-        const res = await axios.get(url, {
+        const res = await scopedHttp.get(url, {
           headers,
           timeout: REQUEST_TIMEOUT,
           validateStatus: () => true,
-        });
+        }, programId);
         const body =
           typeof res.data === "string" ? res.data : JSON.stringify(res.data);
         const differs =
@@ -212,11 +213,11 @@ class ParameterDiscovery {
             if (discoveredSet.has(key)) continue;
             discoveredSet.add(key);
 
-            const paramRes = await axios.get(buildGetUrl(targetUrl, [param]), {
+            const paramRes = await scopedHttp.get(buildGetUrl(targetUrl, [param]), {
               headers,
               timeout: REQUEST_TIMEOUT,
               validateStatus: () => true,
-            });
+            }, programId);
             const paramBody =
               typeof paramRes.data === "string"
                 ? paramRes.data
@@ -247,11 +248,11 @@ class ParameterDiscovery {
     // 3. POST batch tasks
     const postTasks = batches.map((batch) => async () => {
       try {
-        const res = await axios.post(targetUrl, buildPostBody(batch), {
+        const res = await scopedHttp.post(targetUrl, buildPostBody(batch), {
           headers: { ...headers, "Content-Type": "application/json" },
           timeout: REQUEST_TIMEOUT,
           validateStatus: () => true,
-        });
+        }, programId);
         const body =
           typeof res.data === "string" ? res.data : JSON.stringify(res.data);
         const differs =
@@ -267,11 +268,11 @@ class ParameterDiscovery {
             discoveredSet.add(key);
 
             const singleBody = buildPostBody([param]);
-            const paramRes = await axios.post(targetUrl, singleBody, {
+            const paramRes = await scopedHttp.post(targetUrl, singleBody, {
               headers: { ...headers, "Content-Type": "application/json" },
               timeout: REQUEST_TIMEOUT,
               validateStatus: () => true,
-            });
+            }, programId);
             const paramBody =
               typeof paramRes.data === "string"
                 ? paramRes.data

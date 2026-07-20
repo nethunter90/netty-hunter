@@ -8,7 +8,7 @@
  * Module 6: Cross-Session Vendor Profiles
  * Module 7: Intelligence Synthesizer
  */
-import axios from "axios";
+import { scopedHttp } from "../lib/net/scoped-http";
 import { db } from "../db";
 import { wafProfiles, programs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
@@ -68,10 +68,10 @@ export class WAFDetector {
     generic: [/waf/i, /security/i, /blocked/i, /forbidden.*attack/i],
   };
 
-  async detect(url: string, response?: { status: number; headers: Record<string, string>; body: string }): Promise<WAFDetectionResult> {
+  async detect(url: string, response?: { status: number; headers: Record<string, string>; body: string }, programId?: number): Promise<WAFDetectionResult> {
     if (!response) {
       try {
-        const resp = await axios.get(url, { timeout: 5000, validateStatus: () => true });
+        const resp = await scopedHttp.get(url, { timeout: 5000, validateStatus: () => true }, programId);
         response = {
           status: resp.status,
           headers: resp.headers as Record<string, string>,
@@ -119,7 +119,7 @@ export class WAFDetector {
 
 // ── Module 2: Fingerprint Analyzer ───────────────────────────────────────────
 export class WAFFingerprinter {
-  async fingerprint(url: string): Promise<{ waf: WAFDetectionResult; techStack: string[] }> {
+  async fingerprint(url: string, programId?: number): Promise<{ waf: WAFDetectionResult; techStack: string[] }> {
     const detector = new WAFDetector();
     const probes = [
       { path: "/../../etc/passwd", desc: "path_traversal" },
@@ -128,16 +128,16 @@ export class WAFFingerprinter {
       { path: "/admin/", desc: "admin_panel" },
     ];
 
-    const waf = await detector.detect(url);
+    const waf = await detector.detect(url, undefined, programId);
     const techStack: string[] = [];
 
     for (const probe of probes.slice(0, 2)) {
       try {
-        const resp = await axios.get(`${url}${probe.path}`, {
+        const resp = await scopedHttp.get(`${url}${probe.path}`, {
           timeout: 3000,
           validateStatus: () => true,
           headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" },
-        });
+        }, programId);
         const headers = resp.headers as Record<string, string>;
         if (headers["x-powered-by"]) techStack.push(headers["x-powered-by"]);
         if (headers["server"]) techStack.push(headers["server"]);
@@ -198,20 +198,21 @@ export class BypassExecutor {
     url: string,
     payload: string,
     technique: string,
-    options: { method?: string; paramName?: string } = {}
+    options: { method?: string; paramName?: string } = {},
+    programId?: number
   ): Promise<EvasionResult> {
     const method = options.method || "GET";
     const paramName = options.paramName || "q";
     const start = Date.now();
 
     try {
-      const resp = await axios({
+      const resp = await scopedHttp.request({
         method,
         url: `${url}?${paramName}=${payload}`,
         timeout: 5000,
         validateStatus: () => true,
         headers: this.rotateHeaders(),
-      });
+      }, programId);
 
       const blocked = [403, 406, 429, 503].includes(resp.status) ||
         /blocked|forbidden|security|waf/i.test(JSON.stringify(resp.data));
@@ -364,7 +365,7 @@ export class IntelligenceSynthesizer {
     const auth = await checkWafBypassAuthorization(url, programId);
     if (!auth.allowed) throw new Error(auth.reason);
 
-    const { waf } = await this.fingerprinter.fingerprint(url);
+    const { waf } = await this.fingerprinter.fingerprint(url, programId);
     const recommendedTechs = this.library.recommendTechniques(waf.vendor);
     const libraryVariants = this.library.generateVariants(payload, recommendedTechs);
     const vendorProfile = await this.vendorProfiles.getProfile(waf.vendor, domain);
@@ -416,7 +417,7 @@ export class IntelligenceSynthesizer {
           await new Promise(resolve => setTimeout(resolve, Math.min(probe.delayMs, remaining)));
         }
 
-        const result = await this.executor.execute(url, variant.payload, variant.technique);
+        const result = await this.executor.execute(url, variant.payload, variant.technique, {}, programId);
         results.push(result);
         await this.vendorProfiles.updateProfile(waf.vendor, domain, result);
 

@@ -10,6 +10,7 @@
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "pretest": "tsx scripts/check-scope-egress.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "golden:compare": "tsx golden-run/compare.ts",

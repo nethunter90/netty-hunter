@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface TwoFAVuln {
@@ -85,7 +85,7 @@ function toHypothesis(
 }
 
 class TwoFactorBypassProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<TwoFAResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<TwoFAResult> {
     const vulns: TwoFAVuln[] = [];
     const baseUrl = targetUrl.replace(/\/$/, "");
     const headers = { "Content-Type": "application/json", ...(authHeaders ?? {}) };
@@ -96,7 +96,7 @@ class TwoFactorBypassProber {
     const activeEndpoints: string[] = [];
     for (const ep of TWOFA_ENDPOINTS) {
       try {
-        const res = await axios.post(`${baseUrl}${ep}`, {}, { ...axiosOpts, headers });
+        const res = await scopedHttp.post(`${baseUrl}${ep}`, {}, { ...axiosOpts, headers }, programId);
         // 404 → route doesn't exist
         // 405 → route exists but doesn't accept POST (not a 2FA handler)
         if (res.status === 404 || res.status === 405) continue;
@@ -118,11 +118,11 @@ class TwoFactorBypassProber {
 
       // 1. Null code
       try {
-        const res = await axios.post(
+        const res = await scopedHttp.post(
           url,
           { code: null, otp: null, token: null },
           { ...axiosOpts, headers }
-        );
+        , programId);
         if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "null_code",
@@ -142,11 +142,11 @@ class TwoFactorBypassProber {
 
       // 2. Empty string code
       try {
-        const res = await axios.post(
+        const res = await scopedHttp.post(
           url,
           { code: "", otp: "" },
           { ...axiosOpts, headers }
-        );
+        , programId);
         if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "response_manipulation",
@@ -164,7 +164,7 @@ class TwoFactorBypassProber {
       // 3. Step skip — access protected resources without completing 2FA
       for (const resource of PROTECTED_RESOURCES) {
         try {
-          const resGet = await axios.get(`${baseUrl}${resource}`, { ...axiosOpts, headers });
+          const resGet = await scopedHttp.get(`${baseUrl}${resource}`, { ...axiosOpts, headers }, programId);
           if (resGet.status === 200 && hasUserData(resGet.data)) {
             const vuln: TwoFAVuln = {
               technique: "step_skip",
@@ -180,11 +180,11 @@ class TwoFactorBypassProber {
           logger.debug(`[2FA] step_skip GET ${resource} error: ${err}`);
         }
         try {
-          const resPost = await axios.post(
+          const resPost = await scopedHttp.post(
             `${baseUrl}${resource}`,
             {},
             { ...axiosOpts, headers }
-          );
+          , programId);
           if (resPost.status === 200 && hasUserData(resPost.data)) {
             const vuln: TwoFAVuln = {
               technique: "step_skip",
@@ -204,8 +204,8 @@ class TwoFactorBypassProber {
       // 4. Code reuse — submit same code twice
       try {
         const code = "123456";
-        await axios.post(url, { code }, { ...axiosOpts, headers });
-        const res2 = await axios.post(url, { code }, { ...axiosOpts, headers });
+        await scopedHttp.post(url, { code }, { ...axiosOpts, headers }, programId);
+        const res2 = await scopedHttp.post(url, { code }, { ...axiosOpts, headers }, programId);
         if (isAccepted(res2.status, res2.data, res2.headers as Record<string, string>)) {
           const vuln: TwoFAVuln = {
             technique: "code_reuse",
@@ -224,7 +224,7 @@ class TwoFactorBypassProber {
       const backupCodes = ["00000000", "12345678", "11111111"];
       for (const backup_code of backupCodes) {
         try {
-          const res = await axios.post(url, { backup_code }, { ...axiosOpts, headers });
+          const res = await scopedHttp.post(url, { backup_code }, { ...axiosOpts, headers }, programId);
           if (isAccepted(res.status, res.data, res.headers as Record<string, string>)) {
             const vuln: TwoFAVuln = {
               technique: "backup_code_brute",

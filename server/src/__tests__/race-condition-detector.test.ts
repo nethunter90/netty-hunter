@@ -21,6 +21,14 @@ vi.mock('../lib/tools/csrf-aware-request', () => ({
   getCsrfHeaders: vi.fn(async () => ({})),
 }));
 
+vi.mock('../middleware/scopeGuard', () => ({
+  ScopeGuard: {
+    getInstance: vi.fn().mockReturnValue({
+      isInScope: vi.fn().mockResolvedValue({ allowed: true }),
+    }),
+  },
+}));
+
 vi.mock('axios', () => ({
   default: { get: vi.fn(), request: vi.fn() },
 }));

@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface BucketResult {
@@ -62,7 +62,7 @@ class CloudBucketProber {
     return candidates.slice(0, 12);
   }
 
-  async probe(targetUrl: string): Promise<BucketProbeResult> {
+  async probe(targetUrl: string, programId?: number): Promise<BucketProbeResult> {
     const candidates = this.extractCandidates(targetUrl);
     const buckets: BucketResult[] = [];
 
@@ -73,7 +73,7 @@ class CloudBucketProber {
       checks.push(async () => {
         const url = `https://${name}.s3.amazonaws.com/?list-type=2&max-keys=5`;
         try {
-          const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true });
+          const resp = await scopedHttp.get(url, { timeout: 6000, validateStatus: () => true }, programId);
           if (resp.status === 200) {
             const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
             const listable = body.includes("<Contents>");
@@ -104,7 +104,7 @@ class CloudBucketProber {
       checks.push(async () => {
         const url = `https://s3.amazonaws.com/${name}/?list-type=2&max-keys=5`;
         try {
-          const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true });
+          const resp = await scopedHttp.get(url, { timeout: 6000, validateStatus: () => true }, programId);
           if (resp.status === 200) {
             const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
             const listable = body.includes("<Contents>");
@@ -135,7 +135,7 @@ class CloudBucketProber {
       checks.push(async () => {
         const url = `https://storage.googleapis.com/${name}/`;
         try {
-          const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true });
+          const resp = await scopedHttp.get(url, { timeout: 6000, validateStatus: () => true }, programId);
           if (resp.status === 200) {
             const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
             const isListing = body.includes("<ListBucketResult");
@@ -167,7 +167,7 @@ class CloudBucketProber {
       checks.push(async () => {
         const url = `https://${name}.blob.core.windows.net/${name}?restype=container&comp=list`;
         try {
-          const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true });
+          const resp = await scopedHttp.get(url, { timeout: 6000, validateStatus: () => true }, programId);
           if (resp.status === 200) {
             const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
             const listable = body.includes("<Blob>");

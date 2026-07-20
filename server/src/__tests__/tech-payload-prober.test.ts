@@ -15,6 +15,14 @@ vi.mock('../utils/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('../middleware/scopeGuard', () => ({
+  ScopeGuard: {
+    getInstance: vi.fn().mockReturnValue({
+      isInScope: vi.fn().mockResolvedValue({ allowed: true }),
+    }),
+  },
+}));
+
 vi.mock('axios', () => ({
   default: { get: vi.fn(), post: vi.fn() },
 }));

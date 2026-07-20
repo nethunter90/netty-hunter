@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { callbackServer } from "../oob/callback-server";
 
@@ -47,7 +47,7 @@ function buildSsrfPayload(): string {
 }
 
 class BlindXXEProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<XXEProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<XXEProbeResult> {
     const result: XXEProbeResult = {
       xmlEndpointsFound: [],
       vulns: [],
@@ -60,14 +60,14 @@ class BlindXXEProber {
     for (const path of XML_PROBE_PATHS) {
       const url = path === "" ? base : `${base}${path}`;
       try {
-        const resp = await axios.post(url, BENIGN_XML, {
+        const resp = await scopedHttp.post(url, BENIGN_XML, {
           headers: {
             "Content-Type": "application/xml",
             ...authHeaders,
           },
           timeout: 8000,
           validateStatus: () => true,
-        });
+        }, programId);
         if (resp.status !== 404 && resp.status !== 405) {
           logger.debug("[BlindXXEProber] XML endpoint candidate", { url, status: resp.status });
           result.xmlEndpointsFound.push(url);
@@ -81,9 +81,9 @@ class BlindXXEProber {
 
     // Step 2 — test each XML endpoint with XXE payloads
     for (const endpoint of result.xmlEndpointsFound) {
-      await this.tryOobDtd(endpoint, authHeaders ?? {}, result);
-      await this.tryParameterEntity(endpoint, authHeaders ?? {}, result);
-      await this.trySsrfViaXxe(endpoint, authHeaders ?? {}, result);
+      await this.tryOobDtd(endpoint, authHeaders ?? {}, result, programId);
+      await this.tryParameterEntity(endpoint, authHeaders ?? {}, result, programId);
+      await this.trySsrfViaXxe(endpoint, authHeaders ?? {}, result, programId);
     }
 
     return result;
@@ -92,16 +92,17 @@ class BlindXXEProber {
   private async tryOobDtd(
     endpoint: string,
     authHeaders: Record<string, string>,
-    result: XXEProbeResult
+    result: XXEProbeResult,
+    programId?: number
   ): Promise<void> {
     const { beaconId, callbackUrl } = callbackServer.generateBeacon();
     const payload = buildOobDtdPayload(callbackUrl);
     try {
-      const resp = await axios.post(endpoint, payload, {
+      const resp = await scopedHttp.post(endpoint, payload, {
         headers: { "Content-Type": "application/xml", ...authHeaders },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
 
       const oobReceived = (await callbackServer.waitForHit(beaconId, 10000)) !== null;
 
@@ -129,16 +130,17 @@ class BlindXXEProber {
   private async tryParameterEntity(
     endpoint: string,
     authHeaders: Record<string, string>,
-    result: XXEProbeResult
+    result: XXEProbeResult,
+    programId?: number
   ): Promise<void> {
     const { beaconId, callbackUrl } = callbackServer.generateBeacon();
     const payload = buildParameterEntityPayload(callbackUrl);
     try {
-      const resp = await axios.post(endpoint, payload, {
+      const resp = await scopedHttp.post(endpoint, payload, {
         headers: { "Content-Type": "application/xml", ...authHeaders },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
 
       const oobReceived = (await callbackServer.waitForHit(beaconId, 10000)) !== null;
 
@@ -161,17 +163,18 @@ class BlindXXEProber {
   private async trySsrfViaXxe(
     endpoint: string,
     authHeaders: Record<string, string>,
-    result: XXEProbeResult
+    result: XXEProbeResult,
+    programId?: number
   ): Promise<void> {
     // SSRF via XXE uses a fixed target (cloud metadata); no OOB beacon needed
     const beaconId = `ssrf-${endpoint}`;
     const payload = buildSsrfPayload();
     try {
-      const resp = await axios.post(endpoint, payload, {
+      const resp = await scopedHttp.post(endpoint, payload, {
         headers: { "Content-Type": "application/xml", ...authHeaders },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 

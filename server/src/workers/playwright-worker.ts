@@ -17,6 +17,7 @@
 import { parentPort } from 'worker_threads';
 import { chromium, Browser, BrowserContext } from 'playwright';
 import { getBrowserLaunchArgs, getFingerprintInitScript, getRandomUserAgent } from '../lib/stealth/browser-fingerprint';
+import { installScopeRoute } from '../lib/net/scoped-browser-route';
 
 interface SerializedSolverResult {
   taskId: string;
@@ -26,6 +27,10 @@ interface SerializedSolverResult {
   found: boolean;
   confidence: number;
   request?: string;
+  /** This specific replay's program — the context is shared across the
+   *  worker's whole lifetime, so scope MUST be resolved per-replay via a
+   *  fresh page-level route, never cached from an earlier call. */
+  programId?: number;
 }
 
 interface ReplayResult {
@@ -61,6 +66,11 @@ async function replay(result: SerializedSolverResult): Promise<ReplayResult> {
   }
 
   const page = await context.newPage();
+  // Browser-native egress chokepoint, bound to THIS replay's programId. A
+  // fresh page is created per replay() call (confirmed above), so a
+  // page-level route here cannot leak scope between replays for different
+  // programs sharing this worker's one long-lived context.
+  await installScopeRoute(page, result.programId);
   const consoleAlerts: string[] = [];
   const networkRequests: string[] = [];
 

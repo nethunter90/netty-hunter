@@ -13,6 +13,7 @@ import path from "path";
 import { Worker } from "worker_threads";
 import { v4 as uuidv4 } from "uuid";
 import { getRandomUserAgent } from "../lib/stealth/browser-fingerprint";
+import { scopedHttp } from "../lib/net/scoped-http";
 import { db } from "../db";
 import { findings } from "../db/schema";
 import { eq, desc, isNotNull, and } from "drizzle-orm";
@@ -247,7 +248,7 @@ export class Layer2Reprobe {
     // command was actually executed (not merely reflected — the exact-match +
     // anti-reflection guard in reprobeRceNonceEcho rules that out).
     if (result.vulnClass === "rce") {
-      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders);
+      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders, undefined, result.programId);
       return rceProof.confirmed ? { ...rceProof, nonceEchoConfirmed: true } : rceProof;
     }
 
@@ -260,7 +261,7 @@ export class Layer2Reprobe {
     // none (the sink takes its input from a query/body key wfuzz never
     // populated).
     if ((result.vulnClass as string) === "hidden_endpoints" && EXEC_LIKE_PATH.test(reprobeUrl)) {
-      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders, EXEC_PARAM_NAMES);
+      const rceProof = await this.reprobeRceNonceEcho(reprobeUrl, result.authHeaders, EXEC_PARAM_NAMES, result.programId);
       if (rceProof.confirmed) return { ...rceProof, nonceEchoConfirmed: true };
       // No nonce echo observed — fall through to the generic check below so an
       // exec-like path that isn't actually a command sink (e.g. a 404) still
@@ -278,7 +279,7 @@ export class Layer2Reprobe {
         String((result.evidence as { output?: unknown })?.output ?? result.response ?? "")
       );
       if (parsed) {
-        return await massAssignmentProber.reprobe(reprobeUrl, parsed.method, parsed.fields, result.authHeaders);
+        return await massAssignmentProber.reprobe(reprobeUrl, parsed.method, parsed.fields, result.authHeaders, result.programId);
       }
       // Evidence didn't parse (unexpected format) — fall through to the
       // generic bare-GET check rather than silently no-op'ing the reprobe.
@@ -292,7 +293,7 @@ export class Layer2Reprobe {
     // depth. Brute-force the standard depths/param names directly against
     // THIS endpoint instead of a bare GET that can't see it at all.
     if ((result.vulnClass as string) === "hidden_endpoints" && LFI_LIKE_PATH.test(reprobeUrl)) {
-      const lfiProof = await this.reprobeLfiTraversal(reprobeUrl, result.authHeaders, LFI_PARAM_NAMES);
+      const lfiProof = await this.reprobeLfiTraversal(reprobeUrl, result.authHeaders, LFI_PARAM_NAMES, result.programId);
       if (lfiProof.confirmed) return lfiProof;
       // No traversal signature observed — fall through to the generic check
       // below so a file-shaped path that isn't actually a traversal sink
@@ -300,12 +301,11 @@ export class Layer2Reprobe {
     }
 
     try {
-      const { default: axios } = await import("axios");
-      const resp = await axios.get(reprobeUrl, {
+      const resp = await scopedHttp.get(reprobeUrl, {
         timeout: 10000,
         validateStatus: () => true,
         headers: { "User-Agent": getRandomUserAgent(), ...result.authHeaders },
-      });
+      }, result.programId);
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 
@@ -365,6 +365,7 @@ export class Layer2Reprobe {
     reprobeUrl: string,
     authHeaders?: Record<string, string>,
     guessParams: string[] = [],
+    programId?: number,
   ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     let url: URL;
     try {
@@ -383,17 +384,16 @@ export class Layer2Reprobe {
     const nonce = `rcp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
     const variants = [`; echo ${nonce}`, `| echo ${nonce}`, `\`echo ${nonce}\``, `$(echo ${nonce})`];
 
-    const { default: axios } = await import("axios");
     for (const variant of variants) {
       for (const param of candidateParams) {
         const probeUrl = new URL(url.toString());
         probeUrl.searchParams.set(param, variant);
         try {
-          const resp = await axios.get(probeUrl.toString(), {
+          const resp = await scopedHttp.get(probeUrl.toString(), {
             timeout: 8000,
             validateStatus: () => true,
             headers: { "User-Agent": getRandomUserAgent(), ...authHeaders },
-          });
+          }, programId);
           const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
           // Exact nonce present AND the literal injected string is not echoed
           // back verbatim — the latter would mean reflection, not execution.
@@ -428,6 +428,7 @@ export class Layer2Reprobe {
     reprobeUrl: string,
     authHeaders?: Record<string, string>,
     guessParams: string[] = [],
+    programId?: number,
   ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     let url: URL;
     try {
@@ -442,7 +443,6 @@ export class Layer2Reprobe {
       return { confirmed: false, statusCode: 0, responseSnippet: "No injectable parameter for traversal probe" };
     }
 
-    const { default: axios } = await import("axios");
     for (const depth of LFI_TRAVERSAL_DEPTHS) {
       const prefix = "../".repeat(depth);
       for (const param of candidateParams) {
@@ -450,11 +450,11 @@ export class Layer2Reprobe {
           const probeUrl = new URL(url.toString());
           probeUrl.searchParams.set(param, `${prefix}${target}`);
           try {
-            const resp = await axios.get(probeUrl.toString(), {
+            const resp = await scopedHttp.get(probeUrl.toString(), {
               timeout: 8000,
               validateStatus: () => true,
               headers: { "User-Agent": getRandomUserAgent(), ...authHeaders },
-            });
+            }, programId);
             const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
             if (LFI_DISCLOSURE_SIGNATURE.test(body)) {
               return {
@@ -582,6 +582,7 @@ class Layer3BrowserReplay {
           found: result.found,
           confidence: result.confidence,
           request: result.request,
+          programId: result.programId,
         },
       });
     });

@@ -1,7 +1,8 @@
-import axios from "axios";
 import http, { IncomingMessage } from "http";
 import https from "https";
 import logger from "../../utils/logger";
+import { scopedHttp } from "../net/scoped-http";
+import { ScopeGuard } from "../../middleware/scopeGuard";
 
 interface WSVuln {
   endpoint: string;
@@ -54,7 +55,12 @@ interface WsCheckResult {
  * (a normal, non-upgrading reply — 404, 400, etc.) and "upgrade" (the actual
  * 101 case) so a real handshake acceptance is observed instead of discarded.
  */
-function checkWsUpgrade(url: string, headers: Record<string, string>, timeoutMs = 5000): Promise<WsCheckResult> {
+async function checkWsUpgrade(url: string, headers: Record<string, string>, timeoutMs = 5000, programId?: number): Promise<WsCheckResult> {
+  const scopeCheck = await ScopeGuard.getInstance().isInScope(url, programId);
+  if (!scopeCheck.allowed) {
+    logger.warn("[WebSocketProber] checkWsUpgrade blocked by ScopeGuard", { url, reason: scopeCheck.reason });
+    return { status: null, body: "" };
+  }
   return new Promise((resolve) => {
     let settled = false;
     const settle = (result: WsCheckResult) => {
@@ -88,17 +94,17 @@ function checkWsUpgrade(url: string, headers: Record<string, string>, timeoutMs 
 }
 
 class WebSocketProber {
-  async detectEndpoints(baseUrl: string, authHeaders?: Record<string, string>): Promise<string[]> {
+  async detectEndpoints(baseUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<string[]> {
     const base = baseUrl.replace(/\/$/, "");
     const found: string[] = [];
 
     // Fetch the base page and look for ws:// or wss:// references in the response body
     try {
-      const res = await axios.get(base, {
+      const res = await scopedHttp.get(base, {
         headers: { ...(authHeaders || {}) },
         timeout: 5000,
         validateStatus: () => true,
-      });
+      }, programId);
       const body = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
       const matches = body.match(/(wss?:\/\/[^\s"']+)/g) || [];
       for (const match of matches) {
@@ -121,7 +127,7 @@ class WebSocketProber {
           "Connection": "Upgrade",
           "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
           "Sec-WebSocket-Version": "13",
-        });
+        }, 5000, programId);
         if (res.status !== null && res.status !== 404) {
           const wsUrl = toWsUrl(url);
           if (!found.includes(wsUrl)) {
@@ -134,7 +140,7 @@ class WebSocketProber {
     return found;
   }
 
-  async testEndpoint(wsUrl: string, authHeaders?: Record<string, string>): Promise<WSVuln[]> {
+  async testEndpoint(wsUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<WSVuln[]> {
     const vulns: WSVuln[] = [];
     const httpUrl = toHttpUrl(wsUrl);
 
@@ -147,7 +153,7 @@ class WebSocketProber {
         "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
         "Sec-WebSocket-Version": "13",
         "Origin": "https://evil.com",
-      });
+      }, 5000, programId);
       if (res.status === 101) {
         vulns.push({
           endpoint: wsUrl,
@@ -165,7 +171,7 @@ class WebSocketProber {
         "Connection": "Upgrade",
         "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
         "Sec-WebSocket-Version": "13",
-      });
+      }, 5000, programId);
       if (res.status === 101) {
         vulns.push({
           endpoint: wsUrl,
@@ -188,7 +194,7 @@ class WebSocketProber {
         "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
         "Sec-WebSocket-Version": "13",
         "X-Probe": probeToken,
-      });
+      }, 5000, programId);
       if (res.body.includes(probeToken)) {
         vulns.push({
           endpoint: wsUrl,
@@ -202,7 +208,7 @@ class WebSocketProber {
     return vulns;
   }
 
-  async probe(baseUrl: string, authHeaders?: Record<string, string>): Promise<WSProbeResult> {
+  async probe(baseUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<WSProbeResult> {
     const result: WSProbeResult = {
       endpointsFound: [],
       vulns: [],
@@ -210,7 +216,7 @@ class WebSocketProber {
     };
 
     try {
-      result.endpointsFound = await this.detectEndpoints(baseUrl, authHeaders);
+      result.endpointsFound = await this.detectEndpoints(baseUrl, authHeaders, programId);
     } catch (err) {
       logger.debug("[WebSocketProber] detectEndpoints failed", { baseUrl, err: String(err) });
       return result;
@@ -218,7 +224,7 @@ class WebSocketProber {
 
     for (const endpoint of result.endpointsFound) {
       try {
-        const endpointVulns = await this.testEndpoint(endpoint, authHeaders);
+        const endpointVulns = await this.testEndpoint(endpoint, authHeaders, programId);
         result.vulns.push(...endpointVulns);
       } catch (err) {
         logger.debug("[WebSocketProber] testEndpoint failed", { endpoint, err: String(err) });

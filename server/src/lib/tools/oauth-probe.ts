@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface OAuthVuln {
@@ -53,7 +53,8 @@ class OAuthProber {
 
   private async discoverEndpoints(
     base: string,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<{ found: string[]; authEndpoint: string | null; tokenEndpoint: string | null; responseTypesSupported: string[] }> {
     const paths = [
       "/oauth/authorize",
@@ -74,7 +75,7 @@ class OAuthProber {
 
     let baseline = { status: 0, bodyLength: 0 };
     try {
-      const baselineResp = await axios.get(`${base}/__nh_oauth_baseline_${Date.now()}__`, { ...axiosOpts, headers: authHeaders });
+      const baselineResp = await scopedHttp.get(`${base}/__nh_oauth_baseline_${Date.now()}__`, { ...axiosOpts, headers: authHeaders }, programId);
       const baselineBody = typeof baselineResp.data === "string" ? baselineResp.data : JSON.stringify(baselineResp.data || "");
       baseline = { status: baselineResp.status, bodyLength: baselineBody.length };
     } catch (err) {
@@ -85,7 +86,7 @@ class OAuthProber {
       paths.map(async (path) => {
         const url = `${base}${path}`;
         try {
-          const resp = await axios.get(url, { ...axiosOpts, headers: authHeaders });
+          const resp = await scopedHttp.get(url, { ...axiosOpts, headers: authHeaders }, programId);
           const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data || "");
           if (this.isOAuthIndicator(resp.status, resp.headers as Record<string, string | string[] | undefined>, body.length, baseline)) {
             found.push(url);
@@ -132,13 +133,13 @@ class OAuthProber {
     return { found, authEndpoint, tokenEndpoint, responseTypesSupported };
   }
 
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<OAuthProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<OAuthProbeResult> {
     const base = this.getBase(targetUrl);
     const headers = authHeaders || {};
     const vulns: OAuthVuln[] = [];
 
     const { found: oauthEndpointsFound, authEndpoint, responseTypesSupported } =
-      await this.discoverEndpoints(base, headers);
+      await this.discoverEndpoints(base, headers, programId);
 
     if (!authEndpoint) {
       logger.debug("[oauth-probe] No authorization endpoint found, skipping vuln tests");
@@ -150,7 +151,7 @@ class OAuthProber {
     // --- Test 1: Missing state parameter ---
     try {
       const url = `${authEndpoint}?response_type=code&client_id=test&redirect_uri=${encodeURIComponent(callbackUri)}`;
-      const resp = await axios.get(url, { ...axiosOpts, headers });
+      const resp = await scopedHttp.get(url, { ...axiosOpts, headers }, programId);
       if (resp.status === 200 || (resp.status >= 300 && resp.status < 400)) {
         const location = (resp.headers["location"] as string | undefined) || "";
         const isCodeEndpoint = /[?&]code=/.test(location) || resp.status === 200;
@@ -172,7 +173,7 @@ class OAuthProber {
     try {
       const evilUri = "https://evil.com/steal";
       const url = `${authEndpoint}?response_type=code&client_id=test&redirect_uri=${encodeURIComponent(evilUri)}&state=xyz`;
-      const resp = await axios.get(url, { ...axiosOpts, headers });
+      const resp = await scopedHttp.get(url, { ...axiosOpts, headers }, programId);
       const location = (resp.headers["location"] as string | undefined) || "";
       if (resp.status >= 300 && resp.status < 400 && location.includes("evil.com")) {
         vulns.push({
@@ -193,7 +194,7 @@ class OAuthProber {
     if (implicitInDiscovery) {
       try {
         const url = `${authEndpoint}?response_type=token&client_id=test&redirect_uri=${encodeURIComponent(callbackUri)}&state=xyz`;
-        const resp = await axios.get(url, { ...axiosOpts, headers });
+        const resp = await scopedHttp.get(url, { ...axiosOpts, headers }, programId);
         if (resp.status !== 400 && resp.status !== 403) {
           vulns.push({
             issue: "implicit_flow",
@@ -211,7 +212,7 @@ class OAuthProber {
     // --- Test 4: Token in URL ---
     try {
       const url = `${authEndpoint}?response_type=token&client_id=test&redirect_uri=${encodeURIComponent(callbackUri)}&state=xyz`;
-      const resp = await axios.get(url, { ...axiosOpts, headers });
+      const resp = await scopedHttp.get(url, { ...axiosOpts, headers }, programId);
       const location = (resp.headers["location"] as string | undefined) || "";
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data || "");
       const hasTokenInUrl = /[?&#]access_token=/.test(location) || /[?&#]access_token=/.test(body);
@@ -232,7 +233,7 @@ class OAuthProber {
     try {
       const url = `${authEndpoint}?response_type=code&client_id=test&redirect_uri=${encodeURIComponent(callbackUri)}&state=xyz`;
       // No code_challenge or code_challenge_method params
-      const resp = await axios.get(url, { ...axiosOpts, headers });
+      const resp = await scopedHttp.get(url, { ...axiosOpts, headers }, programId);
       if (resp.status !== 400 && resp.status !== 403) {
         vulns.push({
           issue: "pkce_not_required",
@@ -248,7 +249,7 @@ class OAuthProber {
 
     // --- Test 6: Client secret in JS ---
     try {
-      const pageResp = await axios.get(targetUrl, { ...axiosOpts, headers });
+      const pageResp = await scopedHttp.get(targetUrl, { ...axiosOpts, headers }, programId);
       const pageBody = typeof pageResp.data === "string" ? pageResp.data : JSON.stringify(pageResp.data || "");
 
       const secretPattern = /client_?secret["'`\s]*[:=]["'`\s]*([A-Za-z0-9_\-]{8,})/i;
@@ -275,7 +276,7 @@ class OAuthProber {
         await Promise.allSettled(
           jsUrls.map(async (jsUrl) => {
             try {
-              const jsResp = await axios.get(jsUrl, { ...axiosOpts, headers });
+              const jsResp = await scopedHttp.get(jsUrl, { ...axiosOpts, headers }, programId);
               const jsBody = typeof jsResp.data === "string" ? jsResp.data : JSON.stringify(jsResp.data || "");
               if (secretPattern.test(jsBody)) {
                 vulns.push({

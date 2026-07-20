@@ -18,7 +18,7 @@
  * downgraded to a fingerprint-only finding: the dangerous extension was
  * accepted (filter bypass confirmed) but execution wasn't proven.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import crypto from "crypto";
 import logger from "../../utils/logger";
 
@@ -87,7 +87,7 @@ function extractServedPath(body: string, basename: string): string | null {
 }
 
 class FileUploadWebshellProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<UploadProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<UploadProbeResult> {
     const base = targetUrl.replace(/\/$/, "");
     const endpoints = CANDIDATE_ENDPOINTS.map(p => `${base}${p}`);
     const vulns: UploadVuln[] = [];
@@ -95,7 +95,7 @@ class FileUploadWebshellProber {
 
     for (const endpoint of endpoints) {
       for (const variant of VARIANTS) {
-        const vuln = await this.tryVariant(base, endpoint, variant, headers);
+        const vuln = await this.tryVariant(base, endpoint, variant, headers, programId);
         if (vuln) {
           vulns.push(vuln);
           break; // one confirmed/fingerprinted finding per endpoint is enough signal
@@ -120,6 +120,7 @@ class FileUploadWebshellProber {
     endpoint: string,
     variant: PayloadVariant,
     headers: Record<string, string>,
+    programId?: number,
   ): Promise<UploadVuln | null> {
     const a = 1000 + crypto.randomInt(9000);
     const b = 1000 + crypto.randomInt(9000);
@@ -132,11 +133,11 @@ class FileUploadWebshellProber {
     let uploadStatus: number;
     try {
       const { body, boundary } = buildMultipart("file", filename, variant.contentType, source);
-      const resp = await axios.post(endpoint, body, {
+      const resp = await scopedHttp.post(endpoint, body, {
         headers: { "Content-Type": `multipart/form-data; boundary=${boundary}`, ...headers },
         timeout: 8000,
         validateStatus: () => true,
-      });
+      }, programId);
       if (resp.status >= 400) return null; // dangerous extension rejected or endpoint absent
       uploadStatus = resp.status;
       uploadBody = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
@@ -153,7 +154,7 @@ class FileUploadWebshellProber {
 
     for (const url of candidates) {
       try {
-        const resp = await axios.get(url, { headers, timeout: 6000, validateStatus: () => true });
+        const resp = await scopedHttp.get(url, { headers, timeout: 6000, validateStatus: () => true }, programId);
         if (resp.status !== 200) continue;
         const body = String(typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data));
         if (productRe.test(body) && !body.includes(variant.sourceTag)) {

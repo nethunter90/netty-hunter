@@ -9,7 +9,8 @@
  * a token-issuing endpoint, mints a token, and retries once with it replayed as
  * both cookie and header — before falling back to the original rejection.
  */
-import axios, { AxiosRequestConfig, Method } from "axios";
+import { AxiosRequestConfig, Method } from "axios";
+import { scopedHttp } from "../net/scoped-http";
 
 const CANDIDATE_TOKEN_PATHS = [
   "/api/csrf-token", "/api/csrf_token", "/api/csrf", "/csrf-token", "/csrf",
@@ -49,15 +50,16 @@ function extractSetCookies(setCookieHeader: string[] | string | undefined): { na
 
 async function discoverCsrfContext(
   origin: string,
-  existingHeaders?: Record<string, string>
+  existingHeaders?: Record<string, string>,
+  programId?: number
 ): Promise<CsrfContext | null> {
   for (const path of CANDIDATE_TOKEN_PATHS) {
     try {
-      const resp = await axios.get(origin + path, {
+      const resp = await scopedHttp.get(origin + path, {
         timeout: 5000,
         validateStatus: () => true,
         headers: existingHeaders,
-      });
+      }, programId);
       if (resp.status >= 400) continue;
 
       const cookies = extractSetCookies(resp.headers["set-cookie"] as string[] | string | undefined);
@@ -110,21 +112,22 @@ export async function csrfAwareRequest(
   method: Method,
   body: unknown,
   headers?: Record<string, string>,
-  timeout = 8000
+  timeout = 8000,
+  programId?: number
 ): Promise<CsrfAwareResult> {
-  const config: AxiosRequestConfig = { method, url, data: body, timeout, validateStatus: () => true, headers };
-  const first = await axios.request(config);
+  const config: AxiosRequestConfig & { url: string } = { method, url, data: body, timeout, validateStatus: () => true, headers };
+  const first = await scopedHttp.request(config, programId);
   if (!looksLikeCsrfRejection(first.status, first.data)) {
     return { status: first.status, data: first.data, headers: first.headers as Record<string, unknown>, csrfBypassUsed: false };
   }
 
   const origin = new URL(url).origin;
-  const extra = await getCsrfHeaders(origin, headers);
+  const extra = await getCsrfHeaders(origin, headers, programId);
   if (Object.keys(extra).length === 0) {
     return { status: first.status, data: first.data, headers: first.headers as Record<string, unknown>, csrfBypassUsed: false };
   }
 
-  const retry = await axios.request({ ...config, headers: { ...headers, ...extra } });
+  const retry = await scopedHttp.request({ ...config, headers: { ...headers, ...extra } }, programId);
   return { status: retry.status, data: retry.data, headers: retry.headers as Record<string, unknown>, csrfBypassUsed: true };
 }
 
@@ -138,13 +141,14 @@ export async function csrfAwareRequest(
  */
 export async function getCsrfHeaders(
   origin: string,
-  existingHeaders?: Record<string, string>
+  existingHeaders?: Record<string, string>,
+  programId?: number
 ): Promise<Record<string, string>> {
   let ctx: CsrfContext | null;
   if (originCache.has(origin)) {
     ctx = originCache.get(origin)!;
   } else {
-    ctx = await discoverCsrfContext(origin, existingHeaders);
+    ctx = await discoverCsrfContext(origin, existingHeaders, programId);
     originCache.set(origin, ctx);
   }
   if (!ctx) return {};

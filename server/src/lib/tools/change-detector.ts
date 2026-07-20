@@ -9,7 +9,7 @@
  * Snapshots are persisted in the reinforcement store so they survive restarts.
  */
 import crypto from "crypto";
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import { db } from "../../db";
 import { missionMemorySnapshots } from "../../db/schema";
 import { eq } from "drizzle-orm";
@@ -82,12 +82,12 @@ class ChangeDetector {
     }
   }
 
-  async snapshot(targetUrl: string, authHeaders: Record<string, string> = {}): Promise<Map<string, EndpointSnapshot>> {
+  async snapshot(targetUrl: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<Map<string, EndpointSnapshot>> {
     const base = this.extractBase(targetUrl);
     const current = new Map<string, EndpointSnapshot>();
 
     const results = await Promise.allSettled(
-      COMMON_PATHS.map(path => this.fetchEndpoint(`${base}${path}`, authHeaders))
+      COMMON_PATHS.map(path => this.fetchEndpoint(`${base}${path}`, authHeaders, programId))
     );
 
     results.forEach((r, i) => {
@@ -100,12 +100,12 @@ class ChangeDetector {
     return current;
   }
 
-  async detect(targetUrl: string, authHeaders: Record<string, string> = {}): Promise<ChangeReport> {
+  async detect(targetUrl: string, authHeaders: Record<string, string> = {}, programId?: number): Promise<ChangeReport> {
     const base = this.extractBase(targetUrl);
     // Load prev snapshot from memory cache, then fall back to DB
     let prev = this.cache.get(base);
     if (!prev) prev = await this.loadFromDB(base) ?? undefined;
-    const current = await this.snapshot(targetUrl, authHeaders);
+    const current = await this.snapshot(targetUrl, authHeaders, programId);
 
     const report: ChangeReport = {
       newEndpoints: [],
@@ -203,15 +203,15 @@ class ChangeDetector {
     return report;
   }
 
-  private async fetchEndpoint(url: string, headers: Record<string, string>): Promise<EndpointSnapshot | null> {
+  private async fetchEndpoint(url: string, headers: Record<string, string>, programId?: number): Promise<EndpointSnapshot | null> {
     try {
-      const resp = await axios.get(url, {
+      const resp = await scopedHttp.get(url, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; NettyHunter/1.0)", ...headers },
         timeout: 5000,
         validateStatus: () => true,
         maxRedirects: 3,
         responseType: "text",
-      });
+      }, programId);
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
       const respHeaders: Record<string, string> = {};

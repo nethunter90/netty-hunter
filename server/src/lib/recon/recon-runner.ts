@@ -10,6 +10,7 @@
  * the target itself except lightweight HEAD probes on discovered subdomains.
  */
 import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import dns from "dns";
 import { join } from "path";
 import { writeFile, mkdir } from "fs/promises";
@@ -59,6 +60,7 @@ export class ReconRunner {
     private readonly targetUrl: string,
     private readonly sessionId: string,
     private readonly emitter: (event: string, data: unknown) => void = () => {},
+    private readonly programId?: number,
   ) {
     try {
       const u = new URL(targetUrl);
@@ -191,11 +193,13 @@ export class ReconRunner {
 
     const probeOne = async (subdomain: string, ip: string): Promise<{ alive: boolean; httpStatus?: number }> => {
       try {
-        const r = await axios.head(`${this.scheme}://${subdomain}`, {
+        const r = await scopedHttp.request({
+          url: `${this.scheme}://${subdomain}`,
+          method: "HEAD",
           timeout: 4000,
           maxRedirects: 2,
           validateStatus: () => true,
-        });
+        }, this.programId);
         return { alive: true, httpStatus: r.status };
       } catch {
         return { alive: false };

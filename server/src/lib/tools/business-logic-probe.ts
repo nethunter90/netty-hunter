@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 
@@ -38,7 +38,7 @@ const CART_PATHS = [
 ];
 
 class BusinessLogicProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<BizLogicResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<BizLogicResult> {
     const vulns: BizLogicVuln[] = [];
     const baseUrl = targetUrl.replace(/\/$/, "");
     const headers: Record<string, string> = {
@@ -51,11 +51,11 @@ class BusinessLogicProber {
     const discoveryTasks = CART_PATHS.map(async (path) => {
       const url = `${baseUrl}${path}`;
       try {
-        const res = await axios.get(url, {
+        const res = await scopedHttp.get(url, {
           timeout: 6000,
           validateStatus: () => true,
           headers: authHeaders ?? {},
-        });
+        }, programId);
         if (res.status !== 404) {
           activeEndpoints.push(url);
         }
@@ -80,7 +80,7 @@ class BusinessLogicProber {
         notarealfield: true,
       };
       try {
-        const res = await csrfAwareRequest(endpoint, "POST", controlPayload, headers, 6000);
+        const res = await csrfAwareRequest(endpoint, "POST", controlPayload, headers, 6000, programId);
         if (res.status >= 200 && res.status < 300) acceptsEverything.add(endpoint);
       } catch { /* unreachable — real attack posts will also fail, no suppression needed */ }
     }));
@@ -112,7 +112,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { quantity: -1, amount: -1, qty: -1 };
           try {
-            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000, programId);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -135,7 +135,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: 0, cost: 0, amount: 0, unit_price: 0 };
           try {
-            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000, programId);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -158,7 +158,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { quantity: 2147483647, qty: 9999999 };
           try {
-            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000, programId);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -183,8 +183,8 @@ class BusinessLogicProber {
           const payload = { code: "TEST10", coupon: "TEST10" };
           try {
             const [res1, res2] = await Promise.all([
-              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000),
-              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000),
+              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000, programId),
+              csrfAwareRequest(couponEndpoint, "POST", payload, headers, 6000, programId),
             ]);
             const bothAccepted = res1.status >= 200 && res1.status < 300 && res2.status >= 200 && res2.status < 300;
             if (bothAccepted) {
@@ -209,7 +209,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: -100, total: -100 };
           try {
-            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000, programId);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,
@@ -232,7 +232,7 @@ class BusinessLogicProber {
         (async () => {
           const payload = { price: 0.0, discount: 100, coupon_discount: 100 };
           try {
-            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000);
+            const res = await csrfAwareRequest(endpoint, "POST", payload, headers, 6000, programId);
             if (res.status >= 200 && res.status < 300) {
               record(
                 endpoint,

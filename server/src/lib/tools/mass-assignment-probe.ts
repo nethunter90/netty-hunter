@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 
@@ -80,14 +80,15 @@ function bodyLength(data: unknown): number {
 class MassAssignmentProber {
   private async getBaseline(
     url: string,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<unknown> {
     try {
-      const response = await axios.get(url, {
+      const response = await scopedHttp.get(url, {
         headers: { ...authHeaders },
         timeout: 7000,
         validateStatus: () => true,
-      });
+      }, programId);
       return response.data;
     } catch {
       return null;
@@ -108,20 +109,21 @@ class MassAssignmentProber {
   private async getNonexistentPathBaseline(
     baseUrl: string,
     method: "PUT" | "PATCH" | "POST",
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<{ status: number; bodyLength: number } | null> {
     const key = `${method}:${baseUrl}`;
     if (this.nonexistentBaselines.has(key)) return this.nonexistentBaselines.get(key)!;
     try {
       const bogusPath = `/__nettyhunter_baseline_${Math.random().toString(36).slice(2)}__`;
-      const response = await axios.request({
+      const response = await scopedHttp.request({
         method,
         url: `${baseUrl}${bogusPath}`,
         data: { name: "test" },
         headers: { ...authHeaders, "Content-Type": "application/json" },
         timeout: 7000,
         validateStatus: () => true,
-      });
+      }, programId);
       const baseline = { status: response.status, bodyLength: bodyLength(response.data) };
       this.nonexistentBaselines.set(key, baseline);
       return baseline;
@@ -137,7 +139,8 @@ class MassAssignmentProber {
     fieldSet: Record<string, unknown>,
     baseline: unknown,
     authHeaders: Record<string, string>,
-    nonexistentBaselines: Partial<Record<"PUT" | "PATCH", { status: number; bodyLength: number } | null>>
+    nonexistentBaselines: Partial<Record<"PUT" | "PATCH", { status: number; bodyLength: number } | null>>,
+    programId?: number
   ): Promise<MassAssignmentVuln[]> {
     const url = `${baseUrl}${path}`;
     const methods = ["PUT", "PATCH"] as const;
@@ -150,7 +153,7 @@ class MassAssignmentProber {
         const response = await csrfAwareRequest(url, method, body, {
           ...authHeaders,
           "Content-Type": "application/json",
-        }, 7000);
+        }, 7000, programId);
 
         const nonexistent = nonexistentBaselines[method];
         if (nonexistent && response.status === nonexistent.status && bodyLength(response.data) === nonexistent.bodyLength) {
@@ -215,7 +218,8 @@ class MassAssignmentProber {
     path: string,
     fieldSet: Record<string, unknown>,
     authHeaders: Record<string, string>,
-    nonexistentBaseline: { status: number; bodyLength: number } | null
+    nonexistentBaseline: { status: number; bodyLength: number } | null,
+    programId?: number
   ): Promise<MassAssignmentVuln[]> {
     const url = `${baseUrl}${path}`;
     const vulns: MassAssignmentVuln[] = [];
@@ -232,7 +236,7 @@ class MassAssignmentProber {
       const response = await csrfAwareRequest(url, "POST", body, {
         ...authHeaders,
         "Content-Type": "application/json",
-      }, 7000);
+      }, 7000, programId);
 
       if (nonexistentBaseline && response.status === nonexistentBaseline.status && bodyLength(response.data) === nonexistentBaseline.bodyLength) {
         return vulns; // indistinguishable from a route that doesn't exist
@@ -297,7 +301,8 @@ class MassAssignmentProber {
     endpoint: string,
     method: string,
     fields: string[],
-    authHeaders: Record<string, string> = {}
+    authHeaders: Record<string, string> = {},
+    programId?: number
   ): Promise<{ confirmed: boolean; statusCode: number; responseSnippet: string }> {
     const fieldSet = PRIV_FIELDS.find(set =>
       fields.every(f => f in set)
@@ -305,8 +310,8 @@ class MassAssignmentProber {
 
     const isRegisterStyle = /register|signup|\/users\/?$/i.test(endpoint) || method.toUpperCase() === "POST";
     const vulns = isRegisterStyle
-      ? await this.testRegisterEndpoint("", endpoint, fieldSet, authHeaders, null)
-      : await this.testUpdateEndpoint("", endpoint, fieldSet, null, authHeaders, {});
+      ? await this.testRegisterEndpoint("", endpoint, fieldSet, authHeaders, null, programId)
+      : await this.testUpdateEndpoint("", endpoint, fieldSet, null, authHeaders, {}, programId);
 
     if (vulns.length === 0) {
       return { confirmed: false, statusCode: 0, responseSnippet: "Replay found no accepted/reflected privileged field" };
@@ -319,30 +324,30 @@ class MassAssignmentProber {
     };
   }
 
-  async probe(rawTargetUrl: string, authHeaders?: Record<string, string>): Promise<MassAssignmentResult> {
+  async probe(rawTargetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<MassAssignmentResult> {
     const targetUrl = rawTargetUrl.replace(/\/$/, "");
     const headers = authHeaders ?? {};
     const allVulns: MassAssignmentVuln[] = [];
 
     const [putBaseline, patchBaseline, postBaseline] = await Promise.all([
-      this.getNonexistentPathBaseline(targetUrl, "PUT", headers),
-      this.getNonexistentPathBaseline(targetUrl, "PATCH", headers),
-      this.getNonexistentPathBaseline(targetUrl, "POST", headers),
+      this.getNonexistentPathBaseline(targetUrl, "PUT", headers, programId),
+      this.getNonexistentPathBaseline(targetUrl, "PATCH", headers, programId),
+      this.getNonexistentPathBaseline(targetUrl, "POST", headers, programId),
     ]);
     const nonexistentBaselines = { PUT: putBaseline, PATCH: patchBaseline };
 
     // Test update endpoints (PUT/PATCH)
     const updateTasks = UPDATE_ENDPOINTS.flatMap((path) =>
       PRIV_FIELDS.map(async (fieldSet) => {
-        const baseline = await this.getBaseline(`${targetUrl}${path}`, headers);
-        return this.testUpdateEndpoint(targetUrl, path, fieldSet, baseline, headers, nonexistentBaselines);
+        const baseline = await this.getBaseline(`${targetUrl}${path}`, headers, programId);
+        return this.testUpdateEndpoint(targetUrl, path, fieldSet, baseline, headers, nonexistentBaselines, programId);
       })
     );
 
     // Test registration endpoints (POST)
     const registerTasks = REGISTER_ENDPOINTS.flatMap((path) =>
       PRIV_FIELDS.map((fieldSet) =>
-        this.testRegisterEndpoint(targetUrl, path, fieldSet, headers, postBaseline)
+        this.testRegisterEndpoint(targetUrl, path, fieldSet, headers, postBaseline, programId)
       )
     );
 

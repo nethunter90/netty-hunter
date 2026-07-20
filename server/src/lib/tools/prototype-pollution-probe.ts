@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 
@@ -104,7 +104,8 @@ class PrototypePollutionProber {
     authHeaders?: Record<string, string>,
     method?: string,
     body?: string,
-    contentType?: string
+    contentType?: string,
+    programId?: number
   ): Promise<PollutionResult | null> {
     try {
       const headers: Record<string, string> = { ...(authHeaders ?? {}) };
@@ -114,13 +115,13 @@ class PrototypePollutionProber {
 
       let response;
       if (method === "POST") {
-        response = await csrfAwareRequest(url, "POST", body, headers, 7000);
+        response = await csrfAwareRequest(url, "POST", body, headers, 7000, programId);
       } else {
-        response = await axios.get(url, {
+        response = await scopedHttp.get(url, {
           headers,
           timeout: 7000,
           validateStatus: () => true,
-        });
+        }, programId);
       }
 
       const responseText = typeof response.data === "string"
@@ -158,12 +159,12 @@ class PrototypePollutionProber {
     }
   }
 
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<PollutionProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<PollutionProbeResult> {
     const testCases = this.buildTestUrls(targetUrl);
 
     const settledResults = await Promise.allSettled(
       testCases.map((tc) =>
-        this.testUrl(tc.url, tc.vector, tc.payload, authHeaders, tc.method, tc.body, tc.contentType)
+        this.testUrl(tc.url, tc.vector, tc.payload, authHeaders, tc.method, tc.body, tc.contentType, programId)
       )
     );
 

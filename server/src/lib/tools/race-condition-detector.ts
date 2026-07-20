@@ -1,4 +1,5 @@
-import axios, { AxiosRequestConfig } from "axios";
+import { AxiosRequestConfig } from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { getCsrfHeaders } from "./csrf-aware-request";
 
@@ -50,15 +51,15 @@ class RaceConditionDetector {
   // trusting a guessed endpoint is a real, distinct route.
   private baselineCache = new Map<string, { status: number; bodyLength: number }>();
 
-  private async getBaseline(baseUrl: string, authHeaders?: Record<string, string>): Promise<{ status: number; bodyLength: number } | null> {
+  private async getBaseline(baseUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<{ status: number; bodyLength: number } | null> {
     if (this.baselineCache.has(baseUrl)) return this.baselineCache.get(baseUrl)!;
     try {
       const bogusPath = `/__nettyhunter_baseline_${Math.random().toString(36).slice(2)}__`;
-      const resp = await axios.get(`${baseUrl}${bogusPath}`, {
+      const resp = await scopedHttp.get(`${baseUrl}${bogusPath}`, {
         timeout: 8000,
         validateStatus: () => true,
         headers: authHeaders ?? {},
-      });
+      }, programId);
       const body = resp.data;
       const bodyStr = typeof body === "string" ? body : JSON.stringify(body ?? "");
       const baseline = { status: resp.status, bodyLength: bodyStr.length };
@@ -109,6 +110,7 @@ class RaceConditionDetector {
     concurrency: number = 15,
     authHeaders?: Record<string, string>,
     baseline?: { status: number; bodyLength: number } | null,
+    programId?: number,
   ): Promise<RaceResult | null> {
     // Warm the CSRF token cache BEFORE building the burst — discovering it
     // inline per-request (as csrfAwareRequest does for single-shot probes) would
@@ -118,13 +120,13 @@ class RaceConditionDetector {
     let csrfExtra: Record<string, string> = {};
     if (method === "POST") {
       try {
-        csrfExtra = await getCsrfHeaders(new URL(url).origin, authHeaders);
+        csrfExtra = await getCsrfHeaders(new URL(url).origin, authHeaders, programId);
       } catch {
         // discovery failure — proceed without it, same as before this existed
       }
     }
 
-    const requestConfig: AxiosRequestConfig = {
+    const requestConfig: AxiosRequestConfig & { url: string } = {
       method,
       url,
       timeout: 8000,
@@ -136,7 +138,7 @@ class RaceConditionDetector {
     };
 
     const requests = Array.from({ length: concurrency }, () =>
-      axios.request(requestConfig)
+      scopedHttp.request(requestConfig, programId)
     );
 
     const results = await Promise.allSettled(requests);
@@ -210,7 +212,8 @@ class RaceConditionDetector {
 
   async probe(
     targetUrl: string,
-    authHeaders?: Record<string, string>
+    authHeaders?: Record<string, string>,
+    programId?: number
   ): Promise<RaceProbeResult> {
     const endpoints = this.detectStateEndpoints(targetUrl);
 
@@ -220,10 +223,10 @@ class RaceConditionDetector {
     } catch {
       baseUrl = targetUrl;
     }
-    const baseline = await this.getBaseline(baseUrl, authHeaders);
+    const baseline = await this.getBaseline(baseUrl, authHeaders, programId);
 
     const raceJobs = endpoints.map(({ url, method }) =>
-      this.raceEndpoint(url, method, 15, authHeaders, baseline).catch((err) => {
+      this.raceEndpoint(url, method, 15, authHeaders, baseline, programId).catch((err) => {
         logger.warn(`RaceConditionDetector: error probing ${url}: ${err?.message}`);
         return null;
       })

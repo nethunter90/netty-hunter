@@ -15,8 +15,17 @@ vi.mock('../utils/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
+const { mockAxiosFn } = vi.hoisted(() => ({ mockAxiosFn: vi.fn() }));
 vi.mock('axios', () => ({
-  default: vi.fn(),
+  default: Object.assign(mockAxiosFn, { request: mockAxiosFn, get: mockAxiosFn, post: mockAxiosFn }),
+}));
+
+vi.mock('../middleware/scopeGuard', () => ({
+  ScopeGuard: {
+    getInstance: vi.fn().mockReturnValue({
+      isInScope: vi.fn().mockResolvedValue({ allowed: true }),
+    }),
+  },
 }));
 
 vi.mock('../db', () => ({ db: { insert: vi.fn(() => ({ values: vi.fn() })) } }));
@@ -37,7 +46,7 @@ vi.mock('../lib/intelligence/hunt-cortex', () => ({
 import axios from 'axios';
 import { AuthBypassSolver } from '../agents/SolverPool';
 
-const mockedAxios = axios as unknown as ReturnType<typeof vi.fn>;
+const mockedAxios = mockAxiosFn;
 
 function task(endpoint: string) {
   return {

@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface RedirectVuln {
@@ -46,10 +46,11 @@ const REDIRECT_PAYLOADS = [
 class OpenRedirectChainProber {
   async probe(
     targetUrl: string,
-    authHeaders: Record<string, string> = {}
+    authHeaders: Record<string, string> = {},
+    programId?: number
   ): Promise<OpenRedirectResult> {
     // Detect OAuth endpoints from baseline page
-    const hasOAuthEndpoints = await this.detectOAuthEndpoints(targetUrl, authHeaders);
+    const hasOAuthEndpoints = await this.detectOAuthEndpoints(targetUrl, authHeaders, programId);
 
     // Build all probe tasks: GET (query param) + POST (body) for every param × payload
     type ProbeTask = {
@@ -82,7 +83,7 @@ class OpenRedirectChainProber {
     }
 
     const settled = await Promise.allSettled(
-      tasks.map(task => this.probeOne(task.url, task.param, task.payload, task.method, task.body, authHeaders, hasOAuthEndpoints))
+      tasks.map(task => this.probeOne(task.url, task.param, task.payload, task.method, task.body, authHeaders, hasOAuthEndpoints, programId))
     );
 
     // Collect non-null results, deduplicate by (param, redirectsTo)
@@ -117,7 +118,8 @@ class OpenRedirectChainProber {
     method: "GET" | "POST",
     body: Record<string, string> | undefined,
     authHeaders: Record<string, string>,
-    hasOAuthEndpoints: boolean
+    hasOAuthEndpoints: boolean,
+    programId?: number
   ): Promise<RedirectVuln | null> {
     try {
       const config = {
@@ -131,8 +133,8 @@ class OpenRedirectChainProber {
       };
 
       const response = method === "GET"
-        ? await axios.get(url, config)
-        : await axios.post(url, new URLSearchParams(body ?? {}).toString(), config);
+        ? await scopedHttp.get(url, config, programId)
+        : await scopedHttp.post(url, new URLSearchParams(body ?? {}).toString(), config, programId);
 
       const status = response.status;
       const locationHeader: string = (response.headers["location"] as string | undefined) ?? "";
@@ -194,15 +196,16 @@ class OpenRedirectChainProber {
 
   private async detectOAuthEndpoints(
     targetUrl: string,
-    authHeaders: Record<string, string>
+    authHeaders: Record<string, string>,
+    programId?: number
   ): Promise<boolean> {
     try {
-      const response = await axios.get(targetUrl, {
+      const response = await scopedHttp.get(targetUrl, {
         headers: authHeaders,
         timeout: 5000,
         validateStatus: () => true,
         maxRedirects: 3,
-      });
+      }, programId);
       const body: string =
         typeof response.data === "string" ? response.data : JSON.stringify(response.data);
       return /\/oauth|\/auth/i.test(body);

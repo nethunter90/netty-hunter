@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface CRLFVuln {
@@ -27,7 +27,7 @@ const MARKER_HEADER = "X-Injected";
 const MARKER_VALUE = "crlf-netty";
 
 class CRLFProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<CRLFProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<CRLFProbeResult> {
     const vulns: CRLFVuln[] = [];
 
     for (const payload of CRLF_PAYLOADS) {
@@ -44,12 +44,12 @@ class CRLFProber {
 
       for (const { url } of testUrls) {
         try {
-          const response = await axios.get(url, {
+          const response = await scopedHttp.get(url, {
             timeout: 5000,
             validateStatus: () => true,
             maxRedirects: 0,
             headers: authHeaders ?? {},
-          });
+          }, programId);
 
           const headerReflected =
             response.headers[MARKER_HEADER.toLowerCase()] !== undefined;

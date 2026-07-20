@@ -15,7 +15,7 @@
  * discarded before verification" bug already fixed for 18 other probers this
  * session, which would otherwise have reappeared here for a 19th.
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 import { csrfAwareRequest } from "./csrf-aware-request";
 import type { TechPayload } from "./tech-payload-selector";
@@ -150,7 +150,8 @@ class TechPayloadProber {
     targetUrl: string,
     payloads: TechPayload[],
     debugRoutes: string[],
-    authHeaders: Record<string, string> = {}
+    authHeaders: Record<string, string> = {},
+    programId?: number
   ): Promise<TechProbeResult> {
     const findings: TechProbeFinding[] = [];
 
@@ -160,16 +161,16 @@ class TechPayloadProber {
     const infoDisclosureRoutes = payloads.filter(p => p.vulnClass === "info_disclosure" && p.targetPath);
 
     await Promise.allSettled([
-      ...payloads.filter(p => p.vulnClass === "ssti").map(p => this.probeSsti(targetUrl, p, authHeaders, findings)),
-      ...payloads.filter(p => p.vulnClass === "rce").map(p => this.probeRce(targetUrl, p, authHeaders, findings)),
-      ...payloads.filter(p => p.vulnClass === "sqli").map(p => this.probeSqli(targetUrl, p, authHeaders, findings)),
-      ...payloads.filter(p => p.vulnClass === "lfi").map(p => this.probeLfi(targetUrl, p, authHeaders, findings)),
+      ...payloads.filter(p => p.vulnClass === "ssti").map(p => this.probeSsti(targetUrl, p, authHeaders, findings, programId)),
+      ...payloads.filter(p => p.vulnClass === "rce").map(p => this.probeRce(targetUrl, p, authHeaders, findings, programId)),
+      ...payloads.filter(p => p.vulnClass === "sqli").map(p => this.probeSqli(targetUrl, p, authHeaders, findings, programId)),
+      ...payloads.filter(p => p.vulnClass === "lfi").map(p => this.probeLfi(targetUrl, p, authHeaders, findings, programId)),
       ...debugRoutes.map(route =>
         this.probeKnownRoute(targetUrl, route, authHeaders, findings, "exposed_admin",
-          `Debug/admin route exposed unauthenticated: ${route}`, 0.7)),
+          `Debug/admin route exposed unauthenticated: ${route}`, 0.7, programId)),
       ...infoDisclosureRoutes.map(p =>
         this.probeKnownRoute(targetUrl, p.targetPath!, authHeaders, findings, "info_disclosure",
-          `${p.description} — route accessible unauthenticated`, 0.65)),
+          `${p.description} — route accessible unauthenticated`, 0.65, programId)),
     ]);
 
     // ── Loud coverage check ────────────────────────────────────────────────
@@ -219,11 +220,12 @@ class TechPayloadProber {
     technique: TechProbeTechnique,
     endpoint: string,
     authHeaders: Record<string, string> = {},
-    rawPayload?: string
+    rawPayload?: string,
+    programId?: number
   ): Promise<{ found: boolean; evidence: string }> {
     try {
       if (technique === "debug_route") {
-        const resp = await axios.get(endpoint, { timeout: 6000, validateStatus: () => true, headers: authHeaders });
+        const resp = await scopedHttp.get(endpoint, { timeout: 6000, validateStatus: () => true, headers: authHeaders }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         return { found: resp.status === 200 && body.length >= 20, evidence: body.slice(0, 300) };
       }
@@ -237,24 +239,24 @@ class TechPayloadProber {
         const product = String(a * b);
         const u = new URL(endpoint);
         u.searchParams.set(syntax.param, syntax.build(sentExpr));
-        const resp = await axios.get(u.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const resp = await scopedHttp.get(u.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = body.includes(product) && !body.includes(sentExpr);
         return { found, evidence: found ? body.slice(0, 300) : `No re-evaluation of ${sentExpr} observed` };
       }
 
       if (technique === "rce_content_type") {
-        const resp = await axios.post(endpoint, "", {
+        const resp = await scopedHttp.post(endpoint, "", {
           timeout: 7000, validateStatus: () => true,
           headers: { ...authHeaders, "Content-Type": "application/x-java-serialized-object" },
-        });
+        }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = resp.status === 500 || /exception|stack ?trace|deserializ|unserialize/i.test(body);
         return { found, evidence: body.slice(0, 300) };
       }
 
       if (technique === "rce_object_injection" && rawPayload) {
-        const resp = await csrfAwareRequest(endpoint, "POST", rawPayload, { ...authHeaders, "Content-Type": "application/octet-stream" }, 7000);
+        const resp = await csrfAwareRequest(endpoint, "POST", rawPayload, { ...authHeaders, "Content-Type": "application/octet-stream" }, 7000, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = resp.status === 500 || /exception|stack ?trace|deserializ|unserialize/i.test(body);
         return { found, evidence: body.slice(0, 300) };
@@ -263,14 +265,14 @@ class TechPayloadProber {
       if (technique === "lfi_traversal") {
         // endpoint is already the exact confirmed URL (payload embedded) —
         // just replay it and recheck the same disclosure signature.
-        const resp = await axios.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const resp = await scopedHttp.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = LFI_DISCLOSURE_SIGNATURE.test(body);
         return { found, evidence: found ? body.slice(0, 300) : "No file-disclosure content on replay" };
       }
 
       if (technique === "sqli_error_based") {
-        const resp = await axios.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const resp = await scopedHttp.get(endpoint, { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const found = SQLI_ERROR_SIGNATURE.test(body);
         return { found, evidence: found ? body.slice(0, 300) : "No SQL error signature on replay" };
@@ -283,7 +285,7 @@ class TechPayloadProber {
   }
 
   private async probeSsti(
-    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[], programId?: number
   ): Promise<void> {
     const build = detectSyntaxBuilder(p.payload);
     if (!build) return;
@@ -301,7 +303,7 @@ class TechPayloadProber {
         ? (() => { u.searchParams.set(firstParam, built); return u.toString(); })()
         : `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}q=${encodeURIComponent(built)}`;
 
-      const resp = await axios.get(probeUrl, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+      const resp = await scopedHttp.get(probeUrl, { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId);
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 
       // Same anti-reflection discipline as RCESolver.confirmsEvaluation: the
@@ -323,18 +325,18 @@ class TechPayloadProber {
   }
 
   private async probeRce(
-    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[], programId?: number
   ): Promise<void> {
     try {
       const isContentTypeProbe = p.payload.startsWith("Content-Type:");
       const resp = isContentTypeProbe
-        ? await axios.post(targetUrl, "", {
+        ? await scopedHttp.post(targetUrl, "", {
             timeout: 7000, validateStatus: () => true,
             headers: { ...authHeaders, "Content-Type": "application/x-java-serialized-object" },
-          })
+          }, programId)
         : await csrfAwareRequest(targetUrl, "POST", p.payload, {
             ...authHeaders, "Content-Type": "application/octet-stream",
-          }, 7000);
+          }, 7000, programId);
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 
@@ -363,12 +365,12 @@ class TechPayloadProber {
    *  (a genuine, non-trivial 200), different vulnClass/confidence/wording. */
   private async probeKnownRoute(
     targetUrl: string, route: string, authHeaders: Record<string, string>, findings: TechProbeFinding[],
-    vulnClass: string, detail: string, confidence: number,
+    vulnClass: string, detail: string, confidence: number, programId?: number,
   ): Promise<void> {
     try {
       const base = new URL(targetUrl).origin;
       const url = route.startsWith("http") ? route : `${base}${route}`;
-      const resp = await axios.get(url, { timeout: 6000, validateStatus: () => true, headers: authHeaders });
+      const resp = await scopedHttp.get(url, { timeout: 6000, validateStatus: () => true, headers: authHeaders }, programId);
       if (resp.status !== 200) return;
 
       const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
@@ -388,13 +390,13 @@ class TechPayloadProber {
   }
 
   private async probeLfi(
-    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[], programId?: number
   ): Promise<void> {
     const candidates = buildInjectionUrls(targetUrl, p.payload, LFI_PARAM_CANDIDATES);
 
     for (const { url } of candidates) {
       try {
-        const resp = await axios.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders });
+        const resp = await scopedHttp.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
 
         // Real file-disclosure content, never a bare status code or a
@@ -418,7 +420,7 @@ class TechPayloadProber {
   }
 
   private async probeSqli(
-    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[]
+    targetUrl: string, p: TechPayload, authHeaders: Record<string, string>, findings: TechProbeFinding[], programId?: number
   ): Promise<void> {
     const candidates = buildInjectionUrls(targetUrl, p.payload, SQLI_PARAM_CANDIDATES);
 
@@ -428,8 +430,8 @@ class TechPayloadProber {
         baseline.searchParams.set(param, "1");
 
         const [injectedResp, baselineResp] = await Promise.all([
-          axios.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders }),
-          axios.get(baseline.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders }),
+          scopedHttp.get(url, { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId),
+          scopedHttp.get(baseline.toString(), { timeout: 7000, validateStatus: () => true, headers: authHeaders }, programId),
         ]);
         const injectedBody = typeof injectedResp.data === "string" ? injectedResp.data : JSON.stringify(injectedResp.data);
         const baselineBody = typeof baselineResp.data === "string" ? baselineResp.data : JSON.stringify(baselineResp.data);

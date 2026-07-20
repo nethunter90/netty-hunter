@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface HostHeaderVuln {
@@ -16,7 +16,7 @@ interface HostHeaderProbeResult {
 }
 
 class HostHeaderProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<HostHeaderProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<HostHeaderProbeResult> {
     const marker = `hhi-${Date.now()}`;
     const vulns: HostHeaderVuln[] = [];
 
@@ -24,14 +24,14 @@ class HostHeaderProber {
     let baselineStatus = 0;
     let baselineBodyLength = 0;
     try {
-      const baseline = await axios.request({
+      const baseline = await scopedHttp.request({
         method: "GET",
         url: targetUrl,
         timeout: 6000,
         validateStatus: () => true,
         maxRedirects: 0,
         headers: { ...authHeaders },
-      });
+      }, programId);
       baselineStatus = baseline.status;
       const baselineBody = typeof baseline.data === "string" ? baseline.data : JSON.stringify(baseline.data);
       baselineBodyLength = baselineBody.length;
@@ -44,7 +44,7 @@ class HostHeaderProber {
     // Test 1: Host reflection
     tests.push(async () => {
       try {
-        const resp = await axios.request({
+        const resp = await scopedHttp.request({
           method: "GET",
           url: targetUrl,
           timeout: 6000,
@@ -54,7 +54,7 @@ class HostHeaderProber {
             ...authHeaders,
             Host: `${marker}.evil.com`,
           },
-        });
+        }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const locationHeader = resp.headers["location"] || "";
         const reflected = body.includes(marker) || locationHeader.includes(marker);
@@ -89,7 +89,7 @@ class HostHeaderProber {
       for (const path of resetPaths) {
         try {
           const resetUrl = `${baseUrl}${path}`;
-          const resp = await axios.request({
+          const resp = await scopedHttp.request({
             method: "POST",
             url: resetUrl,
             timeout: 6000,
@@ -101,7 +101,7 @@ class HostHeaderProber {
               "Content-Type": "application/x-www-form-urlencoded",
             },
             data: "email=test@example.com",
-          });
+          }, programId);
           const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
           const isSuccessStatus = resp.status === 200 || resp.status === 302;
           const reflected = body.includes(marker);
@@ -126,7 +126,7 @@ class HostHeaderProber {
     // Test 3: Cache poison via X-Forwarded-Host
     tests.push(async () => {
       try {
-        const resp = await axios.request({
+        const resp = await scopedHttp.request({
           method: "GET",
           url: targetUrl,
           timeout: 6000,
@@ -136,7 +136,7 @@ class HostHeaderProber {
             ...authHeaders,
             "X-Forwarded-Host": `${marker}.evil.com`,
           },
-        });
+        }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const reflected = body.includes(marker);
         if (reflected) {
@@ -159,7 +159,7 @@ class HostHeaderProber {
     // Test 4: Routing bypass via Host override
     tests.push(async () => {
       try {
-        const resp = await axios.request({
+        const resp = await scopedHttp.request({
           method: "GET",
           url: targetUrl,
           timeout: 6000,
@@ -170,7 +170,7 @@ class HostHeaderProber {
             Host: "localhost",
             "X-Forwarded-For": "127.0.0.1",
           },
-        });
+        }, programId);
         const body = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data);
         const bodyLength = body.length;
         const statusDiffers = baselineStatus !== 0 && resp.status !== baselineStatus;

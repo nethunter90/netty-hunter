@@ -2,7 +2,7 @@
  * Cookie flag checker — probes common login/auth endpoints and inspects
  * Set-Cookie headers for missing security flags (HttpOnly, Secure, SameSite).
  */
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import logger from "../../utils/logger";
 
 interface CookieIssue {
@@ -86,7 +86,8 @@ function buildDetail(
 class CookieFlagChecker {
   async check(
     targetUrl: string,
-    authHeaders?: Record<string, string>
+    authHeaders?: Record<string, string>,
+    programId?: number
   ): Promise<CookieCheckResult> {
     const base = this.extractBase(targetUrl);
 
@@ -102,7 +103,7 @@ class CookieFlagChecker {
 
     const responses = await Promise.allSettled(
       probes.map(probe =>
-        axios.request({
+        scopedHttp.request({
           method: probe.method,
           url: probe.url,
           data: probe.data,
@@ -113,7 +114,7 @@ class CookieFlagChecker {
           timeout: 5000,
           validateStatus: () => true,
           maxRedirects: 0,
-        }).then(resp => ({ url: probe.url, resp }))
+        }, programId).then(resp => ({ url: probe.url, resp }))
          .catch(() => null)
       )
     );

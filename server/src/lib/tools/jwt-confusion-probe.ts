@@ -1,4 +1,4 @@
-import axios from "axios";
+import { scopedHttp } from "../net/scoped-http";
 import crypto from "crypto";
 import logger from "../../utils/logger";
 
@@ -76,7 +76,7 @@ function toHypothesis(
 }
 
 class JWTConfusionProber {
-  async probe(targetUrl: string, authHeaders?: Record<string, string>): Promise<JWTProbeResult> {
+  async probe(targetUrl: string, authHeaders?: Record<string, string>, programId?: number): Promise<JWTProbeResult> {
     const vulns: JWTVuln[] = [];
     const baseUrl = targetUrl.replace(/\/$/, "");
     const axiosOpts = { timeout: 5000, validateStatus: () => true };
@@ -101,7 +101,7 @@ class JWTConfusionProber {
     // Check Set-Cookie on base URL response
     if (!existingToken) {
       try {
-        const res = await axios.get(baseUrl, { ...axiosOpts, headers: authHeaders ?? {} });
+        const res = await scopedHttp.get(baseUrl, { ...axiosOpts, headers: authHeaders ?? {} }, programId);
         const setCookie = res.headers["set-cookie"];
         if (setCookie) {
           const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
@@ -122,10 +122,10 @@ class JWTConfusionProber {
     // Try GET /api/me to find JWT
     if (!existingToken) {
       try {
-        const res = await axios.get(`${baseUrl}/api/me`, {
+        const res = await scopedHttp.get(`${baseUrl}/api/me`, {
           ...axiosOpts,
           headers: authHeaders ?? {},
-        });
+        }, programId);
         const setCookie = res.headers["set-cookie"];
         if (setCookie) {
           const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
@@ -163,10 +163,10 @@ class JWTConfusionProber {
     try {
       const noneHeader = { ...header, alg: "none" };
       const noneToken = craftJWT(noneHeader, payload, "");
-      const res = await axios.get(meUrl, {
+      const res = await scopedHttp.get(meUrl, {
         ...axiosOpts,
         headers: { ...(authHeaders ?? {}), Authorization: `Bearer ${noneToken}` },
-      });
+      }, programId);
       if (res.status === 200 && hasUserData(res.data)) {
         vulns.push({
           technique: "alg_none",
@@ -187,10 +187,10 @@ class JWTConfusionProber {
         const pB64 = b64url(JSON.stringify(payload));
         const sig = signHS256(hB64, pB64, "");
         const emptySecretToken = `${hB64}.${pB64}.${sig}`;
-        const res = await axios.get(meUrl, {
+        const res = await scopedHttp.get(meUrl, {
           ...axiosOpts,
           headers: { ...(authHeaders ?? {}), Authorization: `Bearer ${emptySecretToken}` },
-        });
+        }, programId);
         if (res.status === 200 && hasUserData(res.data)) {
           vulns.push({
             technique: "empty_secret",
@@ -215,10 +215,10 @@ class JWTConfusionProber {
           const pB64 = b64url(JSON.stringify(payload));
           const sig = signHS256(hB64, pB64, "");
           const kidToken = `${hB64}.${pB64}.${sig}`;
-          const res = await axios.get(meUrl, {
+          const res = await scopedHttp.get(meUrl, {
             ...axiosOpts,
             headers: { ...(authHeaders ?? {}), Authorization: `Bearer ${kidToken}` },
-          });
+          }, programId);
           if (res.status === 200 && hasUserData(res.data)) {
             vulns.push({
               technique: "kid_injection",
@@ -244,10 +244,10 @@ class JWTConfusionProber {
           const pB64 = b64url(JSON.stringify(payload));
           const sig = signHS256(hB64, pB64, secret);
           const weakToken = `${hB64}.${pB64}.${sig}`;
-          const res = await axios.get(meUrl, {
+          const res = await scopedHttp.get(meUrl, {
             ...axiosOpts,
             headers: { ...(authHeaders ?? {}), Authorization: `Bearer ${weakToken}` },
-          });
+          }, programId);
           if (res.status === 200 && hasUserData(res.data)) {
             vulns.push({
               technique: "weak_secret",

@@ -239,7 +239,7 @@ export class CampaignOrchestrator extends EventEmitter {
 
       // ── Subdomain takeover check (non-blocking, runs on expanded targets) ─
       if (expandedTargets.length > 0) {
-        subdomainTakeoverChecker.checkSubdomains(expandedTargets.slice(0, 30)).then(vulnSubs => {
+        subdomainTakeoverChecker.checkSubdomains(expandedTargets.slice(0, 30), params.programId).then(vulnSubs => {
           if (vulnSubs.length > 0) {
             this.emit("orchestration:takeover_found", { targets: vulnSubs });
             for (const v of vulnSubs) {
@@ -936,6 +936,7 @@ export class CampaignOrchestrator extends EventEmitter {
           // blind classes; the verifier confirms on this without L2 vetoing.
           oobConfirmed: dbFinding.oobHitReceived === true,
           authHeaders: Object.keys(verificationAuthHeaders).length > 0 ? verificationAuthHeaders : undefined,
+          programId: dbFinding.programId ?? undefined,
         };
 
         const verification = await this.verifierAgent.verify(mockResult);

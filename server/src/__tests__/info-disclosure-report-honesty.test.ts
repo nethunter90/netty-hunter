@@ -12,6 +12,14 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import express from "express";
 import type { Server } from "http";
 
+vi.mock("../middleware/scopeGuard", () => ({
+  ScopeGuard: {
+    getInstance: vi.fn().mockReturnValue({
+      isInScope: vi.fn().mockResolvedValue({ allowed: true }),
+    }),
+  },
+}));
+
 vi.mock("../utils/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
