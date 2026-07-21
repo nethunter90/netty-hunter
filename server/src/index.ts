@@ -43,6 +43,7 @@ import { activeHunts } from "./lib/state/active-hunts";
 import { db } from "./db";
 import { programs, findings } from "./db/schema";
 import { gt, eq } from "drizzle-orm";
+import { STARTUP_BUILD_HASH } from "./lib/build-freshness";
 import dns from "node:dns";
 
 // Prefer IPv4 in DNS resolution so Node's HTTP clients (axios/fetch) behave like the
@@ -267,6 +268,7 @@ app.get("/health", (_req, res) => res.json({
   status: "ok",
   timestamp: new Date().toISOString(),
   version: "1.0.0",
+  buildHash: STARTUP_BUILD_HASH,
 }));
 
 // 404 handler
@@ -542,6 +544,7 @@ setInterval(() => writeupScraper.scrapeAll().catch(() => {}), 24 * 60 * 60 * 100
 httpServer.listen(PORT, () => {
   logger.info(`Sentinel Primordial – Bug Bounty Intelligence Platform`);
   logger.info(`Server running on http://localhost:${PORT}`);
+  logger.info("[BuildFreshness] Source hash at startup", { buildHash: STARTUP_BUILD_HASH.slice(0, 12) });
   logger.info(`Environment: ${process.env.NODE_ENV || "development"}`);
 });
 

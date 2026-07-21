@@ -22,6 +22,8 @@ const KNOWN_PRODUCER_LITERALS = [
   "security_headers", "jwt_confusion", "two_factor_bypass",
   // HunterEngine.ts inline literals
   "service_disruption",
+  // crlf-probe.ts's downgraded body-only-reflection signal (2026-07-21)
+  "reflected_input",
 ] as const;
 
 describe("vuln-taxonomy completeness", () => {

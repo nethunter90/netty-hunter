@@ -78,6 +78,7 @@ import { ClaudeClient } from "../lib/claude-client";
 import { synthesisAgent } from "./SynthesisAgent";
 import { logicExploitAgent } from "./LogicExploitAgent";
 import { normalizeVulnClass, CANONICAL_VULN_CLASSES } from "../lib/vuln-taxonomy";
+import { assertFreshBuild } from "../lib/build-freshness";
 
 const execFileAsync = promisify(execFile);
 
@@ -897,6 +898,12 @@ export class HunterEngine extends EventEmitter {
      *  See the vulnClassAllowlist field comment for how this differs from focusVulnClasses. */
     vulnClassAllowlist?: string[];
   }): Promise<string> {
+    // Freshness guardrail — the earliest possible check, before scope/anything
+    // else runs. Refuses to start a campaign if the on-disk source has changed
+    // since this process loaded (a stalled `tsx watch` restart), rather than
+    // silently running an unknown number of hunt phases on stale code. See
+    // lib/build-freshness.ts for why this exists.
+    assertFreshBuild();
     this.vulnClassAllowlist = params.vulnClassAllowlist?.filter(Boolean) ?? [];
     // Hard scope gate, enforced here rather than only inside the per-hypothesis
     // probe dispatch (line ~2140) or CampaignOrchestrator's own layer1 gate —
@@ -1319,6 +1326,25 @@ export class HunterEngine extends EventEmitter {
             logger.info('[HunterEngine] Strategy pivot injected', { health: health.health, paths: pivotHypotheses.length, rationale: decision.rationale });
           }
         } catch { /* non-critical — health check failure must not stop the hunt */ }
+      }
+    }
+
+    // Leak C pairing fix (2026-07-20): the while-loop above advances exactly one
+    // phase per iteration and can hit maxIterations/budget/time right after a
+    // "probe" phase sets this.state.phase = "update" — the loop condition is
+    // then checked BEFORE that queued update() ever runs, stranding whatever
+    // evidence the final probe just collected. Traced in the field: run 2's only
+    // #7 (mass_assignment) hypothesis was finally selected in exactly this
+    // orphaned last cycle and never got a chance to confirm, despite its
+    // captured evidence being more than sufficient (updateConfidence() would
+    // have blended it to 0.84, well past the 0.7 threshold). Run the queued
+    // update() once, here, before declaring complete — same phase, just not
+    // silently dropped.
+    if (this.state.phase === "update") {
+      try {
+        await this.update();
+      } catch (err) {
+        logger.error("[HunterEngine] Final orphaned update() pass failed (non-fatal)", { err: String(err) });
       }
     }
 
@@ -2499,9 +2525,50 @@ Return ONLY valid JSON array of hypothesis objects.`;
       });
     }
 
+    // Leak C fix (2026-07-20 selection-starvation diagnosis): a hypothesis
+    // that already carries real, captured evidence from a SELF_CONFIRMED_SOURCES
+    // prober (crlf_probe, mass_assignment_probe, ...) was structurally handicapped
+    // here — those probers hardcode priority <=7 in their own files, while every
+    // purely speculative source (seedFocusHypotheses, synthesizeChainedAttack) is
+    // hardcoded to priority 9. At equal-ish confidence that's a permanent 2-point
+    // deficit for evidence-in-hand against untested speculation, traced in the
+    // field to a real #7 (mass_assignment) hypothesis that sat unselected for 3
+    // full PROBE/UPDATE cycles before finally winning a slot in an orphaned final
+    // cycle with no UPDATE left to confirm it.
+    //
+    // Floored to PARITY (9), not above — this rebalances the race, it doesn't
+    // invert it. Evidence-backed hypotheses now compete on confidence once they
+    // reach the same priority floor as speculative ones; they don't get to
+    // permanently outrank chain-synthesis/focus-seed exploration, which is what
+    // found #4 and #10 and must keep its own fair shot at the same 8 slots.
+    // Deliberately computed only here (the one selection chokepoint), not by
+    // mutating hypothesis.priority or touching any prober's own severity-based
+    // priority logic.
+    const effectivePriority = (h: Hypothesis): number =>
+      h.evidence.some(e => SELF_CONFIRMED_SOURCES.has(e.source)) ? Math.max(h.priority, 9) : h.priority;
+
+    // Leak C Phase 3a: the parity floor above fixed the PRIORITY axis but left
+    // a hypothesis's stored confidence at its unblended creation-time value
+    // (e.g. 0.6) even when a probe already succeeded for it — because that
+    // blend only happens in update(), which can't run until the hypothesis is
+    // SELECTED, which it can't be while its confidence still reads 0.6. This
+    // previews the exact number update() would compute (via the shared
+    // blendConfidence() helper — same formula, not a duplicate/guessed one)
+    // FOR RANKING ONLY. It never writes back to hypothesis.confidence — the
+    // stored value, and therefore the actual confirm path, is untouched here.
+    // Gated on a real success:true probe already in state.probes, not merely
+    // on the source being self-confirmed, so the lift stays tied to evidence
+    // actually in hand, never to potential/future evidence.
+    const effectiveConfidence = (h: Hypothesis): number => {
+      if (!h.evidence.some(e => SELF_CONFIRMED_SOURCES.has(e.source))) return h.confidence;
+      const matchingProbes = this.state.probes.filter(p => p.hypothesisId === h.id && p.success);
+      if (matchingProbes.length === 0) return h.confidence;
+      return this.blendConfidence(h.confidence, matchingProbes);
+    };
+
     const pending = this.state.hypotheses
       .filter(h => h.status === "pending")
-      .sort((a, b) => (b.priority * b.confidence) - (a.priority * a.confidence))
+      .sort((a, b) => (effectivePriority(b) * effectiveConfidence(b)) - (effectivePriority(a) * effectiveConfidence(a)))
       .slice(0, 8);
 
     for (const hypothesis of pending) {
@@ -3842,11 +3909,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
     }
   }
 
-  private async updateConfidence(hypothesis: Hypothesis, probes: ProbeResult[]): Promise<number> {
+  // Shared with the PROBE-phase selector's effectiveConfidence() (Leak C Phase
+  // 3a) — single source of truth for "what would this hypothesis's confidence
+  // become if update() blended these probes right now." Pulled out so the
+  // selector can PREVIEW the same real number update() would compute, instead
+  // of a duplicated/approximated formula drifting out of sync with this one.
+  private blendConfidence(baseConfidence: number, probes: ProbeResult[]): number {
     const successRate = probes.filter(p => p.success).length / Math.max(probes.length, 1);
-    const baseConfidence = hypothesis.confidence;
     // Bayesian update (simplified)
     return Math.min(0.99, baseConfidence * 0.4 + successRate * 0.6);
+  }
+
+  private async updateConfidence(hypothesis: Hypothesis, probes: ProbeResult[]): Promise<number> {
+    return this.blendConfidence(hypothesis.confidence, probes);
   }
 
   private async buildConfirmedFinding(

@@ -639,6 +639,47 @@ class Layer4AIConfirmation {
       : null;
     const origResponse = result.response ? String(result.response).slice(0, 300) : null;
 
+    // 2026-07-21 CRLF bar unification — scoped strictly to crlf_injection,
+    // additive only, does not touch authBypassNote/layer2Section/any other
+    // class's prompt assembly below. layer4_ai's CRLF conclusions were
+    // previously an ungrounded LLM inference: the L2->L4 evidence chain never
+    // carried real response headers, so its "no new header observed" claim,
+    // though correct here, wasn't backed by bytes it was actually given. This
+    // makes one small, targeted live fetch and hands the model the MECHANICAL
+    // ground truth (the same isCrlfImpactProven() predicate crlf_probe and
+    // probesFor() now both enforce) instead of asking it to infer a
+    // mechanically-decidable fact from a body snippet.
+    let crlfHeaderGroundTruth = "";
+    if ((result.vulnClass as string) === "crlf_injection") {
+      try {
+        const { isCrlfImpactProven } = await import("../lib/tools/crlf-probe");
+        const resp = await scopedHttp.get(result.endpoint, {
+          timeout: 8000,
+          validateStatus: () => true,
+          maxRedirects: 0,
+          headers: { "User-Agent": getRandomUserAgent(), ...(result.authHeaders || {}) },
+        }, result.programId);
+        const proven = isCrlfImpactProven(resp.headers as Record<string, unknown>);
+        crlfHeaderGroundTruth =
+          `
+GROUND TRUTH (mechanical check, not inference — trust this for the header-sink question):
+` +
+          `A fresh live re-fetch of this exact endpoint was inspected for a NEW line in the
+` +
+          `actual raw response HEADERS (not the body). Result: isCrlfImpactProven() = ${proven}.
+` +
+          `${proven
+            ? "A real header sink WAS found — this is genuine CRLF/response-splitting."
+            : "NO header sink was found — any reflection is body-only. Do not independently guess at header content; treat this mechanical result as authoritative for the header-sink question specifically. Body reflection alone is NOT genuine CRLF injection."}
+`;
+      } catch (err) {
+        // Non-fatal — if the live check itself fails, layer4_ai falls back to
+        // its prior body-only-inference behavior for this one confirmation
+        // rather than blocking verification entirely.
+        logger.debug("[VerifierAgent] CRLF header ground-truth check failed (non-fatal)", { err: String(err) });
+      }
+    }
+
     const authBypassNote = result.vulnClass === "auth_bypass"
       ? isStatefulOracle
         ? `\nIMPORTANT — auth_bypass rule: confirming requires evidence that a previously\n` +
@@ -671,7 +712,7 @@ Endpoint: ${result.endpoint}
 Vulnerability Class: ${result.vulnClass}
 Payload Used: ${result.payload}
 Original Confidence: ${result.confidence}
-${authBypassNote}
+${authBypassNote}${crlfHeaderGroundTruth}
 Original Probe Evidence (what the stateful agent captured during discovery):
 ${origEvidence ?? "Not available"}
 

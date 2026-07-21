@@ -37,7 +37,12 @@ export const CANONICAL_VULN_CLASSES = [
   // server-side
   "ssrf", "deserialization", "prototype_pollution",
   // config / info
-  "misconfig", "info_disclosure", "security_headers", "hidden_endpoints",
+  // "reflected_input" added 2026-07-21 (CRLF bar unification): the downgraded
+  // signal for crlf_probe hits that reflect into the BODY only, with no header
+  // sink reachable — real (unsanitized reflection, HTML/log-injection-adjacent
+  // impact) but explicitly NOT crlf_injection, which now requires proof of an
+  // actual new response-header line. See lib/tools/crlf-probe.ts.
+  "misconfig", "info_disclosure", "security_headers", "hidden_endpoints", "reflected_input",
   "exposed_admin", "oauth_misconfiguration", "host_header_injection",
   "subdomain_takeover",
   // infra
