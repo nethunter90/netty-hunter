@@ -327,7 +327,18 @@ export class VendorEvasionProfiles {
 export async function checkWafBypassAuthorization(
   url: string, programId?: number
 ): Promise<{ allowed: boolean; reason?: string }> {
-  if (programId === undefined) return { allowed: true };
+  // 2026-07-21 readiness pass (item D): this function previously failed OPEN
+  // in two places — no programId skipped scope entirely, and an unset/
+  // "unspecified" program policy defaulted to allowed. WAF-bypass techniques
+  // are an authorization question, not just a scope question: running them
+  // unauthorized against a real program is both a ban vector and an
+  // exceeded-scope problem. Fail CLOSED on both defaults — the caller must
+  // supply a real programId, and the program must have EXPLICITLY set
+  // wafBypassPolicy to "allowed", not merely have failed to say "disallowed".
+  if (programId === undefined) {
+    logger.warn('WAFBypass authorization blocked — no programId supplied (fail-closed default)', { url });
+    return { allowed: false, reason: 'No programId supplied — cannot authorize without a known program' };
+  }
 
   const scopeGuard = ScopeGuard.getInstance();
   const { allowed, reason } = await scopeGuard.isInScope(url, programId);
@@ -336,15 +347,20 @@ export async function checkWafBypassAuthorization(
     return { allowed: false, reason: `Out of scope: ${reason}` };
   }
 
-  // A program whose rules explicitly disallow WAF evasion is blocked
-  // regardless of the per-hunt toggle — the user's opt-in for THIS hunt
-  // cannot override an explicit prohibition from the program itself.
-  // Silent/unspecified and explicitly-allowed programs both proceed.
+  // Only an EXPLICIT "allowed" policy permits WAF evasion. "unspecified"
+  // (the schema default) and "disallowed" are both treated as not
+  // authorized — the user's per-hunt opt-in is necessary but not
+  // sufficient; the program must have affirmatively said yes.
   const [program] = await db.select({ wafBypassPolicy: programs.wafBypassPolicy })
     .from(programs).where(eq(programs.id, programId)).limit(1);
-  if (program?.wafBypassPolicy === 'disallowed') {
-    logger.warn('WAFBypass authorization blocked — program policy disallows WAF evasion', { url, programId });
-    return { allowed: false, reason: 'WAF bypass disallowed by program policy' };
+  if (program?.wafBypassPolicy !== 'allowed') {
+    logger.warn('WAFBypass authorization blocked — program policy is not explicitly "allowed"', {
+      url, programId, policy: program?.wafBypassPolicy ?? 'unspecified',
+    });
+    return {
+      allowed: false,
+      reason: `WAF bypass not authorized — program policy is "${program?.wafBypassPolicy ?? 'unspecified'}", not "allowed"`,
+    };
   }
 
   return { allowed: true };

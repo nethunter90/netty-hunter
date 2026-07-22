@@ -30,9 +30,10 @@ export const programs = pgTable("programs", {
   active: boolean("active").notNull().default(true),
   // Whether this program's rules of engagement address WAF bypass/evasion
   // techniques — "unspecified" (default) means the user hasn't recorded a
-  // policy yet; "disallowed" hard-blocks WAFBypass.synthesize() regardless of
-  // the per-hunt toggle (see WAFBypass.ts); "allowed" permits it when the
-  // per-hunt toggle is also on.
+  // policy yet. 2026-07-21: checkWafBypassAuthorization() fails CLOSED on
+  // anything other than an EXPLICIT "allowed" — "unspecified" and
+  // "disallowed" are both treated as not authorized. "allowed" permits it
+  // only when the per-hunt toggle is also on (see WAFBypass.ts).
   wafBypassPolicy: varchar("waf_bypass_policy", { length: 16 }).notNull().default("unspecified"),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),

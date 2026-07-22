@@ -37,9 +37,14 @@ beforeEach(() => {
 });
 
 describe('checkWafBypassAuthorization', () => {
-  it('allows unconditionally when no programId is given', async () => {
+  // 2026-07-21 readiness pass (item D): this gate previously failed OPEN in
+  // two places (no programId, and an unset/"unspecified" policy) — flipped
+  // to fail CLOSED on both. These tests were rewritten to assert the new,
+  // correct behavior; the prior versions asserted the fail-open bug itself.
+
+  it('BLOCKS when no programId is given (fail-closed default)', async () => {
     const result = await checkWafBypassAuthorization('http://example.com', undefined);
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
     expect(mockIsInScope).not.toHaveBeenCalled();
   });
 
@@ -60,20 +65,29 @@ describe('checkWafBypassAuthorization', () => {
     const result = await checkWafBypassAuthorization('http://example.com', 1);
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toBe('WAF bypass disallowed by program policy');
+    expect(result.reason).toContain('not "allowed"');
   });
 
-  it('allows when in scope and policy is unspecified or allowed', async () => {
+  it('BLOCKS when policy is unspecified (fail-closed — no longer an implicit allow)', async () => {
     mockIsInScope.mockResolvedValue({ allowed: true });
     mockLimit.mockResolvedValue([{ wafBypassPolicy: 'unspecified' }]);
 
     const result = await checkWafBypassAuthorization('http://example.com', 1);
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('unspecified');
   });
 
-  it('allows when the program row is missing entirely (defensive default)', async () => {
+  it('BLOCKS when the program row is missing entirely (fail-closed default)', async () => {
     mockIsInScope.mockResolvedValue({ allowed: true });
     mockLimit.mockResolvedValue([]);
+
+    const result = await checkWafBypassAuthorization('http://example.com', 1);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('allows ONLY when the program has explicitly set policy to "allowed"', async () => {
+    mockIsInScope.mockResolvedValue({ allowed: true });
+    mockLimit.mockResolvedValue([{ wafBypassPolicy: 'allowed' }]);
 
     const result = await checkWafBypassAuthorization('http://example.com', 1);
     expect(result.allowed).toBe(true);
