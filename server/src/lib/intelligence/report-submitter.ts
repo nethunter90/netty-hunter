@@ -7,6 +7,26 @@ import axios from "axios";
 import logger from "../../utils/logger";
 import { runtimeConfig } from '../runtime-config';
 
+// 2026-07-22 (inbound-audit Phase 1): description/reproductionSteps/impact/
+// exploitPayload/evidence are LLM-authored text generated from a prompt that
+// includes target-controlled rawEvidence (HTTP responses) with no delimiter
+// isolation (see ReportGenerator.generateAIContent()) — a hostile target can
+// attempt to steer that generation, and whatever it produces lands here
+// verbatim. The *_html fields below are submitted to YesWeHack as raw HTML
+// (field name says so), so unescaped target-influenced text reaching them is
+// a stored-XSS-into-triager risk on OUR side, regardless of what the
+// receiving platform itself does. The markdown fields (H1/Bugcrowd/Intigriti)
+// are a separate, out-of-scope risk (would require the receiving platform's
+// own markdown renderer to also mishandle raw HTML) — not addressed here.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export interface SubmissionPayload {
   title: string;
   vulnType: string;
@@ -222,8 +242,8 @@ class ReportSubmitter {
           vulnerability_type: { id: this.ywvType(payload.vulnType) },
           cvss: payload.cvssScore ?? 5.0,
           description_html: this.buildHtmlBody(payload),
-          poc_html: payload.exploitPayload ?? payload.evidence ?? "See description",
-          impact_html: payload.impact,
+          poc_html: escapeHtml(payload.exploitPayload ?? payload.evidence ?? "See description"),
+          impact_html: escapeHtml(payload.impact),
         },
         {
           headers: {
@@ -264,7 +284,8 @@ class ReportSubmitter {
   }
 
   private buildHtmlBody(p: SubmissionPayload): string {
-    return `<h2>Description</h2><p>${p.description}</p><h2>Steps</h2><p>${p.reproductionSteps.replace(/\n/g, "<br>")}</p><h2>Target</h2><p>${p.targetUrl}</p>`;
+    const stepsHtml = escapeHtml(p.reproductionSteps).replace(/\n/g, "<br>");
+    return `<h2>Description</h2><p>${escapeHtml(p.description)}</p><h2>Steps</h2><p>${stepsHtml}</p><h2>Target</h2><p>${escapeHtml(p.targetUrl)}</p>`;
   }
 
   private bugcrowdVRT(vulnType: string): string {
