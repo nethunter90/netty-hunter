@@ -24,6 +24,44 @@ function shellEscape(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+// 2026-07-21 RCE stopgap (readiness pass, external-tool chokepoint work).
+//
+// runCrawl() harvests href/src/action values out of the TARGET's own HTML
+// with no shell-metacharacter filtering (only a #/javascript:/mailto:/data:
+// prefix check) and persists them into missionMemory; the next agent cycle
+// re-dispatches those same crawl-derived strings as `target` into
+// runWhatweb()/runNikto()/runNuclei()/runSqlmap() (ScannerAgent), the
+// ExploitMetaAgent sqlmap/metasploit cases, and the SupportMetaAgent
+// hydra/hashcat cases — ALL of which interpolate `target` (or
+// userlist/passlist/service/mode, also uninterpolated) into a shell string
+// via exec() with either NO escaping or double-quote-only escaping (which
+// does not stop $()/backtick substitution). A hostile or compromised bounty
+// target can therefore reach an arbitrary shell on the operator's own
+// machine through this platform's ordinary recon -> crawl -> scan cycle —
+// this is a live RCE, not a scope gap.
+//
+// Disabled by default (fail closed) until Phase 1 of the chokepoint work
+// replaces every one of these shell-string exec() calls with the
+// execFile+array-args dispatchTool() pattern already proven safe in
+// HunterEngine.runTool(). Gates the taint SOURCE (runCrawl) and every known
+// unsafe SINK reachable from the same missionMemory-fed agent loop — not
+// just the two originally-named vectors — because a partial gate here would
+// leave a live RCE reachable through a sibling tool call.
+function crawlDerivedToolsEnabled(): boolean {
+  return process.env.ALLOW_UNSAFE_SHELL_RECON_TOOLS === 'true';
+}
+
+function unsafeToolDisabledResult(tool: string, target: string) {
+  console.warn(`[RCE-stopgap] ${tool} dispatch blocked — unsafe shell-exec path disabled (target=${target})`);
+  return {
+    result: {
+      disabled: true,
+      reason: `${tool} shell-exec dispatch is disabled pending the external-tool chokepoint fix (2026-07-21 RCE stopgap). Set ALLOW_UNSAFE_SHELL_RECON_TOOLS=true to override — NOT recommended against untrusted targets.`,
+    },
+    real: false,
+  };
+}
+
 const toolCache = new Map<string, boolean>();
 
 async function toolExists(name: string): Promise<boolean> {
@@ -191,6 +229,7 @@ export class ReconAgent extends MetaAgent {
   }
 
   private async runWhatweb(target: string) {
+    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('whatweb', target);
     if (isReal() && await toolExists('whatweb')) {
       let stdout = '';
       try {
@@ -232,6 +271,7 @@ export class ReconAgent extends MetaAgent {
   private async runCrawl(target: string) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
+    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('crawl', target);
     if (isReal()) {
       try {
         const stdout = await this.exec(
@@ -532,6 +572,7 @@ export class ScannerAgent extends MetaAgent {
   }
 
   private async runNikto(target: string, stealthMode?: string) {
+    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('nikto', target);
     if (isReal() && await toolExists('nikto')) {
       let baseCmd = `nikto -h ${target} -maxtime 120 -Tuning 123bde`;
       if (stealthMode && stealthMode !== 'aggressive') {
@@ -577,6 +618,7 @@ export class ScannerAgent extends MetaAgent {
   }
 
   private async runNuclei(target: string, params: Record<string, any>, stealthMode?: string) {
+    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('nuclei', target);
     if (isReal() && await toolExists('nuclei')) {
       const severity = params.severity || 'low,medium,high,critical';
 
@@ -649,6 +691,7 @@ export class ScannerAgent extends MetaAgent {
   }
 
   private async runSqlmap(target: string, params: Record<string, any>, stealthMode?: string) {
+    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('sqlmap', target);
     if (isReal() && await toolExists('sqlmap')) {
       const injectableTargets: string[] = params.injectableTargets || [];
 
@@ -749,6 +792,7 @@ export class ExploitMetaAgent extends MetaAgent {
     const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
       case 'sqlmap': {
+        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('sqlmap (exploit)', target);
         if (isReal() && await toolExists('sqlmap')) {
           const injectableTargets: string[] = params.injectableTargets || [];
           const targetsToTest: string[] = [];
@@ -830,6 +874,7 @@ export class ExploitMetaAgent extends MetaAgent {
       }
 
       case 'metasploit':
+        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('metasploit', target);
         if (isReal()) {
           try {
             const { stdout } = await execAsync(`msfconsole -q -x "use ${params.module || 'auxiliary/scanner/http/http_version'}; set RHOSTS ${target}; run; exit" 2>&1`, { timeout: 120000 });
@@ -861,6 +906,7 @@ export class SupportMetaAgent extends MetaAgent {
   protected async runTool(tool: string, target: string, params: Record<string, any>) {
     switch (tool) {
       case 'hydra':
+        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('hydra', target);
         if (isReal()) {
           try {
             const service = params.service || 'http-post-form';
@@ -888,6 +934,7 @@ export class SupportMetaAgent extends MetaAgent {
           real: false,
         };
       case 'hashcat':
+        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('hashcat', target);
         if (isReal()) {
           try {
             const hashFile = params.hashFile || '/tmp/hashes.txt';

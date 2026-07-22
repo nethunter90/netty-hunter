@@ -24,6 +24,17 @@ export { TriagePredictor } from './triage-predictor';
 export type { TriageDataPoint, ProgramTriageAverage, SubmissionTiming } from './triage-predictor';
 export * from './intelligence-types';
 
+// 2026-07-21 RCE stopgap (readiness pass, external-tool chokepoint work):
+// reconSubdomains()/reconTechnologies() below shell out to subfinder/whatweb
+// via exec() with the client-supplied `target` (POST /api/bounty-intelligence
+// /pipeline/run's request body, stripped only by a naive protocol/path regex,
+// never shell-escaped or validated). Disabled by default until Phase 1's
+// execFile-based dispatchTool() chokepoint replaces these calls; the route
+// handler also short-circuits before calling into this service at all.
+function unsafeReconToolsEnabled(): boolean {
+  return process.env.ALLOW_UNSAFE_SHELL_RECON_TOOLS === 'true';
+}
+
 // ============================================================
 // Interfaces
 // ============================================================
@@ -2032,6 +2043,10 @@ export class BountyIntelligenceService extends EventEmitter {
   }
 
   private async reconSubdomains(domain: string, depth: string, isReal: boolean): Promise<SubdomainInfo[]> {
+    if (isReal && !unsafeReconToolsEnabled()) {
+      console.warn(`[RCE-stopgap] subfinder dispatch blocked — unsafe shell-exec path disabled (domain=${domain})`);
+      return [{ hostname: domain, status: 200, title: `${domain} (unsafe-tool dispatch disabled)` }];
+    }
     if (isReal) {
       try {
         const { exec } = await import('child_process');
@@ -2062,6 +2077,10 @@ export class BountyIntelligenceService extends EventEmitter {
   }
 
   private async reconTechnologies(domain: string, isReal: boolean): Promise<TechnologyInfo[]> {
+    if (isReal && !unsafeReconToolsEnabled()) {
+      console.warn(`[RCE-stopgap] whatweb dispatch blocked — unsafe shell-exec path disabled (domain=${domain})`);
+      return [];
+    }
     if (isReal) {
       try {
         const { exec } = await import('child_process');
