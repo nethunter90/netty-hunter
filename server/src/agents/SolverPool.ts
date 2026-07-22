@@ -1106,14 +1106,20 @@ Return ONLY the JSON array.`;
     try {
       const response = await this.modelRouter.reason(prompt, huntId);
       const tasks = JSON.parse(response.match(/\[[\s\S]+\]/)?.[0] || "[]");
-      return tasks.map((t: Record<string, unknown>) => ({
+      // "Maximum 5 tasks" above is a prompt INSTRUCTION, never enforced in
+      // code — the LLM was trusted to self-limit (inbound-audit noted-item
+      // #2). .slice(0,5) is the real cap; clamping priority/confidence to
+      // their documented ranges (inbound-audit noted-item #1) stops an
+      // out-of-range LLM value from silently skewing downstream
+      // prioritization or confidence-gated logic.
+      return tasks.slice(0, 5).map((t: Record<string, unknown>) => ({
         id: uuidv4(),
         endpoint,
         vulnClass: t.vulnClass as VulnClass,
         programId: 0,
         sessionId: 0,
-        priority: Number(t.priority) || 5,
-        confidence: Number(t.confidence) || 0.5,
+        priority: Math.min(10, Math.max(1, Number(t.priority) || 5)),
+        confidence: Math.min(1, Math.max(0, Number(t.confidence) || 0.5)),
         context: { reasoning: t.reasoning, observations },
       }));
     } catch {
