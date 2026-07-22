@@ -3130,6 +3130,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
                     cvssScore: assessment.cvssScore,
                     impact: assessment.businessImpact,
                     proven: true,
+                    evidenceComplete: assessment.evidenceComplete,
                   });
                   await db.update(findings)
                     .set({ evidence: ev as unknown as Record<string, unknown>[], updatedAt: new Date() })

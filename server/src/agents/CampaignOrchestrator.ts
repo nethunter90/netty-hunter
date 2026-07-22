@@ -1259,6 +1259,15 @@ export class CampaignOrchestrator extends EventEmitter {
           ? `GET ${adaptation.adaptedUrl} HTTP/1.1\n\nHTTP/1.1 ${adaptation.statusCode}\n${adaptation.responseSnippet}`
           : rawHttpEntry ? String(rawHttpEntry.data ?? "") : undefined;
 
+        // Budget chokepoint Phase 3 must-have #2: if the impact demonstration
+        // that produced this finding's severity escalation was cut short by
+        // the LLM dollar cap, the report must say so instead of presenting
+        // partial evidence as submission-ready.
+        const impactEscalationEntry = [...evidenceArr].reverse().find(e => e.type === "impact_escalation");
+        const impactEvidenceComplete = impactEscalationEntry
+          ? impactEscalationEntry.evidenceComplete !== false
+          : true;
+
         // Idempotency: skip regeneration if the report was already written
         // (handles crash-then-resume between L5 update and L6 report writes).
         if (finding.reportDraft) {
@@ -1271,6 +1280,7 @@ export class CampaignOrchestrator extends EventEmitter {
             huntDate: finding.createdAt.toISOString().split("T")[0],
             rawEvidence,
             sessionId: String(this.state.campaignId ?? params.targetUrl),
+            evidenceComplete: impactEvidenceComplete,
           });
           reports.push(report.reportMarkdown);
           await db.update(findings)

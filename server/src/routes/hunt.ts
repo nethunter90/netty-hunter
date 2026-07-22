@@ -519,6 +519,10 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
   const evidenceArr = (finding.evidence as Array<Record<string, unknown>>) ?? [];
   const rawHttpEntry = [...evidenceArr].reverse().find(e => e.type === "raw_http");
   const videoEntry = evidenceArr.find(e => e.type === "video_poc");
+  const impactEscalationEntry = [...evidenceArr].reverse().find(e => e.type === "impact_escalation");
+  const impactEvidenceComplete = impactEscalationEntry
+    ? impactEscalationEntry.evidenceComplete !== false
+    : true;
 
   const report = await generator.generate(mockSolverResult, mockVerification as unknown as Parameters<typeof generator.generate>[1], {
     severity: finding.severity,
@@ -529,6 +533,7 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
     videoPath: videoEntry ? String(videoEntry.path ?? "") : undefined,
     // Manual on-demand regeneration, outside any live hunt — own budget bucket.
     sessionId: `report-route:${finding.id}`,
+    evidenceComplete: impactEvidenceComplete,
   });
 
   // Save report draft

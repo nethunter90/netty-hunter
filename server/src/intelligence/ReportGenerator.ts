@@ -280,6 +280,15 @@ export class DraftReportGenerator {
       // "default" fallback (a cross-hunt/cross-caller budget-counter collision
       // risk — see ModelRouter.generate()'s fail-closed check on this exact gap).
       sessionId: string;
+      /**
+       * 2026-07-22 (budget chokepoint Phase 3 must-have #2): false when the
+       * finding's impact demonstration was cut short by the LLM dollar cap
+       * (PostExploitAgent's ImpactAssessment.evidenceComplete). A truncated
+       * demonstration must not read as a fully-proven, submission-ready
+       * report — this flips the timeline status and adds a caveat line
+       * instead of silently presenting thin evidence as complete.
+       */
+      evidenceComplete?: boolean;
     }
   ): Promise<BugBountyReport> {
     // Veto-path invariant (handoff 2c.3): a non-confirmed finding must produce
@@ -312,6 +321,13 @@ export class DraftReportGenerator {
     // Use AI-generated steps when raw HTTP evidence is available — they reference actual captured requests
     const stepsToReproduce = aiEnhanced.steps ?? this.buildReproductionSteps(finding, verification, metadata.rawEvidence);
     const evidence = this.buildEvidence(finding, verification, metadata.rawEvidence);
+    if (metadata.evidenceComplete === false) {
+      evidence.push(
+        "CAVEAT: Impact demonstration was cut short by the hunt's LLM budget cap before all " +
+        "planned proof steps ran. The vulnerability class itself is confirmed above, but the " +
+        "impact evidence below is partial — verify manually before relying on it for severity/scope."
+      );
+    }
 
     const report: BugBountyReport = {
       title: `[${metadata.severity.toUpperCase()}] ${vulnInfo.name} in ${finding.endpoint}`,
@@ -327,7 +343,7 @@ export class DraftReportGenerator {
       affectedAssets: [finding.endpoint],
       remediation: vulnInfo.remediation,
       references: vulnInfo.refs,
-      timeline: `**Discovered**: ${metadata.huntDate}\n**Verified**: ${new Date().toISOString().split("T")[0]}\n**Status**: Ready for submission`,
+      timeline: `**Discovered**: ${metadata.huntDate}\n**Verified**: ${new Date().toISOString().split("T")[0]}\n**Status**: ${metadata.evidenceComplete === false ? "Impact evidence incomplete (budget-truncated) — review before submission" : "Ready for submission"}`,
       reportMarkdown: "",
       videoPath: metadata.videoPath,
     };
