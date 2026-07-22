@@ -90,6 +90,33 @@ export const RESTRICTED_PATHS = [
   '.replit',
 ];
 
+/**
+ * 2026-07-22 (inbound-audit Phase 1, item #2): RESTRICTED_PATHS is a
+ * substring BLOCKLIST, not a traversal check — path.resolve(cwd, target)
+ * on a target like "../../../etc/cron.d/x" walks straight past every entry
+ * above and out of the project directory entirely, since none of those
+ * substrings appear in the resolved path. Currently dormant (codegenAgent
+ * — the instance with these file tools — has zero live callers anywhere in
+ * the codebase as of the Phase 2 chokepoint cleanup; only its metadata,
+ * codegenAgentMeta, is still referenced), but a blocklist that doesn't
+ * actually check for traversal is wrong on principle regardless of current
+ * reachability. resolveWithinBase() replaces the blocklist-only check with
+ * a real containment check: resolve, then verify the result is still
+ * inside `base` using a path-separator-bounded prefix comparison (a naive
+ * string startsWith("/home/kali/project") would wrongly also allow
+ * "/home/kali/project-evil" — the separator suffix on both sides closes
+ * that off). Returns null (not a path) if it would escape.
+ */
+export function resolveWithinBase(base: string, target: string): string | null {
+  const resolvedBase = path.resolve(base);
+  const resolved = path.resolve(resolvedBase, target);
+  const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
+  if (resolved !== resolvedBase && !resolved.startsWith(baseWithSep)) {
+    return null;
+  }
+  return resolved;
+}
+
 export const MODIFICATION_LEVELS: Record<string, { threshold: number; autoApprove: boolean; examples: string[] }> = {
   trivial: {
     threshold: 0.7,
@@ -157,9 +184,12 @@ export class CodeGenAgent extends BaseMetaAgent {
   async runTool(tool: string, target: string, params: Record<string, any>): Promise<any> {
     switch (tool) {
       case 'file_read': {
-        const filePath = path.resolve(process.cwd(), target);
         if (this.isPathRestricted(target)) {
           return { success: false, error: `Path restricted: ${target}` };
+        }
+        const filePath = resolveWithinBase(process.cwd(), target);
+        if (!filePath) {
+          return { success: false, error: `Path escapes project directory: ${target}` };
         }
         try {
           const content = await fs.readFile(filePath, 'utf-8');
@@ -173,7 +203,10 @@ export class CodeGenAgent extends BaseMetaAgent {
         if (this.isPathRestricted(target)) {
           return { success: false, error: `Path restricted: ${target}` };
         }
-        const createPath = path.resolve(process.cwd(), target);
+        const createPath = resolveWithinBase(process.cwd(), target);
+        if (!createPath) {
+          return { success: false, error: `Path escapes project directory: ${target}` };
+        }
         const dir = path.dirname(createPath);
         await fs.mkdir(dir, { recursive: true });
         await fs.writeFile(createPath, params.content || '', 'utf-8');
@@ -184,7 +217,10 @@ export class CodeGenAgent extends BaseMetaAgent {
         if (this.isPathRestricted(target)) {
           return { success: false, error: `Path restricted: ${target}` };
         }
-        const editPath = path.resolve(process.cwd(), target);
+        const editPath = resolveWithinBase(process.cwd(), target);
+        if (!editPath) {
+          return { success: false, error: `Path escapes project directory: ${target}` };
+        }
         await fs.writeFile(editPath, params.content || '', 'utf-8');
         return { success: true, file: target, operation: 'modified' };
       }
@@ -193,7 +229,10 @@ export class CodeGenAgent extends BaseMetaAgent {
         if (this.isPathRestricted(target)) {
           return { success: false, error: `Path restricted: ${target}` };
         }
-        const deletePath = path.resolve(process.cwd(), target);
+        const deletePath = resolveWithinBase(process.cwd(), target);
+        if (!deletePath) {
+          return { success: false, error: `Path escapes project directory: ${target}` };
+        }
         await fs.unlink(deletePath);
         return { success: true, file: target, operation: 'deleted' };
       }
