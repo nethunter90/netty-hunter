@@ -155,7 +155,6 @@ export { autoAdjuster } from './auto-adjuster';
 export { timingObfuscation } from './timing-obfuscation';
 export { toolRunner } from './tool-runner';
 export { toolPriority } from './tool-priority';
-export { networkStealth } from './network-stealth';
 export { humanSimulator } from './agent-ui-interactor';
 export { windowManager } from './window-manager';
 export { visionAgent } from './vision-agent';

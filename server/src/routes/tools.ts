@@ -1,21 +1,24 @@
 import { Router, Request, Response } from "express";
-import { execSync, execFile } from "child_process";
+import { execFileSync, execFile } from "child_process";
 import { promisify } from "util";
 import { db } from "../db";
 import { customTools } from "../db/schema";
 import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
+import { dispatchTool, ToolOutOfScopeError } from "../lib/net/dispatch-tool";
+import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
 
 const router = Router();
 const execFileAsync = promisify(execFile);
 
 function getBinaryAvailability(binary: string): { available: boolean; path?: string; version?: string } {
   try {
-    const path = execSync(`which ${binary} 2>/dev/null`, { encoding: "utf8" }).trim();
+    const path = execFileSync("which", [binary], { encoding: "utf8" }).trim();
     if (!path) return { available: false };
     let version: string | undefined;
     try {
-      version = execSync(`${binary} --version 2>&1 | head -1`, { encoding: "utf8", timeout: 3000 }).trim();
+      const raw = execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 3000 });
+      version = raw.split("\n")[0]?.trim();
     } catch { /* version unavailable */ }
     return { available: true, path, version };
   } catch {
@@ -144,18 +147,19 @@ router.post("/:id/test", async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
-  const { url } = req.body;
+  const { url, programId: bodyProgramId } = req.body;
   if (!url || typeof url !== "string") return res.status(400).json({ error: "url is required" });
 
-  // Scope guard — reject private IPs and non-http(s) URLs
+  // Basic well-formedness check stays here (fast 400 before any DB/scope
+  // work); the REAL scope decision — including the private-IP/loopback
+  // rejection this used to do with its own regex blocklist — now lives
+  // inside dispatchTool()'s ScopeGuard.isInScope() check below, which is the
+  // same guard every other target-facing dispatch in this codebase uses
+  // (one guard, not a second hand-rolled one that can drift).
   try {
     const parsed = new URL(url);
     if (!["http:", "https:"].includes(parsed.protocol)) {
       return res.status(400).json({ error: "Only http/https URLs are allowed" });
-    }
-    const hostname = parsed.hostname;
-    if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|localhost$|::1$)/.test(hostname)) {
-      return res.status(400).json({ error: "Private/loopback URLs are not allowed for test-fire" });
     }
   } catch {
     return res.status(400).json({ error: "Invalid URL" });
@@ -165,17 +169,30 @@ router.post("/:id/test", async (req: Request, res: Response) => {
     const [tool] = await db.select().from(customTools).where(eq(customTools.id, id));
     if (!tool) return res.status(404).json({ error: "Tool not found" });
 
-    const parts = tool.commandTemplate.replace("{url}", url).split(/\s+/).filter(Boolean);
-    const bin = parts[0];
-    const args = parts.slice(1);
+    // 2026-07-22: tokenize the template BEFORE substituting {url} (matching
+    // HunterEngine.buildCommandFromTemplate's convention dispatchTool
+    // mirrors) — the previous version substituted the raw url into the
+    // template STRING first and split on whitespace afterward, so a url
+    // containing a space (e.g. "http://x.com/ --output=/etc/passwd") could
+    // inject an extra argv entry. Tokenizing first keeps the substituted URL
+    // confined to a single argument no matter what it contains.
+    const templateTokens = tool.commandTemplate.split(/\s+/).filter(Boolean);
+    const bin = templateTokens[0];
+    const args = templateTokens.slice(1);
 
-    const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000 }).catch(e => ({
-      stdout: e.stdout || "",
-      stderr: e.stderr || String(e),
-    }));
+    const programId = bodyProgramId ?? await resolveCustomTargetProgram(url);
+    const { stdout, stderr } = await dispatchTool({
+      tool: bin, target: url, args, programId, timeoutMs: 30000,
+    }).catch(e => {
+      if (e instanceof ToolOutOfScopeError) throw e;
+      return { stdout: e.stdout || "", stderr: e.stderr || String(e) };
+    });
 
     return res.json({ stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000) });
   } catch (err) {
+    if (err instanceof ToolOutOfScopeError) {
+      return res.status(403).json({ error: `Out of scope: ${err.reason}` });
+    }
     logger.error("Tool test-fire failed", { id, err: String(err) });
     return res.status(500).json({ error: "Tool test-fire failed", detail: String(err) });
   }

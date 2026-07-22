@@ -4,12 +4,11 @@
  * alerts into Hypothesis-compatible findings for the hunt pipeline.
  */
 import axios from "axios";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execFile } from "child_process";
 import { promisify } from "util";
-import { exec } from "child_process";
 import logger from "../../utils/logger";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -129,7 +128,7 @@ class ZapScanner {
   private async findBin(): Promise<string | null> {
     for (const bin of ["zaproxy", "zap.sh", "/usr/bin/zaproxy"]) {
       try {
-        await execAsync(`which ${bin}`);
+        await execFileAsync("which", [bin]);
         return bin;
       } catch { /* not found */ }
     }

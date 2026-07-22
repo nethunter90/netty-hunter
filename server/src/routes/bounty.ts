@@ -6,6 +6,8 @@ import fs from "fs/promises";
 import path from "path";
 import { db } from "../db";
 import { scopedHttp, OutOfScopeError } from "../lib/net/scoped-http";
+import { dispatchTool, ToolOutOfScopeError } from "../lib/net/dispatch-tool";
+import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
 import { installScopeRoute } from "../lib/net/scoped-browser-route";
 import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
 import { eq, desc, like, or, inArray } from "drizzle-orm";
@@ -584,7 +586,7 @@ router.get("/nuclei/templates", async (req: Request, res: Response) => {
 });
 
 router.post("/nuclei/run", async (req: Request, res: Response) => {
-  const { templateId, target } = req.body as { templateId?: string; target?: string };
+  const { templateId, target, programId: bodyProgramId } = req.body as { templateId?: string; target?: string; programId?: number };
 
   // Validate inputs — these flow into a subprocess, so reject anything that
   // isn't a plain template path / a well-formed http(s) URL.
@@ -601,14 +603,26 @@ router.post("/nuclei/run", async (req: Request, res: Response) => {
 
   if (process.env.REAL_TOOLS) {
     try {
-      // execFile with an args array — no shell, so metacharacters can't inject.
-      const { stdout } = await execFileAsync(
-        "nuclei",
-        ["-t", templateId, "-u", targetUrl.toString(), "-json"],
-        { encoding: "utf8", timeout: 30000 }
-      );
+      // 2026-07-22: this endpoint had NO scope check at all (one of the
+      // originally-audited chokepoint-bypass sites) — dispatchTool() now
+      // scope-checks targetUrl against a real program before exec. Callers
+      // that already know which program this target belongs to should pass
+      // programId explicitly; otherwise resolveCustomTargetProgram() finds-
+      // or-creates one scoped to targetUrl's own host, same as the ad-hoc/
+      // custom-target launch path.
+      const programId = bodyProgramId ?? await resolveCustomTargetProgram(targetUrl.toString());
+      const { stdout } = await dispatchTool({
+        tool: "nuclei",
+        target: targetUrl.toString(),
+        args: ["-t", templateId, "-u", "{url}", "-jsonl"], // nuclei v3+ removed -json; -jsonl is current
+        programId,
+        timeoutMs: 30000,
+      });
       return res.json({ result: stdout, executed: true });
     } catch (err: any) {
+      if (err instanceof ToolOutOfScopeError) {
+        return res.status(403).json({ error: `Out of scope: ${err.reason}` });
+      }
       return res.status(500).json({ error: err.message });
     }
   }

@@ -3,10 +3,10 @@
  *
  * Every invocation of an offensive security binary (nmap, ffuf, nuclei,
  * sqlmap, gobuster, whatweb, ...) must go through dispatchTool(). Raw
- * `exec`/`execSync`/`spawn(..., { shell: true })` — anything that runs a
- * command through a shell — is disallowed outside this module; the CI
- * import-guard (see scripts/check-tool-exec.ts, Phase 2) fails the build if
- * it finds one.
+ * `exec`/`execSync`, or a `spawn` call with its shell option turned on —
+ * anything that runs a command through a shell — is disallowed outside this
+ * module; the CI import-guard (see scripts/check-tool-exec.ts, Phase 2)
+ * fails the build if it finds one.
  *
  * This is the third of three egress chokepoints, mirroring scoped-http.ts
  * (Node HTTP) and scoped-browser-route.ts (Playwright browser contexts).
@@ -23,9 +23,11 @@
  *
  * Design constraints (why this shape, not another):
  *
- * 1. execFile, never a shell. The signature takes a pre-tokenized `args`
+ * 1. Array args, never a shell. The signature takes a pre-tokenized `args`
  *    array — there is no code path in this module that concatenates a
- *    command string or sets `shell: true`. This is what makes shell
+ *    command string or turns a shell option on. (Dispatches via `spawn`
+ *    with stdin explicitly closed rather than `execFile` — see
+ *    execFileNoStdin()'s own comment for why.) This is what makes shell
  *    injection structurally impossible here, not just escaped: an escaping
  *    bug (as found in layer5-meta-agents.ts's double-quote-only sqlmap call)
  *    can't recur because there's never a shell to escape *for*.
@@ -55,13 +57,61 @@
  * buildCommandFromTemplate() (:741-761, tokenize-then-substitute, URL-
  * validated) and runTool() (:3299-3374, execFileAsync with an args array).
  */
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import { ScopeGuard } from "../../middleware/scopeGuard";
 import logger from "../../utils/logger";
 
-const execFileAsync = promisify(execFile);
 const guard = ScopeGuard.getInstance();
+
+class ToolExecError extends Error {
+  constructor(message: string, public readonly stdout: string, public readonly stderr: string) {
+    super(message);
+    this.name = "ToolExecError";
+  }
+}
+
+/** spawn() instead of execFile(): execFile's default stdin is inherited from
+ *  this process, and at least one real tool (nuclei, confirmed live) reads
+ *  from stdin when spawned non-interactively and hangs forever waiting for
+ *  EOF that never comes — invisible in a terminal (which sends EOF/closes on
+ *  its own) but real under a server process, where the tool would otherwise
+ *  only ever exit via timeoutMs's SIGTERM. stdio: ["ignore", ...] closes
+ *  stdin immediately so any such read fails/returns right away instead. */
+function execFileNoStdin(
+  file: string, args: string[], opts: { timeout: number; env: NodeJS.ProcessEnv },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { env: opts.env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new ToolExecError(`Command timed out after ${opts.timeout}ms: ${file} ${args.join(" ")}`, stdout, stderr));
+    }, opts.timeout);
+
+    child.stdout?.on("data", (d) => { stdout += d; });
+    child.stderr?.on("data", (d) => { stderr += d; });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new ToolExecError(`Command failed (exit ${code}): ${file} ${args.join(" ")}`, stdout, stderr));
+      }
+    });
+  });
+}
 
 export class ToolOutOfScopeError extends Error {
   constructor(public readonly target: string, public readonly reason: string) {
@@ -146,7 +196,7 @@ export async function dispatchTool(params: DispatchToolParams): Promise<Dispatch
   const substitutedArgs = substituteArgs(args, safeUrl, domain);
 
   const start = Date.now();
-  const { stdout, stderr } = await execFileAsync(tool, substitutedArgs, {
+  const { stdout, stderr } = await execFileNoStdin(tool, substitutedArgs, {
     timeout: timeoutMs,
     env: env ?? process.env,
   });

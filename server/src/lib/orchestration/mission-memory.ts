@@ -48,10 +48,18 @@ export class MissionMemoryStore {
     }
   }
 
-  async initialize(huntId: string, initialDomains: string[]): Promise<MissionMemory> {
+  async initialize(huntId: string, initialDomains: string[], programId: number): Promise<MissionMemory> {
     // Authoritative source: DB snapshot wins over a cold start
     if (await this.restore(huntId)) {
-      return this.memories.get(huntId)!;
+      const restored = this.memories.get(huntId)!;
+      if (restored.programId === undefined || restored.programId === null) {
+        // Pre-migration snapshot (written before programId existed on this
+        // interface) — backfill from the current call so scope-checked tool
+        // dispatch works, rather than leaving it undefined (which would fail
+        // closed forever on this hunt via ScopeGuard's missing-programId path).
+        restored.programId = programId;
+      }
+      return restored;
     }
 
     const seedEndpoints: Endpoint[] = initialDomains
@@ -67,6 +75,7 @@ export class MissionMemoryStore {
 
     const memory: MissionMemory = {
       huntId,
+      programId,
       domains: initialDomains,
       subdomains: [],
       endpoints: seedEndpoints,

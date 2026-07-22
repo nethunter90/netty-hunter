@@ -13,8 +13,7 @@
  * Beacon IDs use a "n"+12-hex format (13 chars) — short enough for a DNS label,
  * starts with a letter so all DNS validators accept it.
  */
-import { spawn, ChildProcess } from "child_process";
-import { execSync } from "child_process";
+import { spawn, ChildProcess, execFileSync } from "child_process";
 import logger from "../../utils/logger";
 
 export interface OOBHit {
@@ -36,7 +35,7 @@ class InteractshManager {
   isAvailable(): boolean {
     if (this._available !== null) return this._available;
     try {
-      const p = execSync("which interactsh-client 2>/dev/null", { encoding: "utf8", timeout: 2000 }).trim();
+      const p = execFileSync("which", ["interactsh-client"], { encoding: "utf8", timeout: 2000 }).trim();
       this._available = p.length > 0;
     } catch {
       this._available = false;

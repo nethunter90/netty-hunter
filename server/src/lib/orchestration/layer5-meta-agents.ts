@@ -1,9 +1,13 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { readdir, readFile } from 'fs/promises';
 import { autoAdjuster } from '../stealth/auto-adjuster';
 import { aiBridge } from './layer6-ai-bridge';
 import { agentRegistry } from './agent-registry';
 import { interactshManager } from '../oob/interactsh-manager';
+import { dispatchTool, ToolOutOfScopeError } from '../net/dispatch-tool';
+import { scopedHttp } from '../net/scoped-http';
+import { checkExploitationToolAuthorization } from '../../agents/ExploitationToolGate';
 import {
   parseTargetUrl,
   parseNmapOutput, nmapToFindings,
@@ -14,68 +18,51 @@ import {
 } from './tool-parsers';
 import { toolRunner } from '../stealth/tool-runner';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 function isReal(): boolean {
   return process.env.REAL_TOOLS === 'true';
 }
 
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
-// 2026-07-21 RCE stopgap (readiness pass, external-tool chokepoint work).
-//
-// runCrawl() harvests href/src/action values out of the TARGET's own HTML
-// with no shell-metacharacter filtering (only a #/javascript:/mailto:/data:
-// prefix check) and persists them into missionMemory; the next agent cycle
-// re-dispatches those same crawl-derived strings as `target` into
-// runWhatweb()/runNikto()/runNuclei()/runSqlmap() (ScannerAgent), the
-// ExploitMetaAgent sqlmap/metasploit cases, and the SupportMetaAgent
-// hydra/hashcat cases — ALL of which interpolate `target` (or
-// userlist/passlist/service/mode, also uninterpolated) into a shell string
-// via exec() with either NO escaping or double-quote-only escaping (which
-// does not stop $()/backtick substitution). A hostile or compromised bounty
-// target can therefore reach an arbitrary shell on the operator's own
-// machine through this platform's ordinary recon -> crawl -> scan cycle —
-// this is a live RCE, not a scope gap.
-//
-// Disabled by default (fail closed) until Phase 1 of the chokepoint work
-// replaces every one of these shell-string exec() calls with the
-// execFile+array-args dispatchTool() pattern already proven safe in
-// HunterEngine.runTool(). Gates the taint SOURCE (runCrawl) and every known
-// unsafe SINK reachable from the same missionMemory-fed agent loop — not
-// just the two originally-named vectors — because a partial gate here would
-// leave a live RCE reachable through a sibling tool call.
-function crawlDerivedToolsEnabled(): boolean {
-  return process.env.ALLOW_UNSAFE_SHELL_RECON_TOOLS === 'true';
-}
-
-function unsafeToolDisabledResult(tool: string, target: string) {
-  console.warn(`[RCE-stopgap] ${tool} dispatch blocked — unsafe shell-exec path disabled (target=${target})`);
-  return {
-    result: {
-      disabled: true,
-      reason: `${tool} shell-exec dispatch is disabled pending the external-tool chokepoint fix (2026-07-21 RCE stopgap). Set ALLOW_UNSAFE_SHELL_RECON_TOOLS=true to override — NOT recommended against untrusted targets.`,
-    },
-    real: false,
-  };
-}
-
-const toolCache = new Map<string, boolean>();
-
+/**
+ * 2026-07-22 (Phase 2, external-tool chokepoint): every tool exec in this
+ * file now goes through dispatchTool() (execFile + array args + a real
+ * ScopeGuard.isInScope() check immediately before spawn) instead of building
+ * shell-string commands with exec(). This replaces the 2026-07-21 stopgap
+ * (ALLOW_UNSAFE_SHELL_RECON_TOOLS) for whatweb/nikto/nuclei/sqlmap/httpx/
+ * crawl — dispatchTool structurally closes the shell-injection class those
+ * were gated against, so the old kill-switch is gone along with the exec()
+ * calls it protected. Exploitation/credential-attack tools (metasploit,
+ * hydra, hashcat) get a SEPARATE, still-fail-closed-by-default gate — see
+ * checkExploitationToolAuthorization() — because dispatchTool only answers
+ * "can a target inject a command," not "should this platform autonomously
+ * run credential attacks against someone's property."
+ *
+ * Only reachable today via routes/reasoning.ts's POST /lab/run -> hunt-lab-
+ * runner.ts -> huntOrchestrator.createHunt(), which always uses a
+ * pre-registered lab-profile targetUrl (never attacker/API-supplied) — see
+ * layer1-hunt-orchestrator.ts's resolveCustomTargetProgram() call for how
+ * this subsystem now gets a real, ScopeGuard-backed programId.
+ */
 async function toolExists(name: string): Promise<boolean> {
-  if (toolCache.has(name)) return toolCache.get(name)!;
   try {
-    await execAsync(`which ${name}`, { timeout: 5000 });
-    toolCache.set(name, true);
+    await execFileAsync('which', [name], { timeout: 5000 });
     console.log(`[ToolCheck] ${name}: FOUND`);
     return true;
   } catch {
-    toolCache.set(name, false);
     console.log(`[ToolCheck] ${name}: NOT FOUND`);
     return false;
   }
+}
+
+/** Static, per-tool stealth flags (toolRunner.injectStealthFlags's source of
+ *  truth) as a token array — never target-derived, safe to splice into an
+ *  args array as-is. Calling injectStealthFlags with an empty base command
+ *  isolates just the appended flags without duplicating toolRunner's table. */
+function stealthArgTokens(tool: string, mode?: string): string[] {
+  if (!mode || mode === 'aggressive') return [];
+  const withFlags = toolRunner.injectStealthFlags(tool, '', mode).trim();
+  return withFlags ? withFlags.split(/\s+/) : [];
 }
 
 interface ToolResult {
@@ -92,13 +79,14 @@ abstract class MetaAgent {
 
   async execute(
     agentId: string,
-    task: { tool: string; target: string; parameters: Record<string, any> }
+    task: { tool: string; target: string; parameters: Record<string, any> },
+    programId: number | null | undefined,
   ): Promise<ToolResult> {
     const start = Date.now();
     console.log(`[${this.type}] Executing ${task.tool} on ${task.target}`);
 
     try {
-      const result = await this.runTool(task.tool, task.target, task.parameters);
+      const result = await this.runTool(task.tool, task.target, task.parameters, programId);
       const duration = Date.now() - start;
       console.log(`[${this.type}] ${task.tool} completed in ${duration}ms (real: ${result.real})`);
       agentRegistry.recordInvocation(agentId, true);
@@ -112,54 +100,63 @@ abstract class MetaAgent {
   }
 
   protected abstract runTool(
-    tool: string, target: string, params: Record<string, any>
+    tool: string, target: string, params: Record<string, any>, programId: number | null | undefined,
   ): Promise<{ result: any; real: boolean }>;
 
-  protected async exec(cmd: string, timeout = 120000): Promise<string> {
-    const { stdout } = await execAsync(cmd, {
-      timeout,
-      maxBuffer: 20 * 1024 * 1024,
-      env: { ...process.env, TERM: 'dumb' },
-    });
-    return stdout;
+  /** Runs dispatchTool() and returns stdout, or '' if the target is out of
+   *  scope (mirrors the old exec()-wrapper's "swallow and continue with
+   *  empty output" behavior on failure — callers already handle empty
+   *  stdout as "nothing found"). Scope violations are logged, not silently
+   *  eaten, but still don't throw past this layer so one blocked tool call
+   *  doesn't abort the whole recon cycle. */
+  protected async dispatch(tool: string, target: string, args: string[], programId: number | null | undefined, timeoutMs = 120000): Promise<string> {
+    try {
+      const { stdout } = await dispatchTool({ tool, target, args, programId, timeoutMs });
+      return stdout;
+    } catch (e) {
+      if (e instanceof ToolOutOfScopeError) {
+        console.warn(`[${this.type}] ${tool} blocked — out of scope: ${e.reason}`);
+        return '';
+      }
+      throw e;
+    }
   }
 }
 
 export class ReconAgent extends MetaAgent {
   type = 'recon';
 
-  protected async runTool(tool: string, target: string, params: Record<string, any>) {
+  protected async runTool(tool: string, target: string, params: Record<string, any>, programId: number | null | undefined) {
     const _baseMode = params.stealthMode || 'balanced';
     const _adjMode = autoAdjuster.getCurrentMode();
     const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
     const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
-      case 'nmap': return this.runNmap(target, stealthMode);
-      case 'subfinder': return this.runSubfinder(target);
-      case 'httpx': return this.runHttpx(target);
-      case 'whatweb': return this.runWhatweb(target);
-      case 'crawl': return this.runCrawl(target);
-      case 'amass': return this.runAmass(target);
-      case 'gobuster': return this.runGobuster(target);
-      case 'ffuf': return this.runFfuf(target);
-      case 'wappalyzer': return this.runWappalyzer(target);
-      case 'masscan': return this.runMasscan(target);
-      case 'eyewitness': return this.runEyewitness(target);
+      case 'nmap': return this.runNmap(target, stealthMode, programId);
+      case 'subfinder': return this.runSubfinder(target, programId);
+      case 'httpx': return this.runHttpx(target, programId);
+      case 'whatweb': return this.runWhatweb(target, programId);
+      case 'crawl': return this.runCrawl(target, programId);
+      case 'amass': return this.runAmass(target, programId);
+      case 'gobuster': return this.runGobuster(target, programId);
+      case 'ffuf': return this.runFfuf(target, programId);
+      case 'wappalyzer': return this.runWappalyzer(target, programId);
+      case 'masscan': return this.runMasscan(target, programId);
+      case 'eyewitness': return this.runEyewitness(target, programId);
       default: throw new Error(`Unknown recon tool: ${tool}`);
     }
   }
 
-  private async runNmap(target: string, stealthMode?: string) {
+  private async runNmap(target: string, stealthMode: string | undefined, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
 
     if (isReal() && await toolExists('nmap')) {
-      const portFlag = port !== 80 ? `-p ${port}` : '-p 80,443,8080,8443,3000';
-      let baseCmd = `nmap -sT -sV -Pn -T4 ${portFlag} ${host}`;
-      if (stealthMode && stealthMode !== 'aggressive') {
-        baseCmd = toolRunner.injectStealthFlags('nmap', `nmap -sT -sV -Pn ${portFlag} ${host}`, stealthMode);
-        console.log(`[ReconAgent] Stealth nmap command: ${baseCmd}`);
-      }
-      const stdout = await this.exec(baseCmd, 300000);
+      const portArgs = port !== 80 ? ['-p', String(port)] : ['-p', '80,443,8080,8443,3000'];
+      const aggressive = !stealthMode || stealthMode === 'aggressive';
+      const args = aggressive
+        ? ['-sT', '-sV', '-Pn', '-T4', ...portArgs, '{domain}']
+        : ['-sT', '-sV', '-Pn', ...portArgs, '{domain}', ...stealthArgTokens('nmap', stealthMode)];
+      const stdout = await this.dispatch('nmap', target, args, programId, 300000);
       const parsed = parseNmapOutput(stdout, target);
       return { result: { parsed, raw: stdout }, real: true };
     }
@@ -180,7 +177,7 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runSubfinder(target: string) {
+  private async runSubfinder(target: string, programId: number | null | undefined) {
     const { host } = parseTargetUrl(target);
 
     const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
@@ -189,7 +186,7 @@ export class ReconAgent extends MetaAgent {
     }
 
     if (isReal() && await toolExists('subfinder')) {
-      const stdout = await this.exec(`subfinder -d ${host} -silent`, 120000);
+      const stdout = await this.dispatch('subfinder', target, ['-d', '{domain}', '-silent'], programId);
       return {
         result: { subdomains: stdout.trim().split('\n').filter(Boolean) },
         real: true,
@@ -202,13 +199,12 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runHttpx(target: string) {
+  private async runHttpx(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
 
     if (isReal() && await toolExists('httpx')) {
-      const { runHttpxProbe } = await import('../../utils/httpx-compat');
-      const stdout = await runHttpxProbe(host, '-json', 120000);
+      const stdout = await this.dispatch('httpx', target, ['-u', '{url}', '-json'], programId);
       const lines = stdout.trim().split('\n').filter(Boolean);
       return {
         result: { endpoints: lines.map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean) },
@@ -228,22 +224,11 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runWhatweb(target: string) {
-    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('whatweb', target);
+  private async runWhatweb(target: string, programId: number | null | undefined) {
     if (isReal() && await toolExists('whatweb')) {
-      let stdout = '';
-      try {
-        stdout = await this.exec(`whatweb --log-json=- ${target} 2>/dev/null`, 60000);
-      } catch (e: any) {
-        stdout = e.stdout || '';
-      }
-
+      let stdout = await this.dispatch('whatweb', target, ['--log-json=-', '{url}'], programId, 60000);
       if (!stdout.trim()) {
-        try {
-          stdout = await this.exec(`whatweb ${target} 2>/dev/null`, 60000);
-        } catch (e: any) {
-          stdout = e.stdout || '';
-        }
+        stdout = await this.dispatch('whatweb', target, ['{url}'], programId, 60000);
       }
 
       const parsed = parseWhatwebJson(stdout, target);
@@ -268,17 +253,27 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runCrawl(target: string) {
+  /**
+   * 2026-07-22: previously shelled out to `curl ... | grep ... | sed ... |
+   * sort -u` — a multi-stage shell PIPELINE that can't be expressed as a
+   * single execFile call at all. Rewritten to fetch via scopedHttp (the same
+   * rate-limited, scope-checked HTTP chokepoint every other prober uses) and
+   * do the href/src/action extraction with a plain JS regex over the body —
+   * no shell, no exec() of any kind, and it reuses scopedHttp's own
+   * scope-check + pacing instead of duplicating one via dispatchTool.
+   */
+  private async runCrawl(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
-    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('crawl', target);
     if (isReal()) {
       try {
-        const stdout = await this.exec(
-          `curl -sS --max-time 15 "${url}" | grep -oE '(href|src|action)="[^"]*"' | sed 's/.*="//;s/"$//' | sort -u`,
-          20000
-        );
-        const rawPaths = stdout.trim().split('\n').filter(Boolean);
+        const resp = await scopedHttp.get(url, { timeout: 15000, validateStatus: () => true }, programId);
+        const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data ?? '');
+        const rawPaths: string[] = [];
+        const attrPattern = /(?:href|src|action)\s*=\s*"([^"]*)"/g;
+        let m: RegExpExecArray | null;
+        while ((m = attrPattern.exec(body)) !== null) rawPaths.push(m[1]);
+
         const baseUrl = url.replace(/\/$/, '');
         const seen = new Set<string>();
         const endpoints: { url: string; method: string; discoveredBy: string }[] = [];
@@ -319,7 +314,7 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runAmass(target: string) {
+  private async runAmass(target: string, programId: number | null | undefined) {
     const { host } = parseTargetUrl(target);
     const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
     if (isLocal) {
@@ -328,7 +323,7 @@ export class ReconAgent extends MetaAgent {
 
     if (isReal() && await toolExists('amass')) {
       try {
-        const stdout = await this.exec(`amass enum -passive -d ${shellEscape(host)}`, 300000);
+        const stdout = await this.dispatch('amass', target, ['enum', '-passive', '-d', '{domain}'], programId, 300000);
         const subdomains = stdout.trim().split('\n').filter(Boolean);
         console.log(`[ReconAgent] Amass found ${subdomains.length} subdomains`);
         return { result: { subdomains }, real: true };
@@ -343,16 +338,15 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runGobuster(target: string) {
+  private async runGobuster(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
 
     if (isReal() && await toolExists('gobuster')) {
       try {
-        const stdout = await this.exec(
-          `gobuster dir -u ${shellEscape(url)} -w /usr/share/wordlists/dirb/common.txt -q --no-error -t 10 2>/dev/null`,
-          300000
-        );
+        const stdout = await this.dispatch('gobuster', target,
+          ['dir', '-u', '{url}', '-w', '/usr/share/wordlists/dirb/common.txt', '-q', '--no-error', '-t', '10'],
+          programId, 300000);
         const directories: { path: string; status: number; size?: number }[] = [];
         for (const line of stdout.trim().split('\n').filter(Boolean)) {
           const m = line.match(/^(\/\S+)\s+\(Status:\s*(\d+)\)(?:\s+\[Size:\s*(\d+)\])?/) ||
@@ -388,16 +382,15 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runFfuf(target: string) {
+  private async runFfuf(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
 
     if (isReal() && await toolExists('ffuf')) {
       try {
-        const stdout = await this.exec(
-          `ffuf -u ${shellEscape(url)}/FUZZ -w /usr/share/wordlists/dirb/common.txt -mc 200,204,301,302,307,403 -t 10 -s 2>/dev/null`,
-          300000
-        );
+        const stdout = await this.dispatch('ffuf', target,
+          ['-u', '{url}/FUZZ', '-w', '/usr/share/wordlists/dirb/common.txt', '-mc', '200,204,301,302,307,403', '-t', '10', '-s'],
+          programId, 300000);
         const paths = stdout.trim().split('\n').filter(Boolean);
         const baseUrl = url.replace(/\/$/, '');
         const endpoints = paths.map(p => ({
@@ -424,13 +417,13 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runWappalyzer(target: string) {
+  private async runWappalyzer(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
 
     if (isReal() && await toolExists('wappalyzer')) {
       try {
-        const stdout = await this.exec(`wappalyzer ${shellEscape(url)} 2>/dev/null`, 120000);
+        const stdout = await this.dispatch('wappalyzer', target, ['{url}'], programId, 120000);
         try {
           const parsed = JSON.parse(stdout);
           const technologies = (parsed.technologies || []).map((t: any) => ({
@@ -461,17 +454,17 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runMasscan(target: string) {
+  private async runMasscan(target: string, programId: number | null | undefined) {
     const { host } = parseTargetUrl(target);
     const isLocal = host === 'localhost' || host === '127.0.0.1';
 
     if (isReal() && await toolExists('masscan')) {
       try {
-        const scanHost = isLocal ? '127.0.0.1' : host;
-        const stdout = await this.exec(
-          `masscan ${shellEscape(scanHost)} -p1-10000 --rate=500 --banners -oJ - 2>/dev/null`,
-          300000
-        );
+        // masscan takes a bare host/IP, never a URL — {domain} substitutes to
+        // just that, but dispatchTool still scope-checks the full `target` URL.
+        const stdout = await this.dispatch('masscan', target,
+          [isLocal ? '127.0.0.1' : '{domain}', '-p1-10000', '--rate=500', '--banners', '-oJ', '-'],
+          programId, 300000);
         const ports: { port: number; protocol: string; service?: string }[] = [];
         for (const line of stdout.trim().split('\n').filter(Boolean)) {
           try {
@@ -508,26 +501,28 @@ export class ReconAgent extends MetaAgent {
     };
   }
 
-  private async runEyewitness(target: string) {
+  private async runEyewitness(target: string, programId: number | null | undefined) {
     const { host, port } = parseTargetUrl(target);
     const url = target.startsWith('http') ? target : `http://${host}:${port}`;
 
     if (isReal() && await toolExists('eyewitness')) {
       const outDir = `/tmp/eyewitness-${Date.now()}`;
       try {
-        await this.exec(
-          `eyewitness --web --single ${shellEscape(url)} -d ${outDir} --no-prompt --timeout 15 2>/dev/null`,
-          120000
-        );
+        await this.dispatch('eyewitness', target,
+          ['--web', '--single', '{url}', '-d', outDir, '--no-prompt', '--timeout', '15'],
+          programId, 120000);
+        // eyewitness's own output directory — a Date.now()-based literal, not
+        // target data — so these are plain local filesystem reads, not
+        // further tool dispatch; no exec()/shell needed at all.
         let screenshots: string[] = [];
         try {
-          const lsOut = await this.exec(`ls ${outDir}/screens/ 2>/dev/null`);
-          screenshots = lsOut.trim().split('\n').filter(f => f.endsWith('.png') || f.endsWith('.jpg'));
+          const files = await readdir(`${outDir}/screens/`);
+          screenshots = files.filter(f => f.endsWith('.png') || f.endsWith('.jpg'));
         } catch {}
         let serverHeader = '';
         try {
-          const headerOut = await this.exec(`cat ${outDir}/report.html 2>/dev/null | head -100`);
-          const serverMatch = headerOut.match(/Server:\s*([^\n<]+)/i);
+          const reportHtml = await readFile(`${outDir}/report.html`, 'utf8');
+          const serverMatch = reportHtml.slice(0, 20000).match(/Server:\s*([^\n<]+)/i);
           if (serverMatch) serverHeader = serverMatch[1].trim();
         } catch {}
         console.log(`[ReconAgent] EyeWitness captured ${screenshots.length} screenshot(s)`);
@@ -558,33 +553,26 @@ export class ReconAgent extends MetaAgent {
 export class ScannerAgent extends MetaAgent {
   type = 'scanner';
 
-  protected async runTool(tool: string, target: string, params: Record<string, any>) {
+  protected async runTool(tool: string, target: string, params: Record<string, any>, programId: number | null | undefined) {
     const _baseMode = params.stealthMode || 'balanced';
     const _adjMode = autoAdjuster.getCurrentMode();
     const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
     const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
-      case 'nikto': return this.runNikto(target, stealthMode);
-      case 'nuclei': return this.runNuclei(target, params, stealthMode);
-      case 'sqlmap': return this.runSqlmap(target, params, stealthMode);
+      case 'nikto': return this.runNikto(target, stealthMode, programId);
+      case 'nuclei': return this.runNuclei(target, params, stealthMode, programId);
+      case 'sqlmap': return this.runSqlmap(target, params, stealthMode, programId);
       default: throw new Error(`Unknown scanner tool: ${tool}`);
     }
   }
 
-  private async runNikto(target: string, stealthMode?: string) {
-    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('nikto', target);
+  private async runNikto(target: string, stealthMode: string | undefined, programId: number | null | undefined) {
     if (isReal() && await toolExists('nikto')) {
-      let baseCmd = `nikto -h ${target} -maxtime 120 -Tuning 123bde`;
-      if (stealthMode && stealthMode !== 'aggressive') {
-        baseCmd = toolRunner.injectStealthFlags('nikto', `nikto -h ${target} -maxtime 180 -Tuning 123bde`, stealthMode);
-        console.log(`[ScannerAgent] Stealth nikto command: ${baseCmd}`);
-      }
-      let stdout = '';
-      try {
-        stdout = await this.exec(baseCmd, 240000);
-      } catch (e: any) {
-        stdout = e.stdout || e.message || '';
-      }
+      const aggressive = !stealthMode || stealthMode === 'aggressive';
+      const args = aggressive
+        ? ['-h', '{url}', '-maxtime', '120', '-Tuning', '123bde']
+        : ['-h', '{url}', '-maxtime', '180', '-Tuning', '123bde', ...stealthArgTokens('nikto', stealthMode)];
+      const stdout = await this.dispatch('nikto', target, args, programId, 240000);
       const parsed = parseNiktoOutput(stdout, target);
       const vulnerabilities = niktoToVulnerabilities(parsed);
       return {
@@ -617,45 +605,39 @@ export class ScannerAgent extends MetaAgent {
     };
   }
 
-  private async runNuclei(target: string, params: Record<string, any>, stealthMode?: string) {
-    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('nuclei', target);
+  private async runNuclei(target: string, params: Record<string, any>, stealthMode: string | undefined, programId: number | null | undefined) {
     if (isReal() && await toolExists('nuclei')) {
       const severity = params.severity || 'low,medium,high,critical';
 
       let rateLimit = 100;
-      let concurrency = '';
+      let concurrencyArgs: string[] = [];
       if (stealthMode === 'stealth') {
         rateLimit = 10;
-        concurrency = '-c 2';
+        concurrencyArgs = ['-c', '2'];
       } else if (stealthMode === 'ultrastealth') {
         rateLimit = 3;
-        concurrency = '-c 1';
+        concurrencyArgs = ['-c', '1'];
       }
 
       // Use interactsh for OOB template detection when the client is running;
       // otherwise disable it to avoid nuclei hanging waiting for a server.
-      const interactshFlag = interactshManager.getDomain() ? "" : "-no-interactsh";
-      let baseCmd = `nuclei -u ${target} -t http/technologies/ -t http/exposures/ -t http/misconfiguration/ -t http/vulnerabilities/ -severity ${severity} -jsonl -silent -timeout 5 -retries 0 -rate-limit ${rateLimit} ${concurrency} ${interactshFlag} 2>/dev/null`.trimEnd();
+      const interactshArgs = interactshManager.getDomain() ? [] : ['-no-interactsh'];
       if (stealthMode && stealthMode !== 'aggressive') {
         console.log(`[ScannerAgent] Stealth nuclei: rate-limit=${rateLimit}, mode=${stealthMode}`);
       }
 
-      let stdout = '';
-      try {
-        stdout = await this.exec(baseCmd, 300000);
-      } catch (e: any) {
-        stdout = e.stdout || '';
-      }
+      let stdout = await this.dispatch('nuclei', target, [
+        '-u', '{url}',
+        '-t', 'http/technologies/', '-t', 'http/exposures/', '-t', 'http/misconfiguration/', '-t', 'http/vulnerabilities/',
+        '-severity', severity, '-jsonl', '-silent', '-timeout', '5', '-retries', '0',
+        '-rate-limit', String(rateLimit), ...concurrencyArgs, ...interactshArgs,
+      ], programId, 300000);
 
       if (!stdout.trim()) {
-        try {
-          stdout = await this.exec(
-            `nuclei -u ${target} -severity medium,high,critical -jsonl -silent -timeout 5 -retries 0 ${interactshFlag} 2>/dev/null`.trimEnd(),
-            180000
-          );
-        } catch (e: any) {
-          stdout = e.stdout || '';
-        }
+        stdout = await this.dispatch('nuclei', target, [
+          '-u', '{url}', '-severity', 'medium,high,critical', '-jsonl', '-silent',
+          '-timeout', '5', '-retries', '0', ...interactshArgs,
+        ], programId, 180000);
       }
 
       const parsed = parseNucleiOutput(stdout, target);
@@ -690,8 +672,7 @@ export class ScannerAgent extends MetaAgent {
     };
   }
 
-  private async runSqlmap(target: string, params: Record<string, any>, stealthMode?: string) {
-    if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('sqlmap', target);
+  private async runSqlmap(target: string, params: Record<string, any>, stealthMode: string | undefined, programId: number | null | undefined) {
     if (isReal() && await toolExists('sqlmap')) {
       const injectableTargets: string[] = params.injectableTargets || [];
 
@@ -716,30 +697,28 @@ export class ScannerAgent extends MetaAgent {
         };
       }
 
-      let stealthFlags = '';
+      let stealthFlags: string[] = [];
       let threads = 5;
       if (stealthMode === 'stealth') {
-        stealthFlags = '--delay=2 --random-agent';
+        stealthFlags = ['--delay=2', '--random-agent'];
         threads = 2;
       } else if (stealthMode === 'ultrastealth') {
-        stealthFlags = '--delay=5 --time-sec=15 --random-agent --safe-url-retries=3';
+        stealthFlags = ['--delay=5', '--time-sec=15', '--random-agent', '--safe-url-retries=3'];
         threads = 1;
       }
 
       const allVulnerabilities: any[] = [];
       let combinedRaw = '';
 
+      // Each candidate target is scope-checked in its OWN right by
+      // dispatchTool (previous version never scope-checked injectableTargets
+      // at all — they came straight from nikto's parsed findings).
       for (const testTarget of targetsToTest.slice(0, 5)) {
         console.log(`[ScannerAgent] SQLMap testing: ${testTarget} (stealth=${stealthMode})`);
-        let stdout = '';
-        try {
-          stdout = await this.exec(
-            `sqlmap -u "${testTarget}" --batch --threads=${threads} --level=1 --risk=1 --timeout=10 --retries=1 ${stealthFlags} --output-dir=/tmp/sqlmap-${Date.now()} 2>&1`,
-            120000
-          );
-        } catch (e: any) {
-          stdout = e.stdout || e.message || '';
-        }
+        const stdout = await this.dispatch('sqlmap', testTarget, [
+          '-u', '{url}', '--batch', `--threads=${threads}`, '--level=1', '--risk=1',
+          '--timeout=10', '--retries=1', ...stealthFlags, `--output-dir=/tmp/sqlmap-${Date.now()}`,
+        ], programId, 120000);
 
         combinedRaw += `\n--- Target: ${testTarget} ---\n${stdout}\n`;
 
@@ -782,17 +761,33 @@ export class ScannerAgent extends MetaAgent {
   }
 }
 
+/** Shared exploitation-tool guard: scope+shell-injection is dispatchTool's
+ *  job, but metasploit/hydra/hashcat are a separate "should this platform
+ *  autonomously run credential attacks against someone's property" policy
+ *  question — checked fresh at every dispatch, fail-closed by default. */
+async function exploitationDisabledResult(tool: string, target: string, programId: number | null | undefined) {
+  const auth = await checkExploitationToolAuthorization(target, programId);
+  if (!auth.allowed) {
+    console.warn(`[ExploitGate] ${tool} dispatch blocked: ${auth.reason}`);
+    return { blocked: true as const, reason: auth.reason };
+  }
+  return { blocked: false as const };
+}
+
 export class ExploitMetaAgent extends MetaAgent {
   type = 'exploit';
 
-  protected async runTool(tool: string, target: string, params: Record<string, any>) {
+  protected async runTool(tool: string, target: string, params: Record<string, any>, programId: number | null | undefined) {
     const _baseMode = params.stealthMode || 'balanced';
     const _adjMode = autoAdjuster.getCurrentMode();
     const _ORDER = ['aggressive', 'balanced', 'stealth', 'ultrastealth'];
     const stealthMode = _ORDER.indexOf(_adjMode) > _ORDER.indexOf(_baseMode) ? _adjMode : _baseMode;
     switch (tool) {
       case 'sqlmap': {
-        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('sqlmap (exploit)', target);
+        const gate = await exploitationDisabledResult('sqlmap (exploit)', target, programId);
+        if (gate.blocked) {
+          return { result: { exploited: false, reason: gate.reason }, real: false };
+        }
         if (isReal() && await toolExists('sqlmap')) {
           const injectableTargets: string[] = params.injectableTargets || [];
           const targetsToTest: string[] = [];
@@ -811,13 +806,13 @@ export class ExploitMetaAgent extends MetaAgent {
             };
           }
 
-          let stealthFlags = '';
+          let stealthFlags: string[] = [];
           let threads = 5;
           if (stealthMode === 'stealth') {
-            stealthFlags = '--delay=3 --random-agent';
+            stealthFlags = ['--delay=3', '--random-agent'];
             threads = 2;
           } else if (stealthMode === 'ultrastealth') {
-            stealthFlags = '--delay=8 --time-sec=20 --random-agent --safe-url-retries=5';
+            stealthFlags = ['--delay=8', '--time-sec=20', '--random-agent', '--safe-url-retries=5'];
             threads = 1;
           }
 
@@ -826,15 +821,10 @@ export class ExploitMetaAgent extends MetaAgent {
 
           for (const testTarget of targetsToTest.slice(0, 3)) {
             console.log(`[ExploitAgent] SQLMap deep testing: ${testTarget} (stealth=${stealthMode})`);
-            let stdout = '';
-            try {
-              stdout = await this.exec(
-                `sqlmap -u "${testTarget}" --batch --threads=${threads} --level=3 --risk=2 --timeout=10 --retries=1 ${stealthFlags} --output-dir=/tmp/sqlmap-exploit-${Date.now()} 2>&1`,
-                240000
-              );
-            } catch (e: any) {
-              stdout = e.stdout || e.message || '';
-            }
+            const stdout = await this.dispatch('sqlmap', testTarget, [
+              '-u', '{url}', '--batch', `--threads=${threads}`, '--level=3', '--risk=2',
+              '--timeout=10', '--retries=1', ...stealthFlags, `--output-dir=/tmp/sqlmap-exploit-${Date.now()}`,
+            ], programId, 240000);
             combinedRaw += `\n--- Target: ${testTarget} ---\n${stdout}\n`;
             const parsed = parseSqlmapOutput(stdout, testTarget);
             allVulnerabilities.push(...sqlmapToVulnerabilities(parsed));
@@ -873,16 +863,37 @@ export class ExploitMetaAgent extends MetaAgent {
         }
       }
 
-      case 'metasploit':
-        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('metasploit', target);
+      case 'metasploit': {
+        const gate = await exploitationDisabledResult('metasploit', target, programId);
+        if (gate.blocked) {
+          return { result: { simulated: true, message: gate.reason }, real: false };
+        }
         if (isReal()) {
+          // NOTE: msfconsole's own `-x` argument is a SEMICOLON-JOINED STRING
+          // of msfconsole commands — execFile's array-args protection stops
+          // the OS shell from interpreting it, but msfconsole's OWN command
+          // parser still splits on ";" internally. A module/target value
+          // containing an embedded ";" could still inject an additional
+          // msfconsole command (a tool-level injection, not an OS-shell one —
+          // dispatchTool's guarantee is "no shell," not "immune to every
+          // sub-language a specific tool happens to embed"). Tracked as a
+          // known residual risk of this specific tool, not fixable via
+          // array-args alone; mitigated by requiring explicit per-program
+          // exploitation-tool authorization (checked above) before this path
+          // is ever reachable at all.
+          const msfCmd = `use ${params.module || 'auxiliary/scanner/http/http_version'}; set RHOSTS {domain}; run; exit`;
           try {
-            const { stdout } = await execAsync(`msfconsole -q -x "use ${params.module || 'auxiliary/scanner/http/http_version'}; set RHOSTS ${target}; run; exit" 2>&1`, { timeout: 120000 });
+            const { stdout } = await dispatchTool({
+              tool: 'msfconsole', target, args: ['-q', '-x', msfCmd], programId, timeoutMs: 120000,
+            });
             return {
               result: { output: stdout, exploited: stdout.includes('session') || stdout.includes('opened'), raw: stdout },
               real: true,
             };
           } catch (e: any) {
+            if (e instanceof ToolOutOfScopeError) {
+              return { result: { exploited: false, reason: `Out of scope: ${e.reason}` }, real: false };
+            }
             return {
               result: { exploited: false, error: e.message, raw: e.stdout || '' },
               real: true,
@@ -893,6 +904,7 @@ export class ExploitMetaAgent extends MetaAgent {
           result: { simulated: true, message: 'Metasploit requires REAL_TOOLS=true and msfconsole installed' },
           real: false,
         };
+      }
 
       default:
         throw new Error(`Unknown exploit tool: ${tool}`);
@@ -903,26 +915,33 @@ export class ExploitMetaAgent extends MetaAgent {
 export class SupportMetaAgent extends MetaAgent {
   type = 'support';
 
-  protected async runTool(tool: string, target: string, params: Record<string, any>) {
+  protected async runTool(tool: string, target: string, params: Record<string, any>, programId: number | null | undefined) {
     switch (tool) {
-      case 'hydra':
-        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('hydra', target);
+      case 'hydra': {
+        const gate = await exploitationDisabledResult('hydra', target, programId);
+        if (gate.blocked) {
+          return { result: { simulated: true, message: gate.reason }, real: false };
+        }
         if (isReal()) {
+          const service = params.service || 'http-post-form';
+          const userlist = params.userlist || '/usr/share/wordlists/users.txt';
+          const passlist = params.passlist || '/usr/share/wordlists/passwords.txt';
+          const delay = params.delay || 2;
           try {
-            const service = params.service || 'http-post-form';
-            const userlist = params.userlist || '/usr/share/wordlists/users.txt';
-            const passlist = params.passlist || '/usr/share/wordlists/passwords.txt';
-            const delay = params.delay || 2;
-            const { stdout } = await execAsync(
-              `hydra -L ${userlist} -P ${passlist} -t 4 -W ${delay} ${target} ${service} 2>&1`,
-              { timeout: 600000 }
-            );
+            const { stdout } = await dispatchTool({
+              tool: 'hydra', target,
+              args: ['-L', userlist, '-P', passlist, '-t', '4', '-W', String(delay), '{domain}', service],
+              programId, timeoutMs: 600000,
+            });
             const lines = stdout.trim().split('\n').filter((l: string) => l.includes('login:'));
             return {
               result: { credentials: lines, count: lines.length, raw: stdout },
               real: true,
             };
           } catch (e: any) {
+            if (e instanceof ToolOutOfScopeError) {
+              return { result: { credentials: [], error: `Out of scope: ${e.reason}` }, real: false };
+            }
             return {
               result: { credentials: [], error: e.message, raw: e.stdout || '' },
               real: true,
@@ -933,27 +952,37 @@ export class SupportMetaAgent extends MetaAgent {
           result: { simulated: true, message: 'Hydra requires REAL_TOOLS=true and hydra installed' },
           real: false,
         };
-      case 'hashcat':
-        if (isReal() && !crawlDerivedToolsEnabled()) return unsafeToolDisabledResult('hashcat', target);
+      }
+      case 'hashcat': {
+        const gate = await exploitationDisabledResult('hashcat', target, programId);
+        if (gate.blocked) {
+          return { result: { simulated: true, message: gate.reason }, real: false };
+        }
         if (isReal()) {
+          const hashFile = params.hashFile || '/tmp/hashes.txt';
+          const mode = params.mode || 0;
+          const wordlist = params.wordlist || '/usr/share/wordlists/rockyou.txt';
           try {
-            const hashFile = params.hashFile || '/tmp/hashes.txt';
-            const mode = params.mode || 0;
-            const wordlist = params.wordlist || '/usr/share/wordlists/rockyou.txt';
-            const { stdout } = await execAsync(
-              `hashcat -m ${mode} ${hashFile} ${wordlist} --force --potfile-disable -o /tmp/hashcat-out.txt 2>&1`,
-              { timeout: 600000 }
-            );
+            // hashcat doesn't operate on a URL at all — `target` is only used
+            // for the scope/authorization check above, not substituted into
+            // any arg here.
+            const { stdout } = await dispatchTool({
+              tool: 'hashcat', target,
+              args: ['-m', String(mode), hashFile, wordlist, '--force', '--potfile-disable', '-o', '/tmp/hashcat-out.txt'],
+              programId, timeoutMs: 600000,
+            });
             let cracked: string[] = [];
             try {
-              const fs = await import('fs');
-              cracked = fs.readFileSync('/tmp/hashcat-out.txt', 'utf8').trim().split('\n').filter(Boolean);
+              cracked = (await readFile('/tmp/hashcat-out.txt', 'utf8')).trim().split('\n').filter(Boolean);
             } catch {}
             return {
               result: { cracked, count: cracked.length, raw: stdout },
               real: true,
             };
           } catch (e: any) {
+            if (e instanceof ToolOutOfScopeError) {
+              return { result: { cracked: [], error: `Out of scope: ${e.reason}` }, real: false };
+            }
             return {
               result: { cracked: [], error: e.message, raw: e.stdout || '' },
               real: true,
@@ -964,6 +993,7 @@ export class SupportMetaAgent extends MetaAgent {
           result: { simulated: true, message: 'Hashcat requires REAL_TOOLS=true, GPU, and hashcat installed' },
           real: false,
         };
+      }
       default:
         throw new Error(`Unknown support tool: ${tool}`);
     }

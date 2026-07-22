@@ -1,102 +1,15 @@
-import { completeAgents, CompleteAgentType } from './layer5-complete-agents';
-
-interface PassKConfig {
-  k: number;
-  task: {
-    agentType: string;
-    tool: string;
-    target: string;
-    parameters: Record<string, any>;
-  };
-  confidenceThreshold: number;
-  timeout?: number;
-}
-
-interface PassKResult {
-  bestResult: any;
-  bestConfidence: number;
-  allResults: Array<{
-    attempt: number;
-    result: any;
-    confidence: number;
-    duration: number;
-    success: boolean;
-  }>;
-  totalAttempts: number;
-  successRate: number;
-  averageConfidence: number;
-  selectedAttempt: number;
-}
-
-class PassKEvaluator {
-  async evaluate(config: PassKConfig): Promise<PassKResult> {
-    const agent = completeAgents[config.task.agentType as CompleteAgentType];
-    if (!agent) {
-      throw new Error(`Unknown agent type: ${config.task.agentType}`);
-    }
-
-    const allResults: PassKResult['allResults'] = [];
-
-    for (let i = 0; i < config.k; i++) {
-      const startTime = Date.now();
-      let result: any = null;
-      let confidence = 0.5;
-      let success = false;
-
-      try {
-        const agentResult = await agent.execute(`passk-${config.task.agentType}-${i}`, {
-          tool: config.task.tool,
-          target: config.task.target,
-          parameters: config.task.parameters
-        });
-
-        success = agentResult.success;
-        result = agentResult.result;
-
-        if (result && typeof result === 'object' && 'confidence' in result) {
-          confidence = result.confidence;
-        }
-      } catch {
-        success = false;
-        result = null;
-      }
-
-      const duration = Date.now() - startTime;
-
-      allResults.push({
-        attempt: i + 1,
-        result,
-        confidence,
-        duration,
-        success
-      });
-    }
-
-    const successfulResults = allResults.filter(r => r.success);
-    const successRate = allResults.length > 0 ? successfulResults.length / allResults.length : 0;
-    const totalConfidence = allResults.reduce((sum, r) => sum + r.confidence, 0);
-    const averageConfidence = allResults.length > 0 ? totalConfidence / allResults.length : 0;
-
-    let meetsThreshold = allResults.filter(r => r.success && r.confidence >= config.confidenceThreshold);
-    let selected: PassKResult['allResults'][0];
-
-    if (meetsThreshold.length > 0) {
-      selected = meetsThreshold.reduce((best, current) => current.confidence > best.confidence ? current : best);
-    } else {
-      selected = allResults.reduce((best, current) => current.confidence > best.confidence ? current : best);
-    }
-
-    return {
-      bestResult: selected.result,
-      bestConfidence: selected.confidence,
-      allResults,
-      totalAttempts: config.k,
-      successRate,
-      averageConfidence,
-      selectedAttempt: selected.attempt
-    };
-  }
-}
+// 2026-07-22 (Phase 2, external-tool chokepoint): PassKEvaluator.evaluate()
+// (the multi-attempt-via-completeAgents runner) was removed here — dynamic-
+// reference-checked dead code (confirmed via grep for every call form: direct
+// `.evaluate(`, string-keyed dynamic dispatch, DI/config lookup — zero live
+// callers found anywhere except this class's own definition). It was the
+// ONLY caller of layer5-complete-agents.ts's `completeAgents` (the Record of
+// CompleteMetaAgent instances whose runTool() methods shelled out via raw
+// exec() with weak/no escaping — the same RCE class as layer5-meta-agents.ts,
+// see that file's migration comment). Deleting the dead caller alongside the
+// vulnerable dependency it was the only path to, rather than migrating code
+// nothing reaches. PassKEvaluatorService/resolveK() below (the only live
+// member of this file) never touched completeAgents and is unaffected.
 
 // DEFAULT_K_VALUES represent the maximum (turbo/intensive) attempts per agent type.
 // Scaled down for standard resource class to conserve LLM inference budget.
@@ -122,7 +35,7 @@ const PAYOUT_K_TIERS: Array<{ minPayout: number; k: number }> = [
   { minPayout: 0,    k: 1 },
 ];
 
-export class PassKEvaluatorService extends PassKEvaluator {
+export class PassKEvaluatorService {
   /**
    * Resolve how many attempts to run for an agent type given the resource class
    * and optional expected program payout. Uses the DEFAULT_K_VALUES as the

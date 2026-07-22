@@ -4,17 +4,14 @@ import { BountyIntelligenceService } from "../lib/bounty-intelligence";
 const router = Router();
 const service = new BountyIntelligenceService();
 
-// 2026-07-21 RCE stopgap (readiness pass, external-tool chokepoint work):
-// runFullPipeline -> runRecon shells out to subfinder/whatweb with the raw
-// request-body `target` — no URL validation, no scope check, no shell
-// escaping. A single POST with a target containing shell metacharacters
-// reaches a shell on this server. Route-level gate here is belt-and-suspenders
-// with the same env-var gate inside BountyIntelligenceService itself
-// (lib/bounty-intelligence/index.ts) — disabled by default until Phase 1's
-// dispatchTool() chokepoint replaces the underlying exec() calls.
-function unsafeReconToolsEnabled(): boolean {
-  return process.env.ALLOW_UNSAFE_SHELL_RECON_TOOLS === 'true';
-}
+// 2026-07-22: runFullPipeline -> runRecon previously shelled out to
+// subfinder/whatweb with the raw request-body `target` (2026-07-21 RCE
+// stopgap gated this route entirely pending a real fix). Now dispatchTool()
+// (execFile + array args + a real ScopeGuard.isInScope() check immediately
+// before spawn, via a per-target resolveCustomTargetProgram()) closes the
+// shell-injection class structurally at the point of execution — see
+// lib/bounty-intelligence/index.ts's reconSubdomains/reconTechnologies/
+// reconEndpoints. No route-level gate needed anymore.
 
 // ─── Status ──────────────────────────────────────────────────────────────────
 
@@ -47,13 +44,6 @@ router.get("/status", (_req: Request, res: Response) => {
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 router.post("/pipeline/run", async (req: Request, res: Response) => {
-  if (process.env.REAL_TOOLS === 'true' && !unsafeReconToolsEnabled()) {
-    return res.status(503).json({
-      error: "Pipeline recon is disabled pending the external-tool chokepoint fix (2026-07-21 RCE stopgap). " +
-        "runRecon() shells out to subfinder/whatweb with the raw request target. Set " +
-        "ALLOW_UNSAFE_SHELL_RECON_TOOLS=true to override — NOT recommended against untrusted targets.",
-    });
-  }
   try {
     const { target, program } = req.body;
     const result = await service.runFullPipeline(target, program);

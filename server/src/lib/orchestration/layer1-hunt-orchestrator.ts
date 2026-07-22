@@ -8,6 +8,7 @@ import { coverageValidator, taskPlannerAgent, analystAgent } from './layer4-cogn
 import { missionChainManager, _registerHuntOrchestrator } from './mission-chain-manager';
 import { metaReasoner } from '../intelligence/meta-reasoning';
 import { decisionTraceLogger } from '../intelligence/decision-trace';
+import { resolveCustomTargetProgram } from '../hunter/custom-target-program';
 
 export class HuntOrchestrator {
   private hunts: Map<string, Hunt> = new Map();
@@ -51,7 +52,14 @@ export class HuntOrchestrator {
 
     this.hunts.set(hunt.id, hunt);
 
-    await missionMemory.initialize(hunt.id, [config.target]);
+    // 2026-07-22 (Phase 2, external-tool chokepoint): this subsystem had no
+    // ScopeGuard-backed programId anywhere — dispatchTool() (which every tool
+    // exec now goes through) requires one to scope-check before dispatch.
+    // resolveCustomTargetProgram() finds-or-creates a real program row scoped
+    // to config.scope.inScope (falls back to "*.<hostname>" if empty), the
+    // same helper routes/hunt.ts uses for ad-hoc/custom-target launches.
+    const programId = await resolveCustomTargetProgram(config.target, config.scope.inScope);
+    await missionMemory.initialize(hunt.id, [config.target], programId);
 
     console.log(`[HuntOrchestrator] Created hunt: ${hunt.id} for ${hunt.target} (stealth=${hunt.stealthMode}, resource=${hunt.resourceClass})`);
 

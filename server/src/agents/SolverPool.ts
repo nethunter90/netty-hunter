@@ -7,9 +7,9 @@
 import { EventEmitter } from "events";
 import PQueue from "p-queue";
 import { v4 as uuidv4 } from "uuid";
-import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import { scopedHttp } from "../lib/net/scoped-http";
+import { dispatchTool, ToolOutOfScopeError } from "../lib/net/dispatch-tool";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { toolKnowledge } from "../lib/hunter/tool-knowledge";
@@ -22,8 +22,6 @@ import { huntCortex, SignalType } from "../lib/intelligence/hunt-cortex";
 import { getCsrfHeaders } from "../lib/tools/csrf-aware-request";
 import { SSRF_PARAM_NAMES } from "../lib/tools/ssrf-chain-prober";
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
 
 /**
  * Validate a target URL before passing it to an external tool.
@@ -279,20 +277,25 @@ class SQLiSolver extends BaseSolver {
     let bestPayload = "";
     let lastResp = { status: 0, headers: {} as Record<string, string>, body: "" };
 
-    // Try sqlmap first if available. The endpoint is validated and passed as a
-    // single execFile argument (no shell), so a hostile endpoint string cannot
-    // inject additional sqlmap flags or shell metacharacters.
+    // Try sqlmap first if available. dispatchTool() scope-checks task.endpoint
+    // against task.programId immediately before exec (this call previously
+    // ran via a raw execFileAsync with no scope check at all — one of the
+    // originally-audited chokepoint-bypass sites) and execFiles with an
+    // array of arguments, so a hostile endpoint string cannot inject
+    // additional sqlmap flags or shell metacharacters.
     const sqlmapTarget = safeHttpUrl(task.endpoint);
     if (sqlmapTarget) {
       const targetWithParam = sqlmapTarget.includes("?")
         ? sqlmapTarget
         : `${sqlmapTarget}${sqlmapTarget.endsWith("/") ? "" : ""}?id=1`;
       try {
-        const { stdout } = await execFileAsync(
-          "sqlmap",
-          ["-u", targetWithParam, "--batch", "--level=1", "--risk=1", "--timeout=10", "--disable-coloring"],
-          { timeout: 30000, maxBuffer: 4 * 1024 * 1024 }
-        );
+        const { stdout } = await dispatchTool({
+          tool: "sqlmap",
+          target: targetWithParam,
+          args: ["-u", "{url}", "--batch", "--level=1", "--risk=1", "--timeout=10", "--disable-coloring"],
+          programId: task.programId,
+          timeoutMs: 30000,
+        });
         const tail = stdout.split("\n").slice(-20).join("\n");
         if (/is vulnerable|parameter .* is vulnerable/i.test(tail)) {
           found = true;
@@ -312,7 +315,12 @@ class SQLiSolver extends BaseSolver {
             toolsUsed: ["sqlmap"],
           };
         }
-      } catch { /* sqlmap not available or timed out – fall through to manual */ }
+      } catch (e) {
+        if (e instanceof ToolOutOfScopeError) {
+          logger.warn("[SQLiSolver] sqlmap blocked — out of scope", { endpoint: task.endpoint, reason: e.reason });
+        }
+        /* sqlmap not available, out of scope, or timed out – fall through to manual */
+      }
     }
 
     // Manual probing

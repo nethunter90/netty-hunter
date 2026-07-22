@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { db } from "../db";
 import { campaigns, huntSessions, findings, targets, programs } from "../db/schema";
 import { eq, desc, and } from "drizzle-orm";
@@ -579,7 +579,7 @@ router.post("/solve", async (req: Request, res: Response) => {
 router.get("/tools/preflight", (_req: Request, res: Response) => {
   const results = HUNT_TOOLS.map(t => {
     try {
-      const path = execSync(`which ${t.binary} 2>/dev/null`, { encoding: "utf8", timeout: 2000 }).trim();
+      const path = execFileSync("which", [t.binary], { encoding: "utf8", timeout: 2000 }).trim();
       return { ...t, available: Boolean(path), path: path || undefined };
     } catch {
       return { ...t, available: false };

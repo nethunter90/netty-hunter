@@ -35,6 +35,18 @@ export const programs = pgTable("programs", {
   // "disallowed" are both treated as not authorized. "allowed" permits it
   // only when the per-hunt toggle is also on (see WAFBypass.ts).
   wafBypassPolicy: varchar("waf_bypass_policy", { length: 16 }).notNull().default("unspecified"),
+  // 2026-07-22 (Phase 2 of external-tool chokepoint work): whether this
+  // program has explicitly authorized autonomous exploitation/credential-
+  // attack tooling (metasploit, hydra, hashcat). Same fail-closed posture as
+  // wafBypassPolicy — "unspecified" and "disallowed" both mean NOT
+  // authorized, only an explicit "allowed" permits dispatch, and even then
+  // ONLY when EXPLOITATION_TOOLS_ENABLED=true is also set (a separate,
+  // deploy-time "should this be autonomous at all" decision — see
+  // agents/ExploitationToolGate.ts). Scoping (dispatchTool's isInScope
+  // check) answers "can a target inject a command"; this answers "am I
+  // allowed to run this here"; the env flag answers "should this run
+  // autonomously at all" — three different questions, checked separately.
+  exploitationToolsPolicy: varchar("exploitation_tools_policy", { length: 16 }).notNull().default("unspecified"),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
   scheduleInterval: integer("schedule_interval").default(0), // hours between auto re-scans; 0 = disabled

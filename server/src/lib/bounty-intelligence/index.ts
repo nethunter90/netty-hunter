@@ -24,16 +24,16 @@ export { TriagePredictor } from './triage-predictor';
 export type { TriageDataPoint, ProgramTriageAverage, SubmissionTiming } from './triage-predictor';
 export * from './intelligence-types';
 
-// 2026-07-21 RCE stopgap (readiness pass, external-tool chokepoint work):
-// reconSubdomains()/reconTechnologies() below shell out to subfinder/whatweb
-// via exec() with the client-supplied `target` (POST /api/bounty-intelligence
-// /pipeline/run's request body, stripped only by a naive protocol/path regex,
-// never shell-escaped or validated). Disabled by default until Phase 1's
-// execFile-based dispatchTool() chokepoint replaces these calls; the route
-// handler also short-circuits before calling into this service at all.
-function unsafeReconToolsEnabled(): boolean {
-  return process.env.ALLOW_UNSAFE_SHELL_RECON_TOOLS === 'true';
-}
+// 2026-07-22 (Phase 2, external-tool chokepoint): reconSubdomains()/
+// reconTechnologies()/reconEndpoints() below dispatch subfinder/whatweb/httpx
+// through dispatchTool() (execFile + array args + a real ScopeGuard check
+// immediately before spawn) instead of the raw exec()-with-request-body-
+// target this file used before — see the 2026-07-21 RCE stopgap commit for
+// what that looked like. resolveCustomTargetProgram() (called once in
+// runRecon()) gives this subsystem a real programId to scope-check against,
+// which it previously had none of at all.
+import { dispatchTool } from '../net/dispatch-tool';
+import { resolveCustomTargetProgram } from '../hunter/custom-target-program';
 
 // ============================================================
 // Interfaces
@@ -2005,14 +2005,22 @@ export class BountyIntelligenceService extends EventEmitter {
     const isReal = process.env.REAL_TOOLS === 'true';
 
     const domain = target.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+    // 2026-07-22 (Phase 2, external-tool chokepoint): this subsystem had NO
+    // scope concept at all for the client-supplied `target` — reconSubdomains/
+    // reconTechnologies/reconEndpoints now dispatch through dispatchTool(),
+    // which requires a real ScopeGuard-backed programId. resolveCustomTargetProgram
+    // finds-or-creates one scoped to this exact target, same helper
+    // routes/hunt.ts and layer1-hunt-orchestrator.ts use.
+    const normalizedUrl = target.startsWith('http') ? target : `https://${domain}`;
+    const programId = isReal ? await resolveCustomTargetProgram(normalizedUrl) : null;
 
-    const subdomains = await this.reconSubdomains(domain, depth, isReal);
+    const subdomains = await this.reconSubdomains(domain, normalizedUrl, depth, isReal, programId);
     this.emit('agent:progress', { agent: 'bounty-recon-agent', stage: 'subdomains', count: subdomains.length });
 
-    const technologies = includeTech ? await this.reconTechnologies(domain, isReal) : [];
+    const technologies = includeTech ? await this.reconTechnologies(domain, normalizedUrl, isReal, programId) : [];
     this.emit('agent:progress', { agent: 'bounty-recon-agent', stage: 'technologies', count: technologies.length });
 
-    const endpoints = includeEndpoints ? await this.reconEndpoints(domain, subdomains, depth, isReal) : [];
+    const endpoints = includeEndpoints ? await this.reconEndpoints(domain, subdomains, depth, isReal, programId) : [];
     this.emit('agent:progress', { agent: 'bounty-recon-agent', stage: 'endpoints', count: endpoints.length });
 
     const vulnerabilitySurface = this.mapVulnerabilitySurface(endpoints, technologies);
@@ -2042,17 +2050,10 @@ export class BountyIntelligenceService extends EventEmitter {
     return result;
   }
 
-  private async reconSubdomains(domain: string, depth: string, isReal: boolean): Promise<SubdomainInfo[]> {
-    if (isReal && !unsafeReconToolsEnabled()) {
-      console.warn(`[RCE-stopgap] subfinder dispatch blocked — unsafe shell-exec path disabled (domain=${domain})`);
-      return [{ hostname: domain, status: 200, title: `${domain} (unsafe-tool dispatch disabled)` }];
-    }
+  private async reconSubdomains(domain: string, targetUrl: string, depth: string, isReal: boolean, programId: number | null): Promise<SubdomainInfo[]> {
     if (isReal) {
       try {
-        const { exec } = await import('child_process');
-        const { promisify } = await import('util');
-        const execAsync = promisify(exec);
-        const { stdout } = await execAsync(`subfinder -d ${domain} -silent 2>/dev/null || echo ""`, { timeout: 60000 });
+        const { stdout } = await dispatchTool({ tool: 'subfinder', target: targetUrl, args: ['-d', '{domain}', '-silent'], programId, timeoutMs: 60000 });
         const subs = stdout.trim().split('\n').filter(Boolean);
         return subs.map(hostname => ({ hostname }));
       } catch (e: any) {
@@ -2076,17 +2077,10 @@ export class BountyIntelligenceService extends EventEmitter {
     }));
   }
 
-  private async reconTechnologies(domain: string, isReal: boolean): Promise<TechnologyInfo[]> {
-    if (isReal && !unsafeReconToolsEnabled()) {
-      console.warn(`[RCE-stopgap] whatweb dispatch blocked — unsafe shell-exec path disabled (domain=${domain})`);
-      return [];
-    }
+  private async reconTechnologies(domain: string, targetUrl: string, isReal: boolean, programId: number | null): Promise<TechnologyInfo[]> {
     if (isReal) {
       try {
-        const { exec } = await import('child_process');
-        const { promisify } = await import('util');
-        const execAsync = promisify(exec);
-        const { stdout } = await execAsync(`whatweb ${domain} --log-json=/dev/stdout 2>/dev/null || echo "[]"`, { timeout: 30000 });
+        const { stdout } = await dispatchTool({ tool: 'whatweb', target: targetUrl, args: ['{domain}', '--log-json=/dev/stdout'], programId, timeoutMs: 30000 });
         try {
           const parsed = JSON.parse(stdout);
           if (Array.isArray(parsed)) {
@@ -2115,16 +2109,25 @@ export class BountyIntelligenceService extends EventEmitter {
     ];
   }
 
-  private async reconEndpoints(domain: string, subdomains: SubdomainInfo[], depth: string, isReal: boolean): Promise<EndpointInfo[]> {
+  private async reconEndpoints(domain: string, subdomains: SubdomainInfo[], depth: string, isReal: boolean, programId: number | null): Promise<EndpointInfo[]> {
     if (isReal) {
       try {
-        const { runHttpxProbe } = await import('../../utils/httpx-compat');
-        const stdout = await runHttpxProbe(
-          [domain, ...subdomains.slice(0, 5).map(s => s.hostname)],
-          '-status-code -content-type -json',
-          60000
-        );
-        const lines = stdout.trim().split('\n').filter(Boolean);
+        // One dispatchTool call per host (was a single multi-target httpx
+        // invocation) — each subdomain gets its OWN scope check, since
+        // subfinder's output was never individually scope-verified before.
+        const hosts = [domain, ...subdomains.slice(0, 5).map(s => s.hostname)];
+        const lines: string[] = [];
+        for (const host of hosts) {
+          const hostUrl = host.startsWith('http') ? host : `https://${host}`;
+          try {
+            const { stdout } = await dispatchTool({
+              tool: 'httpx', target: hostUrl,
+              args: ['-u', '{url}', '-status-code', '-content-type', '-json'],
+              programId, timeoutMs: 15000,
+            });
+            lines.push(...stdout.trim().split('\n').filter(Boolean));
+          } catch { /* one host failing/out-of-scope doesn't abort the batch */ }
+        }
         return lines.map(line => {
           try {
             const parsed = JSON.parse(line);

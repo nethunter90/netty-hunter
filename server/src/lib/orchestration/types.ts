@@ -107,6 +107,13 @@ export interface AgentEvent {
 
 export interface MissionMemory {
   huntId: string;
+  // 2026-07-22 (Phase 2, external-tool chokepoint): the real, DB-backed
+  // program this hunt's tool dispatches are scope-checked against (via
+  // resolveCustomTargetProgram() at hunt creation) — dispatchTool() requires
+  // a genuine ScopeGuard-backed programId, and this subsystem previously had
+  // none anywhere (only huntId), relying on its own bespoke {inScope,
+  // outOfScope} string-match config that never touched ScopeGuard at all.
+  programId: number;
   domains: string[];
   subdomains: string[];
   endpoints: Endpoint[];

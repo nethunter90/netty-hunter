@@ -394,6 +394,11 @@ export class AgentLoop {
     const metaAgent = metaAgents[agent.type];
     if (!metaAgent) return false;
 
+    // 2026-07-22: dispatchTool() (every tool exec now goes through it) requires
+    // a real ScopeGuard-backed programId — missionMemory carries the one
+    // resolved at hunt creation (see layer1-hunt-orchestrator.ts).
+    const programId = missionMemory.get(agent.huntId)?.programId;
+
     const tools = agent.metadata.availableTools as string[];
     const huntConfig = this.getHuntConfig(agent.huntId);
     let didWork = false;
@@ -504,14 +509,14 @@ export class AgentLoop {
           ? passKEvaluator.resolveK(agent.type, huntConfig.resourceClass as 'lightweight' | 'standard' | 'enterprise')
           : 1;
 
-        let result = await metaAgent.execute(agent.id, { tool, target, parameters });
+        let result = await metaAgent.execute(agent.id, { tool, target, parameters }, programId);
         let bestConfidence: number = (result.result && typeof result.result === 'object' && 'confidence' in result.result)
           ? (result.result as any).confidence
           : (result.success ? 0.6 : 0);
 
         for (let attempt = 1; attempt < k; attempt++) {
           if (bestConfidence >= 0.8) break; // already high-confidence — skip remaining attempts
-          const retry = await metaAgent.execute(agent.id, { tool, target, parameters });
+          const retry = await metaAgent.execute(agent.id, { tool, target, parameters }, programId);
           const retryConf: number = (retry.result && typeof retry.result === 'object' && 'confidence' in retry.result)
             ? (retry.result as any).confidence
             : (retry.success ? 0.6 : 0);
