@@ -346,7 +346,7 @@ Previous adaptations: ${JSON.stringify(plan.adaptations)}
 Suggest the most promising next approach to try. Be specific and actionable. Respond in 1-2 sentences.`;
 
     try {
-      return await this.modelRouter.generate(prompt, "reason");
+      return await this.modelRouter.generate(prompt, "reason", { sessionId: plan.planId });
     } catch {
       return "Try enumeration and information gathering before attempting exploitation";
     }

@@ -1270,6 +1270,7 @@ export class CampaignOrchestrator extends EventEmitter {
             targetUrl: params.targetUrl,
             huntDate: finding.createdAt.toISOString().split("T")[0],
             rawEvidence,
+            sessionId: String(this.state.campaignId ?? params.targetUrl),
           });
           reports.push(report.reportMarkdown);
           await db.update(findings)

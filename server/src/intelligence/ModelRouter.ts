@@ -43,9 +43,23 @@ export class ModelRouter {
 
     // Tier 0a / 0b: Sonnet-class reasoning for high-stakes tasks
     if (taskType === "reason" || taskType === "analyze") {
+      // 2026-07-22 (budget chokepoint fix): previously fell back to a shared
+      // literal "default" sessionId when the caller omitted one — every
+      // caller that forgot to pass a real id shared ONE budget/thread
+      // counter, so one module's spend could silently exhaust or collide
+      // with another's (and, for concurrent hunts, with each other). Fail
+      // closed instead — same fat-finger discipline as ScopeGuard's
+      // invalid-programId check: a missing id is a caller bug to fix, not
+      // something to paper over with a shared bucket.
+      if (!options.sessionId) {
+        throw new ClaudeUnavailableError(
+          `ModelRouter.generate() called with taskType="${taskType}" and no sessionId — every reason/analyze call must be attributed to a real budget key, not the old shared "default" fallback.`,
+        );
+      }
+
       if (ClaudeClient.isAvailable()) {
         try {
-          const result = await ClaudeClient.reason(options.sessionId ?? "default", fullPrompt);
+          const result = await ClaudeClient.reason(options.sessionId, fullPrompt);
           this.lastProvider = "claude";
           return result;
         } catch (err) {

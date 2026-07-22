@@ -275,6 +275,11 @@ export class DraftReportGenerator {
       huntDate: string;
       rawEvidence?: string;
       videoPath?: string;
+      // 2026-07-22 (budget chokepoint fix): required so generateAIContent()'s
+      // LLM call has a real budget key instead of ModelRouter's old shared
+      // "default" fallback (a cross-hunt/cross-caller budget-counter collision
+      // risk — see ModelRouter.generate()'s fail-closed check on this exact gap).
+      sessionId: string;
     }
   ): Promise<BugBountyReport> {
     // Veto-path invariant (handoff 2c.3): a non-confirmed finding must produce
@@ -341,7 +346,7 @@ export class DraftReportGenerator {
   private async generateAIContent(
     finding: SolverResult,
     verification: VerificationResult,
-    metadata: { programName: string; targetUrl: string; rawEvidence?: string; videoPath?: string },
+    metadata: { programName: string; targetUrl: string; rawEvidence?: string; videoPath?: string; sessionId: string },
     vulnInfo: { name: string; description: string }
   ): Promise<{ summary: string; impact: string; steps?: string[] }> {
     const hasRawHttp = !!metadata.rawEvidence;
@@ -397,7 +402,7 @@ ${stepsInstruction}
 Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "...", "steps": ["step1", "step2", ...] }`;
 
     try {
-      const response = await this.modelRouter.generate(prompt, "analyze");
+      const response = await this.modelRouter.generate(prompt, "analyze", { sessionId: metadata.sessionId });
       const match = response.match(/\{[\s\S]+\}/);
       const parsed = JSON.parse(match?.[0] || "{}");
       const summary = parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint}.`;

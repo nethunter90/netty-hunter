@@ -527,6 +527,8 @@ router.post("/findings/:id/report", async (req: Request, res: Response) => {
     huntDate: finding.createdAt.toISOString().split("T")[0],
     rawEvidence: rawHttpEntry ? String(rawHttpEntry.data ?? "") : undefined,
     videoPath: videoEntry ? String(videoEntry.path ?? "") : undefined,
+    // Manual on-demand regeneration, outside any live hunt — own budget bucket.
+    sessionId: `report-route:${finding.id}`,
   });
 
   // Save report draft

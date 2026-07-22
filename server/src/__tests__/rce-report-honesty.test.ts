@@ -118,6 +118,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       programName: "Test Program",
       targetUrl: `http://localhost:${PORT}`,
       huntDate: "2026-07-03",
+      sessionId: 'test-session',
     });
 
     const combinedText = `${report.summary} ${report.impact} ${report.evidence.join(" ")}`.toLowerCase();
@@ -156,6 +157,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       programName: "Test Program",
       targetUrl: `http://localhost:${PORT}`,
       huntDate: "2026-07-03",
+      sessionId: 'test-session',
     });
 
     const combinedText = `${report.summary} ${report.impact}`.toLowerCase();
@@ -191,6 +193,7 @@ describe("RCE report honesty (handoff 2c)", () => {
       programName: "Test Program",
       targetUrl: `http://localhost:${PORT}`,
       huntDate: "2026-07-03",
+      sessionId: 'test-session',
     })).rejects.toThrow(/refused/i);
 
     // The AI content generator must never even be invoked for a refused finding.

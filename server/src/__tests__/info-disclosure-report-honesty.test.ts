@@ -102,6 +102,7 @@ describe("Info-disclosure report honesty (Task 3)", () => {
       targetUrl: `http://localhost:${PORT}`,
       huntDate: "2026-07-03",
       rawEvidence,
+      sessionId: 'test-session',
     });
 
     const combinedText = `${report.summary} ${report.impact} ${report.evidence.join(" ")}`.toLowerCase();
@@ -152,6 +153,7 @@ describe("Info-disclosure report honesty (Task 3)", () => {
       targetUrl: `http://localhost:${PORT}`,
       huntDate: "2026-07-03",
       rawEvidence,
+      sessionId: 'test-session',
     });
 
     const combinedText = `${report.summary} ${report.impact}`.toLowerCase();
