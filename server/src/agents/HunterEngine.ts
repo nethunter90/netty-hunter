@@ -1160,7 +1160,7 @@ export class HunterEngine extends EventEmitter {
     // Pre-warm logic_exploit_agent's system+tools prompt cache — fire-and-forget
     // so a slow warm-up call never delays the first observe() phase. Idempotent
     // (no-ops after the first warm call of the process), so safe to call per hunt.
-    logicExploitAgent.prewarmCache().catch(() => {});
+    logicExploitAgent.prewarmCache(this.state.sessionId).catch(() => {});
 
     // Phase 0: passive OSINT recon — runs concurrently with first observe()
     // Resolves before hypothesize() is called so the model reasons over real attack surface.
@@ -2810,6 +2810,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
               found: logicResult.confirmed,
               payload: logicResult.payload,
               rawOutput: logicResult.evidence,
+              // Budget/C: distinguishes "genuinely tested, found nothing" from
+              // "cut off mid-evaluation by the shared LLM budget" — status
+              // below is "inconclusive" either way (never a false negative),
+              // but this flag lets a future retry/reporting pass tell them
+              // apart instead of treating both identically forever.
+              truncated: logicResult.truncated ?? false,
             },
             success: logicResult.confirmed,
             duration: logicResult.duration,
@@ -3085,6 +3091,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
               const assessment = await postExploitAgent.demonstrate(
                 {
                   findingId: confirmed.hypothesis.id,
+                  sessionId: this.state.sessionId,
                   vulnClass: confirmed.hypothesis.vulnClass,
                   targetUrl: confirmed.hypothesis.targetUrl,
                   programId: this.state.programId,
@@ -4149,6 +4156,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const findings = this.state.confirmedFindings;
     if (findings.length <= this.lastSynthesisCount) return;
     this.lastSynthesisCount = findings.length;
+
+    // 2026-07-22 (budget chokepoint fix): this used to fire unconditionally,
+    // fire-and-forget, on every update() cycle where confirmedFindings grew —
+    // with no gate on the hunt's own budget at all. It's correctly keyed to
+    // this.state.sessionId so it DOES count against that hunt's shared LLM
+    // spend (createMessage() would reject it once exhausted), but that meant
+    // it kept trying and failing on every cycle after the cap was hit, rather
+    // than just skipping. Check first so it's a no-op, not a failed attempt.
+    if (ClaudeClient.isDollarBudgetExhausted(this.state.sessionId)) {
+      logger.debug("[HunterEngine] Chain synthesis skipped — hunt LLM budget exhausted", { sessionId: this.state.sessionId });
+      return;
+    }
 
     const summary = findings.map(f => ({
       vulnClass: f.hypothesis.vulnClass,
