@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    setupFiles: ['src/__tests__/setup/disable-rate-limiter.ts'],
     include: ['src/__tests__/**/*.test.ts'],
     coverage: {
       provider: 'v8',

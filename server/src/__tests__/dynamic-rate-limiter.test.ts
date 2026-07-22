@@ -7,11 +7,24 @@
  * This stops scattered 429s among successes from throttling the hunt, while keeping
  * real-tighten detection fast and preserving the 5-consecutive-429 quarantine.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { dynamicRateLimiter } from '../lib/stealth/dynamic-rate-limiter';
 
 const TARGET = 'target.example.com';
 const EP = '/api/search';
+
+// The global test setup (src/__tests__/setup/disable-rate-limiter.ts) disables
+// the limiter so other suites' scopedHttp calls aren't paced/quarantined by
+// leftover cross-test bucket state. This file tests the limiter itself, so it
+// must force it back on.
+let prevEnabledFlag: string | undefined;
+beforeAll(() => {
+  prevEnabledFlag = process.env.DYNAMIC_RATE_LIMIT_ENABLED;
+  process.env.DYNAMIC_RATE_LIMIT_ENABLED = 'true';
+});
+afterAll(() => {
+  process.env.DYNAMIC_RATE_LIMIT_ENABLED = prevEnabledFlag;
+});
 
 beforeEach(() => {
   dynamicRateLimiter.resetAll();

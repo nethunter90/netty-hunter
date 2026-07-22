@@ -13,6 +13,18 @@ const ENV = {
   // genuine rate limit (a rapid run of 429s) still trips it within ~a second.
   noiseBurstCount: () => parseInt(process.env.RATE_LIMIT_429_BURST_COUNT || '3'),
   noiseBurstWindowMs: () => parseInt(process.env.RATE_LIMIT_429_BURST_WINDOW_MS || '10000'),
+  // 2026-07-21 readiness pass (item B, check 2): every other delay in this file
+  // is a REACTION to a signal the target already sent (a discovered quota, an
+  // observed rate, a burst of recent responses, a 429). Before any such signal
+  // exists — i.e. the very first requests of a hunt, exactly the OBSERVE-phase
+  // Promise.allSettled batch — none of them fire, so request #1..N against a
+  // target that has said nothing yet go out with zero pacing. This is the
+  // baseline floor that covers that gap: a minimum spacing between successive
+  // DISPATCHES to the same target, enforced independent of any response ever
+  // having been seen. Deliberately small — this is "don't look like a burst
+  // tool," not throttling; real reactive delays still dominate once a signal
+  // exists.
+  baselineIntervalMs: () => parseInt(process.env.RATE_LIMIT_BASELINE_INTERVAL_MS || '200'),
 };
 
 interface RateBucket {
@@ -42,6 +54,11 @@ interface RateBucket {
     until: number;
     count: number;
   };
+  // Baseline dispatch-spacing floor (target-level bucket only) — see
+  // ENV.baselineIntervalMs. The next wall-clock time a request to this target
+  // is allowed to fire with zero delay; reserved synchronously per check so a
+  // batch of concurrent callers stagger instead of all reading the same value.
+  nextAllowedDispatch: number;
 }
 
 interface CheckResult {
@@ -109,6 +126,7 @@ class DynamicRateLimiter {
         backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
         hardBan: { active: false, until: 0, count: 0 },
+        nextAllowedDispatch: 0,
       };
       this.buckets.set(key, bucket);
     }
@@ -131,6 +149,7 @@ class DynamicRateLimiter {
         backoff: { active: false, until: 0, consecutive429s: 0, consecutive403s: 0, lastBackoffMs: 0 },
         quarantine: { active: false, until: 0, count: 0 },
         hardBan: { active: false, until: 0, count: 0 },
+        nextAllowedDispatch: 0,
       };
       this.targetBuckets.set(target, bucket);
     }
@@ -285,6 +304,23 @@ class DynamicRateLimiter {
     return { delay: 0, factor: null };
   }
 
+  /** Reserves the next dispatch slot for `target`, independent of any response
+   *  ever having been seen. Synchronous read-then-write on the target bucket —
+   *  concurrent callers (an OBSERVE-phase Promise.allSettled batch) each run
+   *  to completion before the next microtask, so they stagger onto successive
+   *  slots instead of all reading the same "now". */
+  private reserveBaselineSlot(targetBucket: RateBucket): { delay: number; factor: string | null } {
+    const interval = ENV.baselineIntervalMs();
+    if (interval <= 0) return { delay: 0, factor: null };
+    const now = Date.now();
+    const earliestSlot = Math.max(now, targetBucket.nextAllowedDispatch || 0);
+    targetBucket.nextAllowedDispatch = earliestSlot + interval;
+    const delay = earliestSlot - now;
+    return delay > 0
+      ? { delay, factor: `Baseline pacing floor (${interval}ms/request, no target signal yet)` }
+      : { delay: 0, factor: null };
+  }
+
   calculateThrottle(target: string, endpoint: string): ThrottleBreakdown {
     const bucket = this.getOrCreateBucket(target, endpoint);
     const targetBucket = this.getOrCreateTargetBucket(target);
@@ -298,6 +334,7 @@ class DynamicRateLimiter {
     const rateDelay = Math.max(rate.delay, targetRate.delay);
 
     const burstDelay = this.calculateBurstDampening(target, endpoint);
+    const baseline = this.reserveBaselineSlot(targetBucket);
 
     let backoffDelay = 0;
     if (bucket.backoff.active && bucket.backoff.until > Date.now()) {
@@ -307,13 +344,14 @@ class DynamicRateLimiter {
       backoffDelay = Math.max(backoffDelay, targetBucket.backoff.until - Date.now());
     }
 
-    const finalDelay = Math.max(quotaDelay, rateDelay, burstDelay, backoffDelay);
+    const finalDelay = Math.max(quotaDelay, rateDelay, burstDelay, baseline.delay, backoffDelay);
     const factors: string[] = [];
     if (quota.factor) factors.push(quota.factor);
     if (targetQuota.factor) factors.push(`[target] ${targetQuota.factor}`);
     if (rate.factor) factors.push(rate.factor);
     if (targetRate.factor) factors.push(`[target] ${targetRate.factor}`);
     if (burstDelay > 0) factors.push(`Burst dampening: ${Math.ceil(burstDelay)}ms cooldown`);
+    if (baseline.factor) factors.push(baseline.factor);
     if (backoffDelay > 0) factors.push(`Backoff active: ${Math.ceil(backoffDelay / 1000)}s remaining`);
 
     return { quotaDelay, rateDelay, burstDelay, backoffDelay, finalDelay, factors };
@@ -376,10 +414,17 @@ class DynamicRateLimiter {
 
   // ─── Component 1: Sliding Window - checkRateLimit ───
 
-  checkRateLimit(target: string, endpoint: string = '/'): CheckResult {
+  // `force` bypasses the DYNAMIC_RATE_LIMIT_ENABLED escape hatch. It exists so
+  // scopedHttp can guarantee pacing/quarantine for real (programId>0) targets
+  // even if that env var is set to 'false' in the environment — the flag is a
+  // dev/lab convenience (and this repo's test suite forces it off globally to
+  // avoid cross-test bucket-state bleed; see
+  // src/__tests__/setup/disable-rate-limiter.ts), not something that should be
+  // able to silently disable pacing against a real bug-bounty target.
+  checkRateLimit(target: string, endpoint: string = '/', force = false): CheckResult {
     this.stats.totalChecks++;
 
-    if (!ENV.enabled()) {
+    if (!ENV.enabled() && !force) {
       return { allowed: true, recommendedDelay: 0 };
     }
 

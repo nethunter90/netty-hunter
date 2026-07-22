@@ -13,11 +13,27 @@
  * The clock is faked so the limiter's real constants (30s backoff, 300s cap, 10min
  * quarantine, 60s window) apply at real scale while the sim completes instantly.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterEach, afterAll, vi } from 'vitest';
 import { dynamicRateLimiter } from '../lib/stealth/dynamic-rate-limiter';
 
 const TARGET = 'waf-lab.example.com';
 const MIN = 60_000;
+
+// The global test setup (src/__tests__/setup/disable-rate-limiter.ts) disables
+// the limiter so other suites' scopedHttp calls aren't paced/quarantined by
+// leftover cross-test bucket state. This harness's entire point is driving the
+// REAL limiter, so it must force it back on — without this the checkRateLimit()
+// calls below short-circuit to {allowed:true, recommendedDelay:0} and every
+// invariant below would pass vacuously (nothing ever throttles) rather than
+// actually exercising detection/backoff/noise-discrimination.
+let prevEnabledFlag: string | undefined;
+beforeAll(() => {
+  prevEnabledFlag = process.env.DYNAMIC_RATE_LIMIT_ENABLED;
+  process.env.DYNAMIC_RATE_LIMIT_ENABLED = 'true';
+});
+afterAll(() => {
+  process.env.DYNAMIC_RATE_LIMIT_ENABLED = prevEnabledFlag;
+});
 const START = 1_700_000_000_000;
 
 // Deterministic PRNG so the report is reproducible (mulberry32).

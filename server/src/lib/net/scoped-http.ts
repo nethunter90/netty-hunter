@@ -29,9 +29,18 @@
  * scopeGuard.ts's classifyProgramPolicy for the three-way policy. There is
  * no "skip if missing" path anymore; a missing/invalid programId fails
  * closed inside ScopeGuard itself.
+ *
+ * 2026-07-21 readiness pass (item B): dynamicRateLimiter existed (real,
+ * unit-tested class) but had zero callers outside its own test files — every
+ * direct probe HTTP call fired with no pacing at all, proven live from raw
+ * logs (36 requests in a single OBSERVE-phase batch sharing one timestamp).
+ * Wired here, at the one place every probe's request actually goes through,
+ * so pacing (and reactive 429/403/backoff learning) applies uniformly
+ * regardless of which prober or tool issued the call.
  */
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 import { ScopeGuard } from "../../middleware/scopeGuard";
+import { dynamicRateLimiter } from "../stealth/dynamic-rate-limiter";
 import logger from "../../utils/logger";
 
 export class OutOfScopeError extends Error {
@@ -48,8 +57,21 @@ export class MaxRedirectsExceededError extends Error {
   }
 }
 
+export class RateLimitedError extends Error {
+  constructor(public readonly url: string, public readonly reason: string, public readonly retryAfter?: number) {
+    super(`Rate limited: ${url} — ${reason}`);
+    this.name = "RateLimitedError";
+  }
+}
+
 const guard = ScopeGuard.getInstance();
 const DEFAULT_MAX_REDIRECTS = 5; // matches axios's own historical default
+// Hard ceiling on any single proactive pacing wait — calculateQuotaDelay() can
+// in principle recommend waiting until a discovered quota's reset time, which
+// could be minutes away. Capping keeps one hop from silently stalling a whole
+// probe cycle; a longer wait is better expressed as quarantine (which throws)
+// than as a delay nobody is watching.
+const MAX_PROACTIVE_DELAY_MS = 30_000;
 
 async function assertInScope(url: string, programId: number | null | undefined): Promise<void> {
   const { allowed, reason } = await guard.isInScope(url, programId);
@@ -57,6 +79,58 @@ async function assertInScope(url: string, programId: number | null | undefined):
     logger.warn("[scopedHttp] Blocked out-of-scope egress", { url, programId, reason });
     throw new OutOfScopeError(url, reason);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Proactive pacing gate — checked before every hop actually goes out.
+ *  `programId > 0` (a real bug-bounty program, not the -1 local-lab sentinel
+ *  or an absent/invalid id) forces pacing on regardless of
+ *  DYNAMIC_RATE_LIMIT_ENABLED — see checkRateLimit()'s `force` param. */
+async function applyRateLimit(url: string, programId: number | null | undefined): Promise<void> {
+  let target: string;
+  let endpoint: string;
+  try {
+    const parsed = new URL(url);
+    target = parsed.hostname;
+    endpoint = parsed.pathname || "/";
+  } catch {
+    return; // unparseable URL — let assertInScope() reject it instead
+  }
+
+  const forceEnabled = typeof programId === "number" && programId > 0;
+  const check = dynamicRateLimiter.checkRateLimit(target, endpoint, forceEnabled);
+  if (!check.allowed) {
+    logger.warn("[scopedHttp] Blocked by rate limiter (quarantine/backoff active)", {
+      url, target, endpoint, reason: check.reason, retryAfter: check.retryAfter,
+    });
+    throw new RateLimitedError(url, check.reason ?? "quarantined", check.retryAfter);
+  }
+  if (check.recommendedDelay > 0) {
+    const delay = Math.min(check.recommendedDelay, MAX_PROACTIVE_DELAY_MS);
+    logger.info("[scopedHttp] Pacing outbound request", { url, target, endpoint, delayMs: delay, reason: check.reason });
+    await sleep(delay);
+  }
+}
+
+/** Reactive feedback gate — feeds the real response back so future checks adapt. */
+function recordRateLimitResponse(url: string, statusCode: number, headers: Record<string, unknown>): void {
+  let target: string;
+  let endpoint: string;
+  try {
+    const parsed = new URL(url);
+    target = parsed.hostname;
+    endpoint = parsed.pathname || "/";
+  } catch {
+    return;
+  }
+  const stringHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers ?? {})) {
+    if (v !== undefined && v !== null) stringHeaders[k] = String(v);
+  }
+  dynamicRateLimiter.recordResponse(target, endpoint, statusCode, stringHeaders);
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -95,13 +169,23 @@ async function scopedRequest(
 
   for (;;) {
     await assertInScope(currentUrl, programId);
+    await applyRateLimit(currentUrl, programId);
 
     const hopConfig: AxiosRequestConfig = { ...restConfig, maxRedirects: 0 };
     const isFirstHop = redirectsFollowed === 0;
-    const resp: AxiosResponse =
-      isFirstHop && entryVerb === "GET" ? await axios.get(currentUrl, hopConfig) :
-      isFirstHop && entryVerb === "POST" ? await axios.post(currentUrl, currentData, hopConfig) :
-      await axios.request({ ...hopConfig, url: currentUrl, method: currentMethod, data: currentData });
+    let resp: AxiosResponse;
+    try {
+      resp =
+        isFirstHop && entryVerb === "GET" ? await axios.get(currentUrl, hopConfig) :
+        isFirstHop && entryVerb === "POST" ? await axios.post(currentUrl, currentData, hopConfig) :
+        await axios.request({ ...hopConfig, url: currentUrl, method: currentMethod, data: currentData });
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        recordRateLimitResponse(currentUrl, err.response.status, err.response.headers as Record<string, unknown>);
+      }
+      throw err;
+    }
+    recordRateLimitResponse(currentUrl, resp.status, resp.headers as Record<string, unknown>);
 
     const isRedirect = REDIRECT_STATUSES.has(resp.status);
     const location = resp.headers?.location as string | undefined;
