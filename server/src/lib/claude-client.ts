@@ -12,6 +12,48 @@ import Anthropic from "@anthropic-ai/sdk";
 import logger from "../utils/logger";
 import { runtimeConfig } from "./runtime-config";
 
+// ── Pricing (USD per million tokens) ────────────────────────────────────────
+// 2026-07-22: current published pricing. Cache read/creation tokens are
+// billed at different rates than plain input by Anthropic (writes ~1.25x,
+// reads ~0.1x base input) — this table doesn't model that distinction and
+// instead charges ALL input-shaped tokens (input + cache_creation +
+// cache_read) at the base input rate. That's a deliberate overestimate, not
+// an oversight: for a SPEND CAP, overestimating cost is the safe direction
+// (stops slightly early rather than slightly late) — undercounting is the
+// failure mode that matters here ("close but wrong is worse than none").
+// claude-sonnet-5 is introductory pricing through 2026-08-31; becomes
+// $3/$15 per M after — update PRICING when that lapses.
+interface ModelPricing { inputPerM: number; outputPerM: number; }
+const PRICING: Record<string, ModelPricing> = {
+  "claude-sonnet-5": { inputPerM: 2, outputPerM: 10 },
+  "claude-haiku-4-5": { inputPerM: 1, outputPerM: 5 },
+};
+const DEFAULT_PRICING: ModelPricing = { inputPerM: 3, outputPerM: 15 }; // conservative fallback for an unrecognized model — Opus-tier, not Haiku-tier, so an unknown model can't silently under-cost
+
+function costForUsage(model: string, usage: Anthropic.Usage): number {
+  const pricing = PRICING[model] ?? DEFAULT_PRICING;
+  const inputShapedTokens = usage.input_tokens
+    + (usage.cache_creation_input_tokens ?? 0)
+    + (usage.cache_read_input_tokens ?? 0);
+  const inputCost = (inputShapedTokens / 1_000_000) * pricing.inputPerM;
+  const outputCost = (usage.output_tokens / 1_000_000) * pricing.outputPerM;
+  return inputCost + outputCost;
+}
+
+export interface SpendRecord {
+  callCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export class LLMDollarBudgetExceededError extends Error {
+  constructor(sessionId: string, spentUsd: number, capUsd: number) {
+    super(`LLM dollar budget exceeded for hunt ${sessionId}: $${spentUsd.toFixed(4)} spent, cap is $${capUsd.toFixed(2)}`);
+    this.name = "LLMDollarBudgetExceededError";
+  }
+}
+
 // The model every hunt-reasoning call uses — this reason() method, and
 // LogicExploitAgent's direct SDK calls (its cache pre-warm + real tool-use
 // loop both must stay in sync with whatever this resolves to, or the
@@ -60,6 +102,43 @@ export class ClaudeClient {
   }
   private static readonly threads = new Map<string, Anthropic.MessageParam[]>();
   private static readonly MAX_THREAD_MESSAGES = 20;
+
+  // ── Dollar/token spend accounting — the actual cap, per Amendment/handoff ──
+  // Call-count (MAX_CALLS_PER_HUNT below) is cost-blind: a 200-token call and
+  // a 4096-token call both count as "1". This is the PRIMARY cap. Recorded
+  // here, at createMessage() — the one place every LLM call in the process
+  // funnels through (LogicExploitAgent's tool-use loop included, as of the
+  // 2026-07-22 chokepoint fix) — so it sees 100% of spend, not just the paths
+  // that happened to call reason()/oneShot() directly.
+  private static readonly spend = new Map<string, SpendRecord>();
+  private static readonly MAX_USD_PER_HUNT =
+    parseFloat(process.env.MAX_LLM_USD_PER_HUNT || "2.00");
+  // Sessions matching this prefix are RECORDED (so the total spend figure
+  // isn't blind to them) but never dollar-capped — there's no "hunt" to
+  // attribute a per-hunt cap to (operator chat, cache pre-warm before a
+  // sessionId exists, etc.).
+  static readonly UNCAPPED_BUCKET = "__uncapped__";
+
+  static getSpend(sessionId: string): SpendRecord {
+    return ClaudeClient.spend.get(sessionId) ?? { callCount: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  }
+
+  private static recordSpend(sessionId: string, model: string, usage: Anthropic.Usage): SpendRecord {
+    const prior = ClaudeClient.getSpend(sessionId);
+    const cost = costForUsage(model, usage);
+    const updated: SpendRecord = {
+      callCount: prior.callCount + 1,
+      inputTokens: prior.inputTokens + usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
+      outputTokens: prior.outputTokens + usage.output_tokens,
+      costUsd: prior.costUsd + cost,
+    };
+    ClaudeClient.spend.set(sessionId, updated);
+    return updated;
+  }
+
+  static isDollarBudgetExhausted(sessionId: string): boolean {
+    return ClaudeClient.getSpend(sessionId).costUsd >= ClaudeClient.MAX_USD_PER_HUNT;
+  }
 
   // ── Per-hunt LLM call budget ────────────────────────────────────────────────
   // Caps total Claude API calls per hunt session so a runaway hunt (e.g. many
@@ -141,13 +220,63 @@ export class ClaudeClient {
     return (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 20;
   }
 
-  static async reason(sessionId: string, userPrompt: string): Promise<string> {
+  /**
+   * THE shared SDK-invocation primitive. Every Claude API call in this
+   * process — reason(), oneShot(), and LogicExploitAgent's tool-use loop and
+   * cache pre-warm — routes through here, and nowhere else calls
+   * `.messages.create()` directly (enforced by scripts/check-llm-bypass.ts,
+   * mirroring the axios/tool-exec import guards). This is what makes the
+   * dollar cap below actually see 100% of spend instead of whatever subset
+   * of call sites happened to remember to check a budget first.
+   *
+   * Enforcement order: dollar cap (primary — the only cost-aware check) →
+   * call-count cap (secondary, cost-blind, cheap backstop) → token-rate
+   * pacing (avoids 429s, not a spend control) → the real call → usage
+   * recording. Both caps throw (fail closed); callers that need a graceful
+   * stop instead of a rejection (LogicExploitAgent's loop) catch the
+   * specific error class and break cleanly — see that file's comment on
+   * why a budget-cut probe is marked truncated, never "not vulnerable".
+   */
+  static async createMessage(
+    params: Omit<Anthropic.MessageCreateParams, "stream">,
+    sessionId: string | undefined,
+    estimatedInputTokens: number,
+  ): Promise<Anthropic.Message> {
     if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
-    if (!ClaudeClient.tryConsumeBudget(sessionId)) {
-      logger.warn("[ClaudeClient] reason() blocked — hunt LLM budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
-      throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
+
+    const budgetKey = sessionId ?? ClaudeClient.UNCAPPED_BUCKET;
+    if (sessionId) {
+      if (ClaudeClient.isDollarBudgetExhausted(sessionId)) {
+        const spend = ClaudeClient.getSpend(sessionId);
+        logger.warn("[ClaudeClient] createMessage() blocked — hunt dollar budget exhausted", {
+          sessionId, spentUsd: spend.costUsd, capUsd: ClaudeClient.MAX_USD_PER_HUNT,
+        });
+        throw new LLMDollarBudgetExceededError(sessionId, spend.costUsd, ClaudeClient.MAX_USD_PER_HUNT);
+      }
+      if (!ClaudeClient.tryConsumeBudget(sessionId)) {
+        logger.warn("[ClaudeClient] createMessage() blocked — hunt LLM call-count budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
+        throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
+      }
     }
 
+    await ClaudeClient.paceTokens(estimatedInputTokens);
+
+    const response = await ClaudeClient.client.messages.create(
+      params as Anthropic.MessageCreateParamsNonStreaming,
+      { timeout: 90_000 },
+    );
+
+    const spend = ClaudeClient.recordSpend(budgetKey, params.model, response.usage);
+    logger.debug("[ClaudeClient] createMessage() complete", {
+      sessionId: budgetKey, model: params.model,
+      inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens,
+      callCostUsd: costForUsage(params.model, response.usage), sessionTotalUsd: spend.costUsd,
+    });
+
+    return response;
+  }
+
+  static async reason(sessionId: string, userPrompt: string): Promise<string> {
     // Build a NEW array — never mutate the stored thread. Concurrent calls sharing
     // the same sessionId previously raced on the same reference, interleaving their
     // user/assistant pushes and producing an assistant-terminated array on the next
@@ -169,15 +298,14 @@ export class ClaudeClient {
         n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0)
       ) / 4
     );
-    await ClaudeClient.paceTokens(estimatedInputTokens);
 
-    const response = await ClaudeClient.client.messages.create({
+    const response = await ClaudeClient.createMessage({
       model: getReasonModel(),
       max_tokens: 4096,
       thinking: { type: "adaptive" },
       system: MISSION_BRIEFING,
       messages,
-    }, { timeout: 90_000 });
+    }, sessionId, estimatedInputTokens);
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -200,25 +328,22 @@ export class ClaudeClient {
    * per-hunt budget when a sessionId is supplied.
    */
   static async oneShot(systemPrompt: string, userPrompt: string, sessionId?: string): Promise<string> {
-    if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
-    if (sessionId && !ClaudeClient.tryConsumeBudget(sessionId)) {
-      logger.warn("[ClaudeClient] oneShot() blocked — hunt LLM budget exhausted", { sessionId, limit: ClaudeClient.MAX_CALLS_PER_HUNT });
-      throw new LLMBudgetExceededError(sessionId, ClaudeClient.MAX_CALLS_PER_HUNT);
-    }
-
     // Pace Haiku calls through the shared bucket too. The PostExploitAgent
     // narrative fan-out issues these concurrently (one per confirmed finding)
     // and they count against the org input-token limit just like Sonnet calls —
     // they were the unpaced burst behind the back-to-back 429s.
     const estimatedInputTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4);
-    await ClaudeClient.paceTokens(estimatedInputTokens);
 
-    const response = await ClaudeClient.client.messages.create({
+    // sessionId is optional here (e.g. operator chat, routes/chat.ts) — when
+    // absent, createMessage() still RECORDS the spend (under a shared
+    // uncapped bucket) so the total dollar figure isn't blind to it, but
+    // skips cap enforcement since there's no hunt to attribute a cap to.
+    const response = await ClaudeClient.createMessage({
       model: "claude-haiku-4-5",
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
-    });
+    }, sessionId, estimatedInputTokens);
 
     return response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -229,5 +354,6 @@ export class ClaudeClient {
   static clearSession(sessionId: string): void {
     ClaudeClient.threads.delete(sessionId);
     ClaudeClient.callCounts.delete(sessionId);
+    ClaudeClient.spend.delete(sessionId);
   }
 }
