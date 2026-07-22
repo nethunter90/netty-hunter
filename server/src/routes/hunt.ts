@@ -77,6 +77,7 @@ const StartHuntSchema = z.object({
   corpusEnrichment: z.boolean().optional().default(false),
   proxyEnabled: z.boolean().optional().default(false),
   wafBypassEnabled: z.boolean().optional().default(false),
+  automatedScanningEnabled: z.boolean().optional().default(false),
   customVulnPriority: z.array(z.string()).max(15).optional(),
 });
 
@@ -95,7 +96,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, customScope, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, customVulnPriority } = parsed.data;
+  const { programId: rawProgramId, targetUrl, customScope, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, automatedScanningEnabled, customVulnPriority } = parsed.data;
 
   // ── Single-flight gate (cost-safety core) ───────────────────────────────────
   // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
@@ -181,6 +182,7 @@ router.post("/start", async (req: Request, res: Response) => {
         corpusEnrichment,
         proxyEnabled,
         wafBypassEnabled,
+        automatedScanningEnabled,
       });
 
       const io = req.app.get("io") as SocketServer;
@@ -239,6 +241,7 @@ router.post("/start", async (req: Request, res: Response) => {
       corpusEnrichment,
       proxyEnabled,
       wafBypassEnabled,
+      automatedScanningEnabled,
     });
 
     const io = req.app.get("io") as SocketServer;

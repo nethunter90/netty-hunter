@@ -676,6 +676,7 @@ export class ProgramFetcher extends EventEmitter {
     let url: string | null = 'https://api.hackerone.com/v1/hackers/programs';
 
     while (url) {
+      // scope-egress-ignore: HackerOne platform API pagination (url comes only from HackerOne's own `links.next`, never target/attacker input) — not the hunted target
       const response: Response = await fetch(url, {
         headers: { 'Accept': 'application/json', 'Authorization': auth },
         signal: AbortSignal.timeout(15000),
@@ -719,6 +720,7 @@ export class ProgramFetcher extends EventEmitter {
     // below cannot see.
     if (auth) {
       try {
+        // scope-egress-ignore: HackerOne structured-scope API, not the hunted target
         const response = await fetch(`https://api.hackerone.com/v1/hackers/programs/${handle}?include=structured_scopes`, {
           headers: { 'Accept': 'application/json', 'Authorization': auth },
           signal: AbortSignal.timeout(15000),
@@ -808,6 +810,7 @@ export class ProgramFetcher extends EventEmitter {
     }
 
     try {
+      // scope-egress-ignore: HackerOne public program page API, not the hunted target
       const response = await fetch(`https://hackerone.com/api/v1/hackers/programs/${handle}`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(15000),
@@ -891,6 +894,7 @@ export class ProgramFetcher extends EventEmitter {
     const domain = this.extractDomain(config.url);
 
     try {
+      // scope-egress-ignore: Bugcrowd public program JSON, not the hunted target
       const response = await fetch(`https://bugcrowd.com/${handle}.json`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(15000),
@@ -965,6 +969,7 @@ export class ProgramFetcher extends EventEmitter {
     const domain = this.extractDomain(config.url);
 
     try {
+      // scope-egress-ignore: Intigriti program API, not the hunted target
       const response = await fetch(`https://app.intigriti.com/api/program/${handle}`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(15000),
@@ -1040,6 +1045,7 @@ export class ProgramFetcher extends EventEmitter {
         throw new Error('SYNACK_API_TOKEN not set');
       }
 
+      // scope-egress-ignore: Synack asset-listing API, not the hunted target
       const response = await fetch(`https://platform.synack.com/api/asset/v2/assets?listingUid[]=${handle}&active=true&scope[]=in&scope[]=discovered&perPage=500`, {
         headers: {
           'Authorization': `Bearer ${synackToken}`,
@@ -1079,6 +1085,7 @@ export class ProgramFetcher extends EventEmitter {
         if (inScope.length > 0 || outOfScope.length > 0) {
           const programScope: ProgramScope = { inScope, outOfScope, lastUpdated: Date.now() };
 
+          // scope-egress-ignore: Synack target-detail API, not the hunted target
           const targetResponse = await fetch(`https://platform.synack.com/api/targets/${handle}`, {
             headers: {
               'Authorization': `Bearer ${synackToken}`,
@@ -1149,6 +1156,7 @@ export class ProgramFetcher extends EventEmitter {
         headers['X-AUTH-TOKEN'] = ywhToken;
       }
 
+      // scope-egress-ignore: YesWeHack program API, not the hunted target
       const response = await fetch(`https://api.yeswehack.com/programs/${handle}`, {
         headers,
         signal: AbortSignal.timeout(15000),
@@ -1220,6 +1228,7 @@ export class ProgramFetcher extends EventEmitter {
         logger.warn('[ProgramFetcher] YesWeHack authenticated fetch failed', { handle, status: response.status });
       }
 
+      // scope-egress-ignore: YesWeHack public program page, not the hunted target
       const publicResponse = await fetch(`https://yeswehack.com/programs/${handle}`, {
         headers: { 'Accept': 'text/html' },
         signal: AbortSignal.timeout(15000),
@@ -1278,8 +1287,25 @@ export class ProgramFetcher extends EventEmitter {
     ];
 
     try {
+      // 2026-07-21 readiness pass (item A/E — containment-for-real): this
+      // ProgramConfig.id is a string from this subsystem's own in-memory
+      // program map, not the numeric programs.id row scopedHttp/ScopeGuard
+      // expect, so it can't cleanly route through the normal chokepoint here
+      // (no DB-registered scope necessarily exists yet at onboarding time —
+      // this fetch IS how a custom program's scope gets discovered). The
+      // request target (`domain`) is trusted (derived directly from the
+      // user's own config.url for this exact program, not attacker-supplied
+      // redirect/response content), but fetch() follows redirects by default,
+      // so an unguarded call could still be redirected to an arbitrary
+      // OTHER host by a malicious/compromised response. `redirect: "manual"`
+      // closes that — a redirect is treated as "nothing useful here", never
+      // followed, so this can never reach a host outside `domain`.
+      // scope-egress-ignore: target-facing, but constrained to `domain`
+      // (from the user's own config.url) with redirect:"manual" — reviewed
+      // inline safeguard in lieu of scopedHttp (see comment above).
       const robotsResponse = await fetch(`https://${domain}/robots.txt`, {
         signal: AbortSignal.timeout(10000),
+        redirect: "manual",
       });
       if (robotsResponse.ok) {
         const robotsTxt = await robotsResponse.text();
@@ -1301,8 +1327,11 @@ export class ProgramFetcher extends EventEmitter {
     } catch {}
 
     try {
+      // Same redirect-containment reasoning as the robots.txt fetch above.
+      // scope-egress-ignore: same reviewed inline safeguard as robots.txt above.
       const sitemapResponse = await fetch(`https://${domain}/sitemap.xml`, {
         signal: AbortSignal.timeout(10000),
+        redirect: "manual",
       });
       if (sitemapResponse.ok) {
         const sitemapXml = await sitemapResponse.text();

@@ -190,6 +190,13 @@ export interface HuntState {
    *  entirely when false, and even when true a program whose wafBypassPolicy is
    *  "disallowed" hard-blocks it (see WAFBypass.ts). */
   wafBypassEnabled: boolean;
+  /** 2026-07-21 readiness pass (item E): many bug-bounty programs prohibit
+   *  automated scanning outright in their rules of engagement — code cannot
+   *  read a program's prose policy, so this defaults to false (fail-closed,
+   *  same posture as wafBypassEnabled) and gates ZAP's spider specifically,
+   *  since ZAP makes its own out-of-process requests that no other flag or
+   *  chokepoint controls. */
+  automatedScanningEnabled: boolean;
   /** Endpoint paths/URLs observed by deepCrawl during observe() — feeds the
    *  post-crawl EffortScaler rescale so complexity reflects what the target
    *  actually exposes, not just the launch string. */
@@ -894,6 +901,7 @@ export class HunterEngine extends EventEmitter {
     corpusEnrichment?: boolean;
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
+    automatedScanningEnabled?: boolean;
     /** Hard filter — when set, only these vulnClasses ever reach PROBE/verification.
      *  See the vulnClassAllowlist field comment for how this differs from focusVulnClasses. */
     vulnClassAllowlist?: string[];
@@ -960,6 +968,7 @@ export class HunterEngine extends EventEmitter {
       corpusEnrichment: params.corpusEnrichment !== false,
       proxyEnabled: params.proxyEnabled === true,
       wafBypassEnabled: params.wafBypassEnabled === true,
+      automatedScanningEnabled: params.automatedScanningEnabled === true,
       discoveredEndpoints: [],
     };
 
@@ -2088,6 +2097,12 @@ export class HunterEngine extends EventEmitter {
 
       // ZAP passive scanner — spider the target and surface passive-scan findings
       (async () => {
+        // 2026-07-21 readiness pass (item E): fail-closed per-hunt gate — many
+        // programs prohibit automated scanning outright, and code cannot read
+        // a program's prose rules of engagement. Defaults to false; the
+        // operator must explicitly opt in per hunt, same posture as
+        // wafBypassEnabled.
+        if (!this.state.automatedScanningEnabled) return;
         try {
           const zapResult = await zapScanner.scan(this.state.targetUrl, this.authHeaders);
           if (!zapResult.available) return;

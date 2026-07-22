@@ -318,6 +318,7 @@ io.on("connection", (socket) => {
     auth?: { cookie?: string; bearerToken?: string; headers?: Record<string, string> };
     proxyEnabled?: boolean;
     wafBypassEnabled?: boolean;
+    automatedScanningEnabled?: boolean;
     customVulnPriority?: string[];
     customScope?: string[];
   }) => {

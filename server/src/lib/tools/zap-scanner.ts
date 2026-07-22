@@ -201,14 +201,51 @@ class ZapScanner {
         }
       }
 
-      // Start spider
+      // 2026-07-21 readiness pass (item A/E — containment-for-real): ZAP's
+      // spider is a SEPARATE process that makes its own outbound requests —
+      // invisible to scopedHttp entirely, since this Node process never makes
+      // those requests itself. Previously handed `contextName: ""` (no
+      // context = no scope restriction) with `recurse: "true"`, so ZAP could
+      // spider off-host to anything it discovered a link to, with zero
+      // re-validation from this codebase. Create a real ZAP Context scoped to
+      // the target's own host via an include-regex BEFORE spidering, so ZAP
+      // is structurally confined to it regardless of what it finds.
+      const targetHost = new URL(targetUrl).hostname;
+      const contextName = `hunt-${Date.now()}`;
+      let scopedContextName = "";
+      try {
+        await axios.get(`${ZAP_BASE}/JSON/context/action/newContext/`, {
+          params: { apikey: ZAP_KEY, contextName },
+          timeout: 5_000,
+        });
+        const escapedHost = targetHost.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        await axios.get(`${ZAP_BASE}/JSON/context/action/includeInContext/`, {
+          params: {
+            apikey: ZAP_KEY,
+            contextName,
+            regex: `^https?://${escapedHost}(:[0-9]+)?/.*$`,
+          },
+          timeout: 5_000,
+        });
+        scopedContextName = contextName;
+      } catch (err) {
+        // Non-fatal, but a real containment degradation — if the Context
+        // can't be created, fall through to an unscoped spider rather than
+        // failing the whole scan. Logged loudly so this isn't silent.
+        logger.warn("[ZAP] Failed to create scope-restricting Context — spidering WITHOUT host restriction", {
+          targetHost, err: String(err),
+        });
+      }
+
+      // Start spider, restricted to the Context created above (empty string
+      // if Context creation failed — see the warning just above).
       const spiderRes = await axios.get(`${ZAP_BASE}/JSON/spider/action/scan/`, {
         params: {
           apikey: ZAP_KEY,
           url: targetUrl,
           maxChildren: 10,
           recurse: "true",
-          contextName: "",
+          contextName: scopedContextName,
           subtreeOnly: "false",
         },
         timeout: 10_000,

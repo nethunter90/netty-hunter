@@ -74,8 +74,6 @@ const ALLOWLIST: Record<string, string> = {
     "public bug-bounty disclosure sites (HackerOne/etc. reports), not the target",
   "lib/intelligence/nvd-client.ts":
     "NVD (National Vulnerability Database) API, not the target",
-  "lib/bounty-intelligence/program-fetcher.ts":
-    "bug-bounty platform program-metadata APIs (HackerOne/Bugcrowd/Intigriti), not the target",
   "lib/intelligence/external-apis.ts":
     "threat-intel APIs (VirusTotal/AbuseIPDB), not the target",
   "index.ts":

@@ -105,6 +105,7 @@ export interface OrchestrateParams {
   /** WAF bypass/evasion synthesis — opt-in per hunt; a program whose policy is
    *  "disallowed" hard-blocks it regardless (see WAFBypass.ts). Off by default. */
   wafBypassEnabled?: boolean;
+  automatedScanningEnabled?: boolean;
   /** Backward-mode only: bypasses goal-text matching entirely — an explicit,
    *  user-ordered vuln-class priority list becomes the attack plan directly
    *  (see BackwardHuntEngine.createPlan's customVulnPriority param). */
@@ -697,6 +698,7 @@ export class CampaignOrchestrator extends EventEmitter {
         auth: params.auth,
         proxyEnabled: params.proxyEnabled,
         wafBypassEnabled: params.wafBypassEnabled,
+        automatedScanningEnabled: params.automatedScanningEnabled,
       });
       this.state.sessionUuid = sessionUuid;
 
@@ -785,6 +787,7 @@ export class CampaignOrchestrator extends EventEmitter {
               budget: { maxRequests: 500, maxTime: 600 },
               proxyEnabled: params.proxyEnabled,
               wafBypassEnabled: params.wafBypassEnabled,
+              automatedScanningEnabled: params.automatedScanningEnabled,
             });
             await new Promise<void>((resolve) => {
               const t = setTimeout(resolve, 660_000);
