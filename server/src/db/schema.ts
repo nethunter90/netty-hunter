@@ -111,6 +111,16 @@ export const huntSessions = pgTable("hunt_sessions", {
   reasoningLog: jsonb("reasoning_log").notNull().default([]),
   solverResults: jsonb("solver_results").notNull().default([]),
   status: varchar("status", { length: 32 }).notNull().default("running"),
+  /**
+   * 2026-07-22 (budget chokepoint Phase 3 must-have #3): full resumable
+   * snapshot written when the hunt loop stops early on the LLM dollar cap
+   * (status="paused_budget") — the complete HuntState plus the engine-level
+   * fields (campaignId/targetId/vulnClassAllowlist) not covered by the
+   * hypotheses/observations/probes columns above, which persistResults()
+   * still writes independently on a genuine completion. Null except while
+   * a hunt sits paused; resumeHunt() reads it and clears it back to null.
+   */
+  checkpoint: jsonb("checkpoint"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
 });

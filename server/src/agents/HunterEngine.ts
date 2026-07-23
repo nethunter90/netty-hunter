@@ -898,6 +898,80 @@ export class HunterEngine extends EventEmitter {
     }
   }
 
+  /** Establish an authenticated session for this program/target, mutating
+   *  this.authConfig/this.authHeaders. Fail-closed on a local/lab target
+   *  (LocalAuthConfigError) for a stale or non-functional auth config —
+   *  shared by startHunt() and resumeHunt() so a resumed hunt re-validates
+   *  auth (the session may have expired while paused) instead of trusting
+   *  headers captured before the pause. */
+  private async establishAuthSession(targetUrl: string, programId: number): Promise<void> {
+    try {
+      const [prog] = await db.select({ authConfig: programs.authConfig })
+        .from(programs).where(eq(programs.id, programId)).limit(1);
+      if (prog?.authConfig) {
+        this.authConfig = prog.authConfig as AuthConfig;
+
+        // A stale authConfig pointing at a different host/port than the target
+        // being hunted (e.g. a "Custom: localhost" program record left over from
+        // a previous target) reliably produces the same silent failure as a bad
+        // password: login() swallows the error and the hunt runs its entire
+        // budget unauthenticated, only discoverable after the fact via log
+        // forensics. On local/lab targets there's no legitimate reason for the
+        // login host to differ from the target host (unlike real bug-bounty
+        // programs, which can genuinely have auth on a separate subdomain), so
+        // fail fast here instead of burning the whole run to find out.
+        const targetHost = (() => { try { return new URL(targetUrl).host; } catch { return ""; } })();
+        const loginHost = (() => {
+          try { return this.authConfig?.loginUrl ? new URL(this.authConfig.loginUrl).host : ""; }
+          catch { return ""; }
+        })();
+        const isLocalHost = (h: string) => /^(localhost|127\.|::1)(:|$)/.test(h);
+        if (loginHost && targetHost && loginHost !== targetHost && isLocalHost(targetHost)) {
+          const msg = `authConfig.loginUrl host (${loginHost}) does not match target host (${targetHost}) for a local/lab target. `
+            + `This is almost always a stale program record — fix programs.auth_config for programId ${programId} before hunting.`;
+          logger.error("[HunterEngine] AUTH CONFIG HOST MISMATCH — aborting before probing", {
+            programId, loginHost, targetHost, loginUrl: this.authConfig.loginUrl,
+          });
+          throw new LocalAuthConfigError(msg);
+        }
+
+        const session = await sessionManager.login(programId, this.authConfig);
+        this.authHeaders = session.headers;
+        // login() NEVER throws — it returns an empty session when the target login
+        // couldn't be reached (e.g. AggregateError on a localhost ::1 refusal) or
+        // returned no session material. Detect that and surface it LOUDLY: a hunt
+        // silently running unauthenticated can't exercise idor/auth_bypass/business_
+        // logic/authed-info_disclosure and produces misleading 0-verified results.
+        const hasAuthMaterial = Object.keys(session.headers).length > 0 || Boolean(session.cookies);
+        if (hasAuthMaterial) {
+          logger.info("[HunterEngine] Authenticated session established", { programId });
+        } else {
+          const reason = "Login reached no session (check loginUrl reachability + credentials). Auth-gated vuln classes will not be tested.";
+          logger.error("[HunterEngine] AUTH CONFIGURED BUT LOGIN PRODUCED NO SESSION — hunting UNAUTHENTICATED", {
+            programId,
+            loginUrl: this.authConfig.loginUrl,
+            authType: this.authConfig.authType ?? "form",
+          });
+          this.emit("hunt:auth_failed", {
+            sessionId: this.state?.sessionId ?? "",
+            programId,
+            loginUrl: this.authConfig.loginUrl,
+            reason,
+          });
+          // Same reasoning as the host-mismatch check above: on a local/lab
+          // target, auth being configured but never establishing a session is
+          // never intentional, so don't waste the run finding that out later.
+          if (isLocalHost(targetHost)) {
+            throw new LocalAuthConfigError(`Auth configured for local target but login produced no session — ${reason}`);
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof LocalAuthConfigError) throw err;
+      logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });
+    }
+  }
+
   async startHunt(params: {
     targetUrl: string;
     programId: number;
@@ -1018,71 +1092,7 @@ export class HunterEngine extends EventEmitter {
     }
 
     // Load auth config for this program and establish session if configured
-    try {
-      const [prog] = await db.select({ authConfig: programs.authConfig })
-        .from(programs).where(eq(programs.id, params.programId)).limit(1);
-      if (prog?.authConfig) {
-        this.authConfig = prog.authConfig as AuthConfig;
-
-        // A stale authConfig pointing at a different host/port than the target
-        // being hunted (e.g. a "Custom: localhost" program record left over from
-        // a previous target) reliably produces the same silent failure as a bad
-        // password: login() swallows the error and the hunt runs its entire
-        // budget unauthenticated, only discoverable after the fact via log
-        // forensics. On local/lab targets there's no legitimate reason for the
-        // login host to differ from the target host (unlike real bug-bounty
-        // programs, which can genuinely have auth on a separate subdomain), so
-        // fail fast here instead of burning the whole run to find out.
-        const targetHost = (() => { try { return new URL(params.targetUrl).host; } catch { return ""; } })();
-        const loginHost = (() => {
-          try { return this.authConfig?.loginUrl ? new URL(this.authConfig.loginUrl).host : ""; }
-          catch { return ""; }
-        })();
-        const isLocalHost = (h: string) => /^(localhost|127\.|::1)(:|$)/.test(h);
-        if (loginHost && targetHost && loginHost !== targetHost && isLocalHost(targetHost)) {
-          const msg = `authConfig.loginUrl host (${loginHost}) does not match target host (${targetHost}) for a local/lab target. `
-            + `This is almost always a stale program record — fix programs.auth_config for programId ${params.programId} before hunting.`;
-          logger.error("[HunterEngine] AUTH CONFIG HOST MISMATCH — aborting before probing", {
-            programId: params.programId, loginHost, targetHost, loginUrl: this.authConfig.loginUrl,
-          });
-          throw new LocalAuthConfigError(msg);
-        }
-
-        const session = await sessionManager.login(params.programId, this.authConfig);
-        this.authHeaders = session.headers;
-        // login() NEVER throws — it returns an empty session when the target login
-        // couldn't be reached (e.g. AggregateError on a localhost ::1 refusal) or
-        // returned no session material. Detect that and surface it LOUDLY: a hunt
-        // silently running unauthenticated can't exercise idor/auth_bypass/business_
-        // logic/authed-info_disclosure and produces misleading 0-verified results.
-        const hasAuthMaterial = Object.keys(session.headers).length > 0 || Boolean(session.cookies);
-        if (hasAuthMaterial) {
-          logger.info("[HunterEngine] Authenticated session established", { programId: params.programId });
-        } else {
-          const reason = "Login reached no session (check loginUrl reachability + credentials). Auth-gated vuln classes will not be tested.";
-          logger.error("[HunterEngine] AUTH CONFIGURED BUT LOGIN PRODUCED NO SESSION — hunting UNAUTHENTICATED", {
-            programId: params.programId,
-            loginUrl: this.authConfig.loginUrl,
-            authType: this.authConfig.authType ?? "form",
-          });
-          this.emit("hunt:auth_failed", {
-            sessionId: this.state?.sessionId ?? "",
-            programId: params.programId,
-            loginUrl: this.authConfig.loginUrl,
-            reason,
-          });
-          // Same reasoning as the host-mismatch check above: on a local/lab
-          // target, auth being configured but never establishing a session is
-          // never intentional, so don't waste the run finding that out later.
-          if (isLocalHost(targetHost)) {
-            throw new LocalAuthConfigError(`Auth configured for local target but login produced no session — ${reason}`);
-          }
-        }
-      }
-    } catch (err) {
-      if (err instanceof LocalAuthConfigError) throw err;
-      logger.warn("[HunterEngine] Auth setup failed — continuing unauthenticated", { err: String(err) });
-    }
+    await this.establishAuthSession(params.targetUrl, params.programId);
 
     // Direct auth from hunt params — overrides DB-stored session for the same keys.
     if (params.auth) {
