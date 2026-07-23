@@ -812,6 +812,12 @@ export class HunterEngine extends EventEmitter {
    *  iteration so the loop exits into the checkpoint-save path (persistCheckpoint())
    *  instead of the normal "complete" path — a cap hit is a pause, not a finish. */
   private budgetPaused = false;
+  /** Which budget dimension tripped budgetPaused — "dollar" or "call_count"
+   *  (see ClaudeClient.budgetExhaustionReason()). Carried into the checkpoint
+   *  so an operator resuming a paused hunt knows which cap to actually raise:
+   *  raising MAX_LLM_USD_PER_HUNT does nothing for a call-count pause, and
+   *  raising MAX_LLM_CALLS_PER_HUNT does nothing for a dollar pause. */
+  private budgetPausedReason: "dollar" | "call_count" | null = null;
   // Tracks vuln classes already pre-seeded (by params.focusVulnClasses or the
   // EffortScaler's focusVulnClasses, at initial start or post-crawl rescale)
   // so a rescale that raises the tier doesn't re-seed classes already present.
@@ -1267,14 +1273,21 @@ export class HunterEngine extends EventEmitter {
       !this.aborted &&
       !this.budgetPaused
     ) {
-      // Budget chokepoint Phase 3 must-have #3: checked once per iteration
-      // (not just inside the LLM primitive) so the LOOP itself winds down
-      // cleanly once the hunt's dollar cap is gone, instead of grinding
-      // through remaining iterations doing LLM-blind, increasingly useless
-      // non-LLM probing. isDollarBudgetExhausted() is cheap (in-memory map
-      // read), so checking every iteration costs nothing.
-      if (ClaudeClient.isDollarBudgetExhausted(this.state.sessionId)) {
+      // Budget chokepoint Phase 3 must-have #3 (both dimensions): checked once
+      // per iteration (not just inside the LLM primitive) so the LOOP itself
+      // winds down cleanly once EITHER the dollar cap or the call-count cap
+      // is gone, instead of grinding through remaining iterations doing
+      // LLM-blind, increasingly useless non-LLM probing. Originally checked
+      // isDollarBudgetExhausted() alone — a hunt that ran out of CALLS before
+      // dollars sailed straight to "complete" with a truncated hypothesis
+      // parked at inconclusive forever, the exact coverage-lie must-have #2
+      // was built to prevent, just via the sibling budget dimension.
+      // budgetExhaustionReason() is cheap (in-memory map reads), so checking
+      // every iteration costs nothing.
+      const exhaustedBudget = ClaudeClient.budgetExhaustionReason(this.state.sessionId);
+      if (exhaustedBudget) {
         this.budgetPaused = true;
+        this.budgetPausedReason = exhaustedBudget;
         break;
       }
 
@@ -1396,28 +1409,33 @@ export class HunterEngine extends EventEmitter {
       }
     }
 
-    // Budget chokepoint Phase 3 must-have #3: a dollar-cap exit is a PAUSE, not
-    // a finish — take a separate path that saves a resumable checkpoint instead
-    // of falling through to the "complete" bookkeeping below (which would mark
-    // the session status=completed and release auth/session state as if the
-    // hunt were actually done). Guarded on !aborted/!hardBanned so an explicit
-    // stop or a ban racing the same loop exit still goes through the normal
-    // complete path rather than being misfiled as resumable.
+    // Budget chokepoint Phase 3 must-have #3 (both dimensions): an exhausted-
+    // budget exit is a PAUSE, not a finish, REGARDLESS of which dimension
+    // (dollar or call-count) tripped it — take a separate path that saves a
+    // resumable checkpoint instead of falling through to the "complete"
+    // bookkeeping below (which would mark the session status=completed and
+    // release auth/session state as if the hunt were actually done). Guarded
+    // on !aborted/!hardBanned so an explicit stop or a ban racing the same
+    // loop exit still goes through the normal complete path rather than
+    // being misfiled as resumable.
     if (this.budgetPaused && !this.aborted && !this.hardBanned) {
-      logger.info("[HunterEngine] runLoop exited — LLM dollar budget exhausted, saving checkpoint", {
+      logger.info("[HunterEngine] runLoop exited — LLM budget exhausted, saving checkpoint", {
         sessionId: this.state.sessionId,
         iteration: this.state.iteration,
         confirmedFindings: this.state.confirmedFindings.length,
+        budgetDimension: this.budgetPausedReason,
       });
       contextWriter.updateState({ phase: this.state.phase, findingsCount: this.state.confirmedFindings.length });
       contextWriter.alert("paused_budget", {
         findings: this.state.confirmedFindings.length,
         iterations: this.state.iteration,
+        budgetDimension: this.budgetPausedReason,
       });
       await this.persistCheckpoint();
       this.emit("hunt:paused", {
         sessionId: this.state.sessionId,
-        reason: "llm_dollar_budget_exhausted",
+        reason: this.budgetPausedReason === "call_count" ? "llm_call_count_budget_exhausted" : "llm_dollar_budget_exhausted",
+        budgetDimension: this.budgetPausedReason,
         findings: this.state.confirmedFindings.length,
         iterations: this.state.iteration,
       });
@@ -4191,6 +4209,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
         lastSynthesisCount: this.lastSynthesisCount,
         llmSpend,
         llmCallCount,
+        // Which budget dimension caused this pause (must-have #2/#3, call-count
+        // fix): an operator resuming must know whether to raise
+        // MAX_LLM_USD_PER_HUNT or MAX_LLM_CALLS_PER_HUNT — raising the wrong
+        // one leaves the resumed hunt re-pausing instantly on the other cap.
+        pausedReason: this.budgetPausedReason,
         savedAt: Date.now(),
       };
       await db.update(huntSessions)
@@ -4209,6 +4232,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
         confirmedFindings: this.state.confirmedFindings.length,
         llmSpendUsd: llmSpend.costUsd,
         llmCallCount,
+        pausedReason: this.budgetPausedReason,
       });
     } catch (err) {
       logger.error("[HunterEngine] Failed to persist checkpoint", { err });
@@ -4248,6 +4272,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       lastSynthesisCount: number;
       llmSpend?: { callCount: number; inputTokens: number; outputTokens: number; costUsd: number };
       llmCallCount?: number;
+      pausedReason?: "dollar" | "call_count" | null;
     };
 
     this.dbSessionId = row.id;
@@ -4301,6 +4326,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
       logger.info("[HunterEngine] LLM spend ledger restored on resume", {
         sessionId, llmSpendUsd: cp.llmSpend.costUsd, llmCallCount: cp.llmCallCount ?? cp.llmSpend.callCount,
       });
+      // Tell the operator which knob actually needs raising — the two budget
+      // dimensions are independent, so resuming after only raising the wrong
+      // one just re-pauses instantly on the cap that was never touched.
+      if (cp.pausedReason === "call_count") {
+        logger.info("[HunterEngine] This hunt paused on the CALL-COUNT budget, not the dollar cap — raise MAX_LLM_CALLS_PER_HUNT (not MAX_LLM_USD_PER_HUNT) if it re-pauses immediately", { sessionId });
+      } else if (cp.pausedReason === "dollar") {
+        logger.info("[HunterEngine] This hunt paused on the DOLLAR budget — raise MAX_LLM_USD_PER_HUNT if it re-pauses immediately", { sessionId });
+      }
     }
 
     await this.loadCustomTools();
@@ -4395,7 +4428,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     // spend (createMessage() would reject it once exhausted), but that meant
     // it kept trying and failing on every cycle after the cap was hit, rather
     // than just skipping. Check first so it's a no-op, not a failed attempt.
-    if (ClaudeClient.isDollarBudgetExhausted(this.state.sessionId)) {
+    if (ClaudeClient.budgetExhaustionReason(this.state.sessionId)) {
       logger.debug("[HunterEngine] Chain synthesis skipped — hunt LLM budget exhausted", { sessionId: this.state.sessionId });
       return;
     }

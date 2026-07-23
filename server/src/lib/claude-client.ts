@@ -222,6 +222,31 @@ export class ClaudeClient {
     return ClaudeClient.callCounts.get(sessionId) ?? 0;
   }
 
+  static isCallCountBudgetExhausted(sessionId: string): boolean {
+    return ClaudeClient.getCallCount(sessionId) >= ClaudeClient.MAX_CALLS_PER_HUNT;
+  }
+
+  /**
+   * Unified "is this hunt out of ANY budget" check (budget chokepoint Phase 3,
+   * call-count dimension fix). The dollar cap is the primary, cost-aware
+   * control; the call-count cap is a secondary, cost-blind backstop — but
+   * both throw from createMessage() and both leave a probe honestly marked
+   * truncated:true rather than a false negative. A caller that only asked
+   * "is the dollar cap gone" (the original shape of this check) would sail
+   * a hunt straight to "complete" once calls ran out instead of dollars,
+   * silently dropping recall on whatever was mid-evaluation — same failure
+   * shape the dollar-only check was built to prevent, just via the sibling
+   * dimension. Returns WHICH dimension tripped (not just a boolean) so the
+   * checkpoint can record it — resuming with a raised dollar cap does
+   * nothing for a call-count pause, and vice versa; the operator needs to
+   * know which knob to turn.
+   */
+  static budgetExhaustionReason(sessionId: string): "dollar" | "call_count" | null {
+    if (ClaudeClient.isDollarBudgetExhausted(sessionId)) return "dollar";
+    if (ClaudeClient.isCallCountBudgetExhausted(sessionId)) return "call_count";
+    return null;
+  }
+
   static isAvailable(): boolean {
     return (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 20;
   }
