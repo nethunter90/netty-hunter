@@ -216,6 +216,12 @@ export class ClaudeClient {
     return Math.max(0, ClaudeClient.MAX_CALLS_PER_HUNT - (ClaudeClient.callCounts.get(sessionId) ?? 0));
   }
 
+  /** Calls already consumed for a hunt — the counterpart persistCheckpoint()
+   *  needs alongside getSpend() to save a restorable ledger (see restoreSession()). */
+  static getCallCount(sessionId: string): number {
+    return ClaudeClient.callCounts.get(sessionId) ?? 0;
+  }
+
   static isAvailable(): boolean {
     return (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 20;
   }
@@ -355,5 +361,22 @@ export class ClaudeClient {
     ClaudeClient.threads.delete(sessionId);
     ClaudeClient.callCounts.delete(sessionId);
     ClaudeClient.spend.delete(sessionId);
+  }
+
+  /**
+   * Restore a previously-checkpointed spend/call-count ledger for a resumed
+   * hunt (budget chokepoint Phase 3 must-have #3). Both caps live in
+   * process-local in-memory Maps keyed by sessionId — a resume that skips
+   * this and lets a fresh HunterEngine just resume issuing calls would see
+   * an EMPTY ledger for that sessionId (spend resets to $0, calls reset to
+   * 0), silently re-granting a full fresh budget on top of what was already
+   * spent. That's an unbounded cap bypass across a pause/resume cycle,
+   * which defeats the entire point of the dollar cap this ledger enforces.
+   * Called once, before runLoop() resumes, with the exact SpendRecord and
+   * call count persistCheckpoint() saved.
+   */
+  static restoreSession(sessionId: string, spend: SpendRecord, callCount: number): void {
+    ClaudeClient.spend.set(sessionId, spend);
+    ClaudeClient.callCounts.set(sessionId, callCount);
   }
 }

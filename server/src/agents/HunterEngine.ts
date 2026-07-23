@@ -4170,6 +4170,14 @@ Return ONLY valid JSON array of hypothesis objects.`;
    */
   private async persistCheckpoint(): Promise<void> {
     try {
+      // Anti-bypass (must-have #3): the dollar/call-count ledgers ClaudeClient
+      // enforces the cap against live in process-local Maps keyed by sessionId,
+      // NOT in this.state. Omitting them here would mean resumeHunt() restores
+      // everything EXCEPT the one thing that actually stops the spend — the
+      // resumed hunt would see an empty ledger for this sessionId and get a
+      // full fresh budget on top of what was already spent, defeating the cap.
+      const llmSpend = ClaudeClient.getSpend(this.state.sessionId);
+      const llmCallCount = ClaudeClient.getCallCount(this.state.sessionId);
       const checkpoint = {
         state: this.state,
         campaignId: this.campaignId,
@@ -4181,6 +4189,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         seededFocusClasses: Array.from(this.seededFocusClasses),
         secondaryAuthHeaders: this.secondaryAuthHeaders,
         lastSynthesisCount: this.lastSynthesisCount,
+        llmSpend,
+        llmCallCount,
         savedAt: Date.now(),
       };
       await db.update(huntSessions)
@@ -4197,6 +4207,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
         sessionId: this.state.sessionId,
         iteration: this.state.iteration,
         confirmedFindings: this.state.confirmedFindings.length,
+        llmSpendUsd: llmSpend.costUsd,
+        llmCallCount,
       });
     } catch (err) {
       logger.error("[HunterEngine] Failed to persist checkpoint", { err });
@@ -4234,6 +4246,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       seededFocusClasses: string[];
       secondaryAuthHeaders: Record<string, string>;
       lastSynthesisCount: number;
+      llmSpend?: { callCount: number; inputTokens: number; outputTokens: number; costUsd: number };
+      llmCallCount?: number;
     };
 
     this.dbSessionId = row.id;
@@ -4250,6 +4264,44 @@ Return ONLY valid JSON array of hypothesis objects.`;
     this.budgetPaused = false;
     this.hardBanned = false;
     this.aborted = false;
+
+    // Budget-truncation recall fix (must-have #2, closing the gap the live
+    // Phase 3 proof surfaced): a hypothesis whose LogicExploitAgent probe was
+    // cut off by the cap is checkpointed "inconclusive" + probe.parsed.truncated
+    // = true — honest (never "rejected"), but "inconclusive" is a TERMINAL
+    // status in probe()'s dispatch (only "pending" gets re-selected), so left
+    // alone it would sit at inconclusive forever even once real budget exists
+    // again. Reset it to "pending" so resume re-attempts it to a real verdict.
+    // Gated STRICTLY on truncated:true — an ordinary inconclusive verdict (the
+    // engine genuinely evaluated it and found nothing) must stay terminal, or
+    // it gets re-probed on every single resume forever.
+    let truncatedResetCount = 0;
+    for (const hypothesis of this.state.hypotheses) {
+      if (hypothesis.status !== "inconclusive") continue;
+      const wasTruncated = this.state.probes.some(
+        p => p.hypothesisId === hypothesis.id && p.parsed?.truncated === true
+      );
+      if (wasTruncated) {
+        hypothesis.status = "pending";
+        truncatedResetCount++;
+      }
+    }
+    if (truncatedResetCount > 0) {
+      logger.info("[HunterEngine] Reset budget-truncated hypotheses to pending for re-attempt on resume", {
+        sessionId, truncatedResetCount,
+      });
+    }
+
+    // Anti-bypass (must-have #3): restore the LLM spend/call-count ledger
+    // BEFORE runLoop() ever calls createMessage() again, so the resumed hunt's
+    // budget continues from the checkpointed spend rather than starting fresh
+    // — see the comment on persistCheckpoint()'s llmSpend/llmCallCount capture.
+    if (cp.llmSpend) {
+      ClaudeClient.restoreSession(sessionId, cp.llmSpend, cp.llmCallCount ?? cp.llmSpend.callCount);
+      logger.info("[HunterEngine] LLM spend ledger restored on resume", {
+        sessionId, llmSpendUsd: cp.llmSpend.costUsd, llmCallCount: cp.llmCallCount ?? cp.llmSpend.callCount,
+      });
+    }
 
     await this.loadCustomTools();
     await this.establishAuthSession(this.state.targetUrl, this.state.programId);
