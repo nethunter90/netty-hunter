@@ -214,6 +214,13 @@ router.post("/start", async (req: Request, res: Response) => {
         setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
       });
       engine.on("hunt:error", () => activeHunts.release(sessionUuid));
+      // Budget-cap pause is not a finish (see HunterEngine's runLoop/persistCheckpoint) —
+      // still release the single-flight slot so a new hunt can launch, but keep the
+      // engine in activeHuntSessions a while so GET /session and POST /resume can see it.
+      engine.on("hunt:paused", () => {
+        activeHunts.release(sessionUuid);
+        setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
+      });
 
       logger.info("Backward hunt started", { campaignId: campaign.id, planId: plan.planId, sessionUuid });
       return res.json({
@@ -277,6 +284,13 @@ router.post("/start", async (req: Request, res: Response) => {
       setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
     });
     engine.on("hunt:error", () => activeHunts.release(sessionUuid));
+    // Budget-cap pause is not a finish (see HunterEngine's runLoop/persistCheckpoint) —
+    // still release the single-flight slot so a new hunt can launch, but keep the
+    // engine in activeHuntSessions a while so GET /session and POST /resume can see it.
+    engine.on("hunt:paused", () => {
+      activeHunts.release(sessionUuid);
+      setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
+    });
 
     logger.info("Hunt started", { campaignId: campaign.id, sessionUuid, targetUrl });
     return res.json({
@@ -296,6 +310,80 @@ router.post("/start", async (req: Request, res: Response) => {
     activeHunts.release();
     logger.error("Failed to start hunt (setup)", { err: outerErr });
     return res.status(500).json({ error: "Failed to start hunt", details: String(outerErr) });
+  }
+});
+
+// Resume a hunt paused by the LLM dollar-budget cap (budget chokepoint Phase 3
+// must-have #3). Takes the single-flight slot like /start does (a resumed hunt
+// spends and probes just like a fresh one, so it's bound by the same
+// cost-safety core), constructs a fresh HunterEngine, and calls resumeHunt()
+// to restore the saved checkpoint and continue runLoop() from where it left off.
+router.post("/resume/:sessionUuid", async (req: Request, res: Response) => {
+  const sessionUuid = req.params.sessionUuid;
+
+  const [session] = await db.select().from(huntSessions)
+    .where(eq(huntSessions.sessionUuid, sessionUuid)).limit(1);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (session.status !== "paused_budget" || !session.checkpoint) {
+    return res.status(409).json({ error: `Session is not paused (status=${session.status}) — nothing to resume` });
+  }
+
+  const [target] = await db.select().from(targets).where(eq(targets.id, session.targetId)).limit(1);
+  const targetUrl = target?.url ?? "";
+
+  if (!activeHunts.reserve(targetUrl)) {
+    const current = activeHunts.current();
+    return res.status(409).json({
+      error: "A hunt is already in progress. Stop it before resuming another.",
+      activeHunt: current ? { id: current.id, kind: current.kind, targetUrl: current.targetUrl } : undefined,
+    });
+  }
+
+  try {
+    const engine = new HunterEngine();
+    await engine.resumeHunt(sessionUuid);
+
+    const io = req.app.get("io") as SocketServer;
+    wireHuntEngineToSocket(engine, sessionUuid, io);
+    io.to(`hunt:${sessionUuid}`).emit("hunt:resumed", { sessionUuid, targetUrl });
+    activeHuntSessions.set(sessionUuid, engine);
+    activeHunts.bind({ id: sessionUuid, kind: "hunt", handle: engine, targetUrl, startedAt: Date.now() });
+
+    engine.on("hunt:complete", (data: unknown) => {
+      const d = data as Record<string, unknown> | null;
+      const finalScore = typeof d?.score === 'number' ? d.score : 0.5;
+      metaReasoner.completeHunt(sessionUuid, finalScore).catch(() => {});
+      strategyWeightLearner.learn().catch(() => {});
+      activeHunts.release(sessionUuid);
+      (async () => {
+        try {
+          io.to(`hunt:${sessionUuid}`).emit("hunt:verifying", { sessionUuid });
+          const { verified, confirmed } = await verifyPendingForSession(verifierAgent, sessionUuid, targetUrl);
+          io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
+          logger.info("Auto-verification complete", { sessionUuid, verified, confirmed });
+          await recordAutonomyOutcome(sessionUuid);
+        } catch (err) {
+          logger.warn("Auto-verification pass failed", { sessionUuid, err: String(err) });
+        }
+      })();
+      setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
+    });
+    engine.on("hunt:error", () => activeHunts.release(sessionUuid));
+    engine.on("hunt:paused", () => {
+      activeHunts.release(sessionUuid);
+      setTimeout(() => activeHuntSessions.delete(sessionUuid), 60_000);
+    });
+
+    logger.info("Hunt resumed", { sessionUuid, targetUrl });
+    return res.json({ sessionUuid, status: "running" });
+  } catch (err) {
+    // resumeHunt() throwing happens before bind() ever runs (still just a
+    // reservation, not an active handle) — release(no id) to clear the
+    // reservation, matching /start's setup-failure path, not release(id)
+    // which only clears an already-bound active run.
+    activeHunts.release();
+    logger.error("Failed to resume hunt", { sessionUuid, err });
+    return res.status(500).json({ error: "Failed to resume hunt", details: String(err) });
   }
 });
 

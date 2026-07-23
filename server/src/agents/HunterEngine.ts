@@ -807,6 +807,11 @@ export class HunterEngine extends EventEmitter {
   private targetId = 0;
   private hardBanned = false;
   private aborted = false;
+  /** 2026-07-22 (budget chokepoint Phase 3 must-have #3): set once the hunt's
+   *  LLM dollar cap is exhausted, checked at the top of each runLoop()
+   *  iteration so the loop exits into the checkpoint-save path (persistCheckpoint())
+   *  instead of the normal "complete" path — a cap hit is a pause, not a finish. */
+  private budgetPaused = false;
   // Tracks vuln classes already pre-seeded (by params.focusVulnClasses or the
   // EffortScaler's focusVulnClasses, at initial start or post-crawl rescale)
   // so a rescale that raises the tier doesn't re-seed classes already present.
@@ -1259,8 +1264,20 @@ export class HunterEngine extends EventEmitter {
       this.state.budget.requestsMade < this.state.budget.maxRequests &&
       (Date.now() - startTime) / 1000 < this.state.budget.maxTime &&
       !this.hardBanned &&
-      !this.aborted
+      !this.aborted &&
+      !this.budgetPaused
     ) {
+      // Budget chokepoint Phase 3 must-have #3: checked once per iteration
+      // (not just inside the LLM primitive) so the LOOP itself winds down
+      // cleanly once the hunt's dollar cap is gone, instead of grinding
+      // through remaining iterations doing LLM-blind, increasingly useless
+      // non-LLM probing. isDollarBudgetExhausted() is cheap (in-memory map
+      // read), so checking every iteration costs nothing.
+      if (ClaudeClient.isDollarBudgetExhausted(this.state.sessionId)) {
+        this.budgetPaused = true;
+        break;
+      }
+
       this.state.iteration++;
       this.state.budget.elapsed = (Date.now() - startTime) / 1000;
 
@@ -1377,6 +1394,38 @@ export class HunterEngine extends EventEmitter {
       } catch (err) {
         logger.error("[HunterEngine] Final orphaned update() pass failed (non-fatal)", { err: String(err) });
       }
+    }
+
+    // Budget chokepoint Phase 3 must-have #3: a dollar-cap exit is a PAUSE, not
+    // a finish — take a separate path that saves a resumable checkpoint instead
+    // of falling through to the "complete" bookkeeping below (which would mark
+    // the session status=completed and release auth/session state as if the
+    // hunt were actually done). Guarded on !aborted/!hardBanned so an explicit
+    // stop or a ban racing the same loop exit still goes through the normal
+    // complete path rather than being misfiled as resumable.
+    if (this.budgetPaused && !this.aborted && !this.hardBanned) {
+      logger.info("[HunterEngine] runLoop exited — LLM dollar budget exhausted, saving checkpoint", {
+        sessionId: this.state.sessionId,
+        iteration: this.state.iteration,
+        confirmedFindings: this.state.confirmedFindings.length,
+      });
+      contextWriter.updateState({ phase: this.state.phase, findingsCount: this.state.confirmedFindings.length });
+      contextWriter.alert("paused_budget", {
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+      });
+      await this.persistCheckpoint();
+      this.emit("hunt:paused", {
+        sessionId: this.state.sessionId,
+        reason: "llm_dollar_budget_exhausted",
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+      });
+      logger.info("Hunt paused (resumable)", {
+        sessionId: this.state.sessionId,
+        confirmedFindings: this.state.confirmedFindings.length,
+      });
+      return;
     }
 
     this.state.phase = "complete";
@@ -4106,6 +4155,125 @@ Return ONLY valid JSON array of hypothesis objects.`;
       logger.error("Failed to persist finding", { err });
       return 0;
     }
+  }
+
+  /**
+   * Save a full resumable snapshot when the hunt's LLM dollar cap stops the
+   * loop mid-run (budget chokepoint Phase 3 must-have #3). Mirrors
+   * persistResults()'s DB write but marks the session status="paused_budget"
+   * (never "completed" — a cap hit is not a finish) and stores the complete
+   * in-memory HuntState plus the engine-level fields persistResults() never
+   * needed (campaignId/targetId/vulnClassAllowlist/etc, since those live on
+   * `this` rather than `this.state`) so resumeHunt() can reconstruct this
+   * exact engine instance and continue without re-probing or re-spending on
+   * work already paid for.
+   */
+  private async persistCheckpoint(): Promise<void> {
+    try {
+      const checkpoint = {
+        state: this.state,
+        campaignId: this.campaignId,
+        targetId: this.targetId,
+        vulnClassAllowlist: this.vulnClassAllowlist,
+        huntGoal: this.huntGoal,
+        provisionalEffortComplexity: this.provisionalEffortComplexity,
+        effortRescaled: this.effortRescaled,
+        seededFocusClasses: Array.from(this.seededFocusClasses),
+        secondaryAuthHeaders: this.secondaryAuthHeaders,
+        lastSynthesisCount: this.lastSynthesisCount,
+        savedAt: Date.now(),
+      };
+      await db.update(huntSessions)
+        .set({
+          phase: this.state.phase,
+          status: "paused_budget",
+          hypotheses: this.state.hypotheses as unknown as Record<string, unknown>[],
+          observations: this.state.observations as unknown as Record<string, unknown>[],
+          probes: this.state.probes as unknown as Record<string, unknown>[],
+          checkpoint: checkpoint as unknown as Record<string, unknown>,
+        })
+        .where(eq(huntSessions.sessionUuid, this.state.sessionId));
+      logger.info("[HunterEngine] Checkpoint saved", {
+        sessionId: this.state.sessionId,
+        iteration: this.state.iteration,
+        confirmedFindings: this.state.confirmedFindings.length,
+      });
+    } catch (err) {
+      logger.error("[HunterEngine] Failed to persist checkpoint", { err });
+    }
+  }
+
+  /**
+   * Resume a hunt previously paused by the LLM dollar-budget cap (budget
+   * chokepoint Phase 3 must-have #3). Loads the saved checkpoint, restores
+   * every field persistCheckpoint() saved, re-validates auth via
+   * establishAuthSession() (the session captured before the pause may have
+   * expired while the hunt sat paused — never trust stale headers), clears
+   * the checkpoint + flips status back to "running", then continues
+   * runLoop() from exactly the iteration/phase/hypotheses it left off at.
+   * Called on a FRESH HunterEngine instance (routes/hunt.ts constructs a new
+   * one per launch, same as startHunt()) — this populates that instance's
+   * state rather than requiring the original instance to still be alive.
+   */
+  async resumeHunt(sessionId: string): Promise<void> {
+    const [row] = await db.select().from(huntSessions)
+      .where(eq(huntSessions.sessionUuid, sessionId)).limit(1);
+    if (!row) throw new Error(`Hunt session ${sessionId} not found`);
+    if (row.status !== "paused_budget" || !row.checkpoint) {
+      throw new Error(`Hunt session ${sessionId} is not paused (status=${row.status}) — nothing to resume`);
+    }
+
+    const cp = row.checkpoint as {
+      state: HuntState;
+      campaignId: number;
+      targetId: number;
+      vulnClassAllowlist: string[];
+      huntGoal: string;
+      provisionalEffortComplexity: import("../lib/intelligence/failure-prediction").Complexity;
+      effortRescaled: boolean;
+      seededFocusClasses: string[];
+      secondaryAuthHeaders: Record<string, string>;
+      lastSynthesisCount: number;
+    };
+
+    this.dbSessionId = row.id;
+    this.campaignId = cp.campaignId;
+    this.targetId = cp.targetId;
+    this.vulnClassAllowlist = cp.vulnClassAllowlist ?? [];
+    this.huntGoal = cp.huntGoal ?? "";
+    this.provisionalEffortComplexity = cp.provisionalEffortComplexity ?? "trivial";
+    this.effortRescaled = cp.effortRescaled ?? false;
+    this.seededFocusClasses = new Set(cp.seededFocusClasses ?? []);
+    this.secondaryAuthHeaders = cp.secondaryAuthHeaders ?? {};
+    this.lastSynthesisCount = cp.lastSynthesisCount ?? 0;
+    this.state = cp.state;
+    this.budgetPaused = false;
+    this.hardBanned = false;
+    this.aborted = false;
+
+    await this.loadCustomTools();
+    await this.establishAuthSession(this.state.targetUrl, this.state.programId);
+
+    await db.update(huntSessions)
+      .set({ status: "running", checkpoint: null })
+      .where(eq(huntSessions.sessionUuid, sessionId));
+
+    logger.info("[HunterEngine] Hunt resumed from checkpoint", {
+      sessionId,
+      iteration: this.state.iteration,
+      phase: this.state.phase,
+      confirmedFindings: this.state.confirmedFindings.length,
+    });
+    this.emit("hunt:resumed", {
+      sessionId,
+      iteration: this.state.iteration,
+      confirmedFindings: this.state.confirmedFindings.length,
+    });
+
+    this.runLoop().catch(err => {
+      logger.error("Hunt loop error (resumed)", { sessionId, err });
+      this.emit("hunt:error", { sessionUuid: sessionId, error: String(err) });
+    });
   }
 
   private async persistResults(): Promise<void> {

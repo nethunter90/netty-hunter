@@ -49,6 +49,9 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   // hunt:aborted — emitted immediately by engine.stop(); clients use this to
   // confirm a stop request was honoured rather than relying on optimistic UI state.
   fwd('hunt:aborted');
-  // hunt:complete handled separately by caller (needs cleanup logic)
+  fwd('hunt:resumed');
+  // hunt:complete and hunt:paused are handled separately by the caller (both need
+  // single-flight-slot release + activeHuntSessions cleanup logic — see routes/hunt.ts).
   engine.on('hunt:complete', (d: unknown) => io.to(room).emit('hunt:complete', d));
+  engine.on('hunt:paused', (d: unknown) => io.to(room).emit('hunt:paused', d));
 }
