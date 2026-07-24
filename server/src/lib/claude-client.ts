@@ -140,6 +140,48 @@ export class ClaudeClient {
     return ClaudeClient.getSpend(sessionId).costUsd >= ClaudeClient.MAX_USD_PER_HUNT;
   }
 
+  /**
+   * Record spend for a real Claude call made OUTSIDE this primitive — today,
+   * only ClaudeBridge.reason() (ModelRouter's CLI-bridge fallback, a
+   * `claude -p` subprocess invocation against the same account/subscription)
+   * has no Anthropic.Usage object to cost precisely via costForUsage().
+   *
+   * Budget chokepoint gap fix (2026-07-24): before this, ModelRouter's
+   * reason/analyze fallback called ClaudeBridge directly and NEVER told
+   * ClaudeClient about it — a hunt that made real, working hypothesis-
+   * generation calls via the bridge showed up with $0.00/0 calls in the
+   * ledger and the checkpoint, indistinguishable from a hunt that made no
+   * calls at all. Estimates cost from prompt/response length (chars/4 ≈
+   * tokens — the same rough proxy already used by the token-bucket rate
+   * limiter elsewhere in this file) at the current reason-model's pricing.
+   * An estimate is not as good as real usage — but zero is provably wrong,
+   * and overestimating is the safe direction for a spend cap, same
+   * principle as the input-shaped-tokens simplification in costForUsage().
+   */
+  static recordExternalCall(sessionId: string, promptChars: number, responseChars: number): SpendRecord {
+    const pricing = PRICING[getReasonModel()] ?? DEFAULT_PRICING;
+    const estInputTokens = promptChars / 4;
+    const estOutputTokens = responseChars / 4;
+    const cost = (estInputTokens / 1_000_000) * pricing.inputPerM + (estOutputTokens / 1_000_000) * pricing.outputPerM;
+    const prior = ClaudeClient.getSpend(sessionId);
+    const updated: SpendRecord = {
+      callCount: prior.callCount + 1,
+      inputTokens: prior.inputTokens + estInputTokens,
+      outputTokens: prior.outputTokens + estOutputTokens,
+      costUsd: prior.costUsd + cost,
+    };
+    ClaudeClient.spend.set(sessionId, updated);
+    // Also consume a call-count slot — the CLI bridge is unmetered by nature
+    // (no createMessage() gate runs for it), so without this a bridge-heavy
+    // hunt could burn arbitrarily many real calls without ever tripping the
+    // call-count cap that every SDK-routed call respects.
+    ClaudeClient.callCounts.set(sessionId, (ClaudeClient.callCounts.get(sessionId) ?? 0) + 1);
+    logger.info("[ClaudeClient] Recorded CLI-bridge call (estimated cost — no real Usage object available)", {
+      sessionId, estimatedCostUsd: cost, promptChars, responseChars,
+    });
+    return updated;
+  }
+
   // ── Per-hunt LLM call budget ────────────────────────────────────────────────
   // Caps total Claude API calls per hunt session so a runaway hunt (e.g. many
   // business_logic hypotheses each driving the 16-call LogicExploitAgent loop)

@@ -57,6 +57,22 @@ export class ModelRouter {
         );
       }
 
+      // Budget chokepoint gap fix (2026-07-24): the CLI bridge (ClaudeBridge,
+      // a `claude -p` subprocess against the same account) is a REAL Claude
+      // call with no createMessage() gate and no Anthropic.Usage object —
+      // ModelRouter used to fall back to it on ANY SDK failure, including
+      // the dollar/call-count cap tripping. That meant a hunt whose budget
+      // was exhausted could keep silently generating real hypotheses via
+      // the bridge for free-looking (actually just unlogged) cost, exactly
+      // defeating the cap that just fired. Refuse outright if the budget is
+      // already gone — don't try either provider.
+      const preCheck = ClaudeClient.budgetExhaustionReason(options.sessionId);
+      if (preCheck) {
+        throw new ClaudeUnavailableError(
+          `Claude unavailable for taskType="${taskType}" — hunt LLM budget already exhausted (${preCheck}); refusing to fall back to the unaccounted CLI bridge.`,
+        );
+      }
+
       if (ClaudeClient.isAvailable()) {
         try {
           const result = await ClaudeClient.reason(options.sessionId, fullPrompt);
@@ -67,10 +83,25 @@ export class ModelRouter {
         }
       }
 
+      // Re-check right before the bridge attempt — the SDK failure just
+      // caught above might itself HAVE BEEN the budget cap tripping
+      // (LLMDollarBudgetExceededError/LLMBudgetExceededError), and falling
+      // back after that specific failure is exactly the bypass this closes.
+      if (ClaudeClient.budgetExhaustionReason(options.sessionId)) {
+        throw new ClaudeUnavailableError(
+          `Claude unavailable for taskType="${taskType}" — hunt LLM budget exhausted; refusing to fall back to the unaccounted CLI bridge.`,
+        );
+      }
+
       const cliAvailable = await ClaudeBridge.isAvailable();
       if (cliAvailable) {
         try {
           const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+          // This IS a real Claude call (genuine API/subscription cost) with
+          // no Usage object to cost precisely — record an estimate so it's
+          // never invisible to the per-hunt ledger, either cap, or
+          // persistCheckpoint()'s spend snapshot. See ClaudeClient.recordExternalCall().
+          ClaudeClient.recordExternalCall(options.sessionId, fullPrompt.length, result.length);
           this.lastProvider = "claude";
           return result;
         } catch (err) {
