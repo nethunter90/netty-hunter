@@ -15,6 +15,8 @@ import { db } from "../../db";
 import { findings, huntSessions } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import type { VerifierAgent, VerificationResult } from "../../agents/VerifierAgent";
+import { contextWriter } from "../context-writer";
+import { applyVerifiedRlOutcome } from "./verified-rl-outcome";
 import logger from "../../utils/logger";
 
 type FindingRow = typeof findings.$inferSelect;
@@ -164,6 +166,26 @@ export async function verifyAndPersistFinding(
     updatedAt: new Date(),
   }).where(eq(findings.id, finding.id)).catch(e =>
     logger.warn("[verify-finding] DB update failed", { findingId: finding.id, err: String(e) })
+  );
+
+  // Reconcile hunt-findings.json — HunterEngine's own fast-path confidence
+  // threshold populated this entry before this more rigorous pipeline ran,
+  // so the file is the write-once heuristic snapshot until corrected here.
+  // Mirrors CampaignOrchestrator.layer5_verificationGate's identical fixup
+  // (updateFindingConfidence on confirm / retractFinding otherwise) so both
+  // verification consumers leave the operator-facing artifact honest, not
+  // just the DB row.
+  if (verification.finalVerdict === "confirmed") {
+    contextWriter.updateFindingConfidence(finding.id, verification.finalConfidence);
+  } else {
+    contextWriter.retractFinding(finding.id);
+  }
+
+  // RL/ROI reinforcement, gated on the real verdict instead of the fast-path
+  // heuristic that originally populated this row (see verified-rl-outcome.ts).
+  await applyVerifiedRlOutcome(
+    { vulnType: finding.vulnType, confidence: verification.finalConfidence, programId: finding.programId },
+    isDuplicate ? "deduplicated" : verification.finalVerdict,
   );
 
   return verification;

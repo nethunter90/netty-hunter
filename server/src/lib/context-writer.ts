@@ -153,9 +153,15 @@ class ContextWriter {
       write("hunt-live.json", this.state).catch(() => {});
       this.writeDigest();
     }
-    if (this.findings.length > 0) {
-      write("hunt-findings.json", this.findings).catch(() => {});
-    }
+    // Always write, even when this.findings is now empty. The `> 0` guard this
+    // replaced meant a full retraction (every finding on this hunt turning out
+    // non-confirmed after verification) could never be reflected on disk: once
+    // the array emptied, flush() silently kept the LAST non-empty snapshot —
+    // stale, pre-verification "confirmed" data — forever. Confirmed live via a
+    // direct-launch hunt (2026-07-24 readiness fix, blocker D Phase 2): three
+    // findings all ended up rejected/deduplicated, and hunt-findings.json kept
+    // showing two of them at their original heuristic confidence indefinitely.
+    write("hunt-findings.json", this.findings).catch(() => {});
   }
 
   private writeDigest(): void {

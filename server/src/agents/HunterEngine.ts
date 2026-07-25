@@ -3165,7 +3165,22 @@ Return ONLY valid JSON array of hypothesis objects.`;
         if (newConfidence > 0.7) {
           hypothesis.status = "confirmed";
           hypothesis.reasoning = describeFromProbe(hypothesis, successful[0]);
-          this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, true);
+          // onHypothesisOutcome() (confidence-calibration RL write) is deliberately NOT
+          // called here anymore. This is only the fast-path heuristic threshold — no
+          // verifier has looked at this yet. It used to fire unconditionally at this
+          // point, so the RL store learned from every heuristic "confirmed" regardless
+          // of whether the 4-layer verifier later rejected it. The deferred, verdict-
+          // gated version now lives in lib/verification/verified-rl-outcome.ts,
+          // called from both verification consumers (CampaignOrchestrator's Layer 5
+          // gate and routes/hunt.ts's post-hunt verifyPendingForSession) once the real
+          // verdict exists — see applyVerifiedRlOutcome().
+          //
+          // recordModelOutcome() below is a NARROWER, FLAGGED RESIDUAL of the same bug:
+          // it still fires here, at heuristic-confirmation time, because it needs
+          // hypothesis.modelSource, which is not persisted to the findings row and so
+          // cannot be replayed from a decoupled post-verification call site without a
+          // schema change or keeping the engine instance alive until verification
+          // completes. Tracked as a follow-up, not silently dropped.
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, true);
           if (hypothesis.retryTechnique) {
             const rt = hypothesis.retryTechnique;

@@ -39,6 +39,8 @@ import { egressAllocator } from "./lib/stealth/egress-route-allocator";
 import { wireHuntEngineToSocket } from "./lib/utils/wire-hunt-engine";
 import { activeHuntSessions } from "./lib/state/hunt-sessions";
 import { checkPlaywrightHealth } from "./lib/verification/playwright-health";
+import { verifyPendingForSession } from "./lib/verification/verify-finding";
+import { VerifierAgent } from "./agents/VerifierAgent";
 import { activeHunts } from "./lib/state/active-hunts";
 import { db } from "./db";
 import { programs, findings } from "./db/schema";
@@ -282,6 +284,10 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // ─── Socket.IO Events ─────────────────────────────────────────────────────────
 
+// Module-level, matching routes/hunt.ts's own const verifierAgent — one
+// instance per module that runs post-hunt verification, not per-connection.
+const socketVerifierAgent = new VerifierAgent();
+
 io.on("connection", (socket) => {
   logger.info("Socket connected", { id: socket.id });
 
@@ -406,6 +412,21 @@ io.on("connection", (socket) => {
       activeHunts.bind({ id: sessionUuid, kind: "hunt", handle: engine, targetUrl: params.targetUrl, startedAt: Date.now() });
       engine.on("hunt:complete", (data: Record<string, unknown>) => {
         activeHunts.release(sessionUuid);
+        // Auto-verify: this socket-launched path used to be the one true gap —
+        // findings persisted at verificationStatus="pending" forever, with no
+        // caller ever running the 4-layer pipeline (manual per-finding verify
+        // aside). Share the exact same post-hunt pass routes/hunt.ts's REST
+        // launch paths use rather than invent a third wiring shape.
+        (async () => {
+          try {
+            io.to(`hunt:${sessionUuid}`).emit("hunt:verifying", { sessionUuid });
+            const { verified, confirmed } = await verifyPendingForSession(socketVerifierAgent, sessionUuid, params.targetUrl);
+            io.to(`hunt:${sessionUuid}`).emit("hunt:verification_complete", { sessionUuid, verified, confirmed });
+            logger.info("Auto-verification complete (socket-launched hunt)", { sessionUuid, verified, confirmed });
+          } catch (err) {
+            logger.warn("Auto-verification pass failed (socket-launched hunt)", { sessionUuid, err: String(err) });
+          }
+        })();
         setTimeout(() => activeHuntSessions.delete(String(data.sessionId ?? sessionUuid)), 60_000);
       });
       engine.on("hunt:error", () => activeHunts.release(sessionUuid));

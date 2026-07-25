@@ -50,6 +50,7 @@ import { eventBus } from "../lib/orchestration/layer3-event-bus";
 import { dynamicRateLimiter } from "../lib/stealth";
 import { publicDisclosureDetector } from "../lib/intelligence/public-disclosure-detector";
 import { pendingEscalation } from "../lib/verification/verify-finding";
+import { applyVerifiedRlOutcome } from "../lib/verification/verified-rl-outcome";
 import { nvdClient } from "../lib/intelligence/nvd-client";
 import { submissionQueue } from "../lib/intelligence/submission-queue";
 import { subdomainTakeoverChecker } from "../lib/tools/subdomain-takeover";
@@ -1072,6 +1073,15 @@ export class CampaignOrchestrator extends EventEmitter {
           // with Layer 5's actual verified value.
           contextWriter.updateFindingConfidence(dbFinding.id, verification.finalConfidence);
 
+          // RL/ROI reinforcement, gated on this real verdict — HunterEngine's
+          // own fast-path threshold no longer writes this unconditionally
+          // (see verified-rl-outcome.ts); this Layer 5 gate is now the sole
+          // place a "confirmed" outcome for this finding reinforces the store.
+          applyVerifiedRlOutcome(
+            { vulnType: dbFinding.vulnType, confidence: verification.finalConfidence, programId: dbFinding.programId },
+            "confirmed",
+          ).catch(() => {});
+
           // Update finding record. dedupHash is only persisted on a CONFIRMED
           // verdict — the column is unique, and now that Layer1Dedup only blocks
           // future attempts on a prior CONFIRMED match (not any prior verdict),
@@ -1168,6 +1178,14 @@ export class CampaignOrchestrator extends EventEmitter {
           // 4-layer check ran — without this, a later rejection is invisible
           // there and the finding stays listed as "confirmed" forever.
           contextWriter.retractFinding(dbFinding.id);
+          // Same deferred-RL principle as the confirmed branch above: a
+          // rejected/inconclusive verdict must reinforce negatively, not
+          // silently skip reinforcement (which would leave the store blind
+          // to every heuristic call the verifier actually caught).
+          applyVerifiedRlOutcome(
+            { vulnType: dbFinding.vulnType, confidence: verification.finalConfidence, programId: dbFinding.programId },
+            verification.finalVerdict as "rejected" | "inconclusive",
+          ).catch(() => {});
           // Persist the rejection so the finding is never left as status:"new"/verificationStatus:"pending"
           // — without this update a rejected finding is indistinguishable from an unverified one.
           await db.update(findings).set({
