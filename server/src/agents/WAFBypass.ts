@@ -17,6 +17,7 @@ import { temporalDecay } from "../lib/hunter/temporal-decay";
 import { stealthCoordinator } from "../lib/stealth";
 import { AIWAFEvasion } from "../lib/stealth/ai-waf-evasion";
 import { ScopeGuard } from "../middleware/scopeGuard";
+import { isActionAllowed } from "./ActionPolicyGate";
 
 const aiWAFEvasion = new AIWAFEvasion();
 
@@ -327,14 +328,14 @@ export class VendorEvasionProfiles {
 export async function checkWafBypassAuthorization(
   url: string, programId?: number
 ): Promise<{ allowed: boolean; reason?: string }> {
-  // 2026-07-21 readiness pass (item D): this function previously failed OPEN
-  // in two places — no programId skipped scope entirely, and an unset/
-  // "unspecified" program policy defaulted to allowed. WAF-bypass techniques
-  // are an authorization question, not just a scope question: running them
-  // unauthorized against a real program is both a ban vector and an
-  // exceeded-scope problem. Fail CLOSED on both defaults — the caller must
-  // supply a real programId, and the program must have EXPLICITLY set
+  // 2026-07-21 readiness pass (item D): fail CLOSED on both "no programId"
+  // and an unset/"unspecified" program policy — the caller must supply a
+  // real programId, and the program must have EXPLICITLY set
   // wafBypassPolicy to "allowed", not merely have failed to say "disallowed".
+  // 2026-07-23 (blocker #3): the lab/real + policy-string decision is now
+  // the SHARED isActionAllowed() gate (ActionPolicyGate.ts) — this function
+  // keeps its own scope-check (a question the shared gate doesn't answer),
+  // external behavior unchanged.
   if (programId === undefined) {
     logger.warn('WAFBypass authorization blocked — no programId supplied (fail-closed default)', { url });
     return { allowed: false, reason: 'No programId supplied — cannot authorize without a known program' };
@@ -347,23 +348,13 @@ export async function checkWafBypassAuthorization(
     return { allowed: false, reason: `Out of scope: ${reason}` };
   }
 
-  // Only an EXPLICIT "allowed" policy permits WAF evasion. "unspecified"
-  // (the schema default) and "disallowed" are both treated as not
-  // authorized — the user's per-hunt opt-in is necessary but not
-  // sufficient; the program must have affirmatively said yes.
-  const [program] = await db.select({ wafBypassPolicy: programs.wafBypassPolicy })
+  const [program] = await db.select({ platform: programs.platform, wafBypassPolicy: programs.wafBypassPolicy })
     .from(programs).where(eq(programs.id, programId)).limit(1);
-  if (program?.wafBypassPolicy !== 'allowed') {
-    logger.warn('WAFBypass authorization blocked — program policy is not explicitly "allowed"', {
-      url, programId, policy: program?.wafBypassPolicy ?? 'unspecified',
-    });
-    return {
-      allowed: false,
-      reason: `WAF bypass not authorized — program policy is "${program?.wafBypassPolicy ?? 'unspecified'}", not "allowed"`,
-    };
+  if (!program) {
+    return { allowed: false, reason: `Program ${programId} not found` };
   }
 
-  return { allowed: true };
+  return isActionAllowed(program, program.wafBypassPolicy, "waf_bypass");
 }
 
 // ── Module 7: Intelligence Synthesizer ───────────────────────────────────────

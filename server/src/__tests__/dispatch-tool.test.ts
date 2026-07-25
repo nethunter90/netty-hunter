@@ -47,6 +47,15 @@ vi.mock('../utils/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// This file's purpose is the shell-injection/argument-injection guarantees,
+// not the restricted-tool policy gate (see action-policy-gate.test.ts for
+// that) — always permit so nuclei/fuzzer test cases here don't need their
+// own DB-backed program fixture.
+vi.mock('../agents/ActionPolicyGate', () => ({
+  checkAutomatedScanningAuthorization: vi.fn().mockResolvedValue({ allowed: true }),
+  checkFuzzingAuthorization: vi.fn().mockResolvedValue({ allowed: true }),
+}));
+
 import {
   dispatchTool, ToolOutOfScopeError, ToolTargetInvalidError, ToolArgumentInjectionError,
   ToolShellUnsafeError,

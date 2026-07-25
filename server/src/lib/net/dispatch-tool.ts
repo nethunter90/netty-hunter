@@ -59,6 +59,7 @@
  */
 import { spawn } from "child_process";
 import { ScopeGuard } from "../../middleware/scopeGuard";
+import { checkAutomatedScanningAuthorization, checkFuzzingAuthorization } from "../../agents/ActionPolicyGate";
 import { hasShellUnsafeChars, hasShellUnsafeUrlChars } from "./shell-safe";
 import logger from "../../utils/logger";
 
@@ -142,6 +143,27 @@ export class ToolShellUnsafeError extends Error {
   }
 }
 
+export class ToolPolicyBlockedError extends Error {
+  constructor(public readonly tool: string, public readonly reason: string) {
+    super(`Tool dispatch blocked by program policy: ${tool} — ${reason}`);
+    this.name = "ToolPolicyBlockedError";
+  }
+}
+
+// 2026-07-23 (blocker #3, Test 0): dispatchTool() is the proven SOLE
+// shell-exec funnel (check-tool-exec.ts) — every one of its ~12 callers
+// (SolverPool, the orchestration layers, bounty-intelligence, routes/tools,
+// routes/bounty, ...) reaches exec through here, structurally, by the same
+// mechanism that makes shell injection impossible in this module. The
+// behavioral-rules policy gate built for HunterEngine.runTool() only
+// covered runTool()'s own SEPARATE execFileAsync path (HunterEngine.ts:3673
+// — a second, independently-safe-but-separate exec path that predates
+// dispatchTool() and is check-tool-exec-allowlisted for that reason, not
+// exempted from POLICY). SolverPool and every other dispatchTool() caller
+// bypassed the policy gate entirely until this check — verified live via
+// the CI guard below, which would have flagged this the moment it existed.
+const FUZZING_TOOLS = new Set(["ffuf", "gobuster", "feroxbuster", "wfuzz", "arjun"]);
+
 export interface DispatchToolParams {
   /** The binary to execFile — e.g. "nmap", "sqlmap", "nikto". Never a shell string. */
   tool: string;
@@ -186,6 +208,26 @@ export async function dispatchTool(params: DispatchToolParams): Promise<Dispatch
   if (!allowed) {
     logger.warn("[dispatchTool] Blocked out-of-scope tool dispatch", { tool, target, programId, reason });
     throw new ToolOutOfScopeError(target, reason);
+  }
+
+  // 1b. Behavioral-rules policy check (2026-07-23, blocker #3) — same
+  // isActionAllowed()-backed gate as HunterEngine.runTool()'s own copy,
+  // enforced HERE too since this is a structurally separate physical exec
+  // path (see the module-level comment above FUZZING_TOOLS). Conservative
+  // per the earlier amendment: ALL of nuclei is gated as scanning, not
+  // per-template-mode.
+  if (tool === "nuclei") {
+    const auth = await checkAutomatedScanningAuthorization(target, programId ?? undefined);
+    if (!auth.allowed) {
+      logger.warn("[dispatchTool] Blocked by automated-scanning policy", { tool, target, programId, reason: auth.reason });
+      throw new ToolPolicyBlockedError(tool, auth.reason ?? "automated scanning not authorized");
+    }
+  } else if (FUZZING_TOOLS.has(tool)) {
+    const auth = await checkFuzzingAuthorization(target, programId ?? undefined);
+    if (!auth.allowed) {
+      logger.warn("[dispatchTool] Blocked by fuzzing policy", { tool, target, programId, reason: auth.reason });
+      throw new ToolPolicyBlockedError(tool, auth.reason ?? "fuzzing not authorized");
+    }
   }
 
   // 2. URL-validate the target before it's substituted into anything.
