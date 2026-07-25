@@ -32,7 +32,7 @@ import { metaReasoner } from "../lib/intelligence/meta-reasoning";
 import { backwardPlanner } from "../lib/intelligence/backward-planner";
 import { observationCompressor } from "../lib/intelligence/observation-compressor";
 import { nvdClient } from "../lib/intelligence/nvd-client";
-import { sessionManager, AuthConfig } from "../lib/tools/session-manager";
+import { sessionManager, AuthConfig, AuthSessionFailedError } from "../lib/tools/session-manager";
 import { callbackServer } from "../lib/oob/callback-server";
 import { interactshManager } from "../lib/oob/interactsh-manager";
 import { graphqlProber } from "../lib/tools/graphql-probe";
@@ -827,6 +827,22 @@ export class HunterEngine extends EventEmitter {
    *  raising MAX_LLM_USD_PER_HUNT does nothing for a call-count pause, and
    *  raising MAX_LLM_CALLS_PER_HUNT does nothing for a dollar pause. */
   private budgetPausedReason: "dollar" | "call_count" | null = null;
+  /** 2026-07-23 readiness handoff, blocker #2: set when the auth session is
+   *  confirmed lost (either ensureSession() genuinely fails after its own
+   *  bounded retry, or the liveness re-check hits its N-of-M drop threshold
+   *  mid-TTL). Checked in runLoop()'s while-condition exactly like
+   *  budgetPaused — a pause, not a finish, so the hunt doesn't keep spending
+   *  budget probing behind an auth wall it can't see past. */
+  private authPaused = false;
+  private authPausedReason: string | null = null;
+  /** Throttles the liveness re-check (Phase 1b) to every LIVENESS_CHECK_EVERY_N_PROBES-th
+   *  probe() call, not every call — ensureSession() above it is cheap/cached,
+   *  but checkLiveness() fires a real request and must not add a round-trip
+   *  to every single probe. */
+  private probePhaseCount = 0;
+  /** Guards against re-emitting the "liveness inactive" operator alert every
+   *  LIVENESS_CHECK_EVERY_N_PROBES cycle — surfaced once per hunt. */
+  private authLivenessInactiveSurfaced = false;
   // Tracks vuln classes already pre-seeded (by params.focusVulnClasses or the
   // EffortScaler's focusVulnClasses, at initial start or post-crawl rescale)
   // so a rescale that raises the tier doesn't re-seed classes already present.
@@ -1305,7 +1321,8 @@ export class HunterEngine extends EventEmitter {
       (Date.now() - startTime) / 1000 < this.state.budget.maxTime &&
       !this.hardBanned &&
       !this.aborted &&
-      !this.budgetPaused
+      !this.budgetPaused &&
+      !this.authPaused
     ) {
       // Budget chokepoint Phase 3 must-have #3 (both dimensions): checked once
       // per iteration (not just inside the LLM primitive) so the LOOP itself
@@ -1465,7 +1482,7 @@ export class HunterEngine extends EventEmitter {
         iterations: this.state.iteration,
         budgetDimension: this.budgetPausedReason,
       });
-      await this.persistCheckpoint();
+      await this.persistCheckpoint("paused_budget", this.budgetPausedReason);
       this.emit("hunt:paused", {
         sessionId: this.state.sessionId,
         reason: this.budgetPausedReason === "call_count" ? "llm_call_count_budget_exhausted" : "llm_dollar_budget_exhausted",
@@ -1476,6 +1493,42 @@ export class HunterEngine extends EventEmitter {
       logger.info("Hunt paused (resumable)", {
         sessionId: this.state.sessionId,
         confirmedFindings: this.state.confirmedFindings.length,
+      });
+      return;
+    }
+
+    // 2026-07-23 readiness handoff, blocker #2: an auth-session drop is a
+    // PAUSE, not a finish — same reasoning as the budget branch above, same
+    // machinery (persistCheckpoint(), generalized to take a status/reason
+    // rather than forking a parallel persistAuthCheckpoint()). Surfaced LOUD
+    // (warn log + operator-visible contextWriter.alert + hunt:paused event)
+    // since silence is exactly the bug this closes — an operator must be
+    // able to tell "auth dropped" apart from "hunt is quietly running dry."
+    if (this.authPaused && !this.aborted && !this.hardBanned) {
+      logger.warn("[HunterEngine] runLoop exited — auth session lost, saving checkpoint", {
+        sessionId: this.state.sessionId,
+        iteration: this.state.iteration,
+        confirmedFindings: this.state.confirmedFindings.length,
+        authPausedReason: this.authPausedReason,
+      });
+      contextWriter.updateState({ phase: this.state.phase, findingsCount: this.state.confirmedFindings.length });
+      contextWriter.alert("paused_auth", {
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+        reason: this.authPausedReason,
+      });
+      await this.persistCheckpoint("paused_auth", this.authPausedReason);
+      this.emit("hunt:paused", {
+        sessionId: this.state.sessionId,
+        reason: "auth_session_lost",
+        authReason: this.authPausedReason,
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+      });
+      logger.warn("Hunt paused (resumable) — auth session lost", {
+        sessionId: this.state.sessionId,
+        confirmedFindings: this.state.confirmedFindings.length,
+        reason: this.authPausedReason,
       });
       return;
     }
@@ -2673,16 +2726,82 @@ Return ONLY valid JSON array of hypothesis objects.`;
     return this.state.budget.requestsMade >= this.state.budget.maxRequests;
   }
 
+  /** Safe origin extraction for the liveness re-check's fallback baseline
+   *  target (config.livenessUrl takes priority — see SessionManager.checkLiveness).
+   *  Null on an unparseable targetUrl, which the caller treats as "skip this
+   *  cycle" rather than throwing mid-hunt over a liveness-check concern. */
+  private getTargetOrigin(): string | null {
+    try {
+      return new URL(this.state.targetUrl).origin;
+    } catch {
+      return null;
+    }
+  }
+
   // ── Phase 3: Probe ──────────────────────────────────────────────────────────
   private async probe(): Promise<void> {
     logger.info("PROBE phase", { session: this.state.sessionId });
+    this.probePhaseCount++;
 
-    // Refresh auth session if it expired mid-hunt (30-min TTL)
+    // Auth session refresh + liveness (2026-07-23 readiness handoff, blocker
+    // #2). Two distinct failure modes, both routed to the same authPaused
+    // response:
+    //  1. ensureSession() genuinely fails (after its own bounded retry) —
+    //     we have NO usable session at all. Root-fixed: ensureSession() now
+    //     THROWS AuthSessionFailedError instead of silently returning a
+    //     fake-valid empty-headers session, so this catch is reachable and
+    //     meaningful (it used to be dead code — see session-manager.ts).
+    //  2. A previously-good session goes dead mid-TTL (server-side logout,
+    //     rotation, IP-binding change) — TTL alone can't see this, so a
+    //     throttled liveness re-check against a proven-authenticated
+    //     baseline catches it, gated on an N-of-M consecutive-failure
+    //     threshold so a single blip doesn't false-pause a healthy hunt.
+    // Either way: STOP probing this iteration too (no unauthenticated
+    // probing burns further budget behind a wall the hunt can now see).
     if (this.authConfig) {
       try {
         const refreshed = await sessionManager.ensureSession(this.state.programId, this.authConfig);
         this.authHeaders = refreshed.headers;
-      } catch { /* non-critical — continue unauthenticated */ }
+      } catch (err) {
+        if (err instanceof AuthSessionFailedError) {
+          this.authPaused = true;
+          this.authPausedReason = err.reason;
+          logger.warn("[HunterEngine] Auth session could not be established — pausing hunt (was silently continuing unauthenticated before this fix)", {
+            sessionId: this.state.sessionId, programId: this.state.programId, reason: err.reason,
+          });
+          return;
+        }
+        // Not an auth-shaped failure (e.g. a programming error in the auth
+        // path itself) — log loudly but don't misclassify it as an auth drop.
+        logger.error("[HunterEngine] Unexpected error refreshing auth session", { err: String(err) });
+      }
+
+      if (!this.authPaused && this.probePhaseCount % LIVENESS_CHECK_EVERY_N_PROBES === 0) {
+        const targetOrigin = this.getTargetOrigin();
+        if (targetOrigin) {
+          const liveness = await sessionManager.checkLiveness(this.state.programId, targetOrigin, this.authConfig);
+          if (liveness.dropped) {
+            this.authPaused = true;
+            this.authPausedReason = `Liveness re-check failed ${liveness.consecutiveFailures} consecutive times (401/403 on a proven-authenticated baseline)`;
+            logger.warn("[HunterEngine] Auth session liveness check confirmed a mid-hunt drop — pausing hunt", {
+              sessionId: this.state.sessionId, programId: this.state.programId,
+              consecutiveFailures: liveness.consecutiveFailures,
+            });
+            return;
+          }
+          // Surfaced operator-visibly once per hunt (not just SessionManager's
+          // own warn log) — no candidate baseline discriminates auth, so a
+          // real mid-hunt drop would go undetected for the rest of this hunt.
+          if (liveness.inactive && !this.authLivenessInactiveSurfaced) {
+            this.authLivenessInactiveSurfaced = true;
+            contextWriter.alert("auth_liveness_inactive", {
+              sessionId: this.state.sessionId,
+              message: "No configured/discovered baseline distinguishes authenticated from unauthenticated responses — a mid-hunt auth-session drop cannot be detected for this hunt. Set AuthConfig.livenessUrl to a real authenticated-only endpoint to enable detection.",
+            });
+            this.emit("hunt:auth_liveness_inactive", { sessionId: this.state.sessionId });
+          }
+        }
+      }
     }
 
     const allowlistExcluded = applyVulnClassAllowlist(this.state.hypotheses, this.vulnClassAllowlist);
@@ -4255,17 +4374,26 @@ Return ONLY valid JSON array of hypothesis objects.`;
   }
 
   /**
-   * Save a full resumable snapshot when the hunt's LLM dollar cap stops the
-   * loop mid-run (budget chokepoint Phase 3 must-have #3). Mirrors
-   * persistResults()'s DB write but marks the session status="paused_budget"
-   * (never "completed" — a cap hit is not a finish) and stores the complete
-   * in-memory HuntState plus the engine-level fields persistResults() never
-   * needed (campaignId/targetId/vulnClassAllowlist/etc, since those live on
-   * `this` rather than `this.state`) so resumeHunt() can reconstruct this
-   * exact engine instance and continue without re-probing or re-spending on
-   * work already paid for.
+   * Save a full resumable snapshot when the hunt loop pauses mid-run instead
+   * of finishing. Mirrors persistResults()'s DB write but marks the session
+   * status="paused_budget"/"paused_auth" (never "completed" — a pause is not
+   * a finish) and stores the complete in-memory HuntState plus the
+   * engine-level fields persistResults() never needed (campaignId/targetId/
+   * vulnClassAllowlist/etc, since those live on `this` rather than
+   * `this.state`) so resumeHunt() can reconstruct this exact engine instance
+   * and continue without re-probing or re-spending on work already paid for.
+   *
+   * Generalized (2026-07-23 readiness handoff, blocker #2) to a `status`/
+   * `reason` PARAMETER pair instead of hardcoding "paused_budget" — a second
+   * pause cause (an auth-session drop) reuses this exact function rather
+   * than forking a parallel persistAuthCheckpoint(). `reason`'s meaning is
+   * status-dependent: "dollar"/"call_count" for paused_budget, a free-text
+   * failure description for paused_auth.
    */
-  private async persistCheckpoint(): Promise<void> {
+  private async persistCheckpoint(
+    status: "paused_budget" | "paused_auth",
+    reason: string | null,
+  ): Promise<void> {
     try {
       // Anti-bypass (must-have #3): the dollar/call-count ledgers ClaudeClient
       // enforces the cap against live in process-local Maps keyed by sessionId,
@@ -4273,6 +4401,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // everything EXCEPT the one thing that actually stops the spend — the
       // resumed hunt would see an empty ledger for this sessionId and get a
       // full fresh budget on top of what was already spent, defeating the cap.
+      // Saved regardless of pause status — an auth-paused hunt still owes an
+      // accurate spend ledger on resume, same as a budget-paused one.
       const llmSpend = ClaudeClient.getSpend(this.state.sessionId);
       const llmCallCount = ClaudeClient.getCallCount(this.state.sessionId);
       const checkpoint = {
@@ -4288,17 +4418,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
         lastSynthesisCount: this.lastSynthesisCount,
         llmSpend,
         llmCallCount,
+        pauseStatus: status,
         // Which budget dimension caused this pause (must-have #2/#3, call-count
         // fix): an operator resuming must know whether to raise
         // MAX_LLM_USD_PER_HUNT or MAX_LLM_CALLS_PER_HUNT — raising the wrong
         // one leaves the resumed hunt re-pausing instantly on the other cap.
-        pausedReason: this.budgetPausedReason,
+        // For paused_auth, this instead carries the auth failure reason.
+        pausedReason: reason,
         savedAt: Date.now(),
       };
       await db.update(huntSessions)
         .set({
           phase: this.state.phase,
-          status: "paused_budget",
+          status,
           hypotheses: this.state.hypotheses as unknown as Record<string, unknown>[],
           observations: this.state.observations as unknown as Record<string, unknown>[],
           probes: this.state.probes as unknown as Record<string, unknown>[],
@@ -4311,10 +4443,45 @@ Return ONLY valid JSON array of hypothesis objects.`;
         confirmedFindings: this.state.confirmedFindings.length,
         llmSpendUsd: llmSpend.costUsd,
         llmCallCount,
-        pausedReason: this.budgetPausedReason,
+        status,
+        pausedReason: reason,
       });
     } catch (err) {
       logger.error("[HunterEngine] Failed to persist checkpoint", { err });
+    }
+    // 2026-07-24 (go-live protocol, Phase A finding): the queryable
+    // llmSpendUsd/llmCallCount columns are written ONLY here — see
+    // persistLlmSpend()'s own docstring for why this isn't inlined into the
+    // update() call above despite already having llmSpend/llmCallCount in
+    // scope. persistResults() (the normal-completion path) calls the exact
+    // same function, so there is exactly one place this ever happens.
+    await this.persistLlmSpend();
+  }
+
+  /**
+   * The single place llmSpendUsd/llmCallCount ever get written to a
+   * hunt_sessions row. Before this existed, persistCheckpoint() captured
+   * the spend ledger inside checkpoint's jsonb blob (needed for
+   * resumeHunt() to restore ClaudeClient's in-process ledger) but that's a
+   * PAUSE-only path — a hunt that completes normally never wrote its cost
+   * anywhere, discovered live during the Phase A localhost dry run (12
+   * confirmed findings, real spend, zero persisted cost after completion).
+   * Called from both persistCheckpoint() and persistResults() so "where's
+   * the cost" never has two possible answers, and a future edit to one
+   * write path can't silently diverge from the other.
+   */
+  private async persistLlmSpend(): Promise<void> {
+    const spend = ClaudeClient.getSpend(this.state.sessionId);
+    const callCount = ClaudeClient.getCallCount(this.state.sessionId);
+    try {
+      await db.update(huntSessions)
+        .set({ llmSpendUsd: spend.costUsd, llmCallCount: callCount })
+        .where(eq(huntSessions.sessionUuid, this.state.sessionId));
+      logger.info("[HunterEngine] LLM spend ledger persisted", {
+        sessionId: this.state.sessionId, llmSpendUsd: spend.costUsd, llmCallCount: callCount,
+      });
+    } catch (err) {
+      logger.error("[HunterEngine] Failed to persist LLM spend ledger", { err });
     }
   }
 
@@ -4334,7 +4501,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const [row] = await db.select().from(huntSessions)
       .where(eq(huntSessions.sessionUuid, sessionId)).limit(1);
     if (!row) throw new Error(`Hunt session ${sessionId} not found`);
-    if (row.status !== "paused_budget" || !row.checkpoint) {
+    const RESUMABLE_STATUSES = ["paused_budget", "paused_auth"];
+    if (!RESUMABLE_STATUSES.includes(row.status) || !row.checkpoint) {
       throw new Error(`Hunt session ${sessionId} is not paused (status=${row.status}) — nothing to resume`);
     }
 
@@ -4351,7 +4519,11 @@ Return ONLY valid JSON array of hypothesis objects.`;
       lastSynthesisCount: number;
       llmSpend?: { callCount: number; inputTokens: number; outputTokens: number; costUsd: number };
       llmCallCount?: number;
-      pausedReason?: "dollar" | "call_count" | null;
+      // Broadened from "dollar" | "call_count" | null (2026-07-23 readiness
+      // handoff, blocker #2) — a paused_auth checkpoint stores a free-text
+      // auth-failure reason here instead.
+      pausedReason?: string | null;
+      pauseStatus?: "paused_budget" | "paused_auth";
     };
 
     this.dbSessionId = row.id;
@@ -4366,8 +4538,16 @@ Return ONLY valid JSON array of hypothesis objects.`;
     this.lastSynthesisCount = cp.lastSynthesisCount ?? 0;
     this.state = cp.state;
     this.budgetPaused = false;
+    this.authPaused = false;
+    this.authPausedReason = null;
     this.hardBanned = false;
     this.aborted = false;
+
+    if (row.status === "paused_auth") {
+      logger.warn("[HunterEngine] Resuming a hunt that was paused on an auth-session drop", {
+        sessionId, reason: cp.pausedReason,
+      });
+    }
 
     // Budget-truncation recall fix (must-have #2, closing the gap the live
     // Phase 3 proof surfaced): a hypothesis whose LogicExploitAgent probe was
@@ -4474,6 +4654,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
           completedAt: new Date(),
         })
         .where(eq(huntSessions.sessionUuid, this.state.sessionId));
+
+      // 2026-07-24 (go-live protocol, Phase A finding): same shared write
+      // persistCheckpoint() calls — see persistLlmSpend()'s docstring. This
+      // is the fix for the exact gap the Phase A dry run found: a normally-
+      // completing hunt previously left its entire cost ledger in-memory,
+      // gone the moment the process restarted.
+      await this.persistLlmSpend();
 
       // Create exploit chain if multiple findings confirmed – links findings into an attack narrative
       if (this.campaignId && this.state.confirmedFindings.length >= 2) {

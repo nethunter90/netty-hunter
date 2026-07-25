@@ -74,6 +74,11 @@ export const programs = pgTable("programs", {
     usernameField?: string;
     passwordField?: string;
     sessionCookieNames?: string[];
+    // 2026-07-23 (auth-expiry handoff, blocker #2): threaded into
+    // lib/tools/session-manager.ts's AuthConfig interface but never into
+    // this persisted type — an operator-set value would have been silently
+    // dropped. Fixed here as part of the config-surface consolidation.
+    livenessUrl?: string;
   } | null>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -136,6 +141,22 @@ export const huntSessions = pgTable("hunt_sessions", {
    * a hunt sits paused; resumeHunt() reads it and clears it back to null.
    */
   checkpoint: jsonb("checkpoint"),
+  /**
+   * 2026-07-24 (readiness go-live protocol, Phase A finding): the LLM cost
+   * ledger (ClaudeClient.getSpend()) was previously only ever persisted via
+   * checkpoint's jsonb blob, written ONLY on a budget/auth pause
+   * (persistCheckpoint()) — a hunt that completes NORMALLY had its entire
+   * spend ledger die with the in-memory process, no queryable cost anywhere.
+   * Found live during the Phase A localhost dry run: 12 confirmed findings,
+   * real spend, zero persisted cost after completion. These two columns are
+   * the single queryable location BOTH persistCheckpoint() and
+   * persistResults() write to (via the shared persistLlmSpend() — see
+   * HunterEngine.ts), so "where's the cost" never has two possible answers.
+   * Nullable: a hunt that crashes before either path runs still has a valid
+   * row with no cost recorded, not a broken one.
+   */
+  llmSpendUsd: real("llm_spend_usd"),
+  llmCallCount: integer("llm_call_count"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
 });
