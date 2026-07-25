@@ -1,27 +1,59 @@
+/**
+ * PROVENANCE (2026-07-23 readiness handoff): decision_journal has no
+ * programId of its own — huntId (text) is the hunt's sessionUuid, which
+ * joins through hunt_sessions -> campaigns -> programs to reach platform.
+ * Previously learn() aggregated across every hunt ever run with zero
+ * program filter, and loadWeights() read the resulting global weights back
+ * with none either — a second, undocumented contamination surface next to
+ * the one closed in UnifiedReinforcementStore/ROIModel. Grouping now
+ * includes platform per (strategy_before, strategy_after) pair; provenance
+ * is derived from that platform via isCrossCampaignEligible() (the same
+ * discriminator every other RL consumer uses, not a reimplementation) and
+ * used as the same real::/lab::/unknown:: key prefix as everywhere else.
+ * A row whose hunt_id doesn't join to any program (deleted session, bad
+ * data) gets platform=null -> provenance "unknown", never silently "real".
+ */
 import { pool } from '../../db';
 import logger from '../../utils/logger';
+import { isCrossCampaignEligible } from '../hunter/custom-target-program';
+import type { Provenance } from '../../intelligence/ReinforcementStore';
 
 const LEARNING_RATE = 0.1;
 const DOMAIN = 'strategy_transitions';
 const MIN_WEIGHT = 0.05;
 const MAX_WEIGHT = 5.0;
 
+function resolveProvenanceFromPlatform(platform: string | null): Provenance {
+  if (platform === null) return "unknown";
+  return isCrossCampaignEligible({ platform }) ? "real" : "lab";
+}
+
+function prefixedKey(provenance: Provenance, key: string): string {
+  return `${provenance}::${key}`;
+}
+
 class StrategyWeightLearner {
   async learn(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT strategy_before, strategy_after,
-                AVG(outcome_score) AS avg_outcome,
+        `SELECT dj.strategy_before, dj.strategy_after,
+                p.platform         AS platform,
+                AVG(dj.outcome_score) AS avg_outcome,
                 COUNT(*)::int      AS sample_count
-         FROM decision_journal
-         WHERE strategy_before IS NOT NULL
-           AND strategy_after  IS NOT NULL
-           AND outcome_score   IS NOT NULL
-         GROUP BY strategy_before, strategy_after`
+         FROM decision_journal dj
+         LEFT JOIN hunt_sessions hs ON hs.session_uuid = dj.hunt_id
+         LEFT JOIN campaigns     c  ON c.id = hs.campaign_id
+         LEFT JOIN programs      p  ON p.id = c.program_id
+         WHERE dj.strategy_before IS NOT NULL
+           AND dj.strategy_after  IS NOT NULL
+           AND dj.outcome_score   IS NOT NULL
+         GROUP BY dj.strategy_before, dj.strategy_after, p.platform`
       );
 
       for (const row of result.rows) {
-        const key = `${row.strategy_before}->${row.strategy_after}`;
+        const provenance = resolveProvenanceFromPlatform(row.platform ?? null);
+        const rawKey = `${row.strategy_before}->${row.strategy_after}`;
+        const key = prefixedKey(provenance, rawKey);
         const avgOutcome: number = parseFloat(row.avg_outcome);
         const sampleCount: number = row.sample_count;
 
@@ -50,7 +82,7 @@ class StrategyWeightLearner {
           [
             DOMAIN,
             key,
-            JSON.stringify({ avgOutcome, sampleCount }),
+            JSON.stringify({ avgOutcome, sampleCount, provenance }),
             Math.round(avgOutcome * sampleCount),
             sampleCount,
             clamped,
@@ -62,15 +94,21 @@ class StrategyWeightLearner {
     }
   }
 
-  async loadWeights(): Promise<Map<string, number>> {
+  /** Provenance-gated read — a "real" hunt only ever loads real::-prefixed
+   *  weights, exactly like every other RL read site. Falls back to the
+   *  caller's hardcoded graph weights (empty map) on any resolution failure
+   *  or absence of data, same as before this change. */
+  async loadWeights(provenance: Provenance): Promise<Map<string, number>> {
     const weights = new Map<string, number>();
     try {
+      const prefix = `${provenance}::`;
       const result = await pool.query(
-        `SELECT key, weight FROM reinforcement_store WHERE domain = $1`,
-        [DOMAIN]
+        `SELECT key, weight FROM reinforcement_store WHERE domain = $1 AND key LIKE $2`,
+        [DOMAIN, `${prefix}%`]
       );
       for (const row of result.rows) {
-        weights.set(row.key as string, row.weight as number);
+        const key = (row.key as string).slice(prefix.length);
+        weights.set(key, row.weight as number);
       }
     } catch (err) {
       logger.warn("[StrategyWeightLearner] loadWeights() failed — using hardcoded graph weights", { err });

@@ -2,11 +2,25 @@
  * ROI Model
  * Calculates expected value per vulnerability type.
  * Auto-tunes confidence thresholds based on historical performance.
+ *
+ * PROVENANCE (2026-07-23 readiness handoff): this class used to read/write
+ * the RL table directly via raw db.select/insert/update calls under
+ * domain "tool_success", key=vulnClass — a second, undocumented writer into
+ * the same domain UnifiedReinforcementStore.recordToolOutcome() uses (with a
+ * different key shape: bare vulnClass here vs "tool:vulnClass" there — they
+ * don't collide, but they were both unsegregated by lab/real). That bypass is
+ * now closed: every read/write here goes through
+ * UnifiedReinforcementStore.getVulnClassStats()/recordVulnClassOutcome(),
+ * which prefixes the key by provenance exactly like every other RL consumer.
+ * Every public method that touches the store now requires a `provenance`
+ * argument — callers must resolve it via resolveProvenance()
+ * (lib/hunter/custom-target-program.ts) or reuse an already-resolved value
+ * (e.g. HunterEngine's own ReinforcementWiring.getProvenance()).
  */
 import { db } from "../db";
-import { findings, reinforcementStore, programs } from "../db/schema";
-import { eq, and } from "drizzle-orm";
-import logger from "../utils/logger";
+import { programs } from "../db/schema";
+import { eq } from "drizzle-orm";
+import { UnifiedReinforcementStore, Provenance } from "./ReinforcementStore";
 
 // Average bug bounty payouts by severity/type (USD) – industry averages
 const BASE_PAYOUTS: Record<string, number> = {
@@ -43,11 +57,13 @@ export interface VulnROI {
 
 export class ROIModel {
   private readonly HOURLY_RATE = 150; // $150/hr equivalent
+  private readonly rl = UnifiedReinforcementStore.getInstance();
 
   async calculateExpectedValue(
     vulnClass: string,
     programMaxPayout: number,
-    programId?: number
+    provenance: Provenance,
+    programId?: number,
   ): Promise<VulnROI> {
     // Fetch program-specific historical payout & success rate when programId is provided
     let programAvgPayout: number | null = null;
@@ -71,17 +87,13 @@ export class ROIModel {
       ? Math.round(globalBase * 0.6 + programAvgPayout * 0.4)
       : globalBase;
 
-    // Fetch historical success rate from reinforcement store
-    const [stored] = await db.select()
-      .from(reinforcementStore)
-      .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, vulnClass)))
-      .limit(1);
+    // Fetch historical success rate from reinforcement store — provenance-gated,
+    // see module docstring.
+    const { successCount: s, totalCount: n } = await this.rl.getVulnClassStats(vulnClass, provenance);
 
     // Bayesian smoothing with Beta(1,3) prior (mean=0.25): (successes+1)/(total+4).
     // At 0 observations → 0.25; at 5 failed attempts → 1/9 ≈ 0.11 (graceful, not 0.0).
     // The prior dissolves naturally as data accumulates — no cliff edge at the 5-attempt boundary.
-    const n = stored?.totalCount ?? 0;
-    const s = stored?.successCount ?? 0;
     const rlRate = (s + 1) / (n + 4);
 
     // Blend: 70% RL store rate, 30% program-specific historical rate (when available)
@@ -109,38 +121,17 @@ export class ROIModel {
     };
   }
 
-  async rankVulnClasses(programMaxPayout: number, programId?: number): Promise<VulnROI[]> {
+  async rankVulnClasses(programMaxPayout: number, provenance: Provenance, programId?: number): Promise<VulnROI[]> {
     const classes = Object.keys(BASE_PAYOUTS);
     const rois = await Promise.all(
-      classes.map(vc => this.calculateExpectedValue(vc, programMaxPayout, programId))
+      classes.map(vc => this.calculateExpectedValue(vc, programMaxPayout, provenance, programId))
     );
     rois.sort((a, b) => b.expectedValue - a.expectedValue);
     return rois;
   }
 
-  async updateSuccessRate(vulnClass: string, found: boolean): Promise<void> {
-    const key = vulnClass;
-    const existing = await db.select()
-      .from(reinforcementStore)
-      .where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, key)))
-      .limit(1);
-
-    if (existing.length > 0) {
-      const row = existing[0];
-      await db.update(reinforcementStore).set({
-        successCount: (row.successCount || 0) + (found ? 1 : 0),
-        totalCount: (row.totalCount || 0) + 1,
-        lastUpdated: new Date(),
-      }).where(and(eq(reinforcementStore.domain, "tool_success"), eq(reinforcementStore.key, key)));
-    } else {
-      await db.insert(reinforcementStore).values({
-        domain: "tool_success",
-        key,
-        value: {},
-        successCount: found ? 1 : 0,
-        totalCount: 1,
-      });
-    }
+  async updateSuccessRate(vulnClass: string, found: boolean, provenance: Provenance): Promise<void> {
+    await this.rl.recordVulnClassOutcome(vulnClass, found, provenance);
   }
 
   private getSeverityMultiplier(vulnClass: string): number {

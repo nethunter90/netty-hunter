@@ -6,6 +6,7 @@
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { TargetSelectionIntelligence } from "../intelligence/TargetSelection";
 import { ROIModel } from "../intelligence/ROIModel";
+import { resolveProvenance } from "../lib/hunter/custom-target-program";
 
 const HUNT_TEMPLATES: Record<string, HuntTemplate> = {
   recon_first: {
@@ -141,7 +142,8 @@ export class HuntStrategyBuilder {
     }));
 
     // Get ROI-sorted vuln classes (pass programId for program-specific blending when available)
-    const roiRanking = await roiModel.rankVulnClasses(10000, params.programId);
+    const provenance = await resolveProvenance(params.programId);
+    const roiRanking = await roiModel.rankVulnClasses(10000, provenance, params.programId);
     const prioritized = roiRanking
       .filter(r => template.vulnClasses.includes(r.vulnClass))
       .map(r => r.vulnClass);

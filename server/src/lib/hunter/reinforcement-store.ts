@@ -4,11 +4,22 @@
  * Extends UnifiedReinforcementStore with richer read APIs:
  * tool profiles, framework-vuln matrix, program/platform rankings,
  * confidence calibration, and exploration stats.
+ *
+ * PROVENANCE (2026-07-23 readiness handoff): every domain-wide scan below now
+ * goes through UnifiedReinforcementStore.getAllEntriesForDomain() — the
+ * explicit, documented reporting escape hatch — instead of a raw db.select()
+ * against the table directly. It returns rows across ALL provenances
+ * (lab+real+unknown) with the provenance prefix already stripped from each
+ * key, so the existing key.split(':') parsing below is unchanged. This is a
+ * DELIBERATE scoping choice: this file is read-only dashboard reporting
+ * (routes/hunter.ts), never a hunt-decision input, so mixing provenances
+ * here is correct, not a regression — see ReinforcementStore.ts's module
+ * docstring for the same reasoning applied to computeBrierScore()/getStats().
+ * The write-delegate methods at the bottom of this class are unused (no
+ * caller found outside this file) but still take a required `provenance`
+ * argument for consistency with the rest of the chokepoint.
  */
-import { UnifiedReinforcementStore } from '../../intelligence/ReinforcementStore';
-import { db } from '../../db';
-import { reinforcementStore as rlTable } from '../../db/schema';
-import { eq } from 'drizzle-orm';
+import { UnifiedReinforcementStore, Provenance } from '../../intelligence/ReinforcementStore';
 
 export interface ToolProfile {
   tool: string;
@@ -77,7 +88,7 @@ class ReinforcementStoreAdapter {
   }
 
   async getAllToolProfiles(): Promise<ToolProfile[]> {
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'tool_success'));
+    const entries = await this.rl.getAllEntriesForDomain('tool_success');
 
     const toolMap: Record<string, { total: number; success: number; byVulnClass: Record<string, { attempts: number; success: number }> }> = {};
 
@@ -150,7 +161,7 @@ class ReinforcementStoreAdapter {
   }
 
   async getAllFrameworkVulnProfiles(): Promise<FrameworkVulnProfile[]> {
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'framework_vuln'));
+    const entries = await this.rl.getAllEntriesForDomain('framework_vuln');
 
     const fwMap: Record<string, Array<{ vulnClass: string; rate: number; attempts: number }>> = {};
     for (const e of entries) {
@@ -167,12 +178,18 @@ class ReinforcementStoreAdapter {
   }
 
   async getFrameworkPriorities(framework: string): Promise<string[]> {
-    const vulns = await this.rl.getVulnsForFramework(framework);
-    return vulns.map(v => v.vulnClass);
+    // Cross-provenance reporting read (see class docstring) — reimplemented
+    // inline rather than calling the provenance-gated getVulnsForFramework(),
+    // which would silently exclude lab data from this dashboard view.
+    const entries = await this.rl.getAllEntriesForDomain('framework_vuln');
+    return entries
+      .filter(e => e.key.startsWith(`${framework}:`))
+      .sort((a, b) => b.successRate - a.successRate)
+      .map(e => e.key.split(':')[1]);
   }
 
   async getPlatformRanking(): Promise<PlatformRankEntry[]> {
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'program_type'));
+    const entries = await this.rl.getAllEntriesForDomain('program_type');
 
     const platformMap: Record<string, { total: number; success: number }> = {};
 
@@ -198,7 +215,7 @@ class ReinforcementStoreAdapter {
   }
 
   async getAllProgramTypeProfiles(): Promise<ProgramTypeProfile[]> {
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'program_type'));
+    const entries = await this.rl.getAllEntriesForDomain('program_type');
 
     const typeMap: Record<string, Array<{ strategy: string; successRate: number }>> = {};
     for (const e of entries) {
@@ -216,7 +233,7 @@ class ReinforcementStoreAdapter {
 
   async getCalibration(): Promise<CalibrationReport> {
     const brierScore = await this.rl.computeBrierScore();
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'confidence_calibration'));
+    const entries = await this.rl.getAllEntriesForDomain('confidence_calibration');
 
     const byVulnClass: Record<string, { biasSum: number; buckets: number }> = {};
     for (const e of entries) {
@@ -259,7 +276,7 @@ class ReinforcementStoreAdapter {
   }
 
   async getExplorationStats(): Promise<ExplorationStats> {
-    const entries = await db.select().from(rlTable).where(eq(rlTable.domain, 'exploration'));
+    const entries = await this.rl.getAllEntriesForDomain('exploration');
 
     const patternCounts: Record<string, number> = {};
     for (const e of entries) {
@@ -285,21 +302,23 @@ class ReinforcementStoreAdapter {
     };
   }
 
-  // Delegates
-  recordToolOutcome(tool: string, vulnClass: string, success: boolean) {
-    return this.rl.recordToolOutcome(tool, vulnClass, success);
+  // Delegates (unused outside this file as of the 2026-07-23 readiness
+  // handoff — `provenance` is required for consistency with the chokepoint,
+  // not because a live caller was found).
+  recordToolOutcome(tool: string, vulnClass: string, success: boolean, provenance: Provenance) {
+    return this.rl.recordToolOutcome(tool, vulnClass, success, provenance);
   }
-  recordFrameworkVuln(framework: string, vulnClass: string, found: boolean) {
-    return this.rl.recordFrameworkVuln(framework, vulnClass, found);
+  recordFrameworkVuln(framework: string, vulnClass: string, found: boolean, provenance: Provenance) {
+    return this.rl.recordFrameworkVuln(framework, vulnClass, found, provenance);
   }
-  recordConfidenceCalibration(vulnClass: string, confidence: number, found: boolean) {
-    return this.rl.recordConfidenceCalibration(vulnClass, confidence, found);
+  recordConfidenceCalibration(vulnClass: string, confidence: number, found: boolean, provenance: Provenance) {
+    return this.rl.recordConfidenceCalibration(vulnClass, confidence, found, provenance);
   }
-  recordModelOutcome(model: string, vulnClass: string, confirmed: boolean) {
-    return this.rl.recordModelOutcome(model, vulnClass, confirmed);
+  recordModelOutcome(model: string, vulnClass: string, confirmed: boolean, provenance: Provenance) {
+    return this.rl.recordModelOutcome(model, vulnClass, confirmed, provenance);
   }
-  getBetterModel(vulnClass: string) {
-    return this.rl.getBetterModel(vulnClass);
+  getBetterModel(vulnClass: string, provenance: Provenance = "unknown") {
+    return this.rl.getBetterModel(vulnClass, ["claude"], provenance);
   }
   computeBrierScore() {
     return this.rl.computeBrierScore();

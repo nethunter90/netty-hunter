@@ -9,10 +9,10 @@ import { scopedHttp, OutOfScopeError } from "../lib/net/scoped-http";
 import { dispatchTool, ToolOutOfScopeError } from "../lib/net/dispatch-tool";
 import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
 import { installScopeRoute } from "../lib/net/scoped-browser-route";
-import { programs, targets, wafProfiles, reinforcementStore, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
+import { programs, targets, wafProfiles, autonomyMetrics, exploitChains, huntSessions, findings, campaigns } from "../db/schema";
 import { eq, desc, like, or, inArray } from "drizzle-orm";
 import { KALI_CATALOG, KaliCategory } from "../lib/hunter/kali-catalog";
-import { isCrossCampaignEligible } from "../lib/hunter/custom-target-program";
+import { isCrossCampaignEligible, resolveProvenance } from "../lib/hunter/custom-target-program";
 import { z } from "zod";
 import TargetSelectionIntelligence from "../intelligence/TargetSelection";
 import ROIModel from "../intelligence/ROIModel";
@@ -288,14 +288,16 @@ router.get("/recommend-target", async (req: Request, res: Response) => {
 router.get("/roi/:vulnClass", async (req: Request, res: Response) => {
   const maxPayout = parseInt(String(req.query.maxPayout || "10000"));
   const programId = req.query.programId ? parseInt(String(req.query.programId)) : undefined;
-  const roi = await roiModel.calculateExpectedValue(req.params.vulnClass, maxPayout, programId);
+  const provenance = await resolveProvenance(programId);
+  const roi = await roiModel.calculateExpectedValue(req.params.vulnClass, maxPayout, provenance, programId);
   return res.json(roi);
 });
 
 router.get("/roi-ranking", async (req: Request, res: Response) => {
   const maxPayout = parseInt(String(req.query.maxPayout || "10000"));
   const programId = req.query.programId ? parseInt(String(req.query.programId)) : undefined;
-  const ranking = await roiModel.rankVulnClasses(maxPayout, programId);
+  const provenance = await resolveProvenance(programId);
+  const ranking = await roiModel.rankVulnClasses(maxPayout, provenance, programId);
   return res.json(ranking);
 });
 
@@ -307,11 +309,15 @@ router.get("/rl-stats", async (_req: Request, res: Response) => {
 });
 
 router.post("/rl-record", async (req: Request, res: Response) => {
-  const { domain, key, success } = req.body;
+  const { domain, key, success, programId } = req.body;
   if (!domain || !key) return res.status(400).json({ error: "domain and key required" });
   const validDomains = ["tool_success", "framework_vuln", "program_type", "confidence_calibration", "exploration"];
   if (!validDomains.includes(domain)) return res.status(400).json({ error: "invalid domain" });
-  await rlStore.record(domain, key, Boolean(success));
+  // Manual/admin write with no hunt context — resolve provenance from an
+  // optional programId in the body, fail closed to "unknown" (never a
+  // silent "real") when absent, matching every other RL write site.
+  const provenance = await resolveProvenance(typeof programId === "number" ? programId : undefined);
+  await rlStore.record(domain, key, Boolean(success), provenance);
   return res.json({ ok: true });
 });
 

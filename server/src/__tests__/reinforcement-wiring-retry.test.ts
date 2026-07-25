@@ -3,6 +3,10 @@
  * store method for waf_blocked and the stack-keyed one for
  * reflected_not_executed. Getting this routing backwards would silently
  * cross-pollinate the two axes the two RL domains exist to keep separate.
+ *
+ * Neither test below calls onHuntStart(), so provenance correctly resolves
+ * to the "unknown" fail-closed default (this file tests routing, not
+ * provenance resolution — see the segregation-proof tests for that).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -36,13 +40,13 @@ beforeEach(() => {
 describe('ReinforcementWiring.onRetryTechniqueOutcome', () => {
   it('routes waf_blocked to recordWafEvasionOutcome, keyed by vendor', () => {
     wiring.onRetryTechniqueOutcome('waf_blocked', 'cloudflare', 'xss', 'unicode_bypass', true);
-    expect(mockWafOutcome).toHaveBeenCalledWith('cloudflare', 'xss', 'unicode_bypass', true);
+    expect(mockWafOutcome).toHaveBeenCalledWith('cloudflare', 'xss', 'unicode_bypass', true, 'unknown');
     expect(mockPayloadOutcome).not.toHaveBeenCalled();
   });
 
   it('routes reflected_not_executed to recordPayloadMutationOutcome, keyed by stack', () => {
     wiring.onRetryTechniqueOutcome('reflected_not_executed', 'django', 'sqli', 'keyword-case', false);
-    expect(mockPayloadOutcome).toHaveBeenCalledWith('django', 'sqli', 'keyword-case', false);
+    expect(mockPayloadOutcome).toHaveBeenCalledWith('django', 'sqli', 'keyword-case', false, 'unknown');
     expect(mockWafOutcome).not.toHaveBeenCalled();
   });
 });

@@ -20,9 +20,10 @@
  * that engagement, rather than a standing wildcard.
  */
 import { db } from "../../db";
-import { programs } from "../../db/schema";
+import { programs, huntSessions, campaigns } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { ScopeGuard } from "../../middleware/scopeGuard";
+import type { Provenance } from "../../intelligence/ReinforcementStore";
 
 export async function resolveCustomTargetProgram(targetUrl: string, customScope?: string[]): Promise<number> {
   const hostname = new URL(targetUrl).hostname;
@@ -64,4 +65,52 @@ export async function resolveCustomTargetProgram(targetUrl: string, customScope?
  */
 export function isCrossCampaignEligible(program: { platform: string }): boolean {
   return !["local", "custom", "other"].includes(program.platform);
+}
+
+/**
+ * RL provenance segregation (2026-07-23 readiness handoff).
+ *
+ * Wraps isCrossCampaignEligible() above — the SAME discriminator, not a
+ * reimplementation — into the three-way tag the reinforcement store's
+ * key-prefix chokepoint (ReinforcementStore.ts) requires. FAIL CLOSED: a
+ * missing/unresolvable program (lookup failure, deleted program, bad id)
+ * resolves to "unknown", never silently to "real". "unknown" entries are
+ * written to their own namespace and are never read back by a "real"-context
+ * caller (see ReinforcementStore.ts's queryDomain/get — provenance is an
+ * exact key match, not a fallback chain).
+ */
+export async function resolveProvenance(programId: number | null | undefined): Promise<Provenance> {
+  if (typeof programId !== "number" || !Number.isFinite(programId)) return "unknown";
+  try {
+    const [program] = await db.select({ platform: programs.platform })
+      .from(programs).where(eq(programs.id, programId)).limit(1);
+    if (!program) return "unknown";
+    return isCrossCampaignEligible(program) ? "real" : "lab";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Same as resolveProvenance() but starting from a hunt's sessionUuid instead
+ * of a programId directly — for callers that only have hunt/session
+ * identity in scope (e.g. MetaReasoner.completeHunt(huntId, ...) and
+ * strategy-weight-learner's decision_journal aggregation use the same join
+ * shape inline via raw SQL for a bulk query; this is the single-row version
+ * for callers making one resolution at a time). Joins
+ * hunt_sessions -> campaigns -> programs; any missing link resolves to
+ * "unknown", never a silent "real".
+ */
+export async function resolveProvenanceFromHuntId(huntId: string): Promise<Provenance> {
+  try {
+    const [row] = await db.select({ programId: campaigns.programId })
+      .from(huntSessions)
+      .innerJoin(campaigns, eq(campaigns.id, huntSessions.campaignId))
+      .where(eq(huntSessions.sessionUuid, huntId))
+      .limit(1);
+    if (!row) return "unknown";
+    return resolveProvenance(row.programId);
+  } catch {
+    return "unknown";
+  }
 }

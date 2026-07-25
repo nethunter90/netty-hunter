@@ -10,6 +10,7 @@ import { adaptiveThresholdTuner } from './adaptive-threshold-tuner';
 import { backwardPlanner } from './backward-planner';
 import { decisionTraceLogger } from './decision-trace';
 import { strategyWeightLearner } from '../learning/strategy-weight-learner';
+import { resolveProvenanceFromHuntId } from '../hunter/custom-target-program';
 
 export interface Evidence {
   type: 'technology' | 'vulnerability' | 'endpoint' | 'credential' | 'defense' | 'error';
@@ -168,7 +169,10 @@ export class MetaReasoner extends EventEmitter {
   }
 
   async loadLearnedWeights(): Promise<void> {
-    this.learnedWeights = await strategyWeightLearner.loadWeights();
+    // Called once at module load (see the bottom of this file), before any
+    // hunt/programId exists — "unknown" is the only honest provenance here.
+    // completeHunt() below refreshes this per-hunt with a real resolution.
+    this.learnedWeights = await strategyWeightLearner.loadWeights("unknown");
   }
 
   private subscribeToCortex(): void {
@@ -291,7 +295,16 @@ export class MetaReasoner extends EventEmitter {
     }
   }
 
-  getBestTransition(currentStrategy: string, context: HuntContext): string {
+  // `weights` (2026-07-23 readiness handoff, Phase 2 regression fix): an
+  // explicit override so evaluateEnriched() (below) can pass freshly-resolved,
+  // hunt-scoped provenance weights instead of relying on this.learnedWeights —
+  // a single shared field only refreshed at hunt COMPLETION (completeHunt()),
+  // which meant a real hunt's mid-hunt decisions never saw its own real::
+  // weights, only whatever the previous hunt's completion had left behind
+  // (wrong-hunt weights at best, "unknown"'s boot default at worst). The sync
+  // evaluate() path (no async DB read available) still falls back to the
+  // shared field, opportunistically refreshed as a side effect below.
+  getBestTransition(currentStrategy: string, context: HuntContext, weights: Map<string, number> = this.learnedWeights): string {
     const edges = this.strategyGraph.get(currentStrategy);
     if (!edges || edges.length === 0) {
       return 'tech_fingerprint';
@@ -301,7 +314,7 @@ export class MetaReasoner extends EventEmitter {
       const historyKey = `${edge.from}->${edge.to}`;
 
       // Start from persisted cross-hunt weight if available, else hardcoded base
-      let adjustedWeight = this.learnedWeights.get(historyKey) ?? edge.weight;
+      let adjustedWeight = weights.get(historyKey) ?? edge.weight;
 
       // Blend with within-session history (60/40 toward base)
       const history = this.transitionSuccessHistory.get(historyKey);
@@ -686,6 +699,15 @@ export class MetaReasoner extends EventEmitter {
       };
     }
 
+    // Resolve THIS hunt's own provenance-scoped weights fresh, every call —
+    // not just at hunt completion (see getBestTransition's docstring above).
+    // Also refresh the shared this.learnedWeights fallback so evaluate()'s
+    // synchronous path (no async DB read available there) benefits on its
+    // next call for this same hunt, rather than only after completeHunt().
+    const huntProvenance = await resolveProvenanceFromHuntId(huntId);
+    const huntWeights = await strategyWeightLearner.loadWeights(huntProvenance);
+    this.learnedWeights = huntWeights;
+
     const health = huntCortex.computeHuntHealth(huntId);
     const hunt = huntOrchestrator.getHunt(huntId);
     const targetType = hunt?.goal || 'General';
@@ -767,7 +789,7 @@ export class MetaReasoner extends EventEmitter {
         recommendations.push(`Replaying successful pivot from past hunt (similarity match, outcome: ${(similarPast.outcomeScore * 100).toFixed(0)}%)`);
       } else {
         const context = this.buildHuntContext(huntId, state);
-        newStrategy = this.getBestTransition(state.currentStrategy, context);
+        newStrategy = this.getBestTransition(state.currentStrategy, context, huntWeights);
       }
 
       this.emit('meta:pivot', { huntId, from: state.currentStrategy, to: newStrategy, reason: 'novelty_exhausted' });
@@ -797,7 +819,7 @@ export class MetaReasoner extends EventEmitter {
 
     if (health.health < thresholds.healthFloor) {
       const context = this.buildHuntContext(huntId, state);
-      const newStrategy = this.getBestTransition(state.currentStrategy, context);
+      const newStrategy = this.getBestTransition(state.currentStrategy, context, huntWeights);
 
       this.emit('meta:pivot', { huntId, from: state.currentStrategy, to: newStrategy, reason: 'health_critical' });
 
@@ -1107,7 +1129,8 @@ export class MetaReasoner extends EventEmitter {
 
     // Recompute strategy weights from the now-scored journal entries and refresh in-memory map
     await strategyWeightLearner.learn();
-    this.learnedWeights = await strategyWeightLearner.loadWeights();
+    const provenance = await resolveProvenanceFromHuntId(huntId);
+    this.learnedWeights = await strategyWeightLearner.loadWeights(provenance);
     
     huntCortex.broadcast({
       signalType: SignalType.FINDING_CONFIRMED,
