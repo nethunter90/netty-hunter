@@ -100,6 +100,21 @@ describe('check-llm-bypass — subprocess-bridge shape (handoff C Phase 2)', () 
     expect(scanContent(src, FAKE_PATH)).toEqual([]);
   });
 
+  it('bare exec(\'claude ...\') shell-string form is flagged — the seventh bypass (execFile/spawn substring-match does not cover it)', () => {
+    const src = `import { exec } from 'child_process';\nexec('claude -p "hello"', () => {});\n`;
+    expect(scanContent(src, FAKE_PATH).length).toBeGreaterThan(0);
+  });
+
+  it('bare execSync(\'claude ...\') is also flagged', () => {
+    const src = `import { execSync } from 'child_process';\nexecSync('claude -p "hello"');\n`;
+    expect(scanContent(src, FAKE_PATH).length).toBeGreaterThan(0);
+  });
+
+  it('exec() of an unrelated shell command is NOT flagged', () => {
+    const src = `import { exec } from 'child_process';\nexec('nmap -sV ' + target, cb);\n`;
+    expect(scanContent(src, FAKE_PATH)).toEqual([]);
+  });
+
   it('claude-bridge.ts at its real path produces zero violations (the bridge chokepoint itself)', () => {
     const content = readFileSync(join(__dirname, '..', 'lib', 'claude-bridge.ts'), 'utf-8');
     expect(scanContent(content, 'lib/claude-bridge.ts')).toEqual([]);

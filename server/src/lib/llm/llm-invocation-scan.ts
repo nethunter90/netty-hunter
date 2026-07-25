@@ -88,6 +88,24 @@ const MODEL_CLI_ALTERNATION = KNOWN_MODEL_CLIS.map(b => b.replace(/[.*+?^${}()|[
 const SUBPROCESS_BRIDGE_PATTERN = new RegExp(
   `\\b\\w*(?:execFile|spawn)\\w*\\s*\\(\\s*["'](${MODEL_CLI_ALTERNATION})["']`
 );
+// 2026-07-25: execFile/spawn take the binary as a DISCRETE argv token
+// (the pattern above requires the quoted string to be EXACTLY the binary
+// name). Bare exec()/execSync() take a single SHELL-COMMAND STRING instead —
+// the binary is only the first word of a longer shell string (e.g. the
+// model CLI's own name followed by its -p flag and prompt text) — so the
+// pattern above's exact-quote-match structurally cannot match it. A real gap, not theoretical: confirmed live that
+// check-tool-exec.ts's pattern DOES catch bare exec()/execSync() (it's an
+// unconditional violation there — always shell-invoking), but check-
+// tool-exec.ts only scans src/, not scripts/, so a bridge placed in
+// scripts/ using shell-string exec() form slipped past BOTH guards until
+// this pattern was added — the LLM-spend guard should own this shape
+// completely, not depend on the tool-exec guard's scope happening to cover
+// it. fork() is deliberately not matched here — it runs another Node.js
+// module by path, not an arbitrary external binary, so it isn't a
+// realistic vector for invoking a model CLI.
+const SHELL_STRING_BRIDGE_PATTERN = new RegExp(
+  `\\bexec(?:Sync)?\\s*\\(\\s*["'](${MODEL_CLI_ALTERNATION})\\b`
+);
 
 export interface LlmBypassViolation {
   reason: string;
@@ -115,6 +133,10 @@ export function scanContent(content: string, relPath: string): LlmBypassViolatio
 
   if (SUBPROCESS_BRIDGE_PATTERN.test(content)) {
     violations.push({ reason: "invokes a model CLI binary (execFile/spawn) directly — this is the exact shape that caused the CLI-bridge $0-cost bug; route through ClaudeBridge (lib/claude-bridge.ts) so spend is attributed via ClaudeClient.recordExternalCall()" });
+  }
+
+  if (SHELL_STRING_BRIDGE_PATTERN.test(content)) {
+    violations.push({ reason: "invokes a model CLI binary via a shell-string exec()/execSync() call — same shape as the execFile/spawn bypass above, just shell-string form instead of argv-array form; route through ClaudeBridge (lib/claude-bridge.ts) so spend is attributed via ClaudeClient.recordExternalCall()" });
   }
 
   return violations;
