@@ -47,6 +47,21 @@ export const programs = pgTable("programs", {
   // allowed to run this here"; the env flag answers "should this run
   // autonomously at all" — three different questions, checked separately.
   exploitationToolsPolicy: varchar("exploitation_tools_policy", { length: 16 }).notNull().default("unspecified"),
+  // 2026-07-23 (blocker #3, behavioral-rules enforcement handoff): same
+  // fail-closed posture as wafBypassPolicy/exploitationToolsPolicy above —
+  // "unspecified"/"disallowed" both mean NOT authorized, only an explicit
+  // "allowed" permits dispatch. Gates ZAP's active/passive scan AND nuclei
+  // (both are "automated scanning" per the audit's own naming — see
+  // agents/ActionPolicyGate.ts). Checked via the shared isActionAllowed()
+  // gate, not a standalone function — see that file for why WAF-bypass and
+  // exploitation-tools got their own checkXAuthorization() wrappers
+  // historically but this one and fuzzingPolicy below don't need to.
+  automatedScanningPolicy: varchar("automated_scanning_policy", { length: 16 }).notNull().default("unspecified"),
+  // Same posture — gates ffuf/gobuster/feroxbuster/wfuzz/arjun (content/
+  // parameter discovery via brute-force), a distinct category from
+  // "automated scanning" since some programs permit targeted vuln scanning
+  // but not broad directory/parameter fuzzing, or vice versa.
+  fuzzingPolicy: varchar("fuzzing_policy", { length: 16 }).notNull().default("unspecified"),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
   scheduleInterval: integer("schedule_interval").default(0), // hours between auto re-scans; 0 = disabled

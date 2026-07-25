@@ -15,6 +15,7 @@ import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary, checkWafBypassAuthorization } from "./WAFBypass";
+import { checkAutomatedScanningAuthorization, checkFuzzingAuthorization, runProgramPreflight } from "./ActionPolicyGate";
 import { ScopeGuard } from "../middleware/scopeGuard";
 import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
@@ -660,6 +661,14 @@ export const TOOL_KNOWLEDGE: Record<string, {
 
 const MAX_OBSERVATIONS = 500;
 const MAX_HYPOTHESES = 150;
+// 2026-07-23 readiness handoff, blocker #2: how often (in probe() calls, not
+// wall-clock time — simpler, no timer bookkeeping) the auth-liveness
+// re-check fires. ensureSession() above it is cheap/cached; this is a real
+// request and must not add a round-trip to every single probe phase.
+const LIVENESS_CHECK_EVERY_N_PROBES = 5;
+// 2026-07-23 (blocker #3): tools gated as "fuzzing" in runTool() — content/
+// parameter brute-force discovery, distinct from targeted vuln scanning.
+const FUZZING_TOOLS = new Set(["ffuf", "gobuster", "feroxbuster", "wfuzz", "arjun"]);
 const MAX_PROBES = 1500;
 
 // Truncation priority for the MAX_HYPOTHESES cap below: "pending"/"probing"
@@ -1038,6 +1047,27 @@ export class HunterEngine extends EventEmitter {
       confidence: 1, reason: "In scope",
       coachMessage: "Hunt authorized to proceed",
     });
+
+    // Behavioral-rules pre-flight (2026-07-23, blocker #3) — Path B's own
+    // copy of the same WARN-only check CampaignOrchestrator's Layer 1 runs,
+    // since console/direct-engine hunts (this path) bypass the orchestrator
+    // entirely (see the comment above rootScopeCheck). Never blocks — see
+    // ActionPolicyGate.runProgramPreflight()'s docstring.
+    try {
+      const [preflightProgram] = await db.select().from(programs)
+        .where(eq(programs.id, params.programId)).limit(1);
+      if (preflightProgram) {
+        const preflightWarnings = runProgramPreflight(preflightProgram);
+        if (preflightWarnings.length > 0) {
+          logger.warn("[HunterEngine] Real-program pre-flight found unspecified policy/config", {
+            programId: params.programId, warnings: preflightWarnings,
+          });
+          this.emit("hunt:preflight_warnings", { programId: params.programId, warnings: preflightWarnings });
+        }
+      }
+    } catch (err) {
+      logger.debug("[HunterEngine] Pre-flight check failed (non-critical)", { err: String(err) });
+    }
 
     await this.loadCustomTools();
 
@@ -2196,6 +2226,18 @@ export class HunterEngine extends EventEmitter {
         // operator must explicitly opt in per hunt, same posture as
         // wafBypassEnabled.
         if (!this.state.automatedScanningEnabled) return;
+        // 2026-07-23 (blocker #3): the per-hunt toggle above answers "did the
+        // operator opt in THIS hunt" — it has zero connection to what the
+        // PROGRAM's rules actually permit. Both must pass now: an operator
+        // could previously enable this toggle on a real program whose rules
+        // prohibit scanning and nothing would stop them.
+        const scanAuth = await checkAutomatedScanningAuthorization(this.state.targetUrl, this.state.programId);
+        if (!scanAuth.allowed) {
+          logger.warn("[HunterEngine] ZAP scan skipped — automated scanning not authorized for this program", {
+            sessionId: this.state.sessionId, reason: scanAuth.reason,
+          });
+          return;
+        }
         try {
           const zapResult = await zapScanner.scan(this.state.targetUrl, this.authHeaders);
           if (!zapResult.available) return;
@@ -3424,6 +3466,23 @@ Return ONLY valid JSON array of hypothesis objects.`;
   ): Promise<Record<string, unknown>> {
     const tool = this.mergedTools[toolName];
     if (!tool) return { error: "Unknown tool" };
+
+    // Program behavioral-rules enforcement (2026-07-23, blocker #3): nuclei
+    // is gated as "automated scanning" (conservative — over-block and let
+    // the operator enable, rather than guess which templates count as
+    // scanning) alongside ZAP's own toggle+policy check in observe().
+    // ffuf/gobuster/feroxbuster/wfuzz/arjun (content/parameter brute-force)
+    // are gated as "fuzzing" — a distinct category since some programs
+    // permit targeted scanning but not broad fuzzing, or vice versa. Both
+    // fail closed on a real program with an unspecified/disallowed policy;
+    // lab targets are unaffected (isActionAllowed permits unconditionally).
+    if (toolName === "nuclei") {
+      const auth = await checkAutomatedScanningAuthorization(url, this.state.programId);
+      if (!auth.allowed) return { error: auth.reason, policyBlocked: true, duration: 0, command: "" };
+    } else if (FUZZING_TOOLS.has(toolName)) {
+      const auth = await checkFuzzingAuthorization(url, this.state.programId);
+      if (!auth.allowed) return { error: auth.reason, policyBlocked: true, duration: 0, command: "" };
+    }
 
     // Rate limiting
     const lastUsed = this.toolLastUsed.get(toolName) || 0;

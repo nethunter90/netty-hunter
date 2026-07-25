@@ -361,6 +361,21 @@ export class CampaignOrchestrator extends EventEmitter {
       return { passed: false, data: { reason: scopeCheck.reason } };
     }
 
+    // 1b.5. Behavioral-rules pre-flight (2026-07-23, blocker #3): WARN-only,
+    // never blocks — every restricted action it flags is already fail-closed
+    // at ActionPolicyGate's dispatch-time gate, so an unspecified policy
+    // makes the hunt safe-but-degraded, not unsafe. Lab programs get zero
+    // warnings. This is the structural reminder the readiness audit found
+    // missing — logged loud (warn) and emitted so an operator watching the
+    // UI sees it, not buried at debug.
+    const preflightWarnings = runProgramPreflight(program);
+    if (preflightWarnings.length > 0) {
+      logger.warn("[CampaignOrchestrator] Real-program pre-flight found unspecified policy/config", {
+        programId: params.programId, warnings: preflightWarnings,
+      });
+      this.emit("orchestration:preflight_warnings", { programId: params.programId, warnings: preflightWarnings });
+    }
+
     // 1c. Budget guard
     const budget = params.budget || { maxRequests: 2000, maxTime: 3600 };
     if (budget.maxRequests < 10 || budget.maxRequests > 50000) {
