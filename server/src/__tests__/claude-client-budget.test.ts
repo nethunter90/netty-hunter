@@ -65,13 +65,31 @@ describe('ClaudeClient.createMessage — dollar accounting', () => {
     expect(spend.outputTokens).toBe(1_000_000);
   });
 
-  it('charges cache_creation and cache_read tokens at the input rate too (conservative overestimate)', async () => {
+  it('prices cache_creation at 1.25x and cache_read at 0.1x the base input rate (2026-07-25 correction)', async () => {
     const { ClaudeClient } = await import('../lib/claude-client');
     createMock.mockResolvedValue(mockResponse('ok', usage(0, 0, { cache_creation_input_tokens: 500_000, cache_read_input_tokens: 500_000 })));
     await ClaudeClient.createMessage({ model: 'claude-sonnet-5', max_tokens: 10, messages: [] }, 'hunt-cache', 100);
     const spend = ClaudeClient.getSpend('hunt-cache');
-    // (500k + 500k) input-shaped tokens = 1M @ $2/M = $2, no output tokens
-    expect(spend.costUsd).toBeCloseTo(2, 5);
+    // sonnet-5 base input $2/M: 500k cache_creation @ 1.25x = $1.25, 500k cache_read @ 0.1x = $0.1
+    expect(spend.costUsd).toBeCloseTo(1.35, 5);
+  });
+
+  it('falls back to conservative DEFAULT_PRICING and logs loudly once claude-sonnet-5 intro pricing expires (2026-08-31)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:01Z'));
+    try {
+      const { ClaudeClient } = await import('../lib/claude-client');
+      const logger = (await import('../utils/logger')).default;
+      createMock.mockResolvedValue(mockResponse('ok', usage(1_000_000, 1_000_000))); // 1M in, 1M out
+      await ClaudeClient.createMessage({ model: 'claude-sonnet-5', max_tokens: 10, messages: [] }, 'hunt-expired', 100);
+      const spend = ClaudeClient.getSpend('hunt-expired');
+      // DEFAULT_PRICING ($3/M in + $15/M out), NOT the stale intro $2/$10 — the
+      // whole point is this must never silently under-bill past the lapse date.
+      expect(spend.costUsd).toBeCloseTo(18, 5);
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('introductory pricing expired'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('accumulates spend across multiple calls for the same session', async () => {

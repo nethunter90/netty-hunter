@@ -84,6 +84,33 @@ describe('check-llm-bypass — allowlist', () => {
   });
 });
 
+describe('check-llm-bypass — subprocess-bridge shape (handoff C Phase 2)', () => {
+  it('execFile("claude", ...) is flagged — the exact shape that caused the CLI-bridge $0-cost bug', () => {
+    const src = `import { execFile } from 'child_process';\nexecFile('claude', ['--print', '-p', prompt], cb);\n`;
+    expect(scanContent(src, FAKE_PATH).length).toBeGreaterThan(0);
+  });
+
+  it('spawn("claude", ...) is also flagged (not just execFile)', () => {
+    const src = `import { spawn } from 'child_process';\nspawn('claude', ['-p', prompt]);\n`;
+    expect(scanContent(src, FAKE_PATH).length).toBeGreaterThan(0);
+  });
+
+  it('execFile of an unrelated binary is NOT flagged (the guard targets known model CLIs, not all subprocess exec)', () => {
+    const src = `import { execFile } from 'child_process';\nexecFile('nmap', ['-sV', target], cb);\n`;
+    expect(scanContent(src, FAKE_PATH)).toEqual([]);
+  });
+
+  it('claude-bridge.ts at its real path produces zero violations (the bridge chokepoint itself)', () => {
+    const content = readFileSync(join(__dirname, '..', 'lib', 'claude-bridge.ts'), 'utf-8');
+    expect(scanContent(content, 'lib/claude-bridge.ts')).toEqual([]);
+  });
+
+  it('the SAME claude-bridge.ts content at a non-allowlisted path IS flagged (proves the allowlist gate, not a pattern miss)', () => {
+    const content = readFileSync(join(__dirname, '..', 'lib', 'claude-bridge.ts'), 'utf-8');
+    expect(scanContent(content, FAKE_PATH).length).toBeGreaterThan(0);
+  });
+});
+
 describe('check-llm-bypass — regression: real project files scan clean', () => {
   it('LogicExploitAgent.ts (the file the fix migrated off the SDK bypass) produces zero violations', () => {
     const content = readFileSync(join(__dirname, '..', 'agents', 'LogicExploitAgent.ts'), 'utf-8');

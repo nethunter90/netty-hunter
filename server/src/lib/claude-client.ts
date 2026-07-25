@@ -13,31 +13,74 @@ import logger from "../utils/logger";
 import { runtimeConfig } from "./runtime-config";
 
 // ── Pricing (USD per million tokens) ────────────────────────────────────────
-// 2026-07-22: current published pricing. Cache read/creation tokens are
-// billed at different rates than plain input by Anthropic (writes ~1.25x,
-// reads ~0.1x base input) — this table doesn't model that distinction and
-// instead charges ALL input-shaped tokens (input + cache_creation +
-// cache_read) at the base input rate. That's a deliberate overestimate, not
-// an oversight: for a SPEND CAP, overestimating cost is the safe direction
-// (stops slightly early rather than slightly late) — undercounting is the
-// failure mode that matters here ("close but wrong is worse than none").
+// 2026-07-22: current published pricing.
 // claude-sonnet-5 is introductory pricing through 2026-08-31; becomes
 // $3/$15 per M after — update PRICING when that lapses.
-interface ModelPricing { inputPerM: number; outputPerM: number; }
+//
+// 2026-07-25 (budget chokepoint, handoff C Phase 1): cache read/creation
+// tokens ARE now priced per Anthropic's real published cache-pricing ratios
+// (write ~1.25x base input, read ~0.1x base input) instead of the previous
+// blanket "charge everything at base input rate" approximation. That
+// approximation was a deliberate, documented overestimate for a cache-heavy
+// hunt (most calls in a reasoning thread are cache reads) — cheap correctly-
+// modeled reads vs. expensive mispriced-as-full-input reads is not a small
+// gap once a hunt runs long enough to build up cache hits. Reconciled
+// against the Anthropic dashboard for a real capped hunt window (see
+// handoff C Phase 1 report) before landing this change, not shipped on
+// the ratio alone.
+interface ModelPricing { inputPerM: number; outputPerM: number; cacheWriteMultiplier: number; cacheReadMultiplier: number; }
+const CACHE_WRITE_MULTIPLIER = 1.25; // Anthropic's published 5-minute cache write rate
+const CACHE_READ_MULTIPLIER = 0.1;   // Anthropic's published cache read rate
 const PRICING: Record<string, ModelPricing> = {
-  "claude-sonnet-5": { inputPerM: 2, outputPerM: 10 },
-  "claude-haiku-4-5": { inputPerM: 1, outputPerM: 5 },
+  "claude-sonnet-5": { inputPerM: 2, outputPerM: 10, cacheWriteMultiplier: CACHE_WRITE_MULTIPLIER, cacheReadMultiplier: CACHE_READ_MULTIPLIER },
+  "claude-haiku-4-5": { inputPerM: 1, outputPerM: 5, cacheWriteMultiplier: CACHE_WRITE_MULTIPLIER, cacheReadMultiplier: CACHE_READ_MULTIPLIER },
 };
-const DEFAULT_PRICING: ModelPricing = { inputPerM: 3, outputPerM: 15 }; // conservative fallback for an unrecognized model — Opus-tier, not Haiku-tier, so an unknown model can't silently under-cost
+// Conservative fallback for an unrecognized model — Opus-tier, not Haiku-
+// tier, so an unknown model can't silently under-cost; cache multipliers
+// use the same published ratios (they're a property of Anthropic's cache
+// mechanism, not per-model).
+const DEFAULT_PRICING: ModelPricing = { inputPerM: 3, outputPerM: 15, cacheWriteMultiplier: CACHE_WRITE_MULTIPLIER, cacheReadMultiplier: CACHE_READ_MULTIPLIER };
+
+// 2026-07-25 (handoff C Phase 2, cap-integrity item): claude-sonnet-5's
+// $2/$10 rate above is INTRODUCTORY, not permanent — it lapses on this date
+// and standard pricing ($3/$15/M, i.e. DEFAULT_PRICING's numbers) takes
+// over. A hardcoded rate with no expiry awareness would silently keep
+// charging the stale, now-50%-too-low price forever after that date — an
+// UNDER-estimate, which is the dangerous direction for a spend cap: it lets
+// a real hunt spend ~1.5x its intended dollar budget with no error thrown,
+// the exact silent-degradation shape this whole project has been converting
+// into loud failures elsewhere. This constant plus the check in
+// getModelPricing() is the tripwire: past this date, claude-sonnet-5 falls
+// back to DEFAULT_PRICING (the conservative, HIGHER rate) instead of the
+// stale intro numbers, and logs an error every single call until PRICING
+// is updated with the real post-lapse rate — annoying by design, so it
+// can't be missed the way a silent under-count would be.
+const SONNET_5_INTRO_PRICING_EXPIRES = "2026-08-31";
+let introPricingExpiryWarned = false;
+
+function getModelPricing(model: string): ModelPricing {
+  if (model === "claude-sonnet-5" && Date.now() > new Date(SONNET_5_INTRO_PRICING_EXPIRES + "T23:59:59Z").getTime()) {
+    if (!introPricingExpiryWarned) {
+      introPricingExpiryWarned = true;
+      logger.error(
+        `[ClaudeClient] claude-sonnet-5's introductory pricing expired on ${SONNET_5_INTRO_PRICING_EXPIRES} — ` +
+        `falling back to the conservative DEFAULT_PRICING rate ($${DEFAULT_PRICING.inputPerM}/$${DEFAULT_PRICING.outputPerM} per M) ` +
+        `instead of the stale $2/$10 intro rate to avoid silently under-billing. Update PRICING["claude-sonnet-5"] with ` +
+        `the real current rate — this fallback is safe-direction (overestimates) but not accurate.`
+      );
+    }
+    return DEFAULT_PRICING;
+  }
+  return PRICING[model] ?? DEFAULT_PRICING;
+}
 
 function costForUsage(model: string, usage: Anthropic.Usage): number {
-  const pricing = PRICING[model] ?? DEFAULT_PRICING;
-  const inputShapedTokens = usage.input_tokens
-    + (usage.cache_creation_input_tokens ?? 0)
-    + (usage.cache_read_input_tokens ?? 0);
-  const inputCost = (inputShapedTokens / 1_000_000) * pricing.inputPerM;
+  const pricing = getModelPricing(model);
+  const plainInputCost = (usage.input_tokens / 1_000_000) * pricing.inputPerM;
+  const cacheWriteCost = ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) * pricing.inputPerM * pricing.cacheWriteMultiplier;
+  const cacheReadCost = ((usage.cache_read_input_tokens ?? 0) / 1_000_000) * pricing.inputPerM * pricing.cacheReadMultiplier;
   const outputCost = (usage.output_tokens / 1_000_000) * pricing.outputPerM;
-  return inputCost + outputCost;
+  return plainInputCost + cacheWriteCost + cacheReadCost + outputCost;
 }
 
 export interface SpendRecord {

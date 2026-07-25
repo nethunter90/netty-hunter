@@ -3,12 +3,22 @@
  * Scan logic lives in src/lib/llm/llm-invocation-scan.ts (see that file's
  * own comment for what's checked and why); this is just the filesystem walk
  * + process.exit wiring. Run: npx tsx scripts/check-llm-bypass.ts
+ *
+ * 2026-07-25 (handoff C, Phase 2): now walks scripts/ as well as src/ — the
+ * original src/-only scope meant three files that construct their own
+ * Anthropic client (gate1-pacer-harness.ts, gate1-cache-harness.ts,
+ * expand-prompts.mjs) were structurally invisible to this guard despite
+ * matching exactly the bypass shape it exists to catch (handoff C Phase 0
+ * finding). They're allowlisted, not exempted from scanning — the guard now
+ * sees them and would flag anything NEW in scripts/ that isn't. Also picks
+ * up .mjs files (expand-prompts.mjs isn't TypeScript) alongside .ts.
  */
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 import { scanContent, ALLOWLIST } from "../src/lib/llm/llm-invocation-scan";
 
 const SRC_ROOT = join(__dirname, "..", "src");
+const SCRIPTS_ROOT = join(__dirname, "..", "scripts");
 const EXCLUDED_DIRS = new Set(["__tests__", "fixtures", "workspace", "node_modules"]);
 
 function walk(dir: string, files: string[] = []): string[] {
@@ -18,7 +28,7 @@ function walk(dir: string, files: string[] = []): string[] {
     const stat = statSync(full);
     if (stat.isDirectory()) {
       walk(full, files);
-    } else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+    } else if ((entry.endsWith(".ts") && !entry.endsWith(".d.ts")) || entry.endsWith(".mjs")) {
       files.push(full);
     }
   }
@@ -32,14 +42,25 @@ function main(): void {
     const relPath = relative(SRC_ROOT, absPath).replace(/\\/g, "/");
     const content = readFileSync(absPath, "utf-8");
     for (const v of scanContent(content, relPath)) {
-      violations.push({ file: relPath, reason: v.reason });
+      violations.push({ file: `src/${relPath}`, reason: v.reason });
+    }
+  }
+
+  // scripts/ files are keyed relative to SRC_ROOT with a "../scripts/" prefix
+  // (see ALLOWLIST in llm-invocation-scan.ts) so they can never collide with
+  // a same-named src/ path and read unambiguously in the ALLOWLIST itself.
+  for (const absPath of walk(SCRIPTS_ROOT)) {
+    const relPath = "../scripts/" + relative(SCRIPTS_ROOT, absPath).replace(/\\/g, "/");
+    const content = readFileSync(absPath, "utf-8");
+    for (const v of scanContent(content, relPath)) {
+      violations.push({ file: relPath.replace(/^\.\.\//, ""), reason: v.reason });
     }
   }
 
   if (violations.length > 0) {
     console.error("\n[check-llm-bypass] FAILED — Anthropic SDK usage found outside ClaudeClient:\n");
     for (const v of violations) {
-      console.error(`  src/${v.file}\n    ${v.reason}`);
+      console.error(`  ${v.file}\n    ${v.reason}`);
     }
     console.error(
       "\nEvery LLM call must go through ClaudeClient.createMessage() (server/src/lib/claude-client.ts), " +
@@ -51,7 +72,7 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log(`[check-llm-bypass] OK — no Anthropic SDK usage outside ClaudeClient (${Object.keys(ALLOWLIST).length} file allowlisted).`);
+  console.log(`[check-llm-bypass] OK — no Anthropic SDK usage or model-CLI subprocess bypass outside ClaudeClient/ClaudeBridge (${Object.keys(ALLOWLIST).length} files allowlisted).`);
 }
 
 main();
