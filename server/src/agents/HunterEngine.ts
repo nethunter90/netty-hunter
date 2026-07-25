@@ -1126,7 +1126,11 @@ export class HunterEngine extends EventEmitter {
       }).catch(() => {});
     }
 
-    this.rlWiring.onHuntStart({
+    // Awaited: resolves RL provenance (real/lab/unknown) before any probe
+    // can call onToolResult()/getBestTool() — must not race a hunt's first
+    // tool-selection read against an unresolved this.config (see
+    // ReinforcementWiring.onHuntStart).
+    await this.rlWiring.onHuntStart({
       sessionId: sessionUuid,
       programId: params.programId,
       programType: "web_app",
@@ -3333,7 +3337,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
           this.rlWiring.onHypothesisOutcome(hypothesis.vulnClass, hypothesis.confidence, false);
           this.rlWiring.recordModelOutcome(hypothesis.modelSource ?? "default", hypothesis.vulnClass, false);
           // Record miss in ROI model so success rates decay appropriately
-          this.roiModel.updateSuccessRate(hypothesis.vulnClass, false).catch(() => {});
+          this.roiModel.updateSuccessRate(hypothesis.vulnClass, false, this.rlWiring.getProvenance()).catch(() => {});
           if (hypothesis.retryTechnique) {
             const rt = hypothesis.retryTechnique;
             this.rlWiring.onRetryTechniqueOutcome(rt.reason, rt.axisKey, hypothesis.vulnClass, rt.technique, false);
@@ -4166,8 +4170,9 @@ Return ONLY valid JSON array of hypothesis objects.`;
         verificationStatus: "pending",
         status: "new",
       }).returning({ id: findings.id });
-      // Update ROI model with confirmed finding
-      await this.roiModel.updateSuccessRate(confirmed.hypothesis.vulnClass, true);
+      // ROI model update moved off this heuristic fast-path — see
+      // applyVerifiedRlOutcome() in lib/verification/verified-rl-outcome.ts,
+      // called once a real verdict exists instead of unconditionally here.
       return row?.id ?? 0;
     } catch (err) {
       logger.error("Failed to persist finding", { err });
@@ -4338,6 +4343,18 @@ Return ONLY valid JSON array of hypothesis objects.`;
 
     await this.loadCustomTools();
     await this.establishAuthSession(this.state.targetUrl, this.state.programId);
+
+    // RL provenance re-resolution on resume (2026-07-23 readiness handoff):
+    // resumeHunt() constructs a fresh HunterEngine per routes/hunt.ts's
+    // comment, so this.rlWiring starts with no config — without this call,
+    // every RL read/write for the remainder of a resumed hunt would silently
+    // no-op or fall back to "unknown" (fail-closed-safe, but loses real
+    // learning for no reason). Mirrors startHunt()'s own onHuntStart() call.
+    await this.rlWiring.onHuntStart({
+      sessionId,
+      programId: this.state.programId,
+      programType: "web_app",
+    });
 
     await db.update(huntSessions)
       .set({ status: "running", checkpoint: null })

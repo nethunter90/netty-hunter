@@ -34,7 +34,8 @@ import { VerifierAgent } from "./VerifierAgent";
 import { TargetSelectionIntelligence } from "../intelligence/TargetSelection";
 import { ROIModel } from "../intelligence/ROIModel";
 import { BackwardHuntEngine, type BackwardPlan } from "../intelligence/BackwardHunt";
-import { resolveCustomTargetProgram } from "../lib/hunter/custom-target-program";
+import { resolveCustomTargetProgram, isCrossCampaignEligible, resolveProvenance } from "../lib/hunter/custom-target-program";
+import { runProgramPreflight } from "./ActionPolicyGate";
 import { contextWriter } from "../lib/context-writer";
 import { coreGovernance } from "../governance";
 import { UnifiedReinforcementStore } from "../intelligence/ReinforcementStore";
@@ -500,10 +501,14 @@ export class CampaignOrchestrator extends EventEmitter {
     const [prog] = await db.select().from(programs)
       .where(eq(programs.id, params.programId)).limit(1);
     const maxPayout = prog?.maxPayout || 5000;
+    // RL provenance (2026-07-23 readiness handoff): reuse the program row
+    // already fetched above rather than a second lookup — "unknown" (not a
+    // silent "real") when the program couldn't be found at all.
+    const roiProvenance = prog ? (isCrossCampaignEligible(prog) ? "real" : "lab") : "unknown";
 
     let rankedVulns: unknown[] = [];
     try {
-      rankedVulns = await this.roiModel.rankVulnClasses(maxPayout, params.programId);
+      rankedVulns = await this.roiModel.rankVulnClasses(maxPayout, roiProvenance, params.programId);
     } catch (err) {
       logger.warn("ROI ranking failed (non-critical)", { err });
       rankedVulns = [];
@@ -1199,6 +1204,13 @@ export class CampaignOrchestrator extends EventEmitter {
 
     this.audit(6, "harvest_start", { verifiedCount: verifiedFindings.length });
 
+    // RL provenance (2026-07-23 readiness handoff): resolved once for this
+    // layer's rlStore.* calls below — L6 runs after L1 already validated
+    // params.programId, so a lookup failure here means the program was
+    // deleted mid-hunt, not a bad input; "unknown" is still the correct
+    // fail-closed answer.
+    const l6Provenance = await resolveProvenance(params.programId);
+
     const reports: string[] = [];
     const nucleiTemplates: string[] = [];
     const reportGen = new DraftReportGenerator();
@@ -1310,7 +1322,7 @@ export class CampaignOrchestrator extends EventEmitter {
     // 6b. Update reinforcement store + bounty intelligence memory
     for (const { finding } of verifiedFindings) {
       try {
-        await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true);
+        await this.rlStore.recordToolOutcome("orchestrator", finding.vulnType, true, l6Provenance);
       } catch (err) {
         logger.warn("[L6] rlStore.recordToolOutcome failed", { vulnType: finding.vulnType, err });
       }
@@ -1338,9 +1350,9 @@ export class CampaignOrchestrator extends EventEmitter {
       const verifiedCount = verifiedFindings.length;
       const totalProcessed = (verifData.totalProcessed as number) || 0;
       const strategy = verifiedCount > 0 ? 'found_vulns' : 'no_vulns';
-      await this.rlStore.recordProgramTypeHeuristic('web_app', strategy, verifiedCount > 0);
+      await this.rlStore.recordProgramTypeHeuristic('web_app', strategy, verifiedCount > 0, l6Provenance);
       if (totalProcessed > 0) {
-        await this.rlStore.recordProgramTypeHeuristic('web_app', 'efficient_hunt', verifiedCount / totalProcessed > 0.1);
+        await this.rlStore.recordProgramTypeHeuristic('web_app', 'efficient_hunt', verifiedCount / totalProcessed > 0.1, l6Provenance);
       }
     } catch (err) {
       logger.debug('[L6] programType heuristic ground-truth correction failed', { err });
@@ -1377,7 +1389,8 @@ export class CampaignOrchestrator extends EventEmitter {
         await this.rlStore.recordConfidenceCalibration(
           finding.vulnType,
           calibratedConfidence,
-          true
+          true,
+          l6Provenance,
         );
       }
 
@@ -1392,7 +1405,8 @@ export class CampaignOrchestrator extends EventEmitter {
         await this.rlStore.recordConfidenceCalibration(
           finding.vulnType,
           calibratedConfidence,
-          false
+          false,
+          l6Provenance,
         );
       }
 
