@@ -48,6 +48,7 @@
   .status-pending { @apply bg-hack-dim; }
   .status-complete { @apply bg-hack-blue; }
   .status-failed { @apply bg-hack-red; }
+  .status-paused { @apply bg-hack-yellow animate-pulse; }
 }
 
 /* Terminal cursor blink */

@@ -17,10 +17,14 @@ import type { ActivityEvent } from '../components/LiveActivityFeed';
 export interface StoredSession {
   sessionUuid: string;
   targetUrl: string;
-  status: 'running' | 'stopping' | 'complete' | 'error';
+  // paused_budget/paused_auth are distinct, terminal-until-resumed states — a
+  // hunt in either must never be conflated with "running" (see hunt:paused
+  // handling in huntEventBridge.ts; this was rendering as running forever).
+  status: 'running' | 'stopping' | 'paused_budget' | 'paused_auth' | 'complete' | 'error';
   phase: string;
   iteration: number;
   findings: number;
+  pausedReason?: string;
 }
 
 export interface ExternalHunt {

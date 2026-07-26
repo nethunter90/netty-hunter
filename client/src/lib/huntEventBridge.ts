@@ -24,10 +24,32 @@ function push(ev: ActivityEvent): void {
   huntStore.pushEvent(ev);
 }
 
+/** Pure parse of a hunt:paused socket payload — factored out of the handler
+ *  below so it's directly unit-testable without a socket. Budget pauses
+ *  always carry budgetDimension; auth pauses never do (see HunterEngine.ts's
+ *  two hunt:paused emit call sites) — that's the reliable discriminator. */
+export function parseHuntPausedEvent(data: any): {
+  sessionId: string; dimension: 'budget' | 'auth'; reason: string; findings: number; iterations: number;
+} {
+  const dimension: 'budget' | 'auth' = data.budgetDimension !== undefined ? 'budget' : 'auth';
+  // For auth pauses, `reason` is a generic constant ("auth_session_lost") —
+  // the actual cause (e.g. which liveness check failed) is in `authReason`.
+  // Prefer it so the operator sees the specific drop cause, not the label.
+  const reason = String(
+    (dimension === 'auth' ? data.authReason : undefined) ?? data.reason
+    ?? (dimension === 'budget' ? 'LLM budget exhausted' : 'Auth session lost')
+  );
+  return {
+    sessionId: String(data.sessionId || ''),
+    dimension, reason,
+    findings: Number(data.findings ?? 0), iterations: Number(data.iterations ?? 0),
+  };
+}
+
 const EVENT_NAMES = [
   'hunt:started', 'hunt:phase', 'hunt:observations', 'hunt:hypotheses',
   'hunt:probing', 'hunt:probe_result', 'hunt:finding_confirmed', 'hunt:update',
-  'hunt:complete', 'hunt:aborted', 'hunt:error', 'solver:started', 'solver:complete', 'solver:finding',
+  'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'solver:started', 'solver:complete', 'solver:finding',
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
   'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
@@ -167,6 +189,23 @@ export function attachHuntEvents(): () => void {
       s.sessionUuid === String(data.sessionId || '') ? { ...s, status: 'complete' } : s
     ));
     huntStore.setExternalHunt(null);
+  });
+
+  // A paused hunt is NOT a running hunt and NOT a completed one — it's its own
+  // state, and the engine has already released it server-side (activeHunts
+  // registry). Before this handler existed, huntStore.status simply kept
+  // whatever `hunt:phase` last set it to (== "running"), so a paused hunt
+  // showed as live/LIVE forever — the UI analog of the $0-spend bug for the
+  // operator's single most important "is this still going" signal.
+  socket.on('hunt:paused', (data: any) => {
+    const { sessionId, dimension, reason, findings, iterations } = parseHuntPausedEvent(data);
+    push({ type: 'paused', ts: ts(), dimension, reason, findings, iterations });
+    huntStore.updateSessions(prev => prev.map(s =>
+      s.sessionUuid === sessionId
+        ? { ...s, status: dimension === 'budget' ? 'paused_budget' : 'paused_auth', pausedReason: reason }
+        : s
+    ));
+    toast.error(`Hunt paused — ${reason}`, { duration: 8000 });
   });
 
   // Backend confirmation that the engine actually halted.

@@ -21,6 +21,7 @@ export type ActivityEvent =
   | { type: "pivot";          ts: string; reason: string; newHypotheses: number }
   | { type: "ban";            ts: string; target: string; reason: string }
   | { type: "complete";        ts: string; findings: number; iterations: number }
+  | { type: "paused";          ts: string; dimension: "budget" | "auth"; reason: string; findings: number; iterations: number }
   | { type: "error";           ts: string; message: string }
   | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean }
   | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number }
@@ -441,6 +442,19 @@ function CompleteRow({ ev }: { ev: ActivityEvent & { type: "complete" } }) {
       <span className="text-hack-yellow">{ev.findings} findings</span>
       <span className="text-hack-dim">· {ev.iterations} iterations</span>
       <span className="text-hack-dim ml-auto">{ev.ts}</span>
+    </div>
+  );
+}
+
+function PausedRow({ ev }: { ev: ActivityEvent & { type: "paused" } }) {
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-2 my-1 text-[10px] font-mono text-hack-yellow border border-hack-yellow/40 bg-hack-yellow/10 rounded animate-pulse">
+      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+      <span className="font-bold tracking-wide uppercase">
+        Paused — {ev.dimension === "budget" ? "budget exhausted" : "auth session lost"}
+      </span>
+      <span className="text-hack-dim normal-case">{ev.reason}</span>
+      <span className="text-hack-dim ml-auto">{ev.findings} findings · {ev.iterations} iter · {ev.ts}</span>
     </div>
   );
 }
@@ -1146,6 +1160,8 @@ export function LiveActivityFeed({
               return <BanRow key={key} ev={ev} />;
             case "complete":
               return <CompleteRow key={key} ev={ev} />;
+            case "paused":
+              return <PausedRow key={key} ev={ev} />;
             case "cve_seeded":
               return <CveSeededRow key={key} ev={ev} />;
             case "public_duplicate":

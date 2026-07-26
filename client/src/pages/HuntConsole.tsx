@@ -161,6 +161,14 @@ export default function HuntConsole() {
     }
   };
 
+  // A paused hunt's engine already returned and released itself from the
+  // server's activeHunts registry (see HunterEngine.ts's budget/auth pause
+  // branches) — there's nothing left to "stop" server-side, so clearing it
+  // is a pure client-side dismiss, not a stopHunt() call.
+  const dismissPausedHunt = (uuid: string) => {
+    huntStore.updateSessions(prev => prev.filter(s => s.sessionUuid !== uuid));
+  };
+
   const isRunning = activeSessions.some(s => s.status === "running" || s.status === "stopping");
 
   return (
@@ -171,8 +179,13 @@ export default function HuntConsole() {
           <Terminal className="w-4 h-4 text-hack-accent" />
           <span className="text-sm font-mono font-bold text-hack-accent">HUNT CONSOLE</span>
         </div>
-        <div className="text-[10px] text-hack-dim font-mono">
-          Active: {activeSessions.filter(s => s.status === "running").length}
+        <div className="text-[10px] text-hack-dim font-mono flex items-center gap-3">
+          <span>Active: {activeSessions.filter(s => s.status === "running").length}</span>
+          {activeSessions.some(s => s.status === "paused_budget" || s.status === "paused_auth") && (
+            <span className="text-hack-yellow font-bold animate-pulse">
+              Paused: {activeSessions.filter(s => s.status === "paused_budget" || s.status === "paused_auth").length}
+            </span>
+          )}
         </div>
       </div>
 
@@ -333,11 +346,20 @@ export default function HuntConsole() {
           {activeSessions.length > 0 && (
             <div className="border-t border-hack-border p-3 space-y-2 flex-shrink-0">
               <div className="text-[10px] text-hack-dim font-mono uppercase mb-2">Active Hunts</div>
-              {activeSessions.map(session => (
-                <div key={session.sessionUuid} className="hack-panel p-2 text-[10px] font-mono">
+              {activeSessions.map(session => {
+                const isPaused = session.status === "paused_budget" || session.status === "paused_auth";
+                const statusDotClass = session.status === "running"
+                  ? "status-running"
+                  : session.status === "stopping"
+                  ? "status-running opacity-50"
+                  : isPaused
+                  ? "status-paused"
+                  : "status-complete";
+                return (
+                <div key={session.sessionUuid} className={`hack-panel p-2 text-[10px] font-mono ${isPaused ? "border border-hack-yellow/40" : ""}`}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
-                      <span className={`status-dot ${session.status === "running" ? "status-running" : session.status === "stopping" ? "status-running opacity-50" : "status-complete"}`} />
+                      <span className={`status-dot ${statusDotClass}`} />
                       <span className="text-hack-text truncate max-w-[140px]">{session.targetUrl}</span>
                     </div>
                     {session.status === "running" && (
@@ -348,16 +370,31 @@ export default function HuntConsole() {
                     {session.status === "stopping" && (
                       <span className="text-hack-yellow text-[9px] animate-pulse">…</span>
                     )}
-                  </div>
-                  <div className="flex items-center gap-2 text-hack-dim">
-                    {PHASE_ICONS[session.phase]}
-                    <span>{session.phase} #{session.iteration}</span>
-                    {session.findings > 0 && (
-                      <span className="text-hack-orange ml-auto">{session.findings} findings</span>
+                    {isPaused && (
+                      <button onClick={() => dismissPausedHunt(session.sessionUuid)} className="text-hack-dim hover:text-hack-red/80" title="Clear paused hunt">
+                        <Square className="w-3 h-3" />
+                      </button>
                     )}
                   </div>
+                  {isPaused ? (
+                    <div className="text-hack-yellow font-bold uppercase tracking-wide">
+                      PAUSED — {session.status === "paused_budget" ? "budget exhausted" : "auth session lost"}
+                      {session.pausedReason && (
+                        <div className="text-hack-dim normal-case font-normal mt-0.5">{session.pausedReason}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-hack-dim">
+                      {PHASE_ICONS[session.phase]}
+                      <span>{session.phase} #{session.iteration}</span>
+                      {session.findings > 0 && (
+                        <span className="text-hack-orange ml-auto">{session.findings} findings</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
