@@ -100,9 +100,13 @@ const SUBPROCESS_BRIDGE_PATTERN = new RegExp(
 // scripts/ using shell-string exec() form slipped past BOTH guards until
 // this pattern was added — the LLM-spend guard should own this shape
 // completely, not depend on the tool-exec guard's scope happening to cover
-// it. fork() is deliberately not matched here — it runs another Node.js
-// module by path, not an arbitrary external binary, so it isn't a
-// realistic vector for invoking a model CLI.
+// it. fork() is deliberately not matched here — confirmed live (blocker #4
+// go-live protocol, C's small close-out items), not just reasoned about:
+// fork('claude', [...]) resolves its first argument as a Node.js MODULE
+// PATH via require() — it fails with MODULE_NOT_FOUND trying to load
+// "claude" as a .js file relative to cwd, never reaching an executable
+// binary at all. Structurally incapable of invoking the model CLI, so it
+// isn't a realistic vector and isn't gated here.
 const SHELL_STRING_BRIDGE_PATTERN = new RegExp(
   `\\bexec(?:Sync)?\\s*\\(\\s*["'](${MODEL_CLI_ALTERNATION})\\b`
 );

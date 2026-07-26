@@ -115,6 +115,17 @@ describe('check-llm-bypass — subprocess-bridge shape (handoff C Phase 2)', () 
     expect(scanContent(src, FAKE_PATH)).toEqual([]);
   });
 
+  it('fork("claude", ...) is NOT flagged — confirmed live it cannot invoke the CLI binary (blocker #4)', () => {
+    // fork() resolves its first arg as a Node.js MODULE PATH via require(),
+    // not an executable — confirmed live: fork('claude', [...]) throws
+    // MODULE_NOT_FOUND trying to load "claude" as a .js file, never reaching
+    // a binary. Structurally incapable of being a model-CLI bridge, so
+    // deliberately unmatched — this test documents that as a checked fact,
+    // not an assumption the guard's comment merely asserts.
+    const src = `import { fork } from 'child_process';\nfork('claude', ['-p', prompt]);\n`;
+    expect(scanContent(src, FAKE_PATH)).toEqual([]);
+  });
+
   it('claude-bridge.ts at its real path produces zero violations (the bridge chokepoint itself)', () => {
     const content = readFileSync(join(__dirname, '..', 'lib', 'claude-bridge.ts'), 'utf-8');
     expect(scanContent(content, 'lib/claude-bridge.ts')).toEqual([]);
