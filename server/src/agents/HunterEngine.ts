@@ -1560,7 +1560,6 @@ export class HunterEngine extends EventEmitter {
       },
     });
     observationCompressor.clearSession(this.state.sessionId);
-    ClaudeClient.clearSession(this.state.sessionId);
     // Release the authenticated session so credentials/cookies aren't held after the hunt.
     if (this.authConfig) {
       sessionManager.invalidate(this.state.programId);
@@ -1573,7 +1572,22 @@ export class HunterEngine extends EventEmitter {
       totalProbes: this.state.probes.length,
       chainIds: [],
     });
+    // 2026-07-25 (handoff C, Phase 3 finding): persistResults() (via
+    // persistLlmSpend()) reads ClaudeClient.getSpend(sessionId) to write the
+    // hunt's final llm_spend_usd/llm_call_count — it MUST run before
+    // ClaudeClient.clearSession() wipes that same sessionId's in-memory
+    // ledger, or persistLlmSpend() reads back the empty default and writes
+    // 0/0 regardless of real spend. This was backwards until now: every
+    // normally-completed hunt in this database has llm_spend_usd=0,
+    // llm_call_count=0 — confirmed live, not theoretical (checked every
+    // completed row in hunt_sessions). The pause path never had this bug
+    // (persistCheckpoint() reads the ledger before any clear happens), which
+    // is why the earlier "persist cost on both completion and pause paths"
+    // claim only ever had live proof for the pause half — the completion
+    // half's DB *code path* was read and assumed correct, never checked
+    // against its actual persisted value.
     await this.persistResults();
+    ClaudeClient.clearSession(this.state.sessionId);
     this.emit("hunt:complete", {
       sessionId: this.state.sessionId,
       findings: this.state.confirmedFindings.length,
