@@ -6,6 +6,7 @@ import { ModelRouter } from "./ModelRouter";
 import logger from "../utils/logger";
 import type { VerificationResult } from "../agents/VerifierAgent";
 import type { SolverResult } from "../agents/SolverPool";
+import { mdInlineCode, safeCodeFence } from "../lib/report/markdown-escape";
 
 export interface BugBountyReport {
   title: string;
@@ -209,10 +210,10 @@ const HONESTY_POLICIES: Partial<Record<string, HonestyPolicy>> = {
     fallbackImpact: (finding, verification, rawEvidence) => {
       const note = HONESTY_POLICIES.rce!.promptNote(verification, rawEvidence);
       if (!note) {
-        return `Command execution was reported at ${finding.endpoint}, but no oracle evidence (nonce-echo or OOB) was available to cite — verify manually before submission.`;
+        return `Command execution was reported at ${mdInlineCode(finding.endpoint)}, but no oracle evidence (nonce-echo or OOB) was available to cite — verify manually before submission.`;
       }
       const privilegeLine = note.includes("do NOT state a privilege level") ? "" : ` Proven privilege level is noted in the evidence section.`;
-      return `Confirmed command execution at ${finding.endpoint}.${privilegeLine} This proves the target executes attacker-supplied commands; it does not by itself establish further reach, persistence, or data access beyond what was directly observed.`;
+      return `Confirmed command execution at ${mdInlineCode(finding.endpoint)}.${privilegeLine} This proves the target executes attacker-supplied commands; it does not by itself establish further reach, persistence, or data access beyond what was directly observed.`;
     },
   },
 
@@ -243,21 +244,21 @@ const HONESTY_POLICIES: Partial<Record<string, HonestyPolicy>> = {
       const fields = extractDisclosedFieldNames(body);
       if (fields.length === 0) return [];
       const sensitiveFields = fields.filter(f => SENSITIVE_KEY_PATTERN.test(f));
-      const lines = [`Disclosed field names observed in response: ${fields.join(", ")}`];
-      if (sensitiveFields.length > 0) lines.push(`Credential/secret-shaped field names present: ${sensitiveFields.join(", ")}`);
+      const lines = [`Disclosed field names observed in response: ${fields.map(f => mdInlineCode(f)).join(", ")}`];
+      if (sensitiveFields.length > 0) lines.push(`Credential/secret-shaped field names present: ${sensitiveFields.map(f => mdInlineCode(f)).join(", ")}`);
       return lines;
     },
     fallbackImpact: (finding, verification, rawEvidence) => {
       const body = rawEvidence ?? verification.layer2_reprobe.responseSnippet ?? "";
       const fields = extractDisclosedFieldNames(body);
       if (fields.length === 0) {
-        return `Unauthenticated access to ${finding.endpoint} returned response data — verify the specific fields disclosed manually before submission.`;
+        return `Unauthenticated access to ${mdInlineCode(finding.endpoint)} returned response data — verify the specific fields disclosed manually before submission.`;
       }
       const sensitiveFields = fields.filter(f => SENSITIVE_KEY_PATTERN.test(f));
       const sensitiveNote = sensitiveFields.length > 0
-        ? ` This includes credential/secret-shaped fields (${sensitiveFields.join(", ")}), which materially raises severity.`
+        ? ` This includes credential/secret-shaped fields (${sensitiveFields.map(f => mdInlineCode(f)).join(", ")}), which materially raises severity.`
         : ` These are configuration/diagnostic values, not credentials.`;
-      return `Unauthenticated access to ${finding.endpoint} discloses the following fields without access control: ${fields.join(", ")}.${sensitiveNote} This does not by itself demonstrate database access, other users' data, or broader system compromise.`;
+      return `Unauthenticated access to ${mdInlineCode(finding.endpoint)} discloses the following fields without access control: ${fields.map(f => mdInlineCode(f)).join(", ")}.${sensitiveNote} This does not by itself demonstrate database access, other users' data, or broader system compromise.`;
     },
   },
 };
@@ -330,7 +331,7 @@ export class DraftReportGenerator {
     }
 
     const report: BugBountyReport = {
-      title: `[${metadata.severity.toUpperCase()}] ${vulnInfo.name} in ${finding.endpoint}`,
+      title: `[${metadata.severity.toUpperCase()}] ${vulnInfo.name} in ${mdInlineCode(finding.endpoint)}`,
       severity: metadata.severity,
       cvssScore: cvssData.score,
       cvssVector: cvssData.vector,
@@ -421,7 +422,7 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
       const response = await this.modelRouter.generate(prompt, "analyze", { sessionId: metadata.sessionId });
       const match = response.match(/\{[\s\S]+\}/);
       const parsed = JSON.parse(match?.[0] || "{}");
-      const summary = parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint}.`;
+      const summary = parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${mdInlineCode(finding.endpoint)}.`;
       const impact = parsed.impact || (policy
         ? policy.fallbackImpact(finding, verification, metadata.rawEvidence)
         : `This vulnerability poses a significant security risk to ${metadata.programName} and its users.`);
@@ -440,7 +441,7 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
         endpoint: finding.endpoint,
       });
       return {
-        summary: `A ${vulnInfo.name} vulnerability was discovered and verified at ${finding.endpoint} with ${Math.round(verification.finalConfidence * 100)}% confidence.`,
+        summary: `A ${vulnInfo.name} vulnerability was discovered and verified at ${mdInlineCode(finding.endpoint)} with ${Math.round(verification.finalConfidence * 100)}% confidence.`,
         impact: policy
           ? policy.fallbackImpact(finding, verification, metadata.rawEvidence)
           : `Successful exploitation of this vulnerability could allow an attacker to compromise user data and system integrity.`,
@@ -450,28 +451,28 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
 
   private buildReproductionSteps(finding: SolverResult, verification: VerificationResult, rawEvidence?: string): string[] {
     const steps = [
-      `Navigate to the affected endpoint: \`${finding.endpoint}\``,
+      `Navigate to the affected endpoint: ${mdInlineCode(finding.endpoint)}`,
       `Intercept the request using a proxy (e.g., Burp Suite)`,
     ];
 
     if (finding.payload) {
-      steps.push(`Inject the following payload: \`${finding.payload}\``);
+      steps.push(`Inject the following payload: ${mdInlineCode(finding.payload)}`);
     }
 
     if (rawEvidence) {
       // Extract the first request line for a specific reproduction step
       const firstReqLine = rawEvidence.split("\n").find(l => /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s/.test(l));
       if (firstReqLine) {
-        steps.push(`Send the following request: \`${firstReqLine}\``);
+        steps.push(`Send the following request: ${mdInlineCode(firstReqLine)}`);
       }
     } else if (finding.request) {
-      steps.push(`Send the modified request: \`${finding.request}\``);
+      steps.push(`Send the modified request: ${mdInlineCode(finding.request)}`);
     }
 
     steps.push(`Observe the response for evidence of the vulnerability`);
 
     if (verification.layer3_playwright.consoleAlerts.length > 0) {
-      steps.push(`Observe browser dialog/alert: "${verification.layer3_playwright.consoleAlerts[0]}"`);
+      steps.push(`Observe browser dialog/alert: ${mdInlineCode(verification.layer3_playwright.consoleAlerts[0])}`);
     }
 
     return steps;
@@ -481,14 +482,14 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
     let poc = `**Tool Used**: ${finding.toolsUsed.join(", ") || "automated probe"}\n\n`;
 
     if (rawEvidence) {
-      poc += `**Raw HTTP Evidence**:\n\`\`\`http\n${rawEvidence.slice(0, 3000)}\n\`\`\`\n\n`;
+      poc += `**Raw HTTP Evidence**:\n${safeCodeFence(rawEvidence.slice(0, 3000), "http")}\n\n`;
     } else {
-      poc += `**Request**:\n\`\`\`\n${finding.request || "N/A"}\n\`\`\`\n\n`;
-      poc += `**Response**:\n\`\`\`\n${finding.response?.slice(0, 500) || "N/A"}\n\`\`\`\n\n`;
+      poc += `**Request**:\n${safeCodeFence(finding.request || "N/A")}\n\n`;
+      poc += `**Response**:\n${safeCodeFence(finding.response?.slice(0, 500) || "N/A")}\n\n`;
     }
 
     if (videoPath) {
-      poc += `**Video PoC**: Recorded exploitation session — \`${videoPath}\`\n\n`;
+      poc += `**Video PoC**: Recorded exploitation session — ${mdInlineCode(videoPath)}\n\n`;
     }
     // verification.layer3_playwright/consoleAlerts always describe the ORIGINAL
     // probe. When adaptation confirmed the finding, that screenshot/alert belongs
@@ -500,10 +501,10 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
         poc += `**Screenshot**: [Attached – base64 encoded screenshot available]\n\n`;
       }
       if (verification.layer3_playwright.consoleAlerts.length > 0) {
-        poc += `**Browser Alerts**: ${verification.layer3_playwright.consoleAlerts.join(", ")}\n`;
+        poc += `**Browser Alerts**: ${verification.layer3_playwright.consoleAlerts.map(a => mdInlineCode(a)).join(", ")}\n`;
       }
     } else {
-      poc += `**Note**: Confirmed via an adapted payload after the original payload failed for a mechanical reason (see Evidence section). The request/response above is the adapted proof; screenshot, if archived, is at \`evidence/<finding-id>/adapted_screenshot.png\`.\n`;
+      poc += `**Note**: Confirmed via an adapted payload after the original payload failed for a mechanical reason (see Evidence section). The request/response above is the adapted proof; screenshot, if archived, is at ${mdInlineCode("evidence/<finding-id>/adapted_screenshot.png")}.\n`;
     }
 
     return poc;
@@ -512,7 +513,7 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
   private buildEvidence(finding: SolverResult, verification: VerificationResult, rawEvidence?: string): string[] {
     const evidence = [
       `Verification Confidence: ${Math.round(verification.finalConfidence * 100)}%`,
-      `Payload: ${finding.payload || "N/A"}`,
+      `Payload: ${finding.payload ? mdInlineCode(finding.payload) : "N/A"}`,
     ];
 
     if (verification.adaptation) {
@@ -523,7 +524,7 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
       // contradicting the confirmed verdict.
       evidence.push(
         `Confirmed via payload adaptation (rule: ${verification.adaptation.rule}) — the original payload below failed, ` +
-        `the adapted payload \`${verification.adaptation.adaptedPayload}\` succeeded (HTTP ${verification.adaptation.statusCode}); see Proof of Concept.`
+        `the adapted payload ${mdInlineCode(verification.adaptation.adaptedPayload)} succeeded (HTTP ${verification.adaptation.statusCode}); see Proof of Concept.`
       );
     } else {
       evidence.push(`HTTP Response Status: ${verification.layer2_reprobe.statusCode}`);

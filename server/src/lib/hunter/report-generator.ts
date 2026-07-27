@@ -7,6 +7,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Finding, Severity } from './types';
 import { offensiveGraphDB } from '../intelligence/offensive-graph-db';
+import { mdInlineCode, safeCodeFence } from '../report/markdown-escape';
 
 export interface BugReport {
   id:         string;
@@ -68,30 +69,31 @@ class ReportGeneratorStore {
 
   async generateReport(finding: Finding, platform: string, huntId?: string): Promise<BugReport> {
     const description = VULN_DESCRIPTIONS[finding.vulnClass] ?? `${finding.vulnClass} vulnerability found.`;
+    // Title carries finding.endpoint (target-controlled) but is also stored
+    // verbatim as BugReport.title outside the markdown — escaping it there
+    // would corrupt that field, so only the markdown H1 below is escaped.
     const title = `${SEVERITY_TITLE[finding.severity]} ${finding.vulnClass.toUpperCase()} at ${finding.endpoint}`;
 
     const chainSection = huntId ? await this.buildExploitChainSection(huntId, finding) : '';
 
-    const markdown = `# ${title}
+    const markdown = `# ${SEVERITY_TITLE[finding.severity]} ${finding.vulnClass.toUpperCase()} at ${mdInlineCode(finding.endpoint)}
 
 ## Summary
 ${description}
 
 A ${finding.severity} severity ${finding.vulnClass} vulnerability was identified at:
-\`${finding.endpoint}\`
+${mdInlineCode(finding.endpoint)}
 
 ## Steps to Reproduce
-1. Navigate to \`${finding.endpoint}\`
-2. Send the following payload: \`${finding.payload || 'See evidence below'}\`
+1. Navigate to ${mdInlineCode(finding.endpoint)}
+2. Send the following payload: ${mdInlineCode(finding.payload || 'See evidence below')}
 3. Observe the vulnerability response
 
 ## Impact
 ${this.buildImpact(finding)}
 ${chainSection}
 ## Evidence
-\`\`\`
-${JSON.stringify(finding.evidence, null, 2).slice(0, 500)}
-\`\`\`
+${safeCodeFence(JSON.stringify(finding.evidence, null, 2).slice(0, 500))}
 
 ## Remediation
 ${this.buildRemediation(finding.vulnClass)}

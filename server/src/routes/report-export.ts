@@ -3,6 +3,7 @@ import { db } from "../db";
 import { findings } from "../db/schema";
 import { eq } from "drizzle-orm";
 import logger from "../utils/logger";
+import { mdEscapeInline, safeCodeFence } from "../lib/report/markdown-escape";
 
 // Report export router.
 //
@@ -78,7 +79,7 @@ function steps(finding: ExportFinding): string {
   const list = finding.stepsToReproduce && finding.stepsToReproduce.length > 0
     ? finding.stepsToReproduce
     : ["See the description above for reproduction details."];
-  return list.map((s, i) => `${i + 1}. ${s.replace(/^[-\d.\s]+/, "")}`).join("\n");
+  return list.map((s, i) => `${i + 1}. ${mdEscapeInline(s.replace(/^[-\d.\s]+/, ""))}`).join("\n");
 }
 
 function remediation(finding: ExportFinding): string {
@@ -95,63 +96,63 @@ function cvssSuffix(f: ExportFinding): string {
 function pocBlock(f: ExportFinding, heading: string): string {
   const poc = (f.exploitPayload ?? f.poc ?? "").trim();
   if (!poc) return "";
-  return `\n## ${heading}\n\`\`\`\n${poc}\n\`\`\`\n`;
+  return `\n## ${heading}\n${safeCodeFence(poc)}\n`;
 }
 
 function formatHackerOne(f: ExportFinding, includeRemediation: boolean): string {
   return `## Summary
-${f.description || f.title || "Vulnerability report."}
+${mdEscapeInline(f.description || f.title || "Vulnerability report.")}
 
 ## Vulnerability Type
-${f.type || "N/A"}
+${mdEscapeInline(f.type || "N/A")}
 
 ## Severity
 ${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
 
 ## Affected Endpoint / Asset
-${f.affectedEndpoint || "N/A"}
+${mdEscapeInline(f.affectedEndpoint || "N/A")}
 
 ## Steps To Reproduce
 ${steps(f)}
 ${pocBlock(f, "Proof of Concept")}
 ## Impact
-${f.impact || "See description."}
+${mdEscapeInline(f.impact || "See description.")}
 ${includeRemediation ? `\n## Remediation\n${remediation(f)}\n` : ""}`;
 }
 
 function formatBugcrowd(f: ExportFinding, includeRemediation: boolean): string {
-  return `# ${f.title || "Vulnerability Submission"}
+  return `# ${mdEscapeInline(f.title || "Vulnerability Submission")}
 
-**VRT Category:** ${f.type || "N/A"}
+**VRT Category:** ${mdEscapeInline(f.type || "N/A")}
 **Severity:** ${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
-**Affected URL:** ${f.affectedEndpoint || "N/A"}
+**Affected URL:** ${mdEscapeInline(f.affectedEndpoint || "N/A")}
 
 ## Description
-${f.description || "N/A"}
+${mdEscapeInline(f.description || "N/A")}
 
 ## Proof of Concept / Steps
 ${steps(f)}
 ${pocBlock(f, "Payload")}
 ## Business Impact
-${f.impact || "See description."}
+${mdEscapeInline(f.impact || "See description.")}
 ${includeRemediation ? `\n## Suggested Remediation\n${remediation(f)}\n` : ""}`;
 }
 
 function formatIntigriti(f: ExportFinding, includeRemediation: boolean): string {
-  return `# ${f.title || "Submission"}
+  return `# ${mdEscapeInline(f.title || "Submission")}
 
-**Type:** ${f.type || "N/A"}
+**Type:** ${mdEscapeInline(f.type || "N/A")}
 **Severity (CVSS band):** ${(f.severity || "medium").toUpperCase()}${cvssSuffix(f)}
-**Endpoint:** ${f.affectedEndpoint || "N/A"}
+**Endpoint:** ${mdEscapeInline(f.affectedEndpoint || "N/A")}
 
 ## What is the issue?
-${f.description || "N/A"}
+${mdEscapeInline(f.description || "N/A")}
 
 ## Steps to reproduce
 ${steps(f)}
 ${pocBlock(f, "Proof of Concept")}
 ## Impact
-${f.impact || "See description."}
+${mdEscapeInline(f.impact || "See description.")}
 ${includeRemediation ? `\n## Recommended fix\n${remediation(f)}\n` : ""}`;
 }
 
