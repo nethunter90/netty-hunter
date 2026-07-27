@@ -398,6 +398,29 @@ export default function HuntConsole() {
                       <span>{session.llmCallCount ?? 0} LLM calls</span>
                     </div>
                   )}
+                  {session.provenance && (
+                    <div className="mt-1 pt-1 border-t border-hack-border/50">
+                      <span className={`text-[9px] font-bold px-1 py-0.5 rounded uppercase ${
+                        session.provenance === "real"
+                          ? "bg-hack-red/15 text-hack-red border border-hack-red/40"
+                          : session.provenance === "lab"
+                          ? "bg-hack-blue/15 text-hack-blue border border-hack-blue/40"
+                          : "bg-hack-yellow/15 text-hack-yellow border border-hack-yellow/40"
+                      }`}>
+                        {session.provenance === "real" ? "REAL TARGET" : session.provenance === "lab" ? "LAB" : session.provenance.toUpperCase()}
+                      </span>
+                      {(session.scope && session.scope.length > 0) && (
+                        <div className="text-hack-dim mt-0.5 truncate" title={session.scope.join(", ")}>
+                          scope: {session.scope.join(", ")}
+                        </div>
+                      )}
+                      {(session.outOfScope && session.outOfScope.length > 0) && (
+                        <div className="text-hack-dim truncate" title={session.outOfScope.join(", ")}>
+                          excluded: {session.outOfScope.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 );
               })}

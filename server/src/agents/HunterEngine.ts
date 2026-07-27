@@ -16,7 +16,7 @@ import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary, checkWafBypassAuthorization } from "./WAFBypass";
 import { checkAutomatedScanningAuthorization, checkFuzzingAuthorization, runProgramPreflight } from "./ActionPolicyGate";
-import { ScopeGuard } from "../middleware/scopeGuard";
+import { ScopeGuard, classifyProgramPolicy } from "../middleware/scopeGuard";
 import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
 import ROIModel from "../intelligence/ROIModel";
@@ -807,6 +807,24 @@ export class HunterEngine extends EventEmitter {
   private state!: HuntState;
   private wafSynthesizer = new IntelligenceSynthesizer();
   private scopeGuard = ScopeGuard.getInstance();
+  // UI trust fix #5/7: bound per-hunt listener for ScopeGuard's global
+  // "blocked" event, attached in startHunt() and detached on every exit
+  // path (complete/aborted/paused) so listeners don't accumulate across the
+  // lifetime of the long-lived ScopeGuard singleton over many hunts.
+  private scopeGuardBlockListener: ((e: { url: string; programId: number | null | undefined; reason: string }) => void) | null = null;
+
+  private detachScopeGuardListener(): void {
+    if (this.scopeGuardBlockListener) {
+      this.scopeGuard.off("blocked", this.scopeGuardBlockListener);
+      this.scopeGuardBlockListener = null;
+    }
+  }
+
+  // UI trust fix #5/7: computed once in startHunt(), emitted once from
+  // runLoop()'s first iteration (see scopeContextEmitted below) once a
+  // socket listener is guaranteed attached.
+  private scopeContext: { provenance: string; scope: string[]; outOfScope: string[] } | null = null;
+  private scopeContextEmitted = false;
   private modelRouter = ModelRouter.getInstance();
   private roiModel = new ROIModel();
   private rlWiring = new ReinforcementWiring();
@@ -1064,6 +1082,12 @@ export class HunterEngine extends EventEmitter {
       coachMessage: "Hunt authorized to proceed",
     });
 
+    // Moved up from just before loadCustomTools() so the preflight block
+    // below (UI trust fix #5/7) can attach a real sessionId to its
+    // hunt:scope_context emit — nothing between here and the original
+    // declaration site depended on ordering relative to loadCustomTools().
+    const sessionUuid = params.sessionId || uuidv4();
+
     // Behavioral-rules pre-flight (2026-07-23, blocker #3) — Path B's own
     // copy of the same WARN-only check CampaignOrchestrator's Layer 1 runs,
     // since console/direct-engine hunts (this path) bypass the orchestrator
@@ -1080,6 +1104,30 @@ export class HunterEngine extends EventEmitter {
           });
           this.emit("hunt:preflight_warnings", { programId: params.programId, warnings: preflightWarnings });
         }
+        // UI trust fix #5/7: the live view previously showed real-vs-lab
+        // classification and in-effect scope only as static pre-launch text
+        // that vanished once a hunt started. classifyProgramPolicy() is the
+        // SAME function ScopeGuard itself enforces against (not a separate
+        // guess), so what the operator sees here matches what actually gates
+        // egress for this hunt. Stashed here, EMITTED from runLoop()'s first
+        // iteration, not here directly — this code runs and completes before
+        // startHunt() returns sessionUuid, but wireHuntEngineToSocket() (the
+        // caller's socket forwarder) isn't attached until AFTER startHunt()
+        // returns, so an emit at this point would fire with no listener yet
+        // attached and be silently lost.
+        this.scopeContext = {
+          provenance: classifyProgramPolicy(params.programId),
+          scope: (preflightProgram.scope as string[] | null) ?? [],
+          outOfScope: (preflightProgram.outOfScope as string[] | null) ?? [],
+        };
+      } else {
+        // No program row (e.g. programId === -1, the lab sentinel) — still
+        // classify and surface it so the operator sees "lab", not silence.
+        this.scopeContext = {
+          provenance: classifyProgramPolicy(params.programId),
+          scope: [],
+          outOfScope: [],
+        };
       }
     } catch (err) {
       logger.debug("[HunterEngine] Pre-flight check failed (non-critical)", { err: String(err) });
@@ -1087,7 +1135,6 @@ export class HunterEngine extends EventEmitter {
 
     await this.loadCustomTools();
 
-    const sessionUuid = params.sessionId || uuidv4();
     this.campaignId = params.campaignId;
     this.targetId = params.targetId ?? 0;
 
@@ -1114,6 +1161,18 @@ export class HunterEngine extends EventEmitter {
       automatedScanningEnabled: params.automatedScanningEnabled === true,
       discoveredEndpoints: [],
     };
+
+    // UI trust fix #5/7: forward this hunt's own out-of-scope blocks to the
+    // live view. ScopeGuard is a shared singleton across concurrent hunts —
+    // filter to this session's programId so a block from a DIFFERENT
+    // concurrent hunt never gets misattributed here.
+    this.detachScopeGuardListener();
+    this.scopeGuardBlockListener = (e) => {
+      if (e.programId === this.state.programId) {
+        this.emit("hunt:scope_blocked", { sessionId: this.state.sessionId, url: e.url, reason: e.reason });
+      }
+    };
+    this.scopeGuard.on("blocked", this.scopeGuardBlockListener);
 
     // Persist session and capture the real DB ID
     const [session] = await db.insert(huntSessions).values({
@@ -1377,6 +1436,19 @@ export class HunterEngine extends EventEmitter {
         });
       }
 
+      // One-shot: provenance/scope don't change mid-hunt, so this fires once
+      // on the first iteration rather than every iteration like spend above.
+      if (!this.scopeContextEmitted && this.scopeContext) {
+        this.scopeContextEmitted = true;
+        this.emit("hunt:scope_context", {
+          sessionId: this.state.sessionId,
+          programId: this.state.programId,
+          provenance: this.scopeContext.provenance,
+          scope: this.scopeContext.scope,
+          outOfScope: this.scopeContext.outOfScope,
+        });
+      }
+
       try {
         switch (this.state.phase) {
           case "observe":
@@ -1503,6 +1575,7 @@ export class HunterEngine extends EventEmitter {
         budgetDimension: this.budgetPausedReason,
       });
       await this.persistCheckpoint("paused_budget", this.budgetPausedReason);
+      this.detachScopeGuardListener();
       this.emit("hunt:paused", {
         sessionId: this.state.sessionId,
         reason: this.budgetPausedReason === "call_count" ? "llm_call_count_budget_exhausted" : "llm_dollar_budget_exhausted",
@@ -1538,6 +1611,7 @@ export class HunterEngine extends EventEmitter {
         reason: this.authPausedReason,
       });
       await this.persistCheckpoint("paused_auth", this.authPausedReason);
+      this.detachScopeGuardListener();
       this.emit("hunt:paused", {
         sessionId: this.state.sessionId,
         reason: "auth_session_lost",
@@ -1608,6 +1682,7 @@ export class HunterEngine extends EventEmitter {
     // against its actual persisted value.
     await this.persistResults();
     ClaudeClient.clearSession(this.state.sessionId);
+    this.detachScopeGuardListener();
     this.emit("hunt:complete", {
       sessionId: this.state.sessionId,
       findings: this.state.confirmedFindings.length,
@@ -4845,6 +4920,7 @@ Only include chains that genuinely increase severity beyond individual findings.
     if (this.aborted) return;
     this.aborted = true;
     logger.info("[HunterEngine] Stop requested — aborting hunt", { session: this.state?.sessionId });
+    this.detachScopeGuardListener();
     this.emit("hunt:aborted", { sessionId: this.state?.sessionId });
   }
 

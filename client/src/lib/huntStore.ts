@@ -30,6 +30,14 @@ export interface StoredSession {
   // column written at pause/completion. Undefined until the first update.
   costUsd?: number;
   llmCallCount?: number;
+  // hunt:scope_context (UI trust fix #5/7) -- real-vs-lab classification and
+  // in-effect scope, previously shown only as static pre-launch text that
+  // vanished once a hunt started. provenance comes straight from
+  // classifyProgramPolicy() on the server, the SAME function ScopeGuard
+  // itself enforces against.
+  provenance?: string;
+  scope?: string[];
+  outOfScope?: string[];
 }
 
 export interface ExternalHunt {

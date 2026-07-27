@@ -7,6 +7,8 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
 
   fwd('hunt:phase');
   fwd('hunt:spend_update');
+  fwd('hunt:scope_blocked');
+  fwd('hunt:scope_context');
   fwd('hunt:observations');
   fwd('hunt:hypotheses');
   fwd('hunt:probing');

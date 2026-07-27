@@ -24,6 +24,7 @@
  *                                  unguarded, and must never be treated as lab.
  */
 import dns from "dns";
+import { EventEmitter } from "events";
 import { Request, Response, NextFunction } from "express";
 import { db } from "../db";
 import { programs, targets } from "../db/schema";
@@ -242,7 +243,15 @@ export interface ScopeTarget {
   programId: number;
 }
 
-export class ScopeGuard {
+/** Emitted by ScopeGuard on every BLOCKED isInScope() call — the single
+ *  funnel every caller (scopedHttp, dispatchTool, HunterEngine's own
+ *  pre-probe checks) goes through. UI trust fix #5/7: this is what lets the
+ *  live hunt view surface "engine tried to leave scope, was blocked" as it
+ *  happens, instead of only ever reaching a server log (see the go-live UI
+ *  trust audit — containment events were previously invisible in the UI).
+ *  ScopeGuard is a global singleton shared across concurrent hunts, so a
+ *  listener must filter by programId itself (see HunterEngine's subscribe). */
+export class ScopeGuard extends EventEmitter {
   private static instance: ScopeGuard;
   private scopeCache = new Map<number, { inScope: string[]; outOfScope: string[]; cachedAt: number }>();
   private readonly CACHE_TTL = 30 * 1000; // 30 seconds — short TTL so scope changes take effect quickly
@@ -269,7 +278,12 @@ export class ScopeGuard {
   }> {
     const result = await this.evaluateScope(url, programId);
     this.stats.totalChecks++;
-    if (result.allowed) this.stats.allowed++; else this.stats.blocked++;
+    if (result.allowed) {
+      this.stats.allowed++;
+    } else {
+      this.stats.blocked++;
+      this.emit("blocked", { url, programId, reason: result.reason });
+    }
     return result;
   }
 

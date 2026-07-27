@@ -22,6 +22,7 @@ export type ActivityEvent =
   | { type: "ban";            ts: string; target: string; reason: string }
   | { type: "complete";        ts: string; findings: number; iterations: number }
   | { type: "paused";          ts: string; dimension: "budget" | "auth"; reason: string; findings: number; iterations: number }
+  | { type: "scope_blocked";   ts: string; url: string; reason: string }
   | { type: "error";           ts: string; message: string }
   | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean }
   | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number }
@@ -455,6 +456,18 @@ function PausedRow({ ev }: { ev: ActivityEvent & { type: "paused" } }) {
       </span>
       <span className="text-hack-dim normal-case">{ev.reason}</span>
       <span className="text-hack-dim ml-auto">{ev.findings} findings · {ev.iterations} iter · {ev.ts}</span>
+    </div>
+  );
+}
+
+function ScopeBlockedRow({ ev }: { ev: ActivityEvent & { type: "scope_blocked" } }) {
+  return (
+    <div className="flex items-center gap-2 py-1 px-2 my-0.5 text-[10px] font-mono text-hack-accent border border-hack-accent/30 bg-hack-accent/5 rounded">
+      <Shield className="w-3 h-3 flex-shrink-0" />
+      <span className="font-bold uppercase tracking-wide">Contained</span>
+      <span className="text-hack-dim">engine tried to leave scope, blocked —</span>
+      <span className="truncate max-w-[260px]">{ev.url}</span>
+      <span className="text-hack-dim ml-auto">{ev.ts}</span>
     </div>
   );
 }
@@ -1162,6 +1175,8 @@ export function LiveActivityFeed({
               return <CompleteRow key={key} ev={ev} />;
             case "paused":
               return <PausedRow key={key} ev={ev} />;
+            case "scope_blocked":
+              return <ScopeBlockedRow key={key} ev={ev} />;
             case "cve_seeded":
               return <CveSeededRow key={key} ev={ev} />;
             case "public_duplicate":

@@ -49,7 +49,7 @@ export function parseHuntPausedEvent(data: any): {
 const EVENT_NAMES = [
   'hunt:started', 'hunt:phase', 'hunt:observations', 'hunt:hypotheses',
   'hunt:probing', 'hunt:probe_result', 'hunt:finding_confirmed', 'hunt:update',
-  'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'hunt:spend_update', 'solver:started', 'solver:complete', 'solver:finding',
+  'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'hunt:spend_update', 'hunt:scope_blocked', 'hunt:scope_context', 'solver:started', 'solver:complete', 'solver:finding',
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
   'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
@@ -124,6 +124,27 @@ export function attachHuntEvents(): () => void {
         ? { ...s, costUsd: Number(data.costUsd ?? 0), llmCallCount: Number(data.callCount ?? 0) }
         : s
     ));
+  });
+
+  // UI trust fix #5/7: real-vs-lab + in-effect scope, emitted once per hunt.
+  socket.on('hunt:scope_context', (data: any) => {
+    huntStore.updateSessions(prev => prev.map(s =>
+      s.sessionUuid === String(data.sessionId || '')
+        ? {
+            ...s,
+            provenance: String(data.provenance || 'unknown'),
+            scope: Array.isArray(data.scope) ? data.scope.map(String) : [],
+            outOfScope: Array.isArray(data.outOfScope) ? data.outOfScope.map(String) : [],
+          }
+        : s
+    ));
+  });
+
+  // UI trust fix #5/7: the scope guard blocked an out-of-scope egress
+  // attempt for THIS hunt -- previously only ever reached a server log.
+  // Phase A's cloud-bucket probe organically produced this exact signal.
+  socket.on('hunt:scope_blocked', (data: any) => {
+    push({ type: 'scope_blocked', ts: ts(), url: String(data.url || ''), reason: String(data.reason || '') });
   });
 
   socket.on('hunt:hypotheses', (data: any) => {
