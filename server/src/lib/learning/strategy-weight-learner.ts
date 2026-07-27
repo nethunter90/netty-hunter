@@ -1,17 +1,21 @@
 /**
- * PROVENANCE (2026-07-23 readiness handoff): decision_journal has no
- * programId of its own — huntId (text) is the hunt's sessionUuid, which
- * joins through hunt_sessions -> campaigns -> programs to reach platform.
- * Previously learn() aggregated across every hunt ever run with zero
- * program filter, and loadWeights() read the resulting global weights back
- * with none either — a second, undocumented contamination surface next to
- * the one closed in UnifiedReinforcementStore/ROIModel. Grouping now
- * includes platform per (strategy_before, strategy_after) pair; provenance
- * is derived from that platform via isCrossCampaignEligible() (the same
- * discriminator every other RL consumer uses, not a reimplementation) and
- * used as the same real::/lab::/unknown:: key prefix as everywhere else.
- * A row whose hunt_id doesn't join to any program (deleted session, bad
- * data) gets platform=null -> provenance "unknown", never silently "real".
+ * PROVENANCE (2026-07-23 readiness handoff; repointed 2026-07-26 scope-
+ * binding handoff Fix 1): decision_journal has no programId of its own —
+ * huntId (text) is the hunt's sessionUuid, which joins through
+ * hunt_sessions -> campaigns -> programs to reach isLab. Previously learn()
+ * aggregated across every hunt ever run with zero program filter, and
+ * loadWeights() read the resulting global weights back with none either —
+ * a second, undocumented contamination surface next to the one closed in
+ * UnifiedReinforcementStore/ROIModel. Grouping now includes isLab per
+ * (strategy_before, strategy_after) pair; provenance is derived from that
+ * via isCrossCampaignEligible() (the same discriminator every other RL
+ * consumer uses, not a reimplementation) and used as the same
+ * real::/lab::/unknown:: key prefix as everywhere else. A row whose hunt_id
+ * doesn't join to any program (deleted session, bad data) gets isLab=null
+ * -> provenance "unknown", never silently "real". (Originally grouped by
+ * `platform`, which made every custom-target hunt — platform: "local"
+ * regardless of lab-vs-real — read back as "lab" here too; see
+ * custom-target-program.ts for the full rationale.)
  */
 import { pool } from '../../db';
 import logger from '../../utils/logger';
@@ -23,9 +27,9 @@ const DOMAIN = 'strategy_transitions';
 const MIN_WEIGHT = 0.05;
 const MAX_WEIGHT = 5.0;
 
-function resolveProvenanceFromPlatform(platform: string | null): Provenance {
-  if (platform === null) return "unknown";
-  return isCrossCampaignEligible({ platform }) ? "real" : "lab";
+function resolveProvenanceFromIsLab(isLab: boolean | null): Provenance {
+  if (isLab === null) return "unknown";
+  return isCrossCampaignEligible({ isLab }) ? "real" : "lab";
 }
 
 function prefixedKey(provenance: Provenance, key: string): string {
@@ -37,7 +41,7 @@ class StrategyWeightLearner {
     try {
       const result = await pool.query(
         `SELECT dj.strategy_before, dj.strategy_after,
-                p.platform         AS platform,
+                p.is_lab           AS is_lab,
                 AVG(dj.outcome_score) AS avg_outcome,
                 COUNT(*)::int      AS sample_count
          FROM decision_journal dj
@@ -47,11 +51,11 @@ class StrategyWeightLearner {
          WHERE dj.strategy_before IS NOT NULL
            AND dj.strategy_after  IS NOT NULL
            AND dj.outcome_score   IS NOT NULL
-         GROUP BY dj.strategy_before, dj.strategy_after, p.platform`
+         GROUP BY dj.strategy_before, dj.strategy_after, p.is_lab`
       );
 
       for (const row of result.rows) {
-        const provenance = resolveProvenanceFromPlatform(row.platform ?? null);
+        const provenance = resolveProvenanceFromIsLab(row.is_lab ?? null);
         const rawKey = `${row.strategy_before}->${row.strategy_after}`;
         const key = prefixedKey(provenance, rawKey);
         const avgOutcome: number = parseFloat(row.avg_outcome);

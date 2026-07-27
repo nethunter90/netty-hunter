@@ -31,7 +31,7 @@ async function main() {
   cleanup.push(async () => { await db.delete(programs).where(eq(programs.id, realProgram.id)); });
 
   const [labProgram] = await db.insert(programs).values({
-    name: "__policy_proof_lab__", platform: "local", scope: ["*"], outOfScope: [],
+    name: "__policy_proof_lab__", platform: "local", isLab: true, scope: ["*"], outOfScope: [],
   }).returning();
   cleanup.push(async () => { await db.delete(programs).where(eq(programs.id, labProgram.id)); });
 
@@ -122,7 +122,7 @@ async function runTests(realId: number, labId: number) {
 
   console.log("\n=== Test 4: pre-flight decision logic — real+unspecified warns, lab and real+decided stay silent ===\n");
   {
-    const realProgramRow = { platform: "hackerone", wafBypassPolicy: "unspecified", exploitationToolsPolicy: "unspecified", automatedScanningPolicy: "unspecified", fuzzingPolicy: "unspecified", authConfig: null };
+    const realProgramRow = { isLab: false, wafBypassPolicy: "unspecified", exploitationToolsPolicy: "unspecified", automatedScanningPolicy: "unspecified", fuzzingPolicy: "unspecified", authConfig: null };
     const warnings = runProgramPreflight(realProgramRow);
     assert(warnings.length === 4, `real program, all 4 policies unspecified -> 4 warnings (got ${warnings.length}: ${warnings.map(w => w.code).join(",")})`);
 
@@ -130,7 +130,7 @@ async function runTests(realId: number, labId: number) {
     const decidedWarnings = runProgramPreflight(decidedRow);
     assert(decidedWarnings.length === 0, `real program, all 4 policies EXPLICITLY decided (allowed or disallowed) -> silent, 0 warnings (got ${decidedWarnings.length}) — Amendment 2 holds`);
 
-    const labRow = { platform: "local", wafBypassPolicy: "unspecified", exploitationToolsPolicy: "unspecified", automatedScanningPolicy: "unspecified", fuzzingPolicy: "unspecified", authConfig: null };
+    const labRow = { isLab: true, wafBypassPolicy: "unspecified", exploitationToolsPolicy: "unspecified", automatedScanningPolicy: "unspecified", fuzzingPolicy: "unspecified", authConfig: null };
     const labWarnings = runProgramPreflight(labRow);
     assert(labWarnings.length === 0, `LAB program, all unspecified -> still silent, 0 warnings (got ${labWarnings.length}) — lab needs no reminder`);
 

@@ -58,7 +58,7 @@ async function runMain(
   console.log("\n=== Setup: throwaway lab + real programs, throwaway hunt_session ===\n");
 
   const [labProgram] = await db.insert(programs).values({
-    name: "__proof_lab_program__", platform: "local", scope: ["*"], outOfScope: [],
+    name: "__proof_lab_program__", platform: "local", isLab: true, scope: ["*"], outOfScope: [],
   }).returning();
   cleanup.push(async () => { await db.delete(programs).where(eq(programs.id, labProgram.id)); });
 

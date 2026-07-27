@@ -62,6 +62,27 @@ export const programs = pgTable("programs", {
   // "automated scanning" since some programs permit targeted vuln scanning
   // but not broad directory/parameter fuzzing, or vice versa.
   fuzzingPolicy: varchar("fuzzing_policy", { length: 16 }).notNull().default("unspecified"),
+  // 2026-07-26 (scope-binding handoff, Fix 1): the single canonical
+  // lab-vs-real identity for this program, decoupled from `platform`.
+  // Before this column, isCrossCampaignEligible()/resolveProvenance() (RL,
+  // ActionPolicyGate) derived lab/real from `platform === "local"`, while
+  // ScopeGuard.classifyProgramPolicy() derived it independently from
+  // programId arithmetic — two classifiers for the same hunt that could (and
+  // did, on the platform's own default `-1` custom-target path) disagree in
+  // the dangerous direction: a real ad-hoc engagement resolved to a
+  // `platform: "local"` row (resolveCustomTargetProgram always sets that,
+  // regardless of whether the target was the practice lab or a genuine
+  // customer target) auto-permitted WAF-bypass/exploitation-tools/automated-
+  // scanning/fuzzing with the fail-closed policy gate structurally skipped.
+  // FAIL CLOSED: defaults to false (real/gated) for every row; only the one
+  // seeded practice-lab target (see lab-profiles.ts's known lab hostnames,
+  // matched exactly in resolveCustomTargetProgram — never a broad heuristic
+  // like isLocalHostname) is ever true. ScopeGuard's own classifyProgramPolicy
+  // arithmetic is deliberately left independent as a defense-in-depth floor
+  // on the scope axis — it already erred toward more protection, not less,
+  // so unifying it in was unnecessary; only the two permissive-direction
+  // consumers (isCrossCampaignEligible/resolveProvenance) are repointed here.
+  isLab: boolean("is_lab").notNull().default(false),
   lastHunted: timestamp("last_hunted"),
   metadata: jsonb("metadata").notNull().default({}),
   scheduleInterval: integer("schedule_interval").default(0), // hours between auto re-scans; 0 = disabled

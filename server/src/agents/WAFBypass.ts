@@ -348,7 +348,7 @@ export async function checkWafBypassAuthorization(
     return { allowed: false, reason: `Out of scope: ${reason}` };
   }
 
-  const [program] = await db.select({ platform: programs.platform, wafBypassPolicy: programs.wafBypassPolicy })
+  const [program] = await db.select({ isLab: programs.isLab, wafBypassPolicy: programs.wafBypassPolicy })
     .from(programs).where(eq(programs.id, programId)).limit(1);
   if (!program) {
     return { allowed: false, reason: `Program ${programId} not found` };

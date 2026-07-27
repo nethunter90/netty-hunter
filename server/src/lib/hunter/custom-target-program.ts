@@ -23,12 +23,29 @@ import { db } from "../../db";
 import { programs, huntSessions, campaigns } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { ScopeGuard } from "../../middleware/scopeGuard";
+import { labScorer } from "../intelligence/lab-profiles";
 import type { Provenance } from "../../intelligence/ReinforcementStore";
 
 export async function resolveCustomTargetProgram(targetUrl: string, customScope?: string[]): Promise<number> {
-  const hostname = new URL(targetUrl).hostname;
+  const url = new URL(targetUrl);
+  const hostname = url.hostname;
   const scope = customScope && customScope.length > 0 ? customScope : [`*.${hostname}`];
-  const label = `Custom: ${hostname}`;
+  // 2026-07-26 (scope-binding handoff, Fix 1): keyed on `url.host`
+  // (hostname:port), not bare hostname. The one seeded practice-lab target
+  // (localhost:3000) and a real target legitimately reached at the same
+  // hostname on a different port (e.g. an internal app tunneled to
+  // localhost:5000 for a real ad-hoc engagement) would otherwise collide
+  // into ONE shared "Custom: localhost" row — whichever was launched most
+  // recently would flip that row's isLab for every other target sharing the
+  // hostname. Port-qualifying the identity makes isLab stable per target.
+  const label = `Custom: ${url.host}`;
+
+  // Narrow, explicit marker (see LabScorer.getKnownLabHosts' doc) — NOT
+  // platform === "local" (every custom-target row gets that label
+  // regardless of what it points at) and NOT a broad loopback/RFC-1918
+  // heuristic (a real ad-hoc engagement can legitimately target an internal
+  // host too).
+  const isLab = labScorer.getKnownLabHosts().includes(url.host);
 
   const [existing] = await db.select().from(programs)
     .where(and(eq(programs.platform, "local"), eq(programs.name, label)))
@@ -37,8 +54,13 @@ export async function resolveCustomTargetProgram(targetUrl: string, customScope?
   if (existing) {
     // An explicit scope this time (e.g. the engagement's authorized scope grew)
     // updates the program so future launches against this host see it too.
-    if (customScope && customScope.length > 0) {
-      await db.update(programs).set({ scope }).where(eq(programs.id, existing.id));
+    // isLab is reconciled defensively on every resolve (cheap, self-healing)
+    // in case the known-lab-host list changes between launches.
+    const updates: Partial<typeof programs.$inferInsert> = {};
+    if (customScope && customScope.length > 0) updates.scope = scope;
+    if (existing.isLab !== isLab) updates.isLab = isLab;
+    if (Object.keys(updates).length > 0) {
+      await db.update(programs).set(updates).where(eq(programs.id, existing.id));
       ScopeGuard.getInstance().invalidateCache(existing.id);
     }
     return existing.id;
@@ -49,6 +71,7 @@ export async function resolveCustomTargetProgram(targetUrl: string, customScope?
     platform: "local",
     scope,
     outOfScope: [],
+    isLab,
   }).returning();
   return created.id;
 }
@@ -56,15 +79,26 @@ export async function resolveCustomTargetProgram(targetUrl: string, customScope?
 /**
  * Whether a program's data (findings, tool-selection outcomes) should count
  * toward cross-campaign priors — recommendation floors, RL reinforcement, or
- * anything else that aggregates across hunts. Practice/lab targets (this
- * module's synthetic "local" programs, plus "custom"/"other") overrepresent
- * priors relative to real programs if left in: same eligibility question for
- * every consumer, so it lives here once rather than being re-inlined at each
- * call site (was previously duplicated ad hoc, e.g. bounty.ts's
- * platform-based filter).
+ * anything else that aggregates across hunts. Practice/lab targets
+ * overrepresent priors relative to real programs if left in: same
+ * eligibility question for every consumer, so it lives here once rather than
+ * being re-inlined at each call site.
+ *
+ * 2026-07-26 (scope-binding handoff, Fix 1): keyed off `isLab`, NOT
+ * `platform`. Deriving this from `platform === "local"/"custom"/"other"`
+ * meant every hunt launched via the platform's own documented default path
+ * (`programId: -1`, resolved to a `platform: "local"` row regardless of
+ * whether the target was the practice lab or a genuine ad-hoc real
+ * engagement) was silently treated as lab here — auto-permitting WAF-bypass,
+ * exploitation-tools, automated-scanning, and fuzzing with the fail-closed
+ * policy gate below structurally skipped, while ScopeGuard's independent
+ * programId-arithmetic classifier correctly treated the same hunt as real.
+ * `isLab` is the single column both axes should agree exist to check now;
+ * see resolveCustomTargetProgram for how it's set (fail-closed default
+ * false, true only for the platform's known lab targets).
  */
-export function isCrossCampaignEligible(program: { platform: string }): boolean {
-  return !["local", "custom", "other"].includes(program.platform);
+export function isCrossCampaignEligible(program: { isLab: boolean }): boolean {
+  return !program.isLab;
 }
 
 /**
@@ -82,7 +116,7 @@ export function isCrossCampaignEligible(program: { platform: string }): boolean 
 export async function resolveProvenance(programId: number | null | undefined): Promise<Provenance> {
   if (typeof programId !== "number" || !Number.isFinite(programId)) return "unknown";
   try {
-    const [program] = await db.select({ platform: programs.platform })
+    const [program] = await db.select({ isLab: programs.isLab })
       .from(programs).where(eq(programs.id, programId)).limit(1);
     if (!program) return "unknown";
     return isCrossCampaignEligible(program) ? "real" : "lab";

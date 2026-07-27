@@ -552,6 +552,20 @@ const LAB_PROFILES: Map<string, LabTargetProfile> = new Map([
 ]);
 
 export class LabScorer {
+  /**
+   * Exact `host` (hostname:port) values of the platform's known,
+   * pre-scored practice-lab targets — the narrow, explicit marker
+   * `resolveCustomTargetProgram()` uses to decide `isLab` (see the
+   * scope-binding handoff, Fix 1). Deliberately NOT a broad heuristic like
+   * `isLocalHostname()` (any loopback/RFC-1918 address): a real ad-hoc
+   * engagement can legitimately target an internal/loopback host too, and
+   * that must still resolve to `isLab: false` (gated). Only a host this
+   * platform actually ships a scored lab profile for is "the lab."
+   */
+  getKnownLabHosts(): string[] {
+    return Array.from(LAB_PROFILES.values()).map((p) => new URL(p.targetUrl).host);
+  }
+
   scoreHunt(huntId: string, profileId: string, confirmedFindings: string[], traceData?: any[]): LabScore {
     const profile = this.getProfile(profileId);
     if (!profile) {

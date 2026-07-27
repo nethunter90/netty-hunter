@@ -33,9 +33,9 @@ export interface PolicyCheckResult {
 }
 
 /**
- * program: only `platform` is required — callers that already have the full
+ * program: only `isLab` is required — callers that already have the full
  * row can pass it directly; callers with just a programId should look up
- * `{ platform }` once (see the two subsumed wrappers below for the pattern).
+ * `{ isLab }` once (see the two subsumed wrappers below for the pattern).
  * policy: the program's raw policy string for THIS action
  * ("unspecified"/"allowed"/"disallowed"/anything else) — pass whichever
  * column corresponds to `action` (wafBypassPolicy, exploitationToolsPolicy,
@@ -46,9 +46,16 @@ export interface PolicyCheckResult {
  * EXPLICIT "allowed"; "unspecified" and "disallowed" both deny. This is the
  * same posture the two pre-existing gates already proved correct — this
  * function generalizes it, not changes it.
+ *
+ * 2026-07-26 (scope-binding handoff, Fix 1): `program` used to be
+ * `{ platform: string }`; every custom-target hunt (the platform's own
+ * documented default launch path) resolves to `platform: "local"`
+ * regardless of whether the target is the practice lab or a real ad-hoc
+ * engagement, which made this gate auto-permit for real hunts too. Now
+ * keyed off the dedicated `isLab` column (see schema.ts / resolveCustomTargetProgram).
  */
 export function isActionAllowed(
-  program: { platform: string },
+  program: { isLab: boolean },
   policy: string | null | undefined,
   action: RestrictedAction,
 ): PolicyCheckResult {
@@ -91,7 +98,7 @@ async function checkPolicyAuthorization(
   }
 
   const [program] = await db.select({
-    platform: programs.platform,
+    isLab: programs.isLab,
     automatedScanningPolicy: programs.automatedScanningPolicy,
     fuzzingPolicy: programs.fuzzingPolicy,
   }).from(programs).where(eq(programs.id, programId)).limit(1);
@@ -130,7 +137,7 @@ export interface PreflightWarning {
  * operator's own target, nothing to remind them of.
  */
 export function runProgramPreflight(program: {
-  platform: string;
+  isLab: boolean;
   wafBypassPolicy: string;
   exploitationToolsPolicy: string;
   automatedScanningPolicy: string;
