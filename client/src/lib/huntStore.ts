@@ -25,6 +25,11 @@ export interface StoredSession {
   iteration: number;
   findings: number;
   pausedReason?: string;
+  // Live LLM spend ledger (hunt:spend_update) -- previously this platform had
+  // no live cost display at all; spend was only ever readable from a DB
+  // column written at pause/completion. Undefined until the first update.
+  costUsd?: number;
+  llmCallCount?: number;
 }
 
 export interface ExternalHunt {

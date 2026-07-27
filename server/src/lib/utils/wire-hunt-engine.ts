@@ -6,6 +6,7 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   const fwd = (evt: string) => engine.on(evt, (d: unknown) => io.to(room).emit(evt, d));
 
   fwd('hunt:phase');
+  fwd('hunt:spend_update');
   fwd('hunt:observations');
   fwd('hunt:hypotheses');
   fwd('hunt:probing');

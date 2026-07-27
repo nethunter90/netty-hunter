@@ -1357,6 +1357,26 @@ export class HunterEngine extends EventEmitter {
       });
       contextWriter.alert("phase", { phase: this.state.phase, iteration: this.state.iteration });
 
+      // UI trust fix #6 (go-live protocol v2 handoff): the live ledger
+      // (ClaudeClient.getSpend/getCallCount) was previously only ever read
+      // at pause/completion to persist llmSpendUsd/llmCallCount — no live
+      // panel could see it accrue during a run, so an operator watching a
+      // real hunt had no way to abort ahead of the cap, only discover the
+      // total after the fact. Emitted once per iteration (same granularity
+      // as hunt:phase) rather than per-LLM-call, matching how every other
+      // live-view event is paced.
+      {
+        const liveSpend = ClaudeClient.getSpend(this.state.sessionId);
+        const liveCallCount = ClaudeClient.getCallCount(this.state.sessionId);
+        this.emit("hunt:spend_update", {
+          sessionId: this.state.sessionId,
+          costUsd: liveSpend.costUsd,
+          callCount: liveCallCount,
+          inputTokens: liveSpend.inputTokens,
+          outputTokens: liveSpend.outputTokens,
+        });
+      }
+
       try {
         switch (this.state.phase) {
           case "observe":

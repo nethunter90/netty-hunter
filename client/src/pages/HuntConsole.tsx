@@ -392,6 +392,12 @@ export default function HuntConsole() {
                       )}
                     </div>
                   )}
+                  {typeof session.costUsd === "number" && (
+                    <div className="text-hack-dim mt-0.5 flex items-center gap-2">
+                      <span className="text-hack-accent">${session.costUsd.toFixed(4)}</span>
+                      <span>{session.llmCallCount ?? 0} LLM calls</span>
+                    </div>
+                  )}
                 </div>
                 );
               })}

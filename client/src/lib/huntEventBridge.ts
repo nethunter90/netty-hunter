@@ -49,7 +49,7 @@ export function parseHuntPausedEvent(data: any): {
 const EVENT_NAMES = [
   'hunt:started', 'hunt:phase', 'hunt:observations', 'hunt:hypotheses',
   'hunt:probing', 'hunt:probe_result', 'hunt:finding_confirmed', 'hunt:update',
-  'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'solver:started', 'solver:complete', 'solver:finding',
+  'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'hunt:spend_update', 'solver:started', 'solver:complete', 'solver:finding',
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
   'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
@@ -113,6 +113,17 @@ export function attachHuntEvents(): () => void {
 
   socket.on('hunt:observations', (_data: any) => {
     // observations are context — no explicit event row needed
+  });
+
+  // UI trust fix #6: live LLM spend, pushed once per iteration from the real
+  // ClaudeClient ledger (see HunterEngine.ts's runLoop) -- not a DB field
+  // that's only accurate at pause/completion.
+  socket.on('hunt:spend_update', (data: any) => {
+    huntStore.updateSessions(prev => prev.map(s =>
+      s.sessionUuid === String(data.sessionId || '')
+        ? { ...s, costUsd: Number(data.costUsd ?? 0), llmCallCount: Number(data.callCount ?? 0) }
+        : s
+    ));
   });
 
   socket.on('hunt:hypotheses', (data: any) => {
