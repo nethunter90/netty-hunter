@@ -49,6 +49,13 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   fwd('hunt:solver_finding');
   fwd('hunt:solver_started');
   fwd('hunt:solver_complete');
+  // Fix 3 (safety-events bridge): these three were previously never
+  // forwarded at all — server-side alerts (pre-flight policy warnings, a
+  // failed auth login, an undetectable auth-liveness baseline) reached only
+  // a log line, never the live UI.
+  fwd('hunt:preflight_warnings');
+  fwd('hunt:auth_failed');
+  fwd('hunt:auth_liveness_inactive');
   // hunt:aborted — emitted immediately by engine.stop(); clients use this to
   // confirm a stop request was honoured rather than relying on optimistic UI state.
   fwd('hunt:aborted');
@@ -57,4 +64,15 @@ export function wireHuntEngineToSocket(engine: HunterEngine, sessionUuid: string
   // single-flight-slot release + activeHuntSessions cleanup logic — see routes/hunt.ts).
   engine.on('hunt:complete', (d: unknown) => io.to(room).emit('hunt:complete', d));
   engine.on('hunt:paused', (d: unknown) => io.to(room).emit('hunt:paused', d));
+
+  // NOTE: preflight_warnings and auth_failed fire SYNCHRONOUSLY inside
+  // startHunt(), which every caller awaits BEFORE calling this function —
+  // and the launching client only learns its sessionUuid (and joins this
+  // room via subscribe:hunt) after that same await resolves server-side.
+  // So a room-broadcast replay placed here would ALWAYS run before any
+  // client — including the one that just launched this hunt — could
+  // possibly have joined `room`. The real replay lives in index.ts's
+  // subscribe:hunt handler instead, which is the one point guaranteed to
+  // have an actual listening socket (covers both "just launched" and a
+  // later page-reload/reconnect). Don't re-add a replay here.
 }

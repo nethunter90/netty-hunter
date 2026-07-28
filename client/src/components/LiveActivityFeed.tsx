@@ -21,8 +21,11 @@ export type ActivityEvent =
   | { type: "pivot";          ts: string; reason: string; newHypotheses: number }
   | { type: "ban";            ts: string; target: string; reason: string }
   | { type: "complete";        ts: string; findings: number; iterations: number }
-  | { type: "paused";          ts: string; dimension: "budget" | "auth"; reason: string; findings: number; iterations: number }
+  | { type: "paused";          ts: string; dimension: "budget" | "auth" | "scope"; reason: string; scopeReason?: string; findings: number; iterations: number }
   | { type: "scope_blocked";   ts: string; url: string; reason: string }
+  | { type: "preflight_warnings"; ts: string; warnings: Array<{ code: string; message: string }> }
+  | { type: "auth_failed";     ts: string; loginUrl?: string; reason: string }
+  | { type: "auth_liveness_inactive"; ts: string; message: string }
   | { type: "error";           ts: string; message: string }
   | { type: "public_duplicate"; ts: string; vulnClass: string; platform: string; reportUrl?: string; title?: string; warn?: boolean }
   | { type: "cve_seeded"; ts: string; tech: string; cveIds: string[]; maxCvss: number }
@@ -447,15 +450,32 @@ function CompleteRow({ ev }: { ev: ActivityEvent & { type: "complete" } }) {
   );
 }
 
+const PAUSE_DIMENSION_LABEL: Record<"budget" | "auth" | "scope", string> = {
+  budget: "budget exhausted",
+  auth: "auth session lost",
+  scope: "scope/policy changed mid-hunt",
+};
+
 function PausedRow({ ev }: { ev: ActivityEvent & { type: "paused" } }) {
+  // The scope-drift pause is the one where the operator most needs to see
+  // WHAT changed before deciding to resume — scopeReason carries the
+  // before/after description (see HunterEngine.checkScopeDrift()), so it
+  // gets its own prominent line instead of sharing the generic reason slot.
   return (
-    <div className="flex items-center gap-2 py-1.5 px-2 my-1 text-[10px] font-mono text-hack-yellow border border-hack-yellow/40 bg-hack-yellow/10 rounded animate-pulse">
-      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-      <span className="font-bold tracking-wide uppercase">
-        Paused — {ev.dimension === "budget" ? "budget exhausted" : "auth session lost"}
-      </span>
-      <span className="text-hack-dim normal-case">{ev.reason}</span>
-      <span className="text-hack-dim ml-auto">{ev.findings} findings · {ev.iterations} iter · {ev.ts}</span>
+    <div className="flex flex-col gap-1 py-1.5 px-2 my-1 text-[10px] font-mono text-hack-yellow border border-hack-yellow/40 bg-hack-yellow/10 rounded animate-pulse">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="font-bold tracking-wide uppercase">
+          Paused — {PAUSE_DIMENSION_LABEL[ev.dimension]}
+        </span>
+        <span className="text-hack-dim normal-case">{ev.reason}</span>
+        <span className="text-hack-dim ml-auto">{ev.findings} findings · {ev.iterations} iter · {ev.ts}</span>
+      </div>
+      {ev.dimension === "scope" && ev.scopeReason && (
+        <div className="text-hack-text normal-case ml-5 border-l-2 border-hack-yellow/40 pl-2">
+          {ev.scopeReason}
+        </div>
+      )}
     </div>
   );
 }
@@ -467,6 +487,47 @@ function ScopeBlockedRow({ ev }: { ev: ActivityEvent & { type: "scope_blocked" }
       <span className="font-bold uppercase tracking-wide">Contained</span>
       <span className="text-hack-dim">engine tried to leave scope, blocked —</span>
       <span className="truncate max-w-[260px]">{ev.url}</span>
+      <span className="text-hack-dim ml-auto">{ev.ts}</span>
+    </div>
+  );
+}
+
+function PreflightWarningsRow({ ev }: { ev: ActivityEvent & { type: "preflight_warnings" } }) {
+  return (
+    <div className="border border-hack-orange/40 bg-hack-orange/5 rounded p-2 my-1">
+      <div className="flex items-center gap-2 text-[10px] font-mono">
+        <AlertTriangle className="w-3.5 h-3.5 text-hack-orange flex-shrink-0" />
+        <span className="text-hack-orange font-bold uppercase tracking-wide">Pre-flight warnings</span>
+        <span className="text-hack-dim ml-auto">{ev.ts}</span>
+      </div>
+      <div className="mt-1 ml-5 space-y-0.5">
+        {ev.warnings.map((w, i) => (
+          <div key={i} className="text-[10px] font-mono text-hack-dim">
+            <span className="text-hack-orange">{w.code}</span> — {w.message}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AuthFailedRow({ ev }: { ev: ActivityEvent & { type: "auth_failed" } }) {
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-2 my-1 text-[10px] font-mono text-hack-red border border-hack-red/40 bg-hack-red/10 rounded">
+      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+      <span className="font-bold tracking-wide uppercase">Auth failed — hunting unauthenticated</span>
+      <span className="text-hack-dim normal-case">{ev.reason}</span>
+      <span className="text-hack-dim ml-auto">{ev.ts}</span>
+    </div>
+  );
+}
+
+function AuthLivenessInactiveRow({ ev }: { ev: ActivityEvent & { type: "auth_liveness_inactive" } }) {
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-2 my-1 text-[10px] font-mono text-hack-orange border border-hack-orange/40 bg-hack-orange/10 rounded">
+      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+      <span className="font-bold tracking-wide uppercase">Auth liveness undetectable</span>
+      <span className="text-hack-dim normal-case">{ev.message}</span>
       <span className="text-hack-dim ml-auto">{ev.ts}</span>
     </div>
   );
@@ -1177,6 +1238,12 @@ export function LiveActivityFeed({
               return <PausedRow key={key} ev={ev} />;
             case "scope_blocked":
               return <ScopeBlockedRow key={key} ev={ev} />;
+            case "preflight_warnings":
+              return <PreflightWarningsRow key={key} ev={ev} />;
+            case "auth_failed":
+              return <AuthFailedRow key={key} ev={ev} />;
+            case "auth_liveness_inactive":
+              return <AuthLivenessInactiveRow key={key} ev={ev} />;
             case "cve_seeded":
               return <CveSeededRow key={key} ev={ev} />;
             case "public_duplicate":

@@ -17,10 +17,13 @@ import type { ActivityEvent } from '../components/LiveActivityFeed';
 export interface StoredSession {
   sessionUuid: string;
   targetUrl: string;
-  // paused_budget/paused_auth are distinct, terminal-until-resumed states — a
-  // hunt in either must never be conflated with "running" (see hunt:paused
-  // handling in huntEventBridge.ts; this was rendering as running forever).
-  status: 'running' | 'stopping' | 'paused_budget' | 'paused_auth' | 'complete' | 'error';
+  // paused_budget/paused_auth/paused_scope are distinct, terminal-until-resumed
+  // states — a hunt in any of them must never be conflated with "running" (see
+  // hunt:paused handling in huntEventBridge.ts; this was rendering as running
+  // forever). paused_scope covers BOTH a scope change and a policy-field
+  // change mid-hunt (HunterEngine's checkScopeDrift() checks both under one
+  // reason, scope_changed_mid_hunt).
+  status: 'running' | 'stopping' | 'paused_budget' | 'paused_auth' | 'paused_scope' | 'complete' | 'error';
   phase: string;
   iteration: number;
   findings: number;

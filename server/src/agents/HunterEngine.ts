@@ -15,7 +15,7 @@ import { eq, isNotNull, desc } from "drizzle-orm";
 import logger from "../utils/logger";
 import { contextWriter } from "../lib/context-writer";
 import IntelligenceSynthesizer, { type UnifiedIntelligence, EvasionLibrary, checkWafBypassAuthorization } from "./WAFBypass";
-import { checkAutomatedScanningAuthorization, checkFuzzingAuthorization, runProgramPreflight } from "./ActionPolicyGate";
+import { checkAutomatedScanningAuthorization, checkFuzzingAuthorization, runProgramPreflight, type PreflightWarning } from "./ActionPolicyGate";
 import { ScopeGuard, classifyProgramPolicy } from "../middleware/scopeGuard";
 import { coreGovernance } from "../governance";
 import { ModelRouter, ClaudeUnavailableError } from "../intelligence/ModelRouter";
@@ -851,6 +851,40 @@ export class HunterEngine extends EventEmitter {
     isLab: boolean;
   } | null = null;
   private scopeContextEmitted = false;
+  // Wiring-order fix (Fix 3, safety-events bridge): preflight_warnings and
+  // auth_failed both fire SYNCHRONOUSLY inside startHunt(), before the
+  // launching client can possibly know its sessionUuid (returned only once
+  // startHunt() resolves) and therefore before it can subscribe:hunt to
+  // this session's room -- emitted with zero listeners attached, they were
+  // previously lost forever (same root cause hunt:started already had a
+  // manual post-wiring replay for; these two never did, and a replay at the
+  // wiring point itself is STILL too early -- see wire-hunt-engine.ts's
+  // note). Cached here so index.ts's subscribe:hunt handler -- the one
+  // point actually guaranteed to have a listening socket -- can replay
+  // whichever of these fired, to any client that (re)subscribes.
+  private lastPreflightWarnings: { programId: number; warnings: PreflightWarning[] } | null = null;
+  private lastAuthFailed: { sessionId: string; programId: number; loginUrl?: string; reason: string } | null = null;
+
+  getPreflightWarningsSnapshot(): { programId: number; warnings: PreflightWarning[] } | null {
+    return this.lastPreflightWarnings;
+  }
+  getAuthFailedSnapshot(): { sessionId: string; programId: number; loginUrl?: string; reason: string } | null {
+    return this.lastAuthFailed;
+  }
+
+  // Same wiring-order problem, different event: when the LLM budget is
+  // pre-exhausted (e.g. MAX_LLM_CALLS_PER_HUNT=0), runLoop()'s very first
+  // top-of-loop check pauses the hunt essentially immediately -- often
+  // before the launching client has even received its sessionUuid back
+  // from the HTTP response, let alone joined the socket room. A room
+  // broadcast at that point reaches nobody, and (unlike hunt:state) there
+  // was no replay for a hunt that's already paused by the time a client
+  // subscribes. Cached here for the same subscribe:hunt replay as the two
+  // above.
+  private lastPaused: Record<string, unknown> | null = null;
+  getPausedSnapshot(): Record<string, unknown> | null {
+    return this.lastPaused;
+  }
   private modelRouter = ModelRouter.getInstance();
   private roiModel = new ROIModel();
   private rlWiring = new ReinforcementWiring();
@@ -1110,12 +1144,14 @@ export class HunterEngine extends EventEmitter {
             loginUrl: this.authConfig.loginUrl,
             authType: this.authConfig.authType ?? "form",
           });
-          this.emit("hunt:auth_failed", {
+          const authFailedPayload = {
             sessionId: this.state?.sessionId ?? "",
             programId,
             loginUrl: this.authConfig.loginUrl,
             reason,
-          });
+          };
+          this.lastAuthFailed = authFailedPayload;
+          this.emit("hunt:auth_failed", authFailedPayload);
           // Same reasoning as the host-mismatch check above: on a local/lab
           // target, auth being configured but never establishing a session is
           // never intentional, so don't waste the run finding that out later.
@@ -1206,7 +1242,9 @@ export class HunterEngine extends EventEmitter {
           logger.warn("[HunterEngine] Real-program pre-flight found unspecified policy/config", {
             programId: params.programId, warnings: preflightWarnings,
           });
-          this.emit("hunt:preflight_warnings", { programId: params.programId, warnings: preflightWarnings });
+          const preflightPayload = { programId: params.programId, warnings: preflightWarnings };
+          this.lastPreflightWarnings = preflightPayload;
+          this.emit("hunt:preflight_warnings", preflightPayload);
         }
         // UI trust fix #5/7: the live view previously showed real-vs-lab
         // classification and in-effect scope only as static pre-launch text
@@ -1705,13 +1743,14 @@ export class HunterEngine extends EventEmitter {
       });
       await this.persistCheckpoint("paused_budget", this.budgetPausedReason);
       this.detachScopeGuardListener();
-      this.emit("hunt:paused", {
+      this.lastPaused = {
         sessionId: this.state.sessionId,
         reason: this.budgetPausedReason === "call_count" ? "llm_call_count_budget_exhausted" : "llm_dollar_budget_exhausted",
         budgetDimension: this.budgetPausedReason,
         findings: this.state.confirmedFindings.length,
         iterations: this.state.iteration,
-      });
+      };
+      this.emit("hunt:paused", this.lastPaused);
       logger.info("Hunt paused (resumable)", {
         sessionId: this.state.sessionId,
         confirmedFindings: this.state.confirmedFindings.length,
@@ -1741,13 +1780,14 @@ export class HunterEngine extends EventEmitter {
       });
       await this.persistCheckpoint("paused_auth", this.authPausedReason);
       this.detachScopeGuardListener();
-      this.emit("hunt:paused", {
+      this.lastPaused = {
         sessionId: this.state.sessionId,
         reason: "auth_session_lost",
         authReason: this.authPausedReason,
         findings: this.state.confirmedFindings.length,
         iterations: this.state.iteration,
-      });
+      };
+      this.emit("hunt:paused", this.lastPaused);
       logger.warn("Hunt paused (resumable) — auth session lost", {
         sessionId: this.state.sessionId,
         confirmedFindings: this.state.confirmedFindings.length,
@@ -1779,13 +1819,14 @@ export class HunterEngine extends EventEmitter {
       });
       await this.persistCheckpoint("paused_scope_drift", this.scopePausedReason);
       this.detachScopeGuardListener();
-      this.emit("hunt:paused", {
+      this.lastPaused = {
         sessionId: this.state.sessionId,
         reason: "scope_changed_mid_hunt",
         scopeReason: this.scopePausedReason,
         findings: this.state.confirmedFindings.length,
         iterations: this.state.iteration,
-      });
+      };
+      this.emit("hunt:paused", this.lastPaused);
       logger.warn("Hunt paused (resumable) — scope changed mid-hunt", {
         sessionId: this.state.sessionId,
         confirmedFindings: this.state.confirmedFindings.length,
@@ -4818,6 +4859,12 @@ Return ONLY valid JSON array of hypothesis objects.`;
     this.authPausedReason = null;
     this.scopePaused = false;
     this.scopePausedReason = null;
+    // A resumed hunt is no longer paused -- a late subscriber must not be
+    // told it's still in the state it just left. hunt:preflight_warnings/
+    // hunt:auth_failed aren't cleared here: they're historical facts about
+    // this launch (what warnings applied, whether the FIRST login attempt
+    // failed), not a live status that resume invalidates.
+    this.lastPaused = null;
     this.hardBanned = false;
     this.aborted = false;
 

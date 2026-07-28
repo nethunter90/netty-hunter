@@ -181,9 +181,9 @@ export default function HuntConsole() {
         </div>
         <div className="text-[10px] text-hack-dim font-mono flex items-center gap-3">
           <span>Active: {activeSessions.filter(s => s.status === "running").length}</span>
-          {activeSessions.some(s => s.status === "paused_budget" || s.status === "paused_auth") && (
+          {activeSessions.some(s => s.status === "paused_budget" || s.status === "paused_auth" || s.status === "paused_scope") && (
             <span className="text-hack-yellow font-bold animate-pulse">
-              Paused: {activeSessions.filter(s => s.status === "paused_budget" || s.status === "paused_auth").length}
+              Paused: {activeSessions.filter(s => s.status === "paused_budget" || s.status === "paused_auth" || s.status === "paused_scope").length}
             </span>
           )}
         </div>
@@ -347,7 +347,7 @@ export default function HuntConsole() {
             <div className="border-t border-hack-border p-3 space-y-2 flex-shrink-0">
               <div className="text-[10px] text-hack-dim font-mono uppercase mb-2">Active Hunts</div>
               {activeSessions.map(session => {
-                const isPaused = session.status === "paused_budget" || session.status === "paused_auth";
+                const isPaused = session.status === "paused_budget" || session.status === "paused_auth" || session.status === "paused_scope";
                 const statusDotClass = session.status === "running"
                   ? "status-running"
                   : session.status === "stopping"
@@ -378,7 +378,11 @@ export default function HuntConsole() {
                   </div>
                   {isPaused ? (
                     <div className="text-hack-yellow font-bold uppercase tracking-wide">
-                      PAUSED — {session.status === "paused_budget" ? "budget exhausted" : "auth session lost"}
+                      PAUSED — {
+                        session.status === "paused_budget" ? "budget exhausted"
+                        : session.status === "paused_scope" ? "scope/policy changed mid-hunt"
+                        : "auth session lost"
+                      }
                       {session.pausedReason && (
                         <div className="text-hack-dim normal-case font-normal mt-0.5">{session.pausedReason}</div>
                       )}

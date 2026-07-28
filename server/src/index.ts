@@ -302,6 +302,29 @@ io.on("connection", (socket) => {
       // Replay current phase so late-joining clients aren't left blank
       const state = engine.getState();
       socket.emit("hunt:state", state);
+
+      // preflight_warnings and auth_failed fire SYNCHRONOUSLY inside
+      // startHunt(), which resolves (and the launching client learns its
+      // sessionUuid and calls subscribe:hunt) well after both could have
+      // already fired — wireHuntEngineToSocket()'s own replay runs before
+      // ANY client, including the one that just launched this hunt, has had
+      // a chance to subscribe. This is the point that's actually guaranteed
+      // to have a listening client, so it's replayed here instead (covers
+      // both the just-launched case and a page-reload/reconnect).
+      const preflight = engine.getPreflightWarningsSnapshot();
+      if (preflight) socket.emit("hunt:preflight_warnings", preflight);
+      const authFailed = engine.getAuthFailedSnapshot();
+      if (authFailed) socket.emit("hunt:auth_failed", authFailed);
+
+      // Same race, worse consequence if missed: a pre-exhausted budget (e.g.
+      // MAX_LLM_CALLS_PER_HUNT=0) can pause the hunt within the first
+      // synchronous tick of runLoop() -- often before this very client has
+      // received its sessionUuid back from the HTTP response, let alone
+      // subscribed. Without this, a late-subscribing client never learns
+      // the hunt it just launched is already paused; the UI would sit on
+      // "running" forever.
+      const paused = engine.getPausedSnapshot();
+      if (paused) socket.emit("hunt:paused", paused);
     }
   });
 

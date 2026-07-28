@@ -25,23 +25,34 @@ function push(ev: ActivityEvent): void {
 }
 
 /** Pure parse of a hunt:paused socket payload — factored out of the handler
- *  below so it's directly unit-testable without a socket. Budget pauses
- *  always carry budgetDimension; auth pauses never do (see HunterEngine.ts's
- *  two hunt:paused emit call sites) — that's the reliable discriminator. */
+ *  below so it's directly unit-testable without a socket. Three reasons now
+ *  (HunterEngine.ts has three hunt:paused emit call sites): budget pauses
+ *  always carry budgetDimension, auth pauses carry authReason, scope/policy
+ *  pauses carry scopeReason (and always the literal reason
+ *  "scope_changed_mid_hunt") — each field's presence is the discriminator,
+ *  but `reason` is checked first since it's the one stable literal across
+ *  all three emit sites. */
 export function parseHuntPausedEvent(data: any): {
-  sessionId: string; dimension: 'budget' | 'auth'; reason: string; findings: number; iterations: number;
+  sessionId: string; dimension: 'budget' | 'auth' | 'scope'; reason: string; scopeReason?: string;
+  findings: number; iterations: number;
 } {
-  const dimension: 'budget' | 'auth' = data.budgetDimension !== undefined ? 'budget' : 'auth';
+  const dimension: 'budget' | 'auth' | 'scope' =
+    data.reason === 'scope_changed_mid_hunt' || data.scopeReason !== undefined ? 'scope'
+    : data.budgetDimension !== undefined ? 'budget'
+    : 'auth';
   // For auth pauses, `reason` is a generic constant ("auth_session_lost") —
   // the actual cause (e.g. which liveness check failed) is in `authReason`.
   // Prefer it so the operator sees the specific drop cause, not the label.
+  // Scope/policy pauses are the same shape: `reason` is the generic constant,
+  // `scopeReason` is the actual before/after description.
   const reason = String(
-    (dimension === 'auth' ? data.authReason : undefined) ?? data.reason
-    ?? (dimension === 'budget' ? 'LLM budget exhausted' : 'Auth session lost')
+    (dimension === 'auth' ? data.authReason : dimension === 'scope' ? data.scopeReason : undefined) ?? data.reason
+    ?? (dimension === 'budget' ? 'LLM budget exhausted' : dimension === 'scope' ? 'Scope/policy changed' : 'Auth session lost')
   );
   return {
     sessionId: String(data.sessionId || ''),
     dimension, reason,
+    scopeReason: dimension === 'scope' ? String(data.scopeReason ?? reason) : undefined,
     findings: Number(data.findings ?? 0), iterations: Number(data.iterations ?? 0),
   };
 }
@@ -50,6 +61,7 @@ const EVENT_NAMES = [
   'hunt:started', 'hunt:phase', 'hunt:observations', 'hunt:hypotheses',
   'hunt:probing', 'hunt:probe_result', 'hunt:finding_confirmed', 'hunt:update',
   'hunt:complete', 'hunt:aborted', 'hunt:error', 'hunt:paused', 'hunt:spend_update', 'hunt:scope_blocked', 'hunt:scope_context', 'solver:started', 'solver:complete', 'solver:finding',
+  'hunt:preflight_warnings', 'hunt:auth_failed', 'hunt:auth_liveness_inactive',
   'hunt:cve_seeded', 'l5:public_duplicate',
   'hunt:graphql_schema', 'hunt:oob_hit', 'oob:hit',
   'hunt:ssrf_pivot', 'hunt:changes_detected', 'l5:report_queued',
@@ -230,14 +242,49 @@ export function attachHuntEvents(): () => void {
   // showed as live/LIVE forever — the UI analog of the $0-spend bug for the
   // operator's single most important "is this still going" signal.
   socket.on('hunt:paused', (data: any) => {
-    const { sessionId, dimension, reason, findings, iterations } = parseHuntPausedEvent(data);
-    push({ type: 'paused', ts: ts(), dimension, reason, findings, iterations });
+    const { sessionId, dimension, reason, scopeReason, findings, iterations } = parseHuntPausedEvent(data);
+    push({ type: 'paused', ts: ts(), dimension, reason, scopeReason, findings, iterations });
+    const status = dimension === 'budget' ? 'paused_budget' : dimension === 'scope' ? 'paused_scope' : 'paused_auth';
     huntStore.updateSessions(prev => prev.map(s =>
-      s.sessionUuid === sessionId
-        ? { ...s, status: dimension === 'budget' ? 'paused_budget' : 'paused_auth', pausedReason: reason }
-        : s
+      s.sessionUuid === sessionId ? { ...s, status, pausedReason: reason } : s
     ));
     toast.error(`Hunt paused — ${reason}`, { duration: 8000 });
+  });
+
+  // Behavioral-rules pre-flight (blocker #3) — WARN-only, never blocks a
+  // launch, but an unspecified policy silently degrades what the hunt can
+  // test (waf-bypass/exploitation-tools/automated-scanning/fuzzing all
+  // fail-closed to BLOCKED). Previously logged server-side only.
+  socket.on('hunt:preflight_warnings', (data: any) => {
+    const warnings = Array.isArray(data.warnings)
+      ? data.warnings.map((w: any) => ({ code: String(w.code ?? ''), message: String(w.message ?? '') }))
+      : [];
+    if (warnings.length === 0) return;
+    push({ type: 'preflight_warnings', ts: ts(), warnings });
+    toast(`${warnings.length} pre-flight warning${warnings.length === 1 ? '' : 's'} — hunt started degraded`, { icon: '⚠️', duration: 6000 });
+  });
+
+  // Auth was configured but login produced no usable session — the hunt
+  // proceeds UNAUTHENTICATED, which silently drops idor/auth_bypass/
+  // business_logic/authed-info_disclosure coverage. Previously a server log
+  // only; the operator had no way to know a hunt's auth silently failed.
+  socket.on('hunt:auth_failed', (data: any) => {
+    const reason = String(data.reason || 'Login produced no session');
+    push({ type: 'auth_failed', ts: ts(), loginUrl: data.loginUrl ? String(data.loginUrl) : undefined, reason });
+    toast.error(`Auth failed — hunting unauthenticated: ${reason}`, { duration: 8000 });
+  });
+
+  // No baseline distinguishes authenticated from unauthenticated responses,
+  // so a mid-hunt auth-session drop can't be detected for this hunt — fires
+  // once per hunt. Previously only a contextWriter.alert (file), invisible
+  // in the live UI.
+  socket.on('hunt:auth_liveness_inactive', (data: any) => {
+    const message = String(
+      data.message
+      ?? 'No configured/discovered baseline distinguishes authenticated from unauthenticated responses — a mid-hunt auth-session drop cannot be detected for this hunt.'
+    );
+    push({ type: 'auth_liveness_inactive', ts: ts(), message });
+    toast(`Auth liveness undetectable — ${message}`, { icon: '⚠️', duration: 8000 });
   });
 
   // Backend confirmation that the engine actually halted.
