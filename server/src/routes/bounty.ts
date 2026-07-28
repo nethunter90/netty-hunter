@@ -1068,20 +1068,14 @@ router.post("/hunts", async (req: Request, res: Response) => {
     // Normalise the target into a URL the rest of the pipeline can consume.
     const targetUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
 
-    // Find-or-create a local-lab program for these ad-hoc hunts so FK constraints
-    // are satisfied (mirrors POST /api/hunt/start's programId === -1 path).
-    let [program] = await db.select().from(programs).where(eq(programs.platform, "local")).limit(1);
-    if (!program) {
-      [program] = await db.insert(programs).values({
-        name: "Custom / Local Lab",
-        platform: "local",
-        scope: (scope?.inScope && scope.inScope.length ? scope.inScope : ["*"]),
-        outOfScope: scope?.outOfScope || [],
-      }).returning();
-    }
+    // Resolve (find-or-create) the program through the same hardened path
+    // POST /api/hunt/start's programId === -1 launches use, so this route
+    // can't reintroduce the standing-wildcard-scope program that
+    // resolveCustomTargetProgram was written to eliminate.
+    const programId = await resolveCustomTargetProgram(targetUrl, scope?.inScope);
 
     const [campaign] = await db.insert(campaigns).values({
-      programId: program.id,
+      programId,
       name: `Hunt: ${targetUrl}`,
       goal: goal || `Hunt for vulnerabilities on ${targetUrl}`,
       status: "running",
@@ -1090,7 +1084,7 @@ router.post("/hunts", async (req: Request, res: Response) => {
     }).returning();
 
     const [tgt] = await db.insert(targets).values({
-      programId: program.id,
+      programId,
       url: targetUrl,
       type: "web",
       status: "scanning",
