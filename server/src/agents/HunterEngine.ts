@@ -853,6 +853,21 @@ export class HunterEngine extends EventEmitter {
    *  budget probing behind an auth wall it can't see past. */
   private authPaused = false;
   private authPausedReason: string | null = null;
+  /** Scope-binding handoff, Fix 2: scope is locked to a snapshot
+   *  (this.scopeContext) taken once in startHunt(), NOT re-read live from the
+   *  DB for the duration of the hunt. Checked once per runLoop() iteration
+   *  against the program's CURRENT scope row; any divergence — widened OR
+   *  narrowed — halts the hunt rather than either silently adopting the
+   *  live change or silently continuing to enforce the stale snapshot.
+   *  Widening must never be auto-adopted mid-run (that would let an
+   *  in-flight hunt retroactively authorize itself). Narrowing is the more
+   *  dangerous direction to get wrong: if an operator edits scope mid-hunt
+   *  specifically to REMOVE a host they've realized shouldn't be hit, a
+   *  hunt still enforcing the original snapshot would keep hitting it. Halt
+   *  + alert covers both directions the same way — a pause, not a finish,
+   *  exactly like budgetPaused/authPaused above. */
+  private scopePaused = false;
+  private scopePausedReason: string | null = null;
   /** Throttles the liveness re-check (Phase 1b) to every LIVENESS_CHECK_EVERY_N_PROBES-th
    *  probe() call, not every call — ensureSession() above it is cheap/cached,
    *  but checkLiveness() fires a real request and must not add a round-trip
@@ -958,6 +973,40 @@ export class HunterEngine extends EventEmitter {
    *  shared by startHunt() and resumeHunt() so a resumed hunt re-validates
    *  auth (the session may have expired while paused) instead of trusting
    *  headers captured before the pause. */
+  /** Scope-binding handoff, Fix 2. Order-independent comparison of the
+   *  program's CURRENT scope/outOfScope arrays against the snapshot locked
+   *  in at startHunt() (this.scopeContext). Returns a human-readable drift
+   *  reason if they differ in either direction, null if unchanged. A missing
+   *  program row (deleted mid-hunt) also counts as drift — fail closed, same
+   *  posture as ScopeGuard itself. */
+  private async checkScopeDrift(): Promise<string | null> {
+    if (!this.scopeContext) return null;
+    try {
+      const [current] = await db.select().from(programs)
+        .where(eq(programs.id, this.state.programId)).limit(1);
+      if (!current) {
+        return `Program ${this.state.programId} no longer exists`;
+      }
+      const currentScope = (current.scope as string[] | null) ?? [];
+      const currentOutOfScope = (current.outOfScope as string[] | null) ?? [];
+      const sameSet = (a: string[], b: string[]) =>
+        a.length === b.length && new Set(a).size === new Set(b).size &&
+        [...new Set(a)].every(v => new Set(b).has(v));
+      if (!sameSet(currentScope, this.scopeContext.scope) ||
+          !sameSet(currentOutOfScope, this.scopeContext.outOfScope)) {
+        return `Program scope changed mid-hunt (was in:[${this.scopeContext.scope.join(", ")}] `
+          + `out:[${this.scopeContext.outOfScope.join(", ")}], now in:[${currentScope.join(", ")}] `
+          + `out:[${currentOutOfScope.join(", ")}])`;
+      }
+      return null;
+    } catch (err) {
+      logger.error("[HunterEngine] Scope drift check failed — failing closed", {
+        err: String(err), programId: this.state.programId,
+      });
+      return "Scope drift check failed — failing closed";
+    }
+  }
+
   private async establishAuthSession(targetUrl: string, programId: number): Promise<void> {
     try {
       const [prog] = await db.select({ authConfig: programs.authConfig })
@@ -1381,7 +1430,8 @@ export class HunterEngine extends EventEmitter {
       !this.hardBanned &&
       !this.aborted &&
       !this.budgetPaused &&
-      !this.authPaused
+      !this.authPaused &&
+      !this.scopePaused
     ) {
       // Budget chokepoint Phase 3 must-have #3 (both dimensions): checked once
       // per iteration (not just inside the LLM primitive) so the LOOP itself
@@ -1399,6 +1449,20 @@ export class HunterEngine extends EventEmitter {
         this.budgetPaused = true;
         this.budgetPausedReason = exhaustedBudget;
         break;
+      }
+
+      // Scope-binding handoff, Fix 2: detect drift between the scope this
+      // hunt locked in at startHunt() and the program's scope row RIGHT NOW.
+      // Only meaningful when startHunt() actually found a program row to
+      // snapshot (this.scopeContext is null for the rare direct-programId=-1
+      // caller with no row to compare against — nothing to diverge from).
+      if (this.scopeContext) {
+        const driftReason = await this.checkScopeDrift();
+        if (driftReason) {
+          this.scopePaused = true;
+          this.scopePausedReason = driftReason;
+          break;
+        }
       }
 
       this.state.iteration++;
@@ -1623,6 +1687,44 @@ export class HunterEngine extends EventEmitter {
         sessionId: this.state.sessionId,
         confirmedFindings: this.state.confirmedFindings.length,
         reason: this.authPausedReason,
+      });
+      return;
+    }
+
+    // Scope-binding handoff, Fix 2: a mid-hunt scope-row change (widened OR
+    // narrowed) is a PAUSE, not a finish and not a silent continue — same
+    // shape as the budget/auth branches above. Halting on ANY divergence
+    // (rather than "adopt the new scope live" or "keep enforcing the stale
+    // snapshot") is deliberate: silently adopting a widening would let an
+    // in-flight hunt retroactively authorize itself, and silently keeping
+    // the stale snapshot would mean a host the operator just REMOVED from
+    // scope keeps getting hit for the rest of the run.
+    if (this.scopePaused && !this.aborted && !this.hardBanned) {
+      logger.warn("[HunterEngine] runLoop exited — scope changed mid-hunt, saving checkpoint", {
+        sessionId: this.state.sessionId,
+        iteration: this.state.iteration,
+        confirmedFindings: this.state.confirmedFindings.length,
+        scopePausedReason: this.scopePausedReason,
+      });
+      contextWriter.updateState({ phase: this.state.phase, findingsCount: this.state.confirmedFindings.length });
+      contextWriter.alert("paused_scope_drift", {
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+        reason: this.scopePausedReason,
+      });
+      await this.persistCheckpoint("paused_scope_drift", this.scopePausedReason);
+      this.detachScopeGuardListener();
+      this.emit("hunt:paused", {
+        sessionId: this.state.sessionId,
+        reason: "scope_changed_mid_hunt",
+        scopeReason: this.scopePausedReason,
+        findings: this.state.confirmedFindings.length,
+        iterations: this.state.iteration,
+      });
+      logger.warn("Hunt paused (resumable) — scope changed mid-hunt", {
+        sessionId: this.state.sessionId,
+        confirmedFindings: this.state.confirmedFindings.length,
+        reason: this.scopePausedReason,
       });
       return;
     }
@@ -4500,7 +4602,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
    * failure description for paused_auth.
    */
   private async persistCheckpoint(
-    status: "paused_budget" | "paused_auth",
+    status: "paused_budget" | "paused_auth" | "paused_scope_drift",
     reason: string | null,
   ): Promise<void> {
     try {
@@ -4610,7 +4712,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const [row] = await db.select().from(huntSessions)
       .where(eq(huntSessions.sessionUuid, sessionId)).limit(1);
     if (!row) throw new Error(`Hunt session ${sessionId} not found`);
-    const RESUMABLE_STATUSES = ["paused_budget", "paused_auth"];
+    const RESUMABLE_STATUSES = ["paused_budget", "paused_auth", "paused_scope_drift"];
     if (!RESUMABLE_STATUSES.includes(row.status) || !row.checkpoint) {
       throw new Error(`Hunt session ${sessionId} is not paused (status=${row.status}) — nothing to resume`);
     }
@@ -4632,7 +4734,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
       // handoff, blocker #2) — a paused_auth checkpoint stores a free-text
       // auth-failure reason here instead.
       pausedReason?: string | null;
-      pauseStatus?: "paused_budget" | "paused_auth";
+      pauseStatus?: "paused_budget" | "paused_auth" | "paused_scope_drift";
     };
 
     this.dbSessionId = row.id;
@@ -4649,6 +4751,8 @@ Return ONLY valid JSON array of hypothesis objects.`;
     this.budgetPaused = false;
     this.authPaused = false;
     this.authPausedReason = null;
+    this.scopePaused = false;
+    this.scopePausedReason = null;
     this.hardBanned = false;
     this.aborted = false;
 
@@ -4656,6 +4760,26 @@ Return ONLY valid JSON array of hypothesis objects.`;
       logger.warn("[HunterEngine] Resuming a hunt that was paused on an auth-session drop", {
         sessionId, reason: cp.pausedReason,
       });
+    }
+
+    // Scope-binding handoff, Fix 2: resuming from a scope-drift pause
+    // re-locks the snapshot to whatever the program's scope row says RIGHT
+    // NOW — resuming is the operator's explicit decision to proceed under
+    // the current scope, so the new snapshot becomes the enforced baseline
+    // for the rest of this run (checked for further drift the same way).
+    if (row.status === "paused_scope_drift") {
+      logger.warn("[HunterEngine] Resuming a hunt that was paused on a mid-hunt scope change — re-locking scope to its current value", {
+        sessionId, reason: cp.pausedReason,
+      });
+      const [current] = await db.select().from(programs)
+        .where(eq(programs.id, this.state.programId)).limit(1);
+      this.scopeContext = current
+        ? {
+            provenance: classifyProgramPolicy(this.state.programId),
+            scope: (current.scope as string[] | null) ?? [],
+            outOfScope: (current.outOfScope as string[] | null) ?? [],
+          }
+        : { provenance: classifyProgramPolicy(this.state.programId), scope: [], outOfScope: [] };
     }
 
     // Budget-truncation recall fix (must-have #2, closing the gap the live
