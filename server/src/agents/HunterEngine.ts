@@ -823,7 +823,33 @@ export class HunterEngine extends EventEmitter {
   // UI trust fix #5/7: computed once in startHunt(), emitted once from
   // runLoop()'s first iteration (see scopeContextEmitted below) once a
   // socket listener is guaranteed attached.
-  private scopeContext: { provenance: string; scope: string[]; outOfScope: string[] } | null = null;
+  private scopeContext: {
+    provenance: string;
+    scope: string[];
+    outOfScope: string[];
+    // Scope-binding handoff, Fix 2 (policy-field locking): the four
+    // behavioral-rules columns ActionPolicyGate.isActionAllowed() reads live
+    // on every restricted-action dispatch. Snapshotted alongside scope so a
+    // mid-hunt policy flip (e.g. an operator flipping wafBypassPolicy to
+    // "allowed" while a real-program hunt is running) is caught by the same
+    // drift check as a scope change, instead of silently taking effect on
+    // the next dispatch. "" (empty program row lookup failure) is treated
+    // the same as "unspecified" by isActionAllowed(), so an empty string
+    // here is a safe placeholder, not a policy value in its own right.
+    wafBypassPolicy: string;
+    exploitationToolsPolicy: string;
+    automatedScanningPolicy: string;
+    fuzzingPolicy: string;
+    // Gates whether policy-field drift is even checked (see checkScopeDrift):
+    // isActionAllowed() permits lab programs unconditionally regardless of
+    // policy-column value, so a lab program's policy fields changing mid-hunt
+    // has no effect on what's actually authorized — halting on it would be
+    // pure noise against the "paste a target and go" lab workflow, not a
+    // safety improvement. Scope/outOfScope drift is still checked for lab
+    // programs either way (Fix 1: scope IS enforced for lab, only the
+    // private-IP rebinding block is relaxed).
+    isLab: boolean;
+  } | null = null;
   private scopeContextEmitted = false;
   private modelRouter = ModelRouter.getInstance();
   private roiModel = new ROIModel();
@@ -853,11 +879,15 @@ export class HunterEngine extends EventEmitter {
    *  budget probing behind an auth wall it can't see past. */
   private authPaused = false;
   private authPausedReason: string | null = null;
-  /** Scope-binding handoff, Fix 2: scope is locked to a snapshot
+  /** Scope-binding handoff, Fix 2: the hunt's rules-of-engagement contract —
+   *  scope/outOfScope AND (for real, non-lab programs) the four
+   *  behavioral-rules policy columns (wafBypassPolicy/exploitationToolsPolicy/
+   *  automatedScanningPolicy/fuzzingPolicy) — is locked to a snapshot
    *  (this.scopeContext) taken once in startHunt(), NOT re-read live from the
    *  DB for the duration of the hunt. Checked once per runLoop() iteration
-   *  against the program's CURRENT scope row; any divergence — widened OR
-   *  narrowed — halts the hunt rather than either silently adopting the
+   *  against the program's CURRENT row; any divergence in EITHER half of the
+   *  contract — widened OR narrowed scope, or a policy flip in either
+   *  direction — halts the hunt rather than either silently adopting the
    *  live change or silently continuing to enforce the stale snapshot.
    *  Widening must never be auto-adopted mid-run (that would let an
    *  in-flight hunt retroactively authorize itself). Narrowing is the more
@@ -974,11 +1004,20 @@ export class HunterEngine extends EventEmitter {
    *  auth (the session may have expired while paused) instead of trusting
    *  headers captured before the pause. */
   /** Scope-binding handoff, Fix 2. Order-independent comparison of the
-   *  program's CURRENT scope/outOfScope arrays against the snapshot locked
-   *  in at startHunt() (this.scopeContext). Returns a human-readable drift
-   *  reason if they differ in either direction, null if unchanged. A missing
+   *  program's CURRENT scope/outOfScope AND (for real, non-lab programs)
+   *  behavioral-rules policy columns against the snapshot locked in at
+   *  startHunt() (this.scopeContext). Returns a human-readable drift reason
+   *  if anything differs in either direction, null if unchanged. A missing
    *  program row (deleted mid-hunt) also counts as drift — fail closed, same
-   *  posture as ScopeGuard itself. */
+   *  posture as ScopeGuard itself.
+   *
+   *  Policy fields are compared only when !this.scopeContext.isLab —
+   *  isActionAllowed() (ActionPolicyGate.ts) permits lab programs
+   *  unconditionally regardless of policy-column value, so lab policy drift
+   *  has no bearing on what's actually authorized and would just be noise
+   *  against the lab workflow. Scope/outOfScope drift is checked
+   *  unconditionally — Fix 1 established that scope IS enforced for lab
+   *  programs, only the private-IP rebinding block is relaxed for them. */
   private async checkScopeDrift(): Promise<string | null> {
     if (!this.scopeContext) return null;
     try {
@@ -998,6 +1037,22 @@ export class HunterEngine extends EventEmitter {
           + `out:[${this.scopeContext.outOfScope.join(", ")}], now in:[${currentScope.join(", ")}] `
           + `out:[${currentOutOfScope.join(", ")}])`;
       }
+
+      if (!this.scopeContext.isLab) {
+        const policyFields: Array<["wafBypassPolicy" | "exploitationToolsPolicy" | "automatedScanningPolicy" | "fuzzingPolicy", string]> = [
+          ["wafBypassPolicy", current.wafBypassPolicy ?? "unspecified"],
+          ["exploitationToolsPolicy", current.exploitationToolsPolicy ?? "unspecified"],
+          ["automatedScanningPolicy", current.automatedScanningPolicy ?? "unspecified"],
+          ["fuzzingPolicy", current.fuzzingPolicy ?? "unspecified"],
+        ];
+        for (const [field, currentValue] of policyFields) {
+          const snapshotValue = this.scopeContext[field];
+          if (currentValue !== snapshotValue) {
+            return `Program ${field} changed mid-hunt (was "${snapshotValue}", now "${currentValue}")`;
+          }
+        }
+      }
+
       return null;
     } catch (err) {
       logger.error("[HunterEngine] Scope drift check failed — failing closed", {
@@ -1168,6 +1223,11 @@ export class HunterEngine extends EventEmitter {
           provenance: classifyProgramPolicy(params.programId),
           scope: (preflightProgram.scope as string[] | null) ?? [],
           outOfScope: (preflightProgram.outOfScope as string[] | null) ?? [],
+          wafBypassPolicy: preflightProgram.wafBypassPolicy ?? "unspecified",
+          exploitationToolsPolicy: preflightProgram.exploitationToolsPolicy ?? "unspecified",
+          automatedScanningPolicy: preflightProgram.automatedScanningPolicy ?? "unspecified",
+          fuzzingPolicy: preflightProgram.fuzzingPolicy ?? "unspecified",
+          isLab: preflightProgram.isLab,
         };
       } else {
         // No program row (e.g. programId === -1, the lab sentinel) — still
@@ -1176,6 +1236,11 @@ export class HunterEngine extends EventEmitter {
           provenance: classifyProgramPolicy(params.programId),
           scope: [],
           outOfScope: [],
+          wafBypassPolicy: "unspecified",
+          exploitationToolsPolicy: "unspecified",
+          automatedScanningPolicy: "unspecified",
+          fuzzingPolicy: "unspecified",
+          isLab: true,
         };
       }
     } catch (err) {
@@ -4768,7 +4833,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     // the current scope, so the new snapshot becomes the enforced baseline
     // for the rest of this run (checked for further drift the same way).
     if (row.status === "paused_scope_drift") {
-      logger.warn("[HunterEngine] Resuming a hunt that was paused on a mid-hunt scope change — re-locking scope to its current value", {
+      logger.warn("[HunterEngine] Resuming a hunt that was paused on a mid-hunt scope/policy change — re-locking the contract to its current value", {
         sessionId, reason: cp.pausedReason,
       });
       const [current] = await db.select().from(programs)
@@ -4778,8 +4843,19 @@ Return ONLY valid JSON array of hypothesis objects.`;
             provenance: classifyProgramPolicy(this.state.programId),
             scope: (current.scope as string[] | null) ?? [],
             outOfScope: (current.outOfScope as string[] | null) ?? [],
+            wafBypassPolicy: current.wafBypassPolicy ?? "unspecified",
+            exploitationToolsPolicy: current.exploitationToolsPolicy ?? "unspecified",
+            automatedScanningPolicy: current.automatedScanningPolicy ?? "unspecified",
+            fuzzingPolicy: current.fuzzingPolicy ?? "unspecified",
+            isLab: current.isLab,
           }
-        : { provenance: classifyProgramPolicy(this.state.programId), scope: [], outOfScope: [] };
+        : {
+            provenance: classifyProgramPolicy(this.state.programId),
+            scope: [], outOfScope: [],
+            wafBypassPolicy: "unspecified", exploitationToolsPolicy: "unspecified",
+            automatedScanningPolicy: "unspecified", fuzzingPolicy: "unspecified",
+            isLab: true,
+          };
     }
 
     // Budget-truncation recall fix (must-have #2, closing the gap the live
