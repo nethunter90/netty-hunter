@@ -303,28 +303,24 @@ io.on("connection", (socket) => {
       const state = engine.getState();
       socket.emit("hunt:state", state);
 
-      // preflight_warnings and auth_failed fire SYNCHRONOUSLY inside
-      // startHunt(), which resolves (and the launching client learns its
-      // sessionUuid and calls subscribe:hunt) well after both could have
-      // already fired — wireHuntEngineToSocket()'s own replay runs before
-      // ANY client, including the one that just launched this hunt, has had
-      // a chance to subscribe. This is the point that's actually guaranteed
-      // to have a listening client, so it's replayed here instead (covers
-      // both the just-launched case and a page-reload/reconnect).
-      const preflight = engine.getPreflightWarningsSnapshot();
-      if (preflight) socket.emit("hunt:preflight_warnings", preflight);
-      const authFailed = engine.getAuthFailedSnapshot();
-      if (authFailed) socket.emit("hunt:auth_failed", authFailed);
-
-      // Same race, worse consequence if missed: a pre-exhausted budget (e.g.
-      // MAX_LLM_CALLS_PER_HUNT=0) can pause the hunt within the first
-      // synchronous tick of runLoop() -- often before this very client has
-      // received its sessionUuid back from the HTTP response, let alone
-      // subscribed. Without this, a late-subscribing client never learns
-      // the hunt it just launched is already paused; the UI would sit on
-      // "running" forever.
-      const paused = engine.getPausedSnapshot();
-      if (paused) socket.emit("hunt:paused", paused);
+      // General early-event replay (Fix 3, safety-events bridge; Gate 0
+      // generalization): several events -- preflight_warnings, auth_failed,
+      // and a pre-exhausted-budget hunt:paused -- can fire SYNCHRONOUSLY
+      // inside startHunt(), which resolves (and the launching client learns
+      // its sessionUuid and calls subscribe:hunt) well after any of them
+      // could have already fired. wireHuntEngineToSocket()'s own listeners
+      // are attached before ANY client, including the one that just
+      // launched this hunt, could possibly have subscribed -- so a replay
+      // at that point is still too early. This IS that point: the first
+      // socket to ever subscribe to this hunt's room. HunterEngine.emit()
+      // buffers everything emitted before this call (see its override), so
+      // this replays the buffer in order rather than special-casing each
+      // event by name -- a new event added early in startHunt() is caught
+      // automatically, not silently lost until someone remembers to wire it
+      // in here too.
+      for (const { event, payload } of engine.getEarlyEventsAndStopCapturing()) {
+        socket.emit(event, payload);
+      }
     }
   });
 
