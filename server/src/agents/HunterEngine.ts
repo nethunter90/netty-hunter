@@ -803,6 +803,18 @@ function makeCustomParser(parserType: string): (output: string) => Record<string
 // see the two throw sites inside startHunt()'s auth-config block.
 class LocalAuthConfigError extends Error {}
 
+// Single source of truth for which hunt_sessions.status values resumeHunt()
+// will actually accept (Gate 3 integration-check finding: routes/hunt.ts's
+// POST /resume/:sessionUuid had its OWN hardcoded check for exactly
+// "paused_budget" -- a second, silently-diverged copy of this list that
+// never got updated when paused_auth/paused_scope_drift became resumable,
+// so those two pause reasons' resume path was unreachable via the actual
+// API despite the engine fully supporting them. Same failure shape as the
+// isLab/classifyProgramPolicy split (Fix 1): two independent places
+// deciding the same question, one silently stale. Exported so there's only
+// ever one list to update.
+export const RESUMABLE_HUNT_STATUSES = ["paused_budget", "paused_auth", "paused_scope_drift"] as const;
+
 export class HunterEngine extends EventEmitter {
   private state!: HuntState;
   private wafSynthesizer = new IntelligenceSynthesizer();
@@ -4839,8 +4851,7 @@ Return ONLY valid JSON array of hypothesis objects.`;
     const [row] = await db.select().from(huntSessions)
       .where(eq(huntSessions.sessionUuid, sessionId)).limit(1);
     if (!row) throw new Error(`Hunt session ${sessionId} not found`);
-    const RESUMABLE_STATUSES = ["paused_budget", "paused_auth", "paused_scope_drift"];
-    if (!RESUMABLE_STATUSES.includes(row.status) || !row.checkpoint) {
+    if (!RESUMABLE_HUNT_STATUSES.includes(row.status as typeof RESUMABLE_HUNT_STATUSES[number]) || !row.checkpoint) {
       throw new Error(`Hunt session ${sessionId} is not paused (status=${row.status}) — nothing to resume`);
     }
 

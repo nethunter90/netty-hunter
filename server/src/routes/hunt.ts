@@ -5,7 +5,7 @@ import { campaigns, huntSessions, findings, targets, programs } from "../db/sche
 import { eq, desc, and } from "drizzle-orm";
 import { z } from "zod";
 import { Server as SocketServer } from "socket.io";
-import { HunterEngine } from "../agents/HunterEngine";
+import { HunterEngine, RESUMABLE_HUNT_STATUSES } from "../agents/HunterEngine";
 import { SolverPool } from "../agents/SolverPool";
 import { VerifierAgent } from "../agents/VerifierAgent";
 import { BackwardHuntEngine } from "../intelligence/BackwardHunt";
@@ -324,7 +324,13 @@ router.post("/resume/:sessionUuid", async (req: Request, res: Response) => {
   const [session] = await db.select().from(huntSessions)
     .where(eq(huntSessions.sessionUuid, sessionUuid)).limit(1);
   if (!session) return res.status(404).json({ error: "Session not found" });
-  if (session.status !== "paused_budget" || !session.checkpoint) {
+  // Gate 3 integration-check finding: this used to hardcode a check for
+  // exactly "paused_budget", a second, independently-maintained copy of
+  // HunterEngine.resumeHunt()'s own resumability list that silently fell out
+  // of sync when paused_auth/paused_scope_drift became resumable -- neither
+  // pause reason's resume path was ever actually reachable through this
+  // route despite the engine fully supporting both. Now the same constant.
+  if (!RESUMABLE_HUNT_STATUSES.includes(session.status as typeof RESUMABLE_HUNT_STATUSES[number]) || !session.checkpoint) {
     return res.status(409).json({ error: `Session is not paused (status=${session.status}) — nothing to resume` });
   }
 
