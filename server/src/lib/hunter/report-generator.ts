@@ -7,7 +7,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Finding, Severity } from './types';
 import { offensiveGraphDB } from '../intelligence/offensive-graph-db';
-import { mdInlineCode, safeCodeFence } from '../report/markdown-escape';
+import { mdEscapeInline, mdInlineCode, safeCodeFence } from '../report/markdown-escape';
 
 export interface BugReport {
   id:         string;
@@ -166,9 +166,23 @@ ${this.buildRemediation(finding.vulnClass)}
 
       if (steps.length < 2) return '';
 
+      // Fix UI-4 follow-up (Gate 2, report escaping): step.label and
+      // step.reasoning come from graph-node data built up during the hunt
+      // (targetNode.label, edge.properties.reasoning) -- target-influenceable,
+      // and previously interpolated raw (label in a manual backtick-wrap with
+      // no breakout protection, reasoning with no escaping at all).
+      //
+      // step.label uses mdEscapeInline, NOT mdInlineCode -- a code span
+      // relies on the RECEIVING renderer to HTML-escape its own content,
+      // which is true for any CommonMark-compliant target but is exactly the
+      // kind of "assume the downstream renderer behaves" gap this whole fix
+      // is closing. mdEscapeInline makes the label inert in OUR generated
+      // markdown text directly, not contingent on that assumption -- same
+      // defense already applied to step.reasoning immediately below.
       const stepLines = steps.map((step, i) => {
         const arrow = i < steps.length - 1 ? '\n   ↓ *chains to*' : '';
-        return `${i + 1}. **\`${step.label}\`** *(${step.nodeType})*${step.reasoning ? ' — ' + step.reasoning : ''}${arrow}`;
+        const reasoning = step.reasoning ? ' — ' + mdEscapeInline(step.reasoning) : '';
+        return `${i + 1}. **${mdEscapeInline(step.label)}** *(${mdEscapeInline(step.nodeType)})*${reasoning}${arrow}`;
       }).join('\n');
 
       return `\n## Exploit Chain\n\nThis vulnerability is the entry point to a **${steps.length}-hop attack chain** identified during the hunt:\n\n${stepLines}\n\n> Triage note: steps 2+ represent implied next-hop surfaces based on graph-mapped pivot relationships. Verify independently before escalating.\n`;

@@ -6,7 +6,7 @@ import { ModelRouter } from "./ModelRouter";
 import logger from "../utils/logger";
 import type { VerificationResult } from "../agents/VerifierAgent";
 import type { SolverResult } from "../agents/SolverPool";
-import { mdInlineCode, safeCodeFence } from "../lib/report/markdown-escape";
+import { mdEscapeInline, mdInlineCode, safeCodeFence } from "../lib/report/markdown-escape";
 
 export interface BugBountyReport {
   title: string;
@@ -422,17 +422,36 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
       const response = await this.modelRouter.generate(prompt, "analyze", { sessionId: metadata.sessionId });
       const match = response.match(/\{[\s\S]+\}/);
       const parsed = JSON.parse(match?.[0] || "{}");
-      const summary = parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${mdInlineCode(finding.endpoint)}.`;
-      const impact = parsed.impact || (policy
+      // Fix UI-4 follow-up (Gate 2, report escaping): parsed.summary/
+      // parsed.impact/parsed.steps are raw LLM output generated from a
+      // prompt that embeds up to 2500 raw chars of target-controlled
+      // rawEvidence with no delimiter isolation (see rawSection above) — a
+      // hostile target can attempt to steer the model into reproducing
+      // fence-breaking or raw-HTML content in its own response, and unlike
+      // every other field in this file (endpoint, payload, disclosed field
+      // names — see mdInlineCode/safeCodeFence calls throughout), this is
+      // the one place raw LLM prose reached the report with ZERO escaping.
+      // Applied here, once, at the source, rather than at renderMarkdown()
+      // time, because stepsToReproduce can ALSO come from
+      // buildReproductionSteps() below, whose entries already contain
+      // deliberate mdInlineCode-wrapped code spans — escaping those a
+      // second time at render would corrupt the code-span backticks it
+      // just added.
+      const summaryRaw = parsed.summary || `A ${vulnInfo.name} vulnerability was discovered and verified at ${mdInlineCode(finding.endpoint)}.`;
+      const impactRaw = parsed.impact || (policy
         ? policy.fallbackImpact(finding, verification, metadata.rawEvidence)
         : `This vulnerability poses a significant security risk to ${metadata.programName} and its users.`);
+      const summary = mdEscapeInline(summaryRaw);
+      const impact = mdEscapeInline(impactRaw);
       return {
         // Final safety net regardless of source (AI or fallback string) — a
         // policy-governed class must never carry an over-claim phrase, even
         // if the model ignored the prompt instruction.
         summary: policy ? stripOverclaims(finding.vulnClass, summary) : summary,
         impact: policy ? stripOverclaims(finding.vulnClass, impact) : impact,
-        steps: Array.isArray(parsed.steps) && parsed.steps.length > 0 ? parsed.steps as string[] : undefined,
+        steps: Array.isArray(parsed.steps) && parsed.steps.length > 0
+          ? (parsed.steps as string[]).map(mdEscapeInline)
+          : undefined,
       };
     } catch (err) {
       logger.warn("ReportGenerator: AI content generation failed — using template fallback", {
@@ -533,7 +552,10 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
     evidence.push(
       `Layer 2 (HTTP Reprobe)${verification.adaptation ? " [original payload]" : ""}: ${verification.layer2_reprobe.confirmed ? "CONFIRMED" : "NOT CONFIRMED"}`,
       `Layer 3 (Browser Replay)${verification.adaptation ? " [original payload]" : ""}: ${verification.layer3_playwright.confirmed ? "CONFIRMED" : "NOT CONFIRMED"}`,
-      `Layer 4 (AI Analysis)${verification.adaptation ? " [original payload]" : ""}: ${verification.layer4_ai.confirmed ? "CONFIRMED" : "NOT CONFIRMED"} - ${verification.layer4_ai.reasoning}`,
+      // layer4_ai.reasoning is LLM-generated free text from analyzing target
+      // content -- the same unescaped-prose gap as generateAIContent()'s
+      // summary/impact above, just a different LLM call site feeding it.
+      `Layer 4 (AI Analysis)${verification.adaptation ? " [original payload]" : ""}: ${verification.layer4_ai.confirmed ? "CONFIRMED" : "NOT CONFIRMED"} - ${mdEscapeInline(verification.layer4_ai.reasoning)}`,
     );
 
     if (finding.toolsUsed.includes("sqlmap")) {
@@ -554,7 +576,7 @@ Return ONLY valid JSON (no markdown fences): { "summary": "...", "impact": "..."
 
   private renderMarkdown(report: BugBountyReport, programName: string): string {
     const videoSection = report.videoPath
-      ? `\n## Video Proof of Concept\n**Recording**: \`${report.videoPath}\`\n> Submit this video file alongside the report for platforms requiring video PoC (Synack, Intigriti P1/P2).\n`
+      ? `\n## Video Proof of Concept\n**Recording**: ${mdInlineCode(report.videoPath)}\n> Submit this video file alongside the report for platforms requiring video PoC (Synack, Intigriti P1/P2).\n`
       : "";
 
     return `# ${report.title}
@@ -574,7 +596,7 @@ ${report.vulnerability}
 ${report.impact}
 
 ## Affected Asset(s)
-${report.affectedAssets.map(a => `- \`${a}\``).join("\n")}
+${report.affectedAssets.map(a => `- ${mdInlineCode(a)}`).join("\n")}
 
 ## Steps to Reproduce
 ${report.stepsToReproduce.map((s, i) => `${i + 1}. ${s}`).join("\n")}

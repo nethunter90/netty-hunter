@@ -6,18 +6,21 @@
 import axios from "axios";
 import logger from "../../utils/logger";
 import { runtimeConfig } from '../runtime-config';
+import { mdEscapeInline, mdInlineCode } from "../report/markdown-escape";
 
-// 2026-07-22 (inbound-audit Phase 1): description/reproductionSteps/impact/
-// exploitPayload/evidence are LLM-authored text generated from a prompt that
-// includes target-controlled rawEvidence (HTTP responses) with no delimiter
-// isolation (see ReportGenerator.generateAIContent()) — a hostile target can
-// attempt to steer that generation, and whatever it produces lands here
-// verbatim. The *_html fields below are submitted to YesWeHack as raw HTML
-// (field name says so), so unescaped target-influenced text reaching them is
-// a stored-XSS-into-triager risk on OUR side, regardless of what the
-// receiving platform itself does. The markdown fields (H1/Bugcrowd/Intigriti)
-// are a separate, out-of-scope risk (would require the receiving platform's
-// own markdown renderer to also mishandle raw HTML) — not addressed here.
+// 2026-07-22 (inbound-audit Phase 1), closed by Gate 2 (report escaping,
+// 2026-07-28): description/reproductionSteps/impact/exploitPayload/evidence
+// are LLM-authored text generated from a prompt that includes target-
+// controlled rawEvidence (HTTP responses) with no delimiter isolation (see
+// ReportGenerator.generateAIContent()) — a hostile target can attempt to
+// steer that generation, and whatever it produces lands here verbatim. The
+// *_html fields below are submitted to YesWeHack as raw HTML (field name
+// says so) and were already escaped via escapeHtml(). buildH1Body()/
+// buildMarkdownBody() below were the actual gap this note used to call
+// "out of scope" — the markdown bodies sent to H1/Bugcrowd/Intigriti had NO
+// escaping at all, not even the markdown-structure escaping every other
+// report path in this codebase already gets (see lib/report/markdown-
+// escape.ts's module doc). Now routed through that same shared choke.
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -276,11 +279,11 @@ class ReportSubmitter {
   }
 
   private buildH1Body(p: SubmissionPayload): string {
-    return `## Summary\n${p.description}\n\n## Steps to Reproduce\n${p.reproductionSteps}\n\n## Supporting Material\n**Target:** ${p.targetUrl}\n**Payload:** \`${p.exploitPayload ?? "N/A"}\`\n\n## Impact\n${p.impact}\n\n## Recommended Fix\n${p.remediation ?? "Apply input validation and output encoding."}`;
+    return `## Summary\n${mdEscapeInline(p.description)}\n\n## Steps to Reproduce\n${mdEscapeInline(p.reproductionSteps)}\n\n## Supporting Material\n**Target:** ${mdEscapeInline(p.targetUrl)}\n**Payload:** ${mdInlineCode(p.exploitPayload ?? "N/A")}\n\n## Impact\n${mdEscapeInline(p.impact)}\n\n## Recommended Fix\n${mdEscapeInline(p.remediation ?? "Apply input validation and output encoding.")}`;
   }
 
   private buildMarkdownBody(p: SubmissionPayload): string {
-    return `## Description\n${p.description}\n\n## Steps to Reproduce\n${p.reproductionSteps}\n\n**Target URL:** ${p.targetUrl}\n**Payload:** \`${p.exploitPayload ?? "N/A"}\`\n\n## Impact\n${p.impact}\n\n## Remediation\n${p.remediation ?? "Apply input validation."}`;
+    return `## Description\n${mdEscapeInline(p.description)}\n\n## Steps to Reproduce\n${mdEscapeInline(p.reproductionSteps)}\n\n**Target URL:** ${mdEscapeInline(p.targetUrl)}\n**Payload:** ${mdInlineCode(p.exploitPayload ?? "N/A")}\n\n## Impact\n${mdEscapeInline(p.impact)}\n\n## Remediation\n${mdEscapeInline(p.remediation ?? "Apply input validation.")}`;
   }
 
   private buildHtmlBody(p: SubmissionPayload): string {

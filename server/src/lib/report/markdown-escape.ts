@@ -18,14 +18,26 @@
 export function mdEscapeInline(text: string): string {
   if (!text) return text;
   return text
-    // Backslash first, so we don't double-escape the backslashes this
-    // function itself introduces below.
+    // & first (HTML-entity escaping), so it doesn't double-escape the "amp"
+    // this step itself introduces, then backslash, for the same reason
+    // relative to the markdown-control escapes below.
+    .replace(/&/g, "&amp;")
     .replace(/\\/g, "\\\\")
     .replace(/`/g, "\\`")
     .replace(/\*/g, "\\*")
     .replace(/_/g, "\\_")
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]")
+    // HTML-entity-escape angle brackets. Markdown-structure escaping alone
+    // (backticks/asterisks/etc above) leaves a literal `<script>...</script>`
+    // completely untouched -- CommonMark and most bounty-platform renderers
+    // pass raw inline/block HTML through unless explicitly disabled, so an
+    // unescaped tag here is a real injection into whatever renders this
+    // report, not just markdown-structure corruption. &lt;/&gt; render as
+    // inert literal text in both a plain-markdown and an HTML-passthrough
+    // renderer.
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
     // Neutralize line-leading markdown structure (headings, blockquotes,
     // bullet/numbered list markers) without touching the same characters
     // mid-line, where they're just punctuation.
