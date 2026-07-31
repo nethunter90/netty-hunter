@@ -79,6 +79,10 @@ const StartHuntSchema = z.object({
   wafBypassEnabled: z.boolean().optional().default(false),
   automatedScanningEnabled: z.boolean().optional().default(false),
   customVulnPriority: z.array(z.string()).max(15).optional(),
+  // Prompt-injection chokepoint BUILD, decisions 1+2: opts OUT of the default
+  // per-hunt waiver for pattern/structural detection categories. See
+  // HunterEngine.startHunt()'s param docstring — default false (waiver on).
+  strictPromptInjectionMode: z.boolean().optional().default(false),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ router.post("/start", async (req: Request, res: Response) => {
   const parsed = StartHuntSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { programId: rawProgramId, targetUrl, customScope, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, automatedScanningEnabled, customVulnPriority } = parsed.data;
+  const { programId: rawProgramId, targetUrl, customScope, mode, goal, maxIterations, budget, templateId, auth, corpusEnrichment, proxyEnabled, wafBypassEnabled, automatedScanningEnabled, customVulnPriority, strictPromptInjectionMode } = parsed.data;
 
   // ── Single-flight gate (cost-safety core) ───────────────────────────────────
   // Claim the one global hunt slot SYNCHRONOUSLY before any await. If a hunt OR
@@ -183,6 +187,7 @@ router.post("/start", async (req: Request, res: Response) => {
         proxyEnabled,
         wafBypassEnabled,
         automatedScanningEnabled,
+        strictPromptInjectionMode,
       });
 
       const io = req.app.get("io") as SocketServer;
@@ -249,6 +254,7 @@ router.post("/start", async (req: Request, res: Response) => {
       proxyEnabled,
       wafBypassEnabled,
       automatedScanningEnabled,
+      strictPromptInjectionMode,
     });
 
     const io = req.app.get("io") as SocketServer;

@@ -189,6 +189,15 @@ export const huntSessions = pgTable("hunt_sessions", {
    */
   promptInjectionChecksRun: integer("prompt_injection_checks_run"),
   promptInjectionPositives: integer("prompt_injection_positives"),
+  /**
+   * Non-waivable (keywords/semantic) blocks for this hunt — a live-adversary
+   * FINDING, never waived under any posture. Written on the same
+   * persistLlmSpend() call as the two counters above; a distinct column
+   * (not folded into promptInjectionPositives) because "a positive" and "a
+   * confirmed hijack attempt" are different severities and collapsing them
+   * would make this column as ambiguous as the thing it's meant to fix.
+   */
+  promptInjectionHijackBlocks: integer("prompt_injection_hijack_blocks"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
 });

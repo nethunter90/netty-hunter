@@ -28,13 +28,26 @@ export const WAIVABLE_DETECTION_CATEGORIES = ['patterns', 'structural'] as const
 const WAIVABLE_SET: ReadonlySet<string> = new Set(WAIVABLE_DETECTION_CATEGORIES);
 
 /**
+ * True only when every category in the given list is in
+ * WAIVABLE_DETECTION_CATEGORIES. This is THE boundary both the override
+ * waive-check (isWaivableDetection, below) and any consumer that only has a
+ * PromptInjectionDetectedError's flat categories: string[] (e.g.
+ * LogicExploitAgent's catch, which decides waivable-strict-mode-block vs.
+ * real-hijack-finding off this exact call) must use — neither is allowed to
+ * keep its own copy of "which categories are serious." One constant, every
+ * consumer reads it, or the two decide the same axis differently and drift.
+ */
+export function isWaivableCategoryList(categories: string[]): boolean {
+  if (categories.length === 0) return false; // fail closed if the shape is unexpected
+  return categories.every(category => WAIVABLE_SET.has(category));
+}
+
+/**
  * True only when every category that fired in this detection result is in
  * WAIVABLE_DETECTION_CATEGORIES. A single non-waivable category hit (keywords
  * or semantic) makes the whole detection non-waivable, regardless of how many
  * waivable categories also fired alongside it.
  */
 export function isWaivableDetection(result: InjectionDetectionResult): boolean {
-  const hitCategories = Object.keys(result.detections);
-  if (hitCategories.length === 0) return false; // fail closed if the shape is unexpected
-  return hitCategories.every(category => WAIVABLE_SET.has(category));
+  return isWaivableCategoryList(Object.keys(result.detections));
 }

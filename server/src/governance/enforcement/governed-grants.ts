@@ -67,15 +67,28 @@ export async function grantInjectionOverride(
   const alreadyActive = await hasActiveInjectionOverride(huntSessionId);
   if (alreadyActive) return;
 
-  await db.insert(governedGrants).values({
-    grantType: INJECTION_OVERRIDE_GRANT_TYPE,
-    scope: HUNT_SESSION_SCOPE,
-    scopeId: huntSessionId,
-    grantedBy,
-    reason,
-  });
-  invalidateInjectionOverrideCache(huntSessionId);
-  logger.warn('[governed-grants] Prompt-injection override GRANTED', { huntSessionId, grantedBy, reason });
+  // Caller-side note (grant-path handoff, increment 1+2): HunterEngine.startHunt()
+  // now calls this unconditionally on every non-strict-mode launch, so a DB
+  // hiccup here must not abort hunt startup over what should be a soft failure —
+  // same fail-closed direction as hasActiveInjectionOverride()'s own catch below.
+  // A failed grant just means the hunt proceeds without the waiver: subsequent
+  // calls fail-closed against waivable-category content too, which is the safe
+  // direction (deny-by-default), not a hunt-launch abort.
+  try {
+    await db.insert(governedGrants).values({
+      grantType: INJECTION_OVERRIDE_GRANT_TYPE,
+      scope: HUNT_SESSION_SCOPE,
+      scopeId: huntSessionId,
+      grantedBy,
+      reason,
+    });
+    invalidateInjectionOverrideCache(huntSessionId);
+    logger.warn('[governed-grants] Prompt-injection override GRANTED', { huntSessionId, grantedBy, reason });
+  } catch (err) {
+    logger.error('[governed-grants] Override grant failed to persist — hunt proceeds WITHOUT the waiver (fail-closed)', {
+      huntSessionId, grantedBy, err: String(err),
+    });
+  }
 }
 
 export async function revokeInjectionOverride(huntSessionId: string, revokedBy: string): Promise<void> {

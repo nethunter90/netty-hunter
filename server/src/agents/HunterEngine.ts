@@ -77,6 +77,7 @@ import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 import { ClaudeClient } from "../lib/claude-client";
 import { getInjectionStats, clearInjectionStats } from "../governance/enforcement/injection-guard";
+import { grantInjectionOverride } from "../governance/enforcement/governed-grants";
 import { synthesisAgent } from "./SynthesisAgent";
 import { logicExploitAgent } from "./LogicExploitAgent";
 import { normalizeVulnClass, CANONICAL_VULN_CLASSES } from "../lib/vuln-taxonomy";
@@ -1224,6 +1225,21 @@ export class HunterEngine extends EventEmitter {
     /** Hard filter — when set, only these vulnClasses ever reach PROBE/verification.
      *  See the vulnClassAllowlist field comment for how this differs from focusVulnClasses. */
     vulnClassAllowlist?: string[];
+    /**
+     * Prompt-injection chokepoint BUILD, decisions 1+2 (grant-path handoff):
+     * opts OUT of the default per-hunt waiver for the pattern/structural
+     * detection categories (base64 blobs, hex/unicode escapes, long/encoded
+     * bodies — ordinary target content, not attacks). Default is false —
+     * every hunt gets the waiver unless the operator explicitly asks for
+     * maximum strictness. The keywords/semantic (hijack) categories are
+     * NEVER waived by this or any other flag; this only ever widens or
+     * narrows the pattern/structural lane. See
+     * HANDOFF-prompt-injection-grant-path.md for why on-by-default is the
+     * posture (off-by-default means every hunt breaks on normal web content
+     * until someone remembers to grant — the exact tool-priority.ts inertia
+     * shape with a safety rationale attached).
+     */
+    strictPromptInjectionMode?: boolean;
   }): Promise<string> {
     // Freshness guardrail — the earliest possible check, before scope/anything
     // else runs. Refuses to start a campaign if the on-disk source has changed
@@ -1490,6 +1506,23 @@ export class HunterEngine extends EventEmitter {
         logger.warn("[HunterEngine] Recon runner failed (non-critical)", { err: String(err) });
         return null;
       });
+
+    // Prompt-injection chokepoint BUILD, decisions 1+2: grant the default
+    // per-hunt waiver BEFORE runLoop() starts making createMessage() calls —
+    // awaited and ordered here specifically so the first real call can never
+    // race ahead of the grant landing (hasActiveInjectionOverride()'s cache
+    // is a live per-call check with no start-of-hunt snapshot; a grant that
+    // fires concurrently with, instead of before, the first call could lose
+    // that race). Skipped entirely when the operator opted into strict mode —
+    // no waiver granted means every pattern/structural hit hard-blocks too,
+    // which is exactly what strict mode is for.
+    if (!params.strictPromptInjectionMode) {
+      await grantInjectionOverride(
+        sessionUuid,
+        "hunt-launch",
+        "default per-hunt waiver for pattern/structural categories (expected payload-shaped web content) — strictPromptInjectionMode not requested",
+      );
+    }
 
     // Run the main loop asynchronously
     this.runLoop().catch(err => {
@@ -3410,6 +3443,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
               // but this flag lets a future retry/reporting pass tell them
               // apart instead of treating both identically forever.
               truncated: logicResult.truncated ?? false,
+              // Prompt-injection chokepoint BUILD, increment 3: hunt/probe-level
+              // correlation for a non-waivable hijack block, on top of the
+              // global visibility that already landed via
+              // coreGovernance.recordDecision() inside the detector itself.
+              // Lands on huntSessions.probes (persistResults()/persistCheckpoint())
+              // — a durable, queryable row, not just an in-memory flag.
+              injectionBlocked: logicResult.injectionBlocked,
             },
             success: logicResult.confirmed,
             duration: logicResult.duration,
@@ -4834,11 +4874,13 @@ Return ONLY valid JSON array of hypothesis objects.`;
           llmCallCount: callCount,
           promptInjectionChecksRun: injectionStats.checksRun,
           promptInjectionPositives: injectionStats.positives,
+          promptInjectionHijackBlocks: injectionStats.hijackBlocks,
         })
         .where(eq(huntSessions.sessionUuid, this.state.sessionId));
       logger.info("[HunterEngine] LLM spend ledger persisted", {
         sessionId: this.state.sessionId, llmSpendUsd: spend.costUsd, llmCallCount: callCount,
         promptInjectionChecksRun: injectionStats.checksRun, promptInjectionPositives: injectionStats.positives,
+        promptInjectionHijackBlocks: injectionStats.hijackBlocks,
       });
     } catch (err) {
       logger.error("[HunterEngine] Failed to persist LLM spend ledger", { err });

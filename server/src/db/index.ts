@@ -102,6 +102,7 @@ pool.connect().then(client => {
       ON governed_grants (grant_type, scope, scope_id);
     ALTER TABLE hunt_sessions ADD COLUMN IF NOT EXISTS prompt_injection_checks_run INTEGER;
     ALTER TABLE hunt_sessions ADD COLUMN IF NOT EXISTS prompt_injection_positives INTEGER;
+    ALTER TABLE hunt_sessions ADD COLUMN IF NOT EXISTS prompt_injection_hijack_blocks INTEGER;
   `).catch(() => { /* non-critical: table may already exist */ })
     .finally(() => client.release());
 }).catch(() => { /* DB not yet available; pool will retry on first real query */ });

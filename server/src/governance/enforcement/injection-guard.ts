@@ -38,14 +38,27 @@ export class PromptInjectionDetectedError extends Error {
 // llmSpendUsd/llmCallCount, never a separate, driftable write path.
 const checksRun = new Map<string, number>();
 const positives = new Map<string, number>();
+// Non-waivable (keywords/semantic) blocks — incremented HERE, at the throw
+// site, unconditionally, so hunt-level visibility into a real hijack attempt
+// never depends on whether the ~12 call sites downstream catch-all-and-
+// degrade the thrown error. This is what makes "does a silent catch site
+// lose the signal" a non-question: the signal is already durable before any
+// catch runs. See getInjectionStats()'s call site (persistLlmSpend()) for
+// where this reaches a queryable DB row.
+const hijackBlocks = new Map<string, number>();
 
-export function getInjectionStats(sessionId: string): { checksRun: number; positives: number } {
-  return { checksRun: checksRun.get(sessionId) ?? 0, positives: positives.get(sessionId) ?? 0 };
+export function getInjectionStats(sessionId: string): { checksRun: number; positives: number; hijackBlocks: number } {
+  return {
+    checksRun: checksRun.get(sessionId) ?? 0,
+    positives: positives.get(sessionId) ?? 0,
+    hijackBlocks: hijackBlocks.get(sessionId) ?? 0,
+  };
 }
 
 export function clearInjectionStats(sessionId: string): void {
   checksRun.delete(sessionId);
   positives.delete(sessionId);
+  hijackBlocks.delete(sessionId);
 }
 
 /**
@@ -89,6 +102,8 @@ export async function screenForInjection(
       return;
     }
   }
+
+  if (!waivable && sessionId) hijackBlocks.set(sessionId, (hijackBlocks.get(sessionId) ?? 0) + 1);
 
   logger.error('[injection-guard] BLOCKING call — prompt injection detected', {
     sessionId, source, score: result.score, categories, reasons: result.reasons, waivable,
