@@ -96,7 +96,7 @@ export class ModelRouter {
       const cliAvailable = await ClaudeBridge.isAvailable();
       if (cliAvailable) {
         try {
-          const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt);
+          const result = await ClaudeBridge.reasonWithHuntContext(fullPrompt, options.sessionId);
           // This IS a real Claude call (genuine API/subscription cost) with
           // no Usage object to cost precisely — record an estimate so it's
           // never invisible to the per-hunt ledger, either cap, or

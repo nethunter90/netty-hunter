@@ -20,6 +20,7 @@ import { eq, desc, isNotNull, and } from "drizzle-orm";
 import logger from "../utils/logger";
 import { ModelRouter } from "../intelligence/ModelRouter";
 import { ClaudeClient } from "../lib/claude-client";
+import { clearInjectionStats } from "../governance/enforcement/injection-guard";
 import type { SolverResult } from "./SolverPool";
 import { SimHashDedup } from "../lib/intelligence/simhash";
 import { adaptPayload, isKnownAdaptationRule } from "../lib/verification/payload-adaptation";
@@ -798,6 +799,7 @@ Return JSON: { "confirmed": boolean, "reasoning": string, "confidenceAdjustment"
       return { confirmed: false, reasoning: "L4 AI analysis unavailable — needs review", confidenceAdjustment: 0, visionUsed: false, errored: true };
     } finally {
       ClaudeClient.clearSession(l4Session);
+      clearInjectionStats(l4Session);
     }
   }
 

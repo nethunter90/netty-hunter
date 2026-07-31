@@ -76,6 +76,7 @@ import { postExploitAgent } from "./PostExploitAgent";
 import { zapScanner } from "../lib/tools/zap-scanner";
 import { ReconRunner, ReconContext } from "../lib/recon/recon-runner";
 import { ClaudeClient } from "../lib/claude-client";
+import { getInjectionStats, clearInjectionStats } from "../governance/enforcement/injection-guard";
 import { synthesisAgent } from "./SynthesisAgent";
 import { logicExploitAgent } from "./LogicExploitAgent";
 import { normalizeVulnClass, CANONICAL_VULN_CLASSES } from "../lib/vuln-taxonomy";
@@ -1923,6 +1924,7 @@ export class HunterEngine extends EventEmitter {
     // against its actual persisted value.
     await this.persistResults();
     ClaudeClient.clearSession(this.state.sessionId);
+    clearInjectionStats(this.state.sessionId);
     this.detachScopeGuardListener();
     this.emit("hunt:complete", {
       sessionId: this.state.sessionId,
@@ -4823,12 +4825,20 @@ Return ONLY valid JSON array of hypothesis objects.`;
   private async persistLlmSpend(): Promise<void> {
     const spend = ClaudeClient.getSpend(this.state.sessionId);
     const callCount = ClaudeClient.getCallCount(this.state.sessionId);
+    // R3: same DB write as llmSpendUsd/llmCallCount — see schema.ts docstring.
+    const injectionStats = getInjectionStats(this.state.sessionId);
     try {
       await db.update(huntSessions)
-        .set({ llmSpendUsd: spend.costUsd, llmCallCount: callCount })
+        .set({
+          llmSpendUsd: spend.costUsd,
+          llmCallCount: callCount,
+          promptInjectionChecksRun: injectionStats.checksRun,
+          promptInjectionPositives: injectionStats.positives,
+        })
         .where(eq(huntSessions.sessionUuid, this.state.sessionId));
       logger.info("[HunterEngine] LLM spend ledger persisted", {
         sessionId: this.state.sessionId, llmSpendUsd: spend.costUsd, llmCallCount: callCount,
+        promptInjectionChecksRun: injectionStats.checksRun, promptInjectionPositives: injectionStats.positives,
       });
     } catch (err) {
       logger.error("[HunterEngine] Failed to persist LLM spend ledger", { err });

@@ -65,5 +65,12 @@ export {
   PromptInjectionDetector,
 };
 
+// NOTE: screenForInjection/PromptInjectionDetectedError (./enforcement/injection-guard)
+// and the governed-grants helpers are deliberately NOT re-exported here — that
+// module imports the promptInjectionDetector singleton FROM this file, and
+// re-exporting it back out of this file would make the two modules circularly
+// import each other. Import them directly from
+// './enforcement/injection-guard' and './enforcement/governed-grants' instead.
+
 export * from './types';
 export * from './pillars';

@@ -13,6 +13,7 @@ import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import logger from "../utils/logger";
+import { screenForInjection } from "../governance/enforcement/injection-guard";
 
 const CONTEXT_DIR = path.join(process.cwd(), "context");
 const TASK_LOG = path.join(CONTEXT_DIR, "claude-tasks.jsonl");
@@ -55,9 +56,17 @@ export class ClaudeBridge {
    * Send a single prompt to Claude Code non-interactively.
    * Uses `claude -p` which runs one prompt and exits — safe to call from async loops.
    */
-  static async reason(prompt: string, timeoutMs = 120_000): Promise<string> {
+  static async reason(prompt: string, sessionId?: string, timeoutMs = 120_000): Promise<string> {
     await ensureContextDir();
     const start = Date.now();
+
+    // Prompt-injection chokepoint BUILD, decision B: this subprocess call
+    // structurally cannot route through ClaudeClient.createMessage() (it's
+    // execFile, not the SDK), so it needs its own screening call on the
+    // assembled prompt before the CLI process is spawned — the CLI-bridge
+    // path is a live fallback tier, not dead code, and shipping it unscreened
+    // was explicitly called out as not optional.
+    await screenForInjection(prompt, sessionId, "cli");
 
     const response = await execFileAsync(
       "claude",
@@ -81,7 +90,7 @@ export class ClaudeBridge {
    * Reason with live hunt context automatically prepended.
    * Reads context/hunt-live.json so Claude has full situational awareness.
    */
-  static async reasonWithHuntContext(task: string, timeoutMs = 120_000): Promise<string> {
+  static async reasonWithHuntContext(task: string, sessionId?: string, timeoutMs = 120_000): Promise<string> {
     let contextPrefix = "";
     try {
       const liveCtx = await fs.readFile(
@@ -91,7 +100,7 @@ export class ClaudeBridge {
       contextPrefix = `Current hunt state:\n${liveCtx}\n\n`;
     } catch { /* context file may not exist yet — proceed without it */ }
 
-    return this.reason(contextPrefix + task, timeoutMs);
+    return this.reason(contextPrefix + task, sessionId, timeoutMs);
   }
 
   /** Reset availability cache — useful after installing claude CLI mid-session. */

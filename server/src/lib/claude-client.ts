@@ -11,6 +11,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import logger from "../utils/logger";
 import { runtimeConfig } from "./runtime-config";
+import { screenForInjection } from "../governance/enforcement/injection-guard";
 
 // ── Pricing (USD per million tokens) ────────────────────────────────────────
 // 2026-07-22: current published pricing.
@@ -131,6 +132,42 @@ export class LLMBudgetExceededError extends Error {
     super(`LLM call budget exceeded for hunt ${sessionId} (limit ${limit})`);
     this.name = "LLMBudgetExceededError";
   }
+}
+
+/**
+ * Prompt-injection chokepoint BUILD, decision A — flattens params.messages
+ * (never params.system: our own system prompts are static instruction text
+ * that legitimately discusses SQLi/jailbreak/injection as subject matter, and
+ * screening them would trip the detector on our own text) into one string for
+ * screenForInjection(). Target-controlled content (HTTP responses, scraped
+ * observation data, tool_result blocks in LogicExploitAgent's agentic loop)
+ * lands in messages by this codebase's existing convention.
+ */
+function extractMessagesText(messages: Anthropic.MessageParam[]): string {
+  const parts: string[] = [];
+  for (const message of messages) {
+    const content = message.content;
+    if (typeof content === "string") {
+      parts.push(content);
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const b = block as unknown as Record<string, unknown>;
+      if (typeof b.text === "string") {
+        parts.push(b.text);
+      } else if (typeof b.content === "string") {
+        // tool_result with plain-string content
+        parts.push(b.content);
+      } else if (Array.isArray(b.content)) {
+        // tool_result with structured content blocks
+        for (const inner of b.content as Record<string, unknown>[]) {
+          if (typeof inner.text === "string") parts.push(inner.text);
+        }
+      }
+    }
+  }
+  return parts.join("\n\n");
 }
 
 export class ClaudeClient {
@@ -359,6 +396,12 @@ export class ClaudeClient {
     estimatedInputTokens: number,
   ): Promise<Anthropic.Message> {
     if (!ClaudeClient.isAvailable()) throw new Error("ANTHROPIC_API_KEY not set");
+
+    // Prompt-injection chokepoint BUILD, decisions A/C: screen params.messages
+    // (never params.system — see extractMessagesText()'s docstring) BEFORE any
+    // budget is consumed or the API is called. A blocked call must cost nothing
+    // and reach neither the dollar/call-count ledger nor the model.
+    await screenForInjection(extractMessagesText(params.messages), sessionId, "sdk");
 
     const budgetKey = sessionId ?? ClaudeClient.UNCAPPED_BUCKET;
     if (sessionId) {

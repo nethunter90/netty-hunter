@@ -178,6 +178,17 @@ export const huntSessions = pgTable("hunt_sessions", {
    */
   llmSpendUsd: real("llm_spend_usd"),
   llmCallCount: integer("llm_call_count"),
+  /**
+   * Prompt-injection chokepoint build (BUILD R3): the failure-visibility
+   * counterpart to llmSpendUsd/llmCallCount above — written on the SAME
+   * persistLlmSpend() call, so "how many LLM calls did this hunt make" and
+   * "how many of them were screened for injection" never have two different
+   * answers. promptInjectionChecksRun < llmCallCount is itself a chokepoint-
+   * bypass detector: it means some LLM call reached the model without ever
+   * being screened.
+   */
+  promptInjectionChecksRun: integer("prompt_injection_checks_run"),
+  promptInjectionPositives: integer("prompt_injection_positives"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
 });
@@ -422,6 +433,30 @@ export const immunizationEvents = pgTable('immunization_events', {
   driftSummary: jsonb('drift_summary').notNull(),
   remediationApplied: jsonb('remediation_applied'),
 });
+
+// ─── Governed Grants ──────────────────────────────────────────────────────────
+// Shared governed-override primitive (prompt-injection chokepoint BUILD, decision
+// D). One reviewable table for "an operator has explicitly waived a normally-
+// restrictive default, attributed and revocable" — grantType distinguishes WHAT
+// is waived (today: only 'prompt_injection_override'), scope+scopeId carries the
+// grain that grant type is checked at ('hunt_session' for the injection override
+// — see governance/enforcement/governed-grants.ts; a future program-durable
+// policy-grant route would use scope='program' with scopeId=programId, on this
+// same table, since the two share lifecycle shape but NOT lifespan — see the
+// 3c grain-decision writeup). A row with revokedAt IS NULL is active.
+export const governedGrants = pgTable('governed_grants', {
+  id: serial('id').primaryKey(),
+  grantType: varchar('grant_type', { length: 64 }).notNull(),
+  scope: varchar('scope', { length: 32 }).notNull(),
+  scopeId: varchar('scope_id', { length: 128 }).notNull(),
+  grantedBy: varchar('granted_by', { length: 128 }).notNull(),
+  grantedAt: timestamp('granted_at').defaultNow().notNull(),
+  reason: text('reason'),
+  revokedAt: timestamp('revoked_at'),
+  revokedBy: varchar('revoked_by', { length: 128 }),
+}, (t) => ({
+  lookupIdx: index('governed_grants_lookup_idx').on(t.grantType, t.scope, t.scopeId),
+}));
 
 // ─── Egress Route Metrics ─────────────────────────────────────────────────────
 // Per-proxy-per-target health and burn state for dynamic egress route allocation.

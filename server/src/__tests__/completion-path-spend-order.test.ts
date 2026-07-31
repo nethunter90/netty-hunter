@@ -40,7 +40,11 @@ describe('HunterEngine completion path — persistResults() before ClaudeClient.
 
   it('persistLlmSpend() reads ClaudeClient.getSpend() — the read this ordering protects', () => {
     const content = readFileSync(join(__dirname, '..', 'agents', 'HunterEngine.ts'), 'utf-8');
-    const persistLlmSpendMatch = content.match(/private async persistLlmSpend\(\): Promise<void> \{[\s\S]{0,400}?\}/);
+    // Window widened 400->700 (prompt-injection chokepoint R3): the method body
+    // legitimately grew when promptInjectionChecksRun/Positives joined this same
+    // write — the bound here is just "far enough to reach the method's first close
+    // brace", not a real size constraint on the method.
+    const persistLlmSpendMatch = content.match(/private async persistLlmSpend\(\): Promise<void> \{[\s\S]{0,700}?\}/);
     expect(persistLlmSpendMatch, 'persistLlmSpend() method not found').not.toBeNull();
     expect(persistLlmSpendMatch![0]).toContain('ClaudeClient.getSpend(this.state.sessionId)');
   });
